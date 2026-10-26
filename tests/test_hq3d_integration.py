@@ -657,3 +657,20 @@ class Hq3dPure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InteractIsF(unittest.TestCase):
+    """[3.22.2] F interacts on foot (doors, stops, terminals, race starts, the Pet shop); E gets on and off things."""
+    def test_f_interacts_e_rides(self):
+        hq = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        self.assertIn("function interactKey()", hq)
+        i = hq.index("function interactKey()")
+        body = hq[i:i + 600]
+        for want in ("doorUnderCrosshair(pose, curDoors(), 3)", "cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})", "if(ride || POOL.u"):
+            self.assertIn(want, body)
+        # F goes to the interaction before the launcher and the tank, and only when there is one
+        self.assertLess(hq.index("&& interactKey()){"), hq.index("var tkF = e.code === \"KeyF\""))
+        # the HUD's prompt says F
+        hp = hq[hq.index("function hudPrompt()"):hq.index("function hudPrompt()") + 700]
+        self.assertIn('"F  Enter "', hp)
+        self.assertIn('replace(/^E(\\s)/, "F$1")', hp)

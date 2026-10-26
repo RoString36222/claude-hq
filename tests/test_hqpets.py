@@ -218,7 +218,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   me.speed = 1.5; fr({scene: scene2, world: lobbyW, worldName: "lobby"}); out.rt.movingNear = K.near ? K.near.p.name : null; me.speed = 0;
   fr({scene: scene2, world: lobbyW, worldName: "lobby"});
   out.rt.near = K.near ? [K.near.kind, K.near.p.name, +Math.hypot(q0.x - me.x, q0.z - me.z).toFixed(2)] : null;
-  if(K.near) K.key("KeyE", me, null);
+  if(K.near) K.key("KeyF", me, null);
   out.rt.toggles = toggles;
   // facing (pure): still, within the distance, within 45 degrees of where you look
   var F = P.facing;
@@ -596,8 +596,10 @@ class PetsEngine(unittest.TestCase):
 
     def test_e_priority_door_before_pet(self):
         hq = read("games", "hq3d.js")
-        key = hq[hq.index("function petsKey(e)"):hq.index("function petsKey(e)") + 600]
-        self.assertIn('e.code === "KeyE" && (ride || !PK.near || useHere())', key, "a door, lift or ride wins E over a pet")
+        key = hq[hq.index("function petsKey(e)"):hq.index("function petsKey(e)") + 1200]
+        # [3.22.2] F interacts (a door, lift or ride wins F over a pet's take / leave); E rides a pet unless a vehicle is beside you
+        self.assertIn('e.code === "KeyF" && (ride || POOL.u || GN.out || !PK.near || useHere())', key, "a door, lift or ride wins F over a pet")
+        self.assertIn('e.code === "KeyE" && !ride && !POOL.u && !POOL.near && nearBike() < 0 && !nearTank() && PK.rideable', key, "E rides a pet, a door or a stop no longer takes it")
         self.assertLess(hq.index("if(petsKey(e)) return;"), hq.index("if(useKey()) e.preventDefault()"))
         use = hq[hq.index("function useHere()"):hq.index("function useKey()")]
         for want in ("nearBike() >= 0", "doorUnderCrosshair(pose, curDoors(), 3)", "cur.prompt", "USE_DOOR_D", "!!d.roof === up"):

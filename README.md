@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.22.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.22.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,11 @@ and feature guide.
 
 ## Changelog
 
+- **3.22.2 — F to interact.** On foot, F now does what the prompt offers (a door, a stop, a terminal, a race's
+  start, a tag, a snack stall, the Pet shop, taking a pet out or leaving it), and the prompts say F. E is for getting on
+  and off things: a vehicle, a board, and a pet you can ride, so a door or a stop beside you no longer takes E from your
+  dragon. E still works for the old interactions where there's nothing to ride. With the grenade launcher out and
+  nothing to use, F still fires.
 - **3.22.1 — More traffic lights.** Side streets get lights too: where a main road crosses a side street (a short
   green for the side street, so the main road barely waits) and at crossroads out of town, spaced at least 60 m apart
   and only where a waiting bus or tram has room. The Commons goes from 17 lights to 42.

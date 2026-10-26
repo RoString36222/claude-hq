@@ -1518,9 +1518,12 @@ function mount(el, api){
   }
   function petsKey(e){
     if(!PK || e.type !== "keydown" || e.repeat || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
-    if(!{KeyB: 1, KeyU: 1, KeyO: 1, KeyE: 1}[e.code]) return false;
-    if(e.code === "KeyE" && !ride && !PK.near && !useHere() && PK.rideable && PK.rideable()){ e.preventDefault(); e.stopPropagation(); mountPet(PK.rideable()); return true; }   // [3.14] ride it
-    if(e.code === "KeyE" && (ride || !PK.near || useHere())) return false;   // [3.13.5] a door, a lift, a ride: E is theirs
+    if(!{KeyB: 1, KeyU: 1, KeyO: 1, KeyE: 1, KeyF: 1}[e.code]) return false;
+    // [3.22.2] E rides (a vehicle beside you comes first), F interacts: a door, a stop or a race start no longer
+    // takes E from a pet you could ride
+    if(e.code === "KeyE" && !ride && !POOL.u && !POOL.near && nearBike() < 0 && !nearTank() && PK.rideable && PK.rideable()){ e.preventDefault(); e.stopPropagation(); mountPet(PK.rideable()); return true; }   // [3.14] ride it
+    if(e.code === "KeyE") return false;
+    if(e.code === "KeyF" && (ride || POOL.u || GN.out || !PK.near || useHere())) return false;   // [3.13.5] a door, a lift, a ride: F is theirs
     if(PK.key(e.code, petsOwner(), function(x, z){ return blocked(x, z); })){ e.preventDefault(); e.stopPropagation(); return true; }
     return false;
   }
@@ -4172,11 +4175,12 @@ function mount(el, api){
     if(a.act === "dive"){ dismount(true); placeAvatar(a.x, a.z, a.yaw); C.dive(rig, rigTarget()); }
     else { C.flyMap(rig, a.x, a.z, a.span); if(a.name && api.announce) api.announce(a.name); }
   }
-  // The HUD's E prompt: a door under the crosshair only. A vehicle near you already has its own E pill (rideUi:
-  // "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it once said "E  Ride the bike" by a rowboat).
+  // The HUD's F prompt ([3.22.2] interacting is F; E rides): a door under the crosshair, or the world's own. A vehicle
+  // near you already has its own E pill (rideUi: "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it
+  // once said "E  Ride the bike" by a rowboat). The worlds still write their prompts "E  ...": shown as F.
   function hudPrompt(){
-    if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "E  Enter " + (d.label || d.tip || "the door"); }
-    if(!ride && cur && cur.prompt && avatar) return cur.prompt({x: avatar.x, z: avatar.z}) || null;    // the world's (a terminal's door)
+    if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "F  Enter " + (d.label || d.tip || "the door"); }
+    if(!ride && cur && cur.prompt && avatar){ var w = cur.prompt({x: avatar.x, z: avatar.z}); return w ? String(w).replace(/^E(\s)/, "F$1") : null; }   // the world's (a terminal's door)
     return null;
   }
   function project(x, y, z){
@@ -5278,6 +5282,14 @@ function mount(el, api){
     for(var i = 0; i < ds.length; i++){ var d = ds[i]; if(d && d.front && !!d.roof === up && Math.hypot(avatar.x - d.front.x, avatar.z - d.front.z) < USE_DOOR_D) return true; }
     return false;
   }
+  // [3.22.2] F: interact on foot (the HUD's prompt): the door under the crosshair in first person, else the world's own
+  // (a resident, a stop, a terminal, a race's start, the Pet shop). Nothing here: F stays the launcher's / a tank's.
+  function interactKey(){
+    if(ride || POOL.u || !avatar || !cur) return false;
+    if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
+    if(cur.use && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
+    return false;
+  }
   // E (and a pad's X): get on or off what is near you; in first person also the door under the crosshair.
   function useKey(){
     // held by a trip (a booked ferry, flight or cruise seat: cur.carry): E is the trip's (get off), not a bike beside it
@@ -5388,6 +5400,9 @@ function mount(el, api){
     }
     // [3.15] riding (games/hqtransit.js): S requests the stop, V cycles seat -> window -> chase, Esc gets off
     if(!ride && inst.running && !typing(e.target) && cur && cur.transitKey && cur.transitKey(e)){ e.preventDefault(); e.stopPropagation(); return; }
+    // [3.22.2] F interacts (a door, a stop, a terminal...); with nothing to use here it falls through to the launcher
+    if(e.code === "KeyF" && e.type === "keydown" && !e.repeat && !ride && !POOL.u && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
+       && interactKey()){ e.preventDefault(); e.stopPropagation(); return; }
     // [3.16] the grenade launcher, on foot in the 3D City: X out / away, F fires (one shot a press)
     // (a tank's gunner, or its driver while nobody is: F fires its cannon)
     var tkF = e.code === "KeyF" && (tkGunner() || tkDriverGuns());

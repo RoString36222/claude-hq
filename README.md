@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.22.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.22.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,10 @@ and feature guide.
 
 ## Changelog
 
+- **3.22.3 — Drive on the left.** The City's traffic keeps left, as in India and the UK: cars, vans, buses, trams,
+  cabs and emergency vehicles, with kerb-side bus and tram stops, doors and lay-bys on the left, traffic-light poles on
+  the left kerb, parked cars facing the way their side goes, and a left turn now the tight one. The buses themselves are
+  mirrored (doors on the left, driver on the right), and a cab you call pulls up on the left. As many cars as before.
 - **3.22.1 — More traffic lights.** Side streets get lights too: where a main road crosses a side street (a short
   green for the side street, so the main road barely waits) and at crossroads out of town, spaced at least 60 m apart
   and only where a waiting bus or tram has room. The Commons goes from 17 lights to 42.

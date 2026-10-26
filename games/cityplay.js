@@ -20,6 +20,7 @@
  *         beacon(id, x, z, colour) / beaconOff(id) (a tall light column you drive to),
  *         waypoint(x, z, label) (the City's route to it, as a map pick),
  *         store: {get(key, fallback), set(key, value)} (this browser only, guarded; nothing leaves the machine),
+ *         feature(id) (another feature of this same City: the Arena games drive jobs, heat and races through it),
  *         seed: a number from the world (W.seed || W.id): every place a feature picks is a pure function of it}
  *
  * Events in (from hq3d.js and the features; HQV.cityPlay.emit is safe with no City built):
@@ -27,7 +28,8 @@
  *   "ram" {x, z, what, speed}  you hit a car, a person or a prop "red" {x, z}   you ran a red light
  *   "job" / "race" / "find" / "heat" {...}   the features' own news
  *
- * Nothing here draws more than the HUD and the beacons; nothing goes to a server. Features never use Math.random for
+ * Nothing here draws more than the HUD and the beacons; nothing here goes to a server (the Arena games, games/playarena.js,
+ * go through the page's opt-in hq presence, the "cityplay" capability). Features never use Math.random for
  * anything a player sees twice: places, routes and rewards come from mulberry32(seed + ...). */
 (function(){
 "use strict";
@@ -71,7 +73,7 @@ function makeHud(){
 
 function create(THREE, o){
   o = o || {};
-  var S = o.scene, W = o.W, feats = [], beacons = {}, data = readStore(), dead = false;
+  var S = o.scene, W = o.W, feats = [], beacons = {}, data = readStore(), dead = false, inst = null;
   var bG = THREE && S ? new THREE.Group() : null;
   if(bG){ bG.name = "cityplay-beacons"; S.add(bG); }
   var hud = makeHud();
@@ -103,6 +105,7 @@ function create(THREE, o){
     blocked: function(x, z){ return !!(o.blocked && o.blocked(x, z)); },
     groundY: function(x, z){ return o.groundY ? o.groundY(x, z) : 0; },
     emit: emit, hud: hud, beacon: beacon, beaconOff: beaconOff,
+    feature: function(id){ return inst ? inst.feature(id) : null; },
     waypoint: function(x, z, label){ if(o.waypoint) try { o.waypoint(x, z, label); } catch(e){} },
     store: {
       get: function(k, fb){ return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : fb; },
@@ -112,7 +115,7 @@ function create(THREE, o){
   FEATS.forEach(function(F){
     try { var f = F.create(ctx); if(f){ f.id = F.id; feats.push(f); } } catch(e){ if(window.console) console.warn("[cityplay] " + F.id, e); }
   });
-  var inst = {
+  inst = {
     ctx: ctx,
     feature: function(id){ for(var i = 0; i < feats.length; i++) if(feats[i].id === id) return feats[i]; return null; },
     update: function(dt, f){

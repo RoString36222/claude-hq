@@ -25,7 +25,12 @@
  * Draws: the cars' bodies and their lightbars (two InstancedMeshes), the helicopter and its rotor, the searchlight.
  * Emits "heat" {stars, why} on every change of stars, "busted" {rep, penalty}, "escaped" {rep, reward}.
  * The feature: stars(), heat(), add(n, why), clear(), chasers() -> [{x, z, yaw, kind}], zone() -> {x, z, r} | null,
- *   heli() -> {x, y, z} | null, busting() (for tools and the Arena heat-tag mode). */
+ *   heli() -> {x, y, z} | null, busting() (for tools and the Arena heat-tag mode), unseen() -> s since police last saw you.
+ * The Arena's Cops & robber (games/playarena.js) drives it with tag({cops: [{x, z}]}) every frame, tag(null) to end:
+ *   while on, those players are the police (they see you along the same line of sight, they witness, they bust you
+ *   within BUST_R m while you are under BUST_V m/s for BUST_S s, on foot or not), no pursuit cars come (any out leave),
+ *   the stars never decay and "You lost them" pays nothing; a bust then fades and takes you to the station with no rep
+ *   lost, and "busted" carries {tag: true}. Their positions come from presence the page already has. */
 (function(){
 "use strict";
 var HQV = window.HQV = window.HQV || {};
@@ -206,7 +211,7 @@ function create(ctx){
     me: {x: 0, y: 0, z: 0, yaw: 0}, speed: 0, ride: null, hidden: false,
     cars: [], spawnN: 0, spawnT: 0, nextId: 1,
     block: null, blockT: 0, heli: null, spin: 0,
-    bustT: 0, footT: 0, busted: null,
+    bustT: 0, footT: 0, busted: null, tag: null,
     cool: {}, red: null, redT: -99, msgT: 0, dead: false
   };
   var sirenPool = null, heliPool = null, fadeEl = null;
@@ -252,6 +257,8 @@ function create(ctx){
     for(var i = 0; i < S.cars.length; i++){ var c = S.cars[i]; if(!c.leave && Math.hypot(c.x - x, c.z - z) <= r) return true; }
     var tr = S.traffic || [];
     for(i = 0; i < tr.length; i++){ var v = tr[i]; if(v && v.kind === "police" && Math.hypot(v.x - x, v.z - z) <= r) return true; }
+    var tc = S.tag ? S.tag.cops : [];
+    for(i = 0; i < tc.length; i++) if(Math.hypot(tc[i].x - x, tc[i].z - z) <= r) return true;   // [arena] a player cop
     return false;
   }
   function camera(sig, x, z){ var k = sig != null ? String(sig) : Math.round(x/20) + "," + Math.round(z/20); return H32(seed + ":cam:" + k) % 4 === 0; }
@@ -371,6 +378,7 @@ function create(ctx){
       if(d <= r && clear(c.x, c.z, me.x, me.z)){ c.sees = true; any = true; }
     });
     if(S.heli && !S.heli.leave && !S.hidden && Math.hypot(S.heli.x - me.x, S.heli.z - me.z) < 160) any = true;
+    if(S.tag && !S.hidden) S.tag.cops.forEach(function(p){ if(!any && Math.hypot(p.x - me.x, p.z - me.z) <= r && clear(p.x, p.z, me.x, me.z)) any = true; });
     S.seen = any;
     if(any){ S.seenT = S.t; S.seenAt = {x: me.x, z: me.z}; }
   }
@@ -492,11 +500,13 @@ function create(ctx){
       var me = S.me, st = null, bd = Infinity;
       stations.forEach(function(s){ var d = Math.hypot(s.x - me.x, s.z - me.z); if(d < bd){ bd = d; st = s; } });
       if(st && ctx.c && ctx.c.teleport){ try { ctx.c.teleport(st.x, st.z, Math.atan2(st.x - st.cx, st.z - st.cz)); } catch(e){} S.me.x = st.x; S.me.z = st.z; }
-      var before = rep(), after = Math.max(0, before - BUST_REP);
+      var tagged = !!S.tag, before = rep(), after = tagged ? before : Math.max(0, before - BUST_REP);   // a game costs no rep
       setRep(after);
       S.cars = []; S.block = null; S.heli = null; S.bustT = 0; S.footT = 0;
       setHeat(0, "busted");
-      ctx.emit && ctx.emit("busted", {rep: after, penalty: before - after, x: st ? st.x : null, z: st ? st.z : null});
+      var ev = {rep: after, penalty: before - after, x: st ? st.x : null, z: st ? st.z : null};
+      if(tagged) ev.tag = true;
+      ctx.emit && ctx.emit("busted", ev);
     }
     if(B.t >= FADE_IN + FADE_HOLD){ fade(false); }
     if(B.t >= FADE_IN + FADE_HOLD + FADE_OUT){ S.busted = null; }
@@ -576,8 +586,9 @@ function create(ctx){
     if(S.stars > 0){
       // more cars, then the roadblock and the helicopter
       var live = S.cars.filter(function(c){ return !c.leave && c.kind === "car"; }).length;
-      if(live < want(S.stars) && S.t >= S.spawnT){ spawn(); S.spawnT = S.t + (live ? 2.5 : 1.5); }
-      if(S.stars >= 4) roadblock();
+      if(S.tag) S.cars.forEach(function(c){ c.leave = true; });              // [arena] Cops & robber: the players are the police
+      else if(live < want(S.stars) && S.t >= S.spawnT){ spawn(); S.spawnT = S.t + (live ? 2.5 : 1.5); }
+      if(S.stars >= 4 && !S.tag) roadblock();
       if(S.block && (S.stars < 4 || S.t - S.block.t > 45 || Math.hypot(S.block.x - S.me.x, S.block.z - S.me.z) > 160)){
         S.block.cars.forEach(function(c){ c.gone = true; }); S.block = null; S.blockT = S.t + 20;
       }
@@ -585,7 +596,7 @@ function create(ctx){
       if(S.losT <= 0){ S.losT = 0.25; look(); }
       // unseen: a star goes every lose(stars) s (hidden: three times as fast)
       var need = lose(S.stars)*(S.hidden ? 0.35 : 1);
-      if(!S.seen && S.t - S.seenT >= need){
+      if(!S.seen && !S.tag && S.t - S.seenT >= need){
         S.seenT = S.t;
         setHeat(S.stars - 1, "lost sight of you");
         if(S.stars === 0) escaped();
@@ -599,9 +610,15 @@ function create(ctx){
     if(S.stars > 0){
       var near = Infinity;
       S.cars.forEach(function(c){ if(!c.leave){ var d = Math.hypot(c.x - S.me.x, c.z - S.me.z); if(d < near) near = d; } });
+      if(S.tag){                                                          // [arena] a player cop: BUST_R for BUST_S while you are slow
+        var pn = Infinity;
+        S.tag.cops.forEach(function(p){ var d = Math.hypot(p.x - S.me.x, p.z - S.me.z); if(d < pn) pn = d; });
+        S.tag.bustT = pn <= BUST_R && S.speed < BUST_V ? S.tag.bustT + dt : 0;
+        if(S.tag.bustT >= BUST_S){ S.tag.bustT = 0; bust(); }
+      }
       if(!S.ride){ S.footT = near <= FOOT_R ? S.footT + dt : 0; S.bustT = 0; }
       else { S.bustT = near <= BUST_R && S.speed < BUST_V ? S.bustT + dt : 0; S.footT = 0; }
-      if(S.footT >= FOOT_S || S.bustT >= BUST_S) bust();
+      if(!S.busted && (S.footT >= FOOT_S || S.bustT >= BUST_S)) bust();
     } else { S.bustT = 0; S.footT = 0; }
     sound(); draw();
   }
@@ -635,6 +652,17 @@ function create(ctx){
     zone: function(){ return S.stars > 0 && S.seenAt ? {x: S.seenAt.x, z: S.seenAt.z, r: 30 + 25*S.stars} : null; },
     heli: function(){ return S.heli ? {x: S.heli.x, y: S.heli.y, z: S.heli.z} : null; },
     busting: function(){ return !!S.busted; },
+    unseen: function(){ return Math.max(0, S.t - S.seenT); },
+    // [arena] Cops & robber: the player cops this frame ({cops: [{x, z}]}), or null to end the game
+    tag: function(o){
+      if(!o){ S.tag = null; return false; }
+      var cops = (Array.isArray(o.cops) ? o.cops : []).slice(0, 8).filter(function(p){ return p && isFinite(+p.x) && isFinite(+p.z); })
+                   .map(function(p){ return {x: +p.x, z: +p.z}; });
+      if(!S.tag){ S.tag = {cops: cops, bustT: 0}; S.seenT = S.t; }
+      else S.tag.cops = cops;
+      return true;
+    },
+    tagBust: function(){ return S.tag ? S.tag.bustT : 0; },
     seen: function(){ return S.seen; },
     view: function(){ return view; }
   };

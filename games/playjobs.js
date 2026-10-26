@@ -23,6 +23,8 @@
  *   start(id | offer | spec) -> {ok, reason?}   spec (co-op): {kind, from: {x, z}, stops: [{x, z}], limit?, base?, id?}:
  *                                its points are snapped to the nearest footpath (refused when there is none)
  *   cancel() / active() -> {id, kind, title, step, of, text, left, dist, rams, aboard} | null / stats() / onChange(fn)
+ *   spec() -> {id, kind, from: {x, z}, stops: [{x, z}], base, limit, step} | null   the active job's places (Arena co-op)
+ *   advance(step) -> bool        a co-op partner reached step `step` first: catch up to it (finishing past the last drop)
  * Events out: ctx.emit("job", {kind, state: "start" | "done" | "fail", tip, reason?}). In: "ram" (while a fare rides
  * or cargo is aboard). ctx.say carries counts only. Nothing leaves the machine.
  */
@@ -346,6 +348,16 @@ function create(ctx){
     lastHud = ""; changed();
     return {ok: true};
   }
+  // a co-op partner's progress: move on to step n (never back); past the last drop the job is done here too
+  function advance(n){
+    n = Math.floor(num(n, 0));
+    if(dead || !job || n <= job.step) return false;
+    if(job.step === 0){ if(fig) fig.visible = false; job.heavy = heavy(motion); }
+    job.step = Math.min(n, job.stops.length + 1);
+    if(job.step > job.stops.length){ finish("done"); return true; }
+    point(); changed();
+    return true;
+  }
   function view(){
     if(!job) return null;
     var t = target(), left = job.limit - (nowMs - job.t0)/1000, d = dist(me, t);
@@ -356,6 +368,12 @@ function create(ctx){
   var feat = {
     offers: function(){ return list().slice(); },
     start: start,
+    advance: advance,
+    spec: function(){
+      if(!job) return null;
+      function pt(p){ return {x: p.x, z: p.z}; }
+      return {id: job.id, kind: job.kind, from: pt(job.from), stops: job.stops.map(pt), base: job.base, limit: job.limit, step: job.step};
+    },
     cancel: function(){ if(job){ finish("cancel", "cancel"); return true; } return false; },
     active: view,
     stats: store,

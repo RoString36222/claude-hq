@@ -5219,7 +5219,8 @@ function mount(el, api){
         else cityFallback(name, w, err);
         enterWorld(name, from, instant);
       };
-      to = setTimeout(function(){ settle(false, new Error("timed out")); }, 15000);
+      // [3.22] 45 s, not 15: a slow machine (or CI's) building the fuller City should get it, not the classic fallback
+      to = setTimeout(function(){ settle(false, new Error("timed out")); }, 45000);
       w.whenReady.then(function(){ settle(true); }, function(e){ settle(false, e); });
       return;
     }

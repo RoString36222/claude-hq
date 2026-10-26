@@ -236,7 +236,7 @@ class Hq3dSource(unittest.TestCase):
         self.assertIn("if(entering === name) return;", ew)
         self.assertIn("entering = name;", ew)
         self.assertIn("if(entering !== name || worlds[name] !== w) return;", ew)
-        self.assertIn("15000", ew)
+        self.assertIn("45000", ew)
         self.assertIn("w.whenReady.then(", ew)
 
     def test_camera_keys_inside_guard(self):

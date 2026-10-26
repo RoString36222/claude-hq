@@ -61,6 +61,27 @@
  * the lap out at its start; each car is a car, taxi, van, lorry, scooter or bike by mix(its district, kind, hour).
  * at() gives a car's type as v.type (kind stays "car"); cars(ms) and closed(ms) list the lap states and closures.
  * Demand only thins today's density and a closure only takes cars off: rings, slots and timetables are unchanged.
+ * HQ 3.22 traffic lights (city play; when citylife.js is loaded with the packed world and o.signals !== false): at the
+ * nodes of HQV.cityLife.signals(W) every movement goes in on its light's green. The plan above changes so:
+ *  - a slot carries a platoon of up to r.P cars (PMAX; PRING on a ring with no lights), nose to tail behind the first one
+ *    out on the slot's timetable (at(): platoons()); its box passes are held until its last car is out (sClear);
+ *  - the window period: the lights' cycle SIG_C at a light (the long cycle HB = SIG_C too, laps multiples of it), the
+ *    shortest of SIG_DIVS that holds the windows elsewhere; a ring through any light has a slot a cycle (Hr);
+ *  - at a light (sigPlace) each colour is one light axis's; the buses' and trams' windows go first in their green, then
+ *    the cars', each where it is clear of the windows it clashes with, early enough for its whole platoon to be in
+ *    before the amber, floating on to its deadline (a platoon that comes up on green drives on); a box that does not
+ *    fit (overfull) takes a car off the platoons through it and the plan is made again (planCars);
+ *  - at a red the platoon stops with its nose on the line and pulls away on its window (profileOf); where its queue
+ *    would reach back into the box behind it waits at that box's line instead and rolls on through (relays: don't
+ *    block the box); boxes closer than MERGE m along a road (or a light's short link, sig.links) are one box
+ *    (clusterOf), so nothing queues between them; a ring no bus or tram lets through at all has a car off its platoons
+ *    and the plan is made again;
+ *  - a platoon that comes up on one waiting ahead queues nose to tail behind it (softly; at() platoons()), never ahead
+ *    of its own timetable, only where that never stands in a box (queueOk), else the slots are spaced wider.
+ * Everything stays a pure function of (doc, seed, tier, the clock): every client sees the same lights and queues.
+ * Emergency runs ignore the lights (they take each box when it is clear, as before). lightAt(x, z, heading, ms) ->
+ * {state, sig, dist} the light ahead (for the police); signals() the lights. Without lights the plan is today's.
+ * street(THREE, scene, W): the lights (poles, lit heads, stop lines) and cityLife.parked(W)'s cars, drawn near you.
  */
 (function(){
 "use strict";
@@ -102,10 +123,11 @@ var EV_KINDS = ["fire", "ambulance", "police"];
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
 var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
-// [3.22] traffic lights: the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green, the window periods
-// that divide the cycle, the most cars in a platoon (on a ring through lights; elsewhere), the share of a platoon's
-// places that hold a car (by place), the speed a platoon pulls away from the line to
-var SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65], SIG_V = 8;
+// [3.22] traffic lights: a wait shorter than SIG_EPS s is rolled through; QSOFT m the softness of a queue's hold, QSTEP s
+// its check's step; the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green comes on, the window
+// periods (each divides the next, and the cycle), the most cars in a platoon (on a ring through lights; elsewhere),
+// the share of a platoon's places j that hold a car
+var SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65];
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */

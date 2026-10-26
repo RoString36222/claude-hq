@@ -23,6 +23,9 @@
  *   mix(group, kind, hour)    what drives there: {car, taxi, van, lorry, scooter, bike} weights; pick(mix, u)
  *   events(W, ms) / closed(W, ms)  the weekly street market, Sunday's parade and roadworks, the same for everyone at
  *                             the same local time; closed -> {edge id: event kind} (v4: a closed segment's capacity is 0)
+ *   signals(W), signalAt(sig, ms, heading), walkAt(sig, ms, heading)  [3.22] traffic lights at the real junctions, a
+ *                             60 s two-phase cycle each with a rough green wave along the main roads (see there)
+ *   parked(W)                 [3.22] cars parked along the kerbs of the local and shopping streets
  * Units: metres (W stores cm), yaw 0 faces +z, the local clock in ms (npcsim.localMs), hours 0..24.
  */
 (function(){
@@ -376,13 +379,16 @@ function events(W, ms){
 function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges.forEach(function(id){ o[id] = ev.kind; }); }); return o; }
 
 /* ---------- [3.22] traffic lights at real junctions ---------- */
-// signals(W) -> {node id: sig}: every node where three or more roads that carry cars meet and one of them is a main
-// road (arterial, avenue, boulevard, a highway's end), and every four-way crossing of local streets downtown; never
-// where a highway's mainline goes on through (two highway arms), nor on an expressway, a ring road or a slip. sig:
+// signals(W) -> {node id: sig}: every node where three or more through roads (main roads, collectors, a highway's end:
+// the ones traffic.js runs on) meet, one of them a main road (arterial, avenue, boulevard, highway), and every
+// four-way crossing of local streets downtown (by the blocks on its corners); never where a highway's mainline goes on
+// through (two highway arms), nor on an expressway, a ring road or a slip. Two lights a short link (LINK m) apart are
+// one junction: the busier keeps its light, and an arm that is such a link has no head of its own (sig.links; the
+// traffic treats the two as one box). sig:
 //   {id, x, z, r: the junction box radius (m, the farthest stop line), axes: [h0, h1] the two road headings (radians,
 //    atan2(dx, dz), in [0, pi): a heading and its reverse are one axis; h0 the main road's), arms: [{heading: the way
 //    traffic comes in, edge, stopX, stopZ: the middle of the stop line across the lane coming in, stop: its distance
-//    from the node, half: half the carriageway, axis}], kind: "main" | "local", cycle, off, green: [g0, g1]}
+//    from the node, half: half the carriageway, axis}], kind: "main" | "local", cycle, off, green: [g0, g1], links}
 // The plan: a CYCLE s cycle from off (s on the clock): axis 0 green g0, amber, all red, axis 1 green g1, amber, all
 // red. off is a hash of the node, except along a straight main road, where each junction is off by the drive from
 // the one before it at WAVE m/s (a rough green wave). The cycle divides 15 minutes, so the local clock (UTC plus a

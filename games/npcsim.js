@@ -38,6 +38,11 @@
  *               the fountain, and Sunday's parade (citylife.events) walking its route. They are not residents (ids
  *               from population up, a resident's look in lk): crowd(spot, t) says how many, and where each one is
  *               is a pure function of (world, spot, person, t). gather(t, c, r), spots(), extra(id) below.
+ *   [play-street] passers-by (with the city life too): people walking the footpaths of the busy streets (centre,
+ *               civic, shopping and main streets), more at the day's busy hours, crossing only at a street's corners
+ *               (waiting at the kerb for HQV.cityLife.walkAt where HQV.cityLife.signals has a signal); in at() as rows
+ *               with crowd "passer" (cross: 1 on the carriageway), passers(t, c, r) and passStreets() below. A resident's
+ *               walk to the other side of the same street crosses at that street's nearer corner, not mid-block.
  *   ridersOn(lineId, t) residents riding that line (layers.transit line id, or a metro line id "M1") at local
  *               ms t; HQV.npcSim.ridersOn(lineId, t) asks the active sim (the latest created, or use(sim)).
  * Sidewalks: the walk runs SIDE_IN in from the road's outer line (half the sidewalk when the edge has one)
@@ -125,6 +130,24 @@ var SHOP_FOOD = 0.4;                // [crowds] share of shop ground floors that
 var ERRAND = 0.3;                   // [crowds] share of workers whose way home (when it has a stop on it) is via a shop
 var XS_IDS = 64;                    // [crowds] ids per gathering spot (a spot's cap is at most this)
 var XS_CELL = 64;                   // [crowds] the spot index's cell (m)
+var PASS_IDS = 16;                  // [play-street] passers-by per street at most (ids per street, x2: alternate epochs)
+var PASS_EPOCH = 600000;            // [play-street] how long one passer-by is out (ms): then someone else
+var PASS_PER100 = 7;                // [play-street] passers-by per 100 m of a busy street at the busiest hour
+var PASS_WAIT = 120000;             // [play-street] the longest a passer-by waits at a signal's kerb (ms)
+var PASS_GROUP = {centre: 1, civic: 0.8, work: 0.55, green: 0.15, home: 0.1, industry: 0.04};
+// [play-street] passers-by through the day (local hour 0..24): commutes, lunch and the evening busiest, nights quiet
+function passHour(h){
+  h = ((h % 24) + 24) % 24;
+  if(h < 6) return 0.05;
+  if(h < 7.5) return 0.05 + 0.55*(h - 6)/1.5;
+  if(h < 9.5) return 0.9;
+  if(h < 11.5) return 0.7;
+  if(h < 14) return 1;
+  if(h < 16.5) return 0.75;
+  if(h < 19) return 0.95;
+  if(h < 22) return 0.95 - 0.6*(h - 19)/3;
+  return 0.35 - 0.3*(h - 22)/2;
+}
 var SHIRTS = [0x3d6fd1, 0xe0559b, 0x6fd38a, 0xffb347, 0x9b8cf0, 0xf4f4f4, 0xff6b5b, 0x5fd3e6, 0x2f3b4c, 0xc2a36b, 0x8a3d3d, 0x4c8c6c];
 var PANTS = [0x2a3442, 0x3b4f7a, 0x5a4a3a, 0x1f1f24, 0x6b6f76, 0x7a5c3c, 0x2f4a3a, 0x8a8f99];
 var SKIN = [0xf1d0b5, 0xe0b48f, 0xc68c62, 0xa86b45, 0x7d4b2c, 0x5a3520];
@@ -239,7 +262,7 @@ function create(doc, opts){
   /* roads: nodes and the tier's edges, in metres */
   var nodeIx = {}, NX = [], NZ = [];
   (R.nodes || []).forEach(function(n, i){ nodeIx[n.id] = i; NX.push((n.x | 0)/100); NZ.push((n.z | 0)/100); });
-  var NN = NX.length, E = [];
+  var NN = NX.length, E = [], NID = (R.nodes || []).map(function(n){ return n.id; });
   (R.edges || []).forEach(function(e){
     if(!shown(e, "min_tier")) return;
     var a = nodeIx[e.a], b = nodeIx[e.b], P = e.points || [];
@@ -263,11 +286,18 @@ function create(doc, opts){
     }
     var width = (e.width | 0)/100, walk = (e.walk | 0)/100, cls = String(e.class || "street");
     var half = width/2;
-    E.push({id: e.id, a: a, b: b, m: m, x: x, y: y, z: z, cum: cum, len: cum[m - 1], nx: nx, nz: nz, cls: cls,
+    E.push({id: e.id, a: a, b: b, m: m, x: x, y: y, z: z, cum: cum, len: cum[m - 1], nx: nx, nz: nz, cls: cls, half: half, walkW: walk,
             walkable: cls !== "highway" && cls !== "ring" || walk > 0,
             off: walk > 0 ? half - walk/2 : Math.max(0.5, half - SIDE_IN),
             lane: npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
   });
+
+  // [play-street] the widest road meeting each node (half width) and its degree: a crossing keeps this far out of the junction
+  var nodeHalf = new Float64Array(NN), nodeDeg = new Int32Array(NN);
+  E.forEach(function(e){ nodeHalf[e.a] = Math.max(nodeHalf[e.a], e.half); nodeHalf[e.b] = Math.max(nodeHalf[e.b], e.half); nodeDeg[e.a]++; nodeDeg[e.b]++; });
+  // the station (m along e) where walkers cross e near its end at node n (atB: the b end): clear of the junction
+  function crossClear(e, n, sig){ return sig && sig.r > 0 ? +sig.r + 1.2 : nodeDeg[n] > 1 ? nodeHalf[n] + 1.5 : 1.5; }
+  function crossSt(e, atB, sig){ var c = Math.min(e.len/2 - 1, crossClear(e, atB ? e.b : e.a, sig)); return atB ? e.len - c : c; }
 
   /* graphs (CSR) for walking and driving */
   function graph(keep){
@@ -595,8 +625,11 @@ function create(doc, opts){
     if(A && B){
       if(A.ei === B.ei){
         var e = E[A.ei], sd = B.s >= A.s ? 1 : -1;
-        run(pts, e, A.s, B.s, walk ? off(e, A.side) : off(e, sd), up);
-        if(walk && A.side !== B.side) run(pts, e, B.s, B.s, off(e, B.side), up);
+        if(walk && A.side !== B.side){
+          // [play-street] the other side of the same street: over at the nearer junction's corner, never mid-block
+          var cs = (A.s + B.s)/2 <= e.len/2 ? crossSt(e, false) : crossSt(e, true);
+          run(pts, e, A.s, cs, off(e, A.side), up); run(pts, e, cs, cs, off(e, B.side), up); run(pts, e, cs, B.s, off(e, B.side), up);
+        } else run(pts, e, A.s, B.s, walk ? off(e, A.side) : off(e, sd), up);
       } else {
         var r = astar(G, A, B);
         stats.astar++;
@@ -816,12 +849,12 @@ function create(doc, opts){
         o.x = s.x + Math.sin(an)*rr; o.z = s.z + Math.cos(an)*rr; o.y = L.ring.y;
         o.yaw = an + (dog ? -1 : 1)*Math.PI/2;
       }
-      o.anim = dog ? "walk" : "jog"; o.speed = v; o.size = 1;
+      o.anim = dog ? "walk" : "jog"; o.speed = v; o.size = 1; o.dog = dog ? 1 : 0;   // [play-street] the dog on its lead: npcdraw
       return true;
     }
     P = L.pts[k];
     if(!P) return false;
-    o.y = P.y; o.size = P.size; o.speed = 0; o.anim = P.anim;
+    o.dog = 0; o.y = P.y; o.size = P.size; o.speed = 0; o.anim = P.anim;
     if(P.walk && L.F){
       var W2 = P.walk, q = pingpong(W2.ph*2*W2.span + W2.v*(((t % DAY) + DAY) % DAY)/1000, W2.span);
       var a = W2.a + q.p - W2.span/2;
@@ -863,7 +896,7 @@ function create(doc, opts){
     var off = (0.8 + col*1.5)*pp.dir;      // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half
     o.x = R.x[i] + (R.x[i + 1] - R.x[i])*f + uz*off; o.z = R.z[i] + (R.z[i + 1] - R.z[i])*f - ux*off;
     o.y = R.y[i] + (R.y[i + 1] - R.y[i])*f + ROAD_UP; o.yaw = Math.atan2(ux*pp.dir, uz*pp.dir);
-    o.anim = "walk"; o.speed = PARADE_V; o.size = 1;
+    o.anim = "walk"; o.speed = PARADE_V; o.size = 1; o.dog = 0;
     return true;
   }
   function lookOf(id){ var v = lkOf[id]; if(v == null) v = lkOf[id] = mix(hash32(seed + ":xl:" + id)) % N; return v; }
@@ -877,6 +910,7 @@ function create(doc, opts){
       if(d2 > r2) return;
       var row = {id: id, lk: lookOf(id), x: o.x, y: o.y, z: o.z, yaw: Math.atan2(Math.sin(o.yaw), Math.cos(o.yaw)), anim: o.anim, mode: "walk", speed: o.speed, d2: d2, crowd: kind, spot: sid};
       if(o.size !== 1) row.size = o.size;
+      if(o.dog) row.dog = 1;
       out.push(row);
     }
     for(var gz = Math.floor((cz - radius)/XS_CELL); gz <= Math.floor((cz + radius)/XS_CELL); gz++)
@@ -909,10 +943,174 @@ function create(doc, opts){
   }
   // who an id >= N is: {kind, spot} (a gathering's person or the parade's), or null
   function extraOf(id){
+    if(PS && id >= PS.base){ var pi = Math.floor((id - PS.base)/(2*PASS_IDS)), PP = PS.list[pi]; return PP ? {kind: "passer", spot: "edge:" + PP.e.id} : null; }
     if(!XS || id < N) return null;
     if(id >= XS.paradeBase) return id < XS.paradeBase + PARADE_ROWS*PARADE_ACROSS ? {kind: "parade", spot: "parade"} : null;
     var X = XS.spots[Math.floor((id - N)/XS_IDS)];
     return X ? {kind: X.s.kind, spot: X.s.id} : null;
+  }
+
+  /* ---------- [play-street] passers-by: people walking the footpaths of the busy streets ----------
+     Not residents (as the gathering spots' people): the centre's shopping streets, main roads and work districts get
+     PASS_PER100 people per 100 m of street at the day's busiest (passHour), fewer by night. Person k of street P walks
+     its footpath on the left of travel to the far junction, waits at the kerb (where HQV.cityLife.signals has a signal
+     there, until walkAt says walk; elsewhere not at all), crosses at the corner, walks back on the other side and
+     crosses at the other corner, and so on. Each one lives PASS_EPOCH from its own offset; the next epoch is someone
+     else (another id, look and pace). A position is a pure function of (world, seed, street, k, local ms): the
+     epoch's crossings are worked out once (cached), the waits by walkAt at those times. */
+  var PS = null, PCACHE = {}, PCN = 0;
+  function passWeight(e){
+    var k = CL.road(e.cls).kind; if(k === "fast") return 0;
+    var mi = e.m >> 1, g = "home";
+    try { g = CL.groupOfName(WQ.districtAt(LW, e.x[mi], e.z[mi]).name); } catch(err){ g = "home"; }
+    var w = PASS_GROUP[g] || 0;
+    if(k === "shop") w = Math.max(w, 0.9); else if(k === "main") w = Math.max(w, 0.5);
+    return w;
+  }
+  // the heading the signal's walk phase is asked for at the crossing of e at its a or b end: the signal's own arm on e
+  // (its heading), else the way traffic on e runs into that junction
+  function armHeading(sig, e, atB){
+    var arms = sig && sig.arms || [];
+    for(var i = 0; i < arms.length; i++) if(arms[i] && String(arms[i].edge) === String(e.id) && arms[i].heading != null) return +arms[i].heading;
+    var j = atB ? e.m - 2 : 1, dx = atB ? e.x[j + 1] - e.x[j] : e.x[0] - e.x[1], dz = atB ? e.z[j + 1] - e.z[j] : e.z[0] - e.z[1];
+    return Math.atan2(dx, dz);
+  }
+  function passInit(){
+    if(PS || !LW || !N || opts.passers === false || !CL.road || !WQ) return PS;
+    xsInit();
+    var base = XS ? XS.paradeBase + PARADE_ROWS*PARADE_ACROSS : N + 64, sigs = null;
+    if(typeof CL.signals === "function"){ try { sigs = CL.signals(LW) || null; } catch(err){ sigs = null; } }
+    var list = [], grid = {};
+    E.forEach(function(e, ei){
+      if(!e.walkable || !(e.walkW > 0) || e.len < 30) return;
+      var w = passWeight(e); if(!(w > 0)) return;
+      var sa = sigs ? sigs[NID[e.a]] || null : null, sb = sigs ? sigs[NID[e.b]] || null : null;
+      var ca = crossSt(e, false, sa), cb = crossSt(e, true, sb);
+      if(cb - ca < 16) return;
+      var offs = new Float64Array(PASS_IDS);
+      for(var k = 0; k < PASS_IDS; k++) offs[k] = mix(hash32(seed + ":poff:" + e.id + ":" + k)) % PASS_EPOCH;
+      var bb = [Infinity, Infinity, -Infinity, -Infinity];
+      for(var i = 0; i < e.m; i++){ bb[0] = Math.min(bb[0], e.x[i]); bb[1] = Math.min(bb[1], e.z[i]); bb[2] = Math.max(bb[2], e.x[i]); bb[3] = Math.max(bb[3], e.z[i]); }
+      var P = {i: list.length, ei: ei, e: e, w: w, ca: ca, cb: cb, sa: sa, sb: sb, ha: sa ? armHeading(sa, e, false) : 0, hb: sb ? armHeading(sb, e, true) : 0,
+               kerb: Math.max(0.5, e.half - e.walkW + 0.35), offs: offs, nq: {}, nqn: 0, bb: bb};
+      list.push(P);
+      for(var gz = Math.floor((bb[1] - e.half)/XS_CELL); gz <= Math.floor((bb[3] + e.half)/XS_CELL); gz++)
+        for(var gx = Math.floor((bb[0] - e.half)/XS_CELL); gx <= Math.floor((bb[2] + e.half)/XS_CELL); gx++)
+          (grid[gx + "," + gz] = grid[gx + "," + gz] || []).push(P.i);
+    });
+    PS = {base: base, list: list, grid: grid, sigs: sigs, seen: new Int32Array(list.length), gen: 0};
+    return PS;
+  }
+  // how many walk street P in epoch q (whose epoch starts at T0)
+  function passCount(P, q, T0){
+    var v = P.nq[q];
+    if(v == null){
+      var day = CL.weekday(T0), h = CL.hourOf(T0), wob = 0.7 + 0.6*xh("pn:" + P.e.id + ":" + q);
+      v = Math.min(PASS_IDS, Math.round(P.e.len/100*PASS_PER100*P.w*passHour(h)*(day === 0 ? 0.8 : 1)*wob));
+      if(++P.nqn > 64){ P.nq = {}; P.nqn = 1; }
+      P.nq[q] = v;
+    }
+    return v;
+  }
+  // the first local ms from t (in whole seconds, within PASS_WAIT) the signal shows walk for heading h; t without one
+  function walkFrom(sig, t, h){
+    if(!sig || typeof CL.walkAt !== "function") return t;
+    for(var w = 0; w <= PASS_WAIT; w += 1000){ var ok = false; try { ok = !!CL.walkAt(sig, t + w, h); } catch(err){ ok = true; } if(ok) return t + w; }
+    return t + PASS_WAIT;
+  }
+  // person k of street P in epoch q: its legs [{k: "w" walk | "b" a look in a shop window | "i" wait | "c" cross, t0, t1, s0, s1, side}]
+  function passPlan(P, k, q){
+    var key = P.i*PASS_IDS + k, c = PCACHE[key];
+    if(c && c.q === q) return c;
+    if(!c && ++PCN > 20000){ PCACHE = {}; PCN = 1; }
+    var g = rng(mix(hash32(seed + ":pass:" + P.e.id + ":" + k + ":" + q))), v = 1.1 + 0.45*g(), dir = g() < 0.5 ? 1 : -1;
+    var T0 = q*PASS_EPOCH + P.offs[k], T1 = T0 + PASS_EPOCH, s = P.ca + g()*(P.cb - P.ca), t = T0, legs = [];
+    while(t < T1 && legs.length < 60){
+      var to = dir > 0 ? P.cb : P.ca, side = dir;
+      if(Math.abs(to - s) > 12 && g() < 0.6){
+        // a look in a shop window on the way: at the footpath's back, facing the lots, 8-30 s
+        var sm = s + (to - s)*(0.2 + 0.6*g()), tm = t + Math.abs(sm - s)/v*1000, bd = (8 + 22*g())*1000;
+        legs.push({k: "w", t0: t, t1: tm, s0: s, s1: sm, side: side});
+        legs.push({k: "b", t0: tm, t1: tm + bd, s0: sm, s1: sm, side: side});
+        t = tm + bd; s = sm;
+      }
+      var t1 = t + Math.abs(to - s)/v*1000;
+      legs.push({k: "w", t0: t, t1: t1, s0: s, s1: to, side: side});
+      // (walkAt takes the walker's own heading: across street e, a right angle to its arm)
+      var tw = walkFrom(dir > 0 ? P.sb : P.sa, t1, (dir > 0 ? P.hb : P.ha) + Math.PI/2);
+      if(tw > t1) legs.push({k: "i", t0: t1, t1: tw, s0: to, s1: to, side: side});
+      var tc = tw + 2*P.kerb/v*1000/0.76;
+      legs.push({k: "c", t0: tw, t1: tc, s0: to, s1: to, side: side, kerb: tw > t1});
+      t = tc; s = to; dir = -dir;
+    }
+    c = PCACHE[key] = {q: q, v: v, legs: legs};
+    return c;
+  }
+  // a point on e at station s, lat m left of a->b (+ up): into o, with the tangent (o.tx, o.tz)
+  function onEdge(e, s, lat, up, o){
+    s = clamp(s, 0, e.len);
+    var k = 0; while(k < e.m - 2 && e.cum[k + 1] < s) k++;
+    var l = e.cum[k + 1] - e.cum[k], t = l > 0 ? (s - e.cum[k])/l : 0;
+    var nx = e.nx[k] + (e.nx[k+1] - e.nx[k])*t, nz = e.nz[k] + (e.nz[k+1] - e.nz[k])*t;
+    o.x = e.x[k] + (e.x[k+1] - e.x[k])*t + nx*lat; o.y = e.y[k] + (e.y[k+1] - e.y[k])*t + up; o.z = e.z[k] + (e.z[k+1] - e.z[k])*t + nz*lat;
+    o.tx = (e.x[k+1] - e.x[k])/(l || 1); o.tz = (e.z[k+1] - e.z[k])/(l || 1);
+  }
+  // person k of P at local ms t -> into o ({x, y, z, yaw, anim, speed, cross}); false when not out
+  // a crossing: 12% of its time stepping from the walk line to the kerb, 76% over the carriageway, 12% up onto the far side
+  function passAt(P, k, t, o){
+    var off = P.offs[k], q = Math.floor((t - off)/PASS_EPOCH);
+    if(k >= passCount(P, q, q*PASS_EPOCH + off)) return false;
+    var pl = passPlan(P, k, q), L = pl.legs, e = P.e;
+    for(var i = 0; i < L.length; i++){
+      var g = L[i]; if(t >= g.t1) continue;
+      if(t < g.t0) return false;
+      var f = g.t1 > g.t0 ? (t - g.t0)/(g.t1 - g.t0) : 1;
+      o.cross = 0; o.speed = pl.v; o.anim = "walk";
+      if(g.k === "w"){
+        onEdge(e, g.s0 + (g.s1 - g.s0)*f, g.side*e.off, SIDEWALK_UP, o);
+        var d = g.s1 >= g.s0 ? 1 : -1; o.yaw = Math.atan2(o.tx*d, o.tz*d);
+      } else if(g.k === "b"){
+        var back = Math.max(e.off, e.half - 0.45), ramp = Math.min(1, (t - g.t0)/1000, (g.t1 - t)/1000);
+        onEdge(e, g.s0, g.side*(e.off + (back - e.off)*ramp), SIDEWALK_UP, o);
+        o.yaw = Math.atan2(o.tz*g.side, -o.tx*g.side); o.anim = "idle"; o.speed = 0;
+      } else if(g.k === "i"){
+        onEdge(e, g.s0, g.side*(e.off + (P.kerb - e.off)*Math.min(1, (t - g.t0)/1000)), SIDEWALK_UP, o);   // a step to the kerb, then wait
+        o.yaw = Math.atan2(-o.tz*g.side, o.tx*g.side); o.anim = "idle"; o.speed = 0;   // facing the road: -side x the left normal
+      } else {
+        var lat = f < 0.12 ? (g.kerb ? P.kerb : e.off) + (P.kerb - e.off)*f/0.12 : f > 0.88 ? -(P.kerb + (e.off - P.kerb)*(f - 0.88)/0.12) : P.kerb*(1 - 2*(f - 0.12)/0.76);
+        var onRoad = f > 0.12 && f < 0.88;
+        onEdge(e, g.s0, g.side*lat, onRoad ? ROAD_UP : SIDEWALK_UP, o);
+        o.yaw = Math.atan2(-o.tz*g.side, o.tx*g.side); o.cross = onRoad ? 1 : 0;
+      }
+      return true;
+    }
+    return false;
+  }
+  function passers(t, cx, cz, radius, out){
+    if(!passInit() || !PS.list.length) return out;
+    var r2 = radius*radius, o = {x: 0, y: 0, z: 0, yaw: 0, anim: "walk", speed: 0, cross: 0, tx: 0, tz: 1}, gen = ++PS.gen;
+    for(var gz = Math.floor((cz - radius)/XS_CELL); gz <= Math.floor((cz + radius)/XS_CELL); gz++)
+      for(var gx = Math.floor((cx - radius)/XS_CELL); gx <= Math.floor((cx + radius)/XS_CELL); gx++){
+        var cell = PS.grid[gx + "," + gz]; if(!cell) continue;
+        for(var ci = 0; ci < cell.length; ci++){
+          var P = PS.list[cell[ci]];
+          if(PS.seen[P.i] === gen) continue;
+          PS.seen[P.i] = gen;
+          var b = P.bb;
+          if(cx < b[0] - radius - 20 || cx > b[2] + radius + 20 || cz < b[1] - radius - 20 || cz > b[3] + radius + 20) continue;
+          for(var k = 0; k < PASS_IDS; k++){
+            if(!passAt(P, k, t, o)) continue;
+            var dx = o.x - cx, dz = o.z - cz, d2 = dx*dx + dz*dz;
+            if(d2 > r2) continue;
+            var q = Math.floor((t - P.offs[k])/PASS_EPOCH), id = PS.base + (P.i*PASS_IDS + k)*2 + (q & 1);
+            var row = {id: id, lk: mix(hash32(seed + ":pl:" + P.e.id + ":" + k + ":" + q)) % N, x: o.x, y: o.y, z: o.z, yaw: o.yaw, anim: o.anim, mode: "walk",
+                       speed: o.speed, d2: d2, crowd: "passer", spot: "edge:" + P.e.id};
+            if(o.cross) row.cross = 1;
+            out.push(row);
+          }
+        }
+      }
+    return out;
   }
 
   var sim = {residents: [], tier: tier, grow: grow, seed: seed, population: N, stats: stats};
@@ -948,6 +1146,7 @@ function create(doc, opts){
       out.push({id: r.id, x: o.x, y: o.y, z: o.z, yaw: o.yaw, anim: anim, mode: mode, speed: speed, d2: d2});
     }
     if(LW && opts.crowds !== false) gather(t, cx, cz, radius, out);   // [crowds] the gathering spots' people, the parade
+    if(LW && opts.crowds !== false) passers(t, cx, cz, radius, out);  // [play-street] people walking the busy streets' footpaths
     out.sort(function(a, b){ return a.d2 - b.d2 || a.id - b.id; });
     return out;
   };
@@ -960,6 +1159,17 @@ function create(doc, opts){
     out.sort(function(a, b){ return a.d2 - b.d2 || a.id - b.id; });
     return out;
   };
+  // [play-street] only the passers-by within radius of c at local ms t, nearest first: rows as gather()'s, crowd
+  // "passer", spot "edge:<id>", cross: 1 while on the carriageway at a corner; [] without games/citylife.js
+  sim.passers = function(t, c, radius){
+    c = c || {}; radius = radius == null ? 150 : +radius;
+    var out = LW && opts.crowds !== false ? passers(+t || 0, +c.x || 0, +c.z || 0, radius, []) : [];
+    out.sort(function(a, b){ return a.d2 - b.d2 || a.id - b.id; });
+    return out;
+  };
+  // [play-street] the streets the passers-by walk: [{edge, len, ca, cb (the crossing stations, m along it), a, b (node
+  // ids), signalA, signalB, w (how busy)}]
+  sim.passStreets = function(){ return passInit() ? PS.list.map(function(P){ return {edge: P.e.id, len: P.e.len, ca: P.ca, cb: P.cb, a: NID[P.e.a], b: NID[P.e.b], signalA: !!P.sa, signalB: !!P.sb, w: P.w}; }) : []; };
   sim.spots = function(){ return xsInit() ? XS.spots.map(function(X){ return X.s; }) : []; };
   sim.extra = extraOf;
   // plan routes ahead (trips in progress or starting within the next hour) for up to `ms` of wall time
@@ -1053,7 +1263,8 @@ var XSAY = {
   market: ["Fresh fruit, and cheaper than the shops.", "Market day's the best day of the week."],
   jog: ["Morning run, keeps me sane.", "Two more laps!"],
   linger: ["Lovely spot to sit for a while.", "Just enjoying the city today."],
-  parade: ["Happy Sunday!", "Every Sunday, the parade. Never miss it."]
+  parade: ["Happy Sunday!", "Every Sunday, the parade. Never miss it."],
+  passer: ["Can't stop, I'm late!", "Lovely day for a stroll.", "Just nipping to the shops.", "Busy round here today, isn't it?"]
 };
 var PLACE_WORD = {townhall: "town hall", clinic: "clinic", hospital: "hospital", fire: "fire station", police: "police station",
   school: "school", university: "university", market: "market", mall: "mall", bank: "bank", library: "library", post: "post office",
@@ -1074,5 +1285,5 @@ var FLAVOUR = {
 
 HQV.npcSim = {create: create, population: population, localMs: localMs, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
               ridersOn: ridersOn, use: use, metroStations: metroStations, TRANSIT: TRANSIT, EVERY: EVERY,
-              JOBS: JOBS, POP: POP, CHARS: CHARS, DAY: DAY, HOUR: HOUR};
+              JOBS: JOBS, POP: POP, CHARS: CHARS, DAY: DAY, HOUR: HOUR, passHour: passHour, PASS_PER100: PASS_PER100, PASS_EPOCH: PASS_EPOCH};
 })();

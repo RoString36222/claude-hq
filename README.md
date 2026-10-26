@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.21.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.22.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,25 @@ and feature guide.
 
 ## Changelog
 
+- **3.22.0 — Things to do in the City.** Traffic lights at real junctions, on a cycle that is the same for everyone:
+  cars, vans, buses and bikes stop at red, queue and pull away on green, and people wait at the kerb for the walk
+  signal. The City is fuller: about twice the traffic in view by day, parked cars along the kerbs, twice the people
+  on the busy streets, and cars wait for people crossing. A **Jobs** phone app offers taxi fares, parcel deliveries
+  and van runs against the clock, paid in local City rep with ranks. Cause trouble (your own blasts, rams, tank shots,
+  red lights in view of police) and you get up to five wanted stars: police cars come from the station and box you in,
+  with roadblocks at four stars and a searchlight helicopter at five; lose them to escape, or get Busted. **Races**:
+  sprints, lap circuits and time trials with checkpoints, best times and a ghost of your best run. **Finds**: 50 hidden
+  tokens, graffiti tags and rare stalls per world, and weekly photo challenges (the parade, the market, a busker...).
+  The street reacts: people jump clear of fast cars and run from blasts, cafe tables and bins go over and stand back
+  up, food stalls hand out snacks (a short sprint boost), and buskers, broken-down cars and loose dogs turn up; dog
+  walkers have dogs. Calm mode keeps sirens quiet and lights steady. **Arena play** (opt-in, invite only): share a
+  job with a player near you, play Cops & robber, or swap best-run ghosts and race them. **Privacy:** behind the new
+  `cityplay` Arena capability, hq presence carries `pk` (which game), `pi`/`pj` (the user id you invite or whose game
+  you joined) and `pq` (at most 12 whole numbers: a shared job's kind, step and footpath points, the robber's stars
+  and clock, a route hash and best time); one directed `ghost` frame (a route id, your own run's positions, at most
+  12,000 characters, and its time) goes only to the one player racing you, at most 6 a minute, and the Arena relays
+  it without storing it. None of it reads transcripts, sessions, paths or names; jobs, rep, races and finds stay in
+  this browser.
 - **3.21.1 — The City waits for a slow machine.** Entering the 3D City now allows 45 s to build it (was 15 s) before
   falling back to the classic City, so a slower computer gets the living City instead of the fallback.
 - **3.21.0 — A city that lives.** Built around the planned City Gen v4, never into it: everything reads the finished

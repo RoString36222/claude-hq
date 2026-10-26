@@ -23,6 +23,9 @@
  *   mix(group, kind, hour)    what drives there: {car, taxi, van, lorry, scooter, bike} weights; pick(mix, u)
  *   events(W, ms) / closed(W, ms)  the weekly street market, Sunday's parade and roadworks, the same for everyone at
  *                             the same local time; closed -> {edge id: event kind} (v4: a closed segment's capacity is 0)
+ *   signals(W), signalAt(sig, ms, heading), walkAt(sig, ms, heading)  [3.22] traffic lights at the real junctions, a
+ *                             60 s two-phase cycle each with a rough green wave along the main roads (see there)
+ *   parked(W)                 [3.22] cars parked along the kerbs of the local and shopping streets
  * Units: metres (W stores cm), yaw 0 faces +z, the local clock in ms (npcsim.localMs), hours 0..24.
  */
 (function(){
@@ -375,8 +378,258 @@ function events(W, ms){
 }
 function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges.forEach(function(id){ o[id] = ev.kind; }); }); return o; }
 
+/* ---------- [3.22] traffic lights at real junctions ---------- */
+// signals(W) -> {node id: sig}: every node where three or more through roads (main roads, collectors, a highway's end:
+// the ones traffic.js runs on) meet, one of them a main road (arterial, avenue, boulevard, highway), and every
+// four-way crossing of local streets downtown (by the blocks on its corners); never where a highway's mainline goes on
+// through (two highway arms), nor on an expressway, a ring road or a slip. Two lights a short link (LINK m) apart are
+// one junction: the busier keeps its light, and an arm that is such a link has no head of its own (sig.links; the
+// traffic treats the two as one box). sig:
+//   {id, x, z, r: the junction box radius (m, the farthest stop line), axes: [h0, h1] the two road headings (radians,
+//    atan2(dx, dz), in [0, pi): a heading and its reverse are one axis; h0 the main road's), arms: [{heading: the way
+//    traffic comes in, edge, stopX, stopZ: the middle of the stop line across the lane coming in, stop: its distance
+//    from the node, half: half the carriageway, axis}], kind: "main" | "local", cycle, off, green: [g0, g1], links}
+// The plan: a CYCLE s cycle from off (s on the clock): axis 0 green g0, amber, all red, axis 1 green g1, amber, all
+// red. off is a hash of the node, except along a straight main road, where each junction is off by the drive from
+// the one before it at WAVE m/s (a rough green wave). The cycle divides 15 minutes, so the local clock (UTC plus a
+// time zone) and the UTC clock the traffic runs on see the same phase. The stop line stands clear of the junction
+// patch and the zebra crossing the street renderer (worldgeom.js) paints, by the same measure.
+// signalAt(sig, ms, heading) -> "green" | "amber" | "red" for traffic coming in on heading at local ms; walkAt(sig,
+// ms, heading) -> may someone walking along heading cross now (with the parallel traffic's green, never in its
+// last WALK_CLEAR s, so never while the road they cross has green).
+var SIG = {cycle: 60, amber: 3, allRed: 2, walkClear: 6, wave: 11, split: [30, 20], even: [25, 25]}, LINK = 46;
+var FOOT_RE = /^(path|footpath|foot|footway|pedestrian|walk|walkway|trail|cycleway|cycle|steps|track)$/;
+var NOSIG = {expressway: 1, ring: 1, ramp: 1, flyover: 1, underpass: 1};
+function carRoad(cls){ return !FOOT_RE.test(normCls(cls)); }
+function mainRoad(cls){ return normCls(cls) === "highway" || road(cls).kind === "main"; }
+// a road through traffic uses (the cars of traffic.js; a collector, v4's through street): a side street where it
+// meets one is a give-way turning, not a light
+function through(e){ var c = normCls(e.cls), k = road(c).kind; return mainRoad(c) || c === "collector" || (k === "fast" && !NOSIG[c]); }
+function angPi(a){ a = (+a || 0) % Math.PI; return a < 0 ? a + Math.PI : a; }
+function axisDist(a, b){ var d = Math.abs(angPi(a) - angPi(b)); return Math.min(d, Math.PI - d); }
+function modp(a, m){ a %= m; return a < 0 ? a + m : a; }
+// worldgeom.js armClear: how far back from the node an arm of half width ha stays clear of one of half width hb
+function armClear(ha, hb, c){
+  c = Math.max(-1, Math.min(1, c));
+  var s = Math.sqrt(1 - c*c);
+  if(s < 1e-3) return c > 0 ? 25 : 0;
+  var t = (hb + ha*c)/s;
+  if(c < 0) t = Math.min(t, ha*s/-c);
+  return Math.max(0, t);
+}
+var SIG_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
+function signals(W){
+  var S = SIG_CACHE && W && typeof W === "object" ? SIG_CACHE.get(W) : null;
+  if(S) return S;
+  S = {};
+  if(!W || !W.edges || !W.nodes) return S;
+  var Q = WQ(), F = facts(W), nodes = {}, inc = {}, edgeById = {};
+  W.nodes.forEach(function(n){ nodes[n.id] = n; });
+  W.edges.forEach(function(e){
+    if(e.a === e.b || !e.pts || e.pts.length < 6) return;
+    edgeById[e.id] = e;
+    (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e);
+  });
+  function lenOf(P){ var L = 0; for(var i = 1; i < P.length; i++) L += Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z); return L; }
+  // an edge seen from one of its nodes: its points from there, its length, the way out (3 m along, as worldgeom.js)
+  function armOf(e, id){
+    var P = edgePts(e);
+    if(String(e.a) !== String(id)) P.reverse();
+    var L = lenOf(P), d = Math.min(3, L), acc = 0, q = P[P.length - 1];
+    for(var i = 1; i < P.length; i++){
+      var l = Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z);
+      if(acc + l >= d){ var t = l > 1e-9 ? (d - acc)/l : 0; q = {x: P[i - 1].x + (P[i].x - P[i - 1].x)*t, z: P[i - 1].z + (P[i].z - P[i - 1].z)*t}; break; }
+      acc += l;
+    }
+    var ux = q.x - P[0].x, uz = q.z - P[0].z, ul = Math.hypot(ux, uz) || 1;
+    return {e: e, len: L, ux: ux/ul, uz: uz/ul, half: cm(e.width)/2, c: Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2),
+            rank: mainRoad(e.cls) ? 2 : road(e.cls).kind === "shop" ? 1 : 0};
+  }
+  function junction(id){ return (inc[id] || []).filter(through).length >= 3; }
+  var link = {}, prio = {};
+  var ids = Object.keys(inc).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); });
+  ids.forEach(function(id){
+    var n = nodes[id];
+    if(!n) return;
+    var es = inc[id].filter(function(e){ return carRoad(e.cls); });
+    if(es.length < 3) return;
+    if(es.some(function(e){ return NOSIG[normCls(e.cls)]; })) return;
+    if(es.filter(function(e){ return normCls(e.cls) === "highway"; }).length >= 2) return;      // a highway going on through
+    var x = cm(n.x), z = cm(n.z), kind = null;
+    if(es.filter(through).length >= 3 && es.some(function(e){ return mainRoad(e.cls); })) kind = "main";
+    else if(es.length === 4 && es.every(function(e){ var k = road(e.cls).kind; return k === "res" || k === "shop"; })){
+      // the blocks on the four corners (the node itself is on the street's own district)
+      var nc = 0;
+      for(var q = 0; q < 4 && Q.districtAt; q++){
+        var d = Q.districtAt(W, x + 16*Math.cos(Math.PI/4 + q*Math.PI/2), z + 16*Math.sin(Math.PI/4 + q*Math.PI/2));
+        if(d && d.k != null && d.name !== "street" && F.group(d.k) === "centre") nc++;
+      }
+      if(nc >= 2) kind = "local";
+    }
+    if(!kind) return;
+    var arms = es.map(function(e){ return armOf(e, id); });
+    arms.forEach(function(a){
+      var t = 0;
+      arms.forEach(function(b){ if(b !== a) t = Math.max(t, armClear(a.half, b.half, a.ux*b.ux + a.uz*b.uz) + 0.3); });
+      a.t = Math.min(t, 25, a.len*0.45);
+      var zebra = /^(street|local|avenue|arterial)$/.test(String(a.e.cls)) && a.t + 5 <= a.len - 1;
+      a.stop = Math.min(a.t + (zebra ? 5.6 : 0.8), a.len*0.4);
+    });
+    var ref = arms.slice().sort(function(p, q){ return q.rank - p.rank || q.c - p.c || p.e.id - q.e.id; })[0];
+    var h0 = angPi(Math.atan2(ref.ux, ref.uz)), h1 = null, far = 0;
+    arms.forEach(function(a){ var h = Math.atan2(a.ux, a.uz), dd = axisDist(h, h0); if(dd > far + 1e-9){ far = dd; h1 = angPi(h); } });
+    if(far < 0.35) h1 = angPi(h0 + Math.PI/2);
+    var sig = {id: n.id, x: x, z: z, r: 0, axes: [h0, h1], arms: [], kind: kind, cycle: SIG.cycle, off: null, green: null, links: []};
+    var rk = [0, 0];
+    arms.sort(function(p, q){ return p.e.id - q.e.id; }).forEach(function(a){
+      var heading = Math.atan2(-a.ux, -a.uz), ax = axisDist(heading, h1) < axisDist(heading, h0) ? 1 : 0;
+      // a short link to the next junction: one box with this one (traffic.js), no head of its own
+      var far = String(a.e.a) === String(id) ? a.e.b : a.e.a;
+      if(kind === "main" && a.len < LINK && junction(far)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
+      // the middle of the stop line: across the lane coming in (the right of the way in: (uz, -ux))
+      sig.arms.push({heading: heading, edge: a.e.id, stop: a.stop, half: a.c, axis: ax,
+                     stopX: x + a.ux*a.stop + a.uz*a.c/2, stopZ: z + a.uz*a.stop - a.ux*a.c/2});
+      sig.r = Math.max(sig.r, a.stop);
+      rk[ax] = Math.max(rk[ax], a.rank);
+    });
+    sig.green = (rk[0] > rk[1] ? SIG.split : SIG.even).slice();
+    if(!sig.arms.length) return;
+    prio[id] = [es.filter(through).length, es.length];
+    S[id] = sig;
+  });
+  // two lights a short link apart are one junction: the busier keeps its light (more through roads, more arms, the
+  // lower id)
+  var kept = {};
+  Object.keys(S).sort(function(a, b){ var p = prio[a], q = prio[b]; return q[0] - p[0] || q[1] - p[1] || (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
+    if((link[id] || []).some(function(f){ return kept[f]; })){ delete S[id]; return; }
+    kept[id] = true;
+  });
+  // offsets: a hash per junction, then along each straight main road the next junction a drive later (a green wave)
+  function startOf(sig, ax){ return ax ? sig.green[0] + SIG.amber + SIG.allRed : 0; }
+  function headOut(e, node){ var a = armOf(e, node); return Math.atan2(a.ux, a.uz); }
+  function onward(node, prev){
+    var hin = headOut(prev, node) + Math.PI, best = null, bd = 0.5;
+    (inc[node] || []).forEach(function(e){
+      if(e === prev || !mainRoad(e.cls)) return;
+      var dd = Math.abs(modp(headOut(e, node) - hin + Math.PI, 2*Math.PI) - Math.PI);
+      if(dd < bd){ bd = dd; best = e; }
+    });
+    return best;
+  }
+  var sids = Object.keys(S).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); });
+  sids.forEach(function(sid){
+    if(S[sid].off != null) return;
+    S[sid].off = hash01(W.hash + ":signal:" + sid)*SIG.cycle;
+    var queue = [sid];
+    while(queue.length){
+      var cur = queue.shift(), sg = S[cur];
+      sg.arms.forEach(function(arm){
+        var e = edgeById[arm.edge];
+        if(!e || !mainRoad(e.cls)) return;
+        var node = String(e.a) === String(cur) ? e.b : e.a, prev = e, dist = armOf(e, cur).len, guard = 0;
+        while(!S[node] && guard++ < 16 && dist <= 1500){
+          var nx = onward(node, prev);
+          if(!nx) break;
+          dist += armOf(nx, node).len; prev = nx; node = String(nx.a) === String(node) ? nx.b : nx.a;
+        }
+        var nxt = S[node];
+        if(!nxt || nxt.off != null || dist > 1500) return;
+        var hin = headOut(prev, node) + Math.PI, axIn = axisDist(hin, nxt.axes[1]) < axisDist(hin, nxt.axes[0]) ? 1 : 0;
+        nxt.off = modp(sg.off + startOf(sg, arm.axis) + dist/SIG.wave - startOf(nxt, axIn), SIG.cycle);
+        queue.push(String(node));
+      });
+    }
+  });
+  if(SIG_CACHE) SIG_CACHE.set(W, S);
+  return S;
+}
+// which of the junction's two axes traffic on heading belongs to
+function sigAxis(sig, heading){ return axisDist(heading, sig.axes[1]) < axisDist(heading, sig.axes[0]) ? 1 : 0; }
+// seconds into axis ax's own phase (0 = its green came on) at local ms
+function sigInto(sig, ms, ax){
+  var C = sig.cycle || SIG.cycle, u = modp((+ms || 0)/1000 - (+sig.off || 0), C), s = ax ? sig.green[0] + SIG.amber + SIG.allRed : 0;
+  return modp(u - s, C);
+}
+function signalAt(sig, ms, heading){
+  if(!sig || !sig.axes || !sig.green) return "amber";
+  var ax = sigAxis(sig, heading), d = sigInto(sig, ms, ax), g = sig.green[ax];
+  return d < g ? "green" : d < g + SIG.amber ? "amber" : "red";
+}
+function walkAt(sig, ms, heading){
+  if(!sig || !sig.axes || !sig.green) return false;
+  var ax = sigAxis(sig, heading);
+  return sigInto(sig, ms, ax) < sig.green[ax] - SIG.walkClear;
+}
+
+/* ---------- [3.22] parked cars ---------- */
+// parked(W) -> [{x, y, z, yaw, type: "car" | "van", paint (0..1), edge, side}]: cars along the kerbs of local and
+// shopping streets (not shared streets, slip roads or anything with a bus or tram on it), facing the way the traffic
+// on their side goes, a bay every PARK_STEP m, clear of the junctions (and their zebras), the stops, the doors and
+// driveways of the lots behind and the hq lots, each bay full by a hash and the place (downtown most). Every car is
+// wholly on its own street's carriageway. Drawn and made solid by traffic.js street(); hidden while its street is
+// closed (cityLife.closed: the market's stalls stand there).
+var PARK_STEP = 6.2, PARK_IN = 1.05, PARK_FILL = {centre: 0.72, home: 0.6, work: 0.5, civic: 0.45, industry: 0.35, green: 0.2};
+var PARK_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
+function parked(W){
+  var out = PARK_CACHE && W && typeof W === "object" ? PARK_CACHE.get(W) : null;
+  if(out) return out;
+  out = [];
+  if(!W || !W.edges) return out;
+  var Q = WQ(), F = facts(W), pair = {}, transit = {}, inc = {};
+  W.edges.forEach(function(e){ pair[Math.min(e.a, e.b) + ":" + Math.max(e.a, e.b)] = e.id; (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
+  ((W.transit && W.transit.lines) || []).forEach(function(l){
+    var P = l.path || [];
+    for(var i = 1; i < P.length; i++){ var id = pair[Math.min(P[i - 1], P[i]) + ":" + Math.max(P[i - 1], P[i])]; if(id != null) transit[id] = true; }
+  });
+  // how far from a node its junction (patch and zebra) reaches along e
+  var SG = signals(W);
+  function clearOf(node, e){
+    var m = 0;
+    (inc[node] || []).forEach(function(o){ if(o !== e) m = Math.max(m, cm(o.width)/2); });
+    m = (inc[node] || []).length >= 3 ? m + 7 : (inc[node] || []).length === 2 ? 3 : 2;
+    return SG[node] ? Math.max(m, SG[node].r + 3) : m;                 // (a light: clear of its whole junction)
+  }
+  W.edges.forEach(function(e){
+    var c = normCls(e.cls), k = road(c).kind;
+    if((k !== "res" && k !== "shop") || c === "shared" || c === "lane" || transit[e.id]) return;
+    var half = (cm(e.width) - 2*cm(e.walk))/2;
+    if(half < 2.9) return;
+    var P = edgePts(e);
+    if(P.length < 2) return;
+    var y0 = P[0].y, L = 0;
+    for(var i = 1; i < P.length; i++) L += Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z);
+    var from = clearOf(e.a, e) + PARK_STEP/2, to = clearOf(e.b, e) + PARK_STEP/2;
+    if(L - from - to < PARK_STEP) return;
+    walkAlong(P, PARK_STEP, from, to, function(p, s){
+      [1, -1].forEach(function(sg){
+        var o = sg*(half - PARK_IN), x = p.x + p.lx*o, z = p.z + p.lz*o;
+        var h = hash01(W.hash + ":park:" + e.id + ":" + Math.round(s*10) + ":" + sg);
+        var bx = p.x + p.lx*sg*(cm(e.width)/2 + 3), bz = p.z + p.lz*sg*(cm(e.width)/2 + 3), lot = Q.lotAt(W, bx, bz);
+        if(lot && (lot.kind === "hq" || lot.kind === "garage")) return;
+        var u = lot ? landUse(W)[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name);
+        if(h >= (PARK_FILL[g] != null ? PARK_FILL[g] : 0.4)) return;
+        if(F.stopDist(x, z) < 14) return;
+        for(var sid in SG) if(Math.hypot(SG[sid].x - x, SG[sid].z - z) < SG[sid].r + 4) return;     // (another street's light)
+        // a door or a loading bay: its kerb kept clear
+        if(lot && lot.door && Math.hypot(cm(lot.door[0]) - x, cm(lot.door[2]) - z) < cm(e.width)/2 + 5) return;
+        // wholly on this street's carriageway: both ends and the middle
+        for(var q = -1; q <= 1; q++){
+          var qx = x + p.dx*q*2.4, qz = z + p.dz*q*2.4, n = Q.nearestRoad(W, qx, qz, 12);
+          if(!n || n.edge !== e.id || Q.surfaceAt(W, qx, qz) !== "road") return;
+        }
+        var yaw = sg > 0 ? Math.atan2(-p.dx, -p.dz) : Math.atan2(p.dx, p.dz), t2 = hash01(W.hash + ":parkt:" + e.id + ":" + Math.round(s*10) + ":" + sg);
+        var ny = Q.nearestRoad(W, x, z, 12);
+        out.push({x: x, y: ny ? ny.y : y0, z: z, yaw: yaw, type: t2 < (g === "industry" ? 0.3 : 0.1) ? "van" : "car", paint: t2, edge: e.id, side: sg});
+      });
+    });
+  });
+  if(PARK_CACHE) PARK_CACHE.set(W, out);
+  return out;
+}
+
 HQV.cityLife = {ROAD: ROAD, normCls: normCls, road: road, groupOfName: groupOfName, facts: facts,
   USES: USES, GROUNDS: GROUNDS, LIT: LIT, landUse: landUse, litShare: litShare, litCode: litCode, litAt: litAt, LIT_GLSL: LIT_GLSL,
   furniture: furniture, hotspots: hotspots, crowd: crowd, hourOf: hourOf, weekday: weekday,
-  demand: demand, mix: mix, pick: pick, events: events, closed: closed};
+  demand: demand, mix: mix, pick: pick, events: events, closed: closed,
+  SIG: SIG, signals: signals, signalAt: signalAt, walkAt: walkAt, sigAxis: sigAxis, parked: parked};
 })();

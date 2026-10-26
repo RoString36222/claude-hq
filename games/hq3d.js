@@ -119,10 +119,12 @@ function travelYawOf(yaw, speed, rate, prev){
 // travelYaw is null meanwhile, so the camera holds its heading and only backs up with you; once you walk with W
 // it swings round behind you again. A / D during it nudge where you head.
 // -> a new state plus travelYaw.
+// [3.22] inp.runMul: your sprint's pace x this (city play's "fed" after a snack), 1..1.3
+function runMul(inp){ var m = +(inp && inp.runMul); return m > 1 ? Math.min(1.3, m) : 1; }
 function footStep(st, inp, dt){
   st = st || {}; inp = inp || {}; dt = Math.max(0, +dt || 0);
   var fwd = Math.max(-1, Math.min(1, +inp.fwd || 0)), turn = Math.max(-1, Math.min(1, +inp.turn || 0));
-  var base = inp.run ? FOOT.run : FOOT.walk, rate0 = +st.rate || 0, yaw0 = +st.yaw || 0;
+  var base = inp.run ? FOOT.run*runMul(inp) : FOOT.walk, rate0 = +st.rate || 0, yaw0 = +st.yaw || 0;
   if(fwd < 0){
     var faceGoal = inp.face != null && isFinite(inp.face) ? +inp.face : st.faceGoal != null ? +st.faceGoal : wrapPi(yaw0 + Math.PI);
     var faceOff = (+st.faceOff || 0) + turn*FOOT.turn*dt;
@@ -159,7 +161,7 @@ function steerStep(st, inp, dt){
   if(l){
     var bk = fwd < 0 ? -1 : 1;
     mdx = bk*(fwd*sn + side*cs)/l; mdz = bk*(fwd*cs - side*sn)/l;
-    goal = bk*(inp.run ? FOOT.run : FOOT.walk)*(fwd < 0 ? FOOT.back : 1);
+    goal = bk*(inp.run ? FOOT.run*runMul(inp) : FOOT.walk)*(fwd < 0 ? FOOT.back : 1);
   }
   var s = spring(st.speed, st.speedV, goal, FOOT.speedW, dt);
   return {yaw: yaw, speed: s[0], speedV: s[1], mdx: mdx, mdz: mdz};
@@ -819,11 +821,17 @@ function mount(el, api){
     // view: the camera's heading (the heading-up minimap turns with it, so map, camera and compass agree)
     motion: function(){ return avatar ? {yaw: avatar.yaw || 0, view: camHeading(), air: !!(ride && (ride.heli || ride.plane)), y: avatar.g.position.y,
                                          craft: ride && ride.plane ? ride.kind : ride && ride.heli ? "heli" : null, speed: Math.abs(ride ? (ride.speed || 0) : (avatar.speed || 0)),
-                                         ride: ride ? ride.base || ride.kind || null : null, boat: !!(ride && ride.boat)} : null; },
+                                         ride: ride ? ride.base || ride.kind || null : null, boat: !!(ride && ride.boat),
+                                         body: ride && ride.V && ride.V.cat ? ride.V.cat.body || null : null} : null; },   // [3.22] body: a catalogue vehicle's (suv, sedan, ...)
     others: function(){ var out = []; Object.keys(peers).forEach(function(u){ var P = peers[u]; if(cur && P.g.parent === cur.scene) out.push({x: P.x, z: P.z, col: bikeColor(u)}); });
                         trips.forEach(function(T){ if(T.C === cur && T.mode === "call") out.push({x: T.run.x, z: T.run.z, col: 0xffb347}); });   // your called vehicle
                         return out; },
     active: function(w){ return !!(inst.running && cur && cur === w); },
+    // [3.22] the other players in this world for the Arena games (games/playarena.js): where they are and their checked play fields
+    players: function(){ var here = cur && (cur.net || cur.name), out = [];
+                         Object.keys(peers).forEach(function(u){ var P = peers[u]; if(P.w !== here) return; var x = P.x != null ? P.x : P.tx, z = P.z != null ? P.z : P.tz;
+                           if(isFinite(x) && isFinite(z)) out.push({u: u, n: P.n || "Visitor", x: x, z: z, play: P.play || null}); });
+                         return out; },
     toggleMap: function(){ if(rigOn()) mapToggle(); },
     // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
     prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
@@ -1251,6 +1259,7 @@ function mount(el, api){
   function gnBlast(b){
     var H = HQV.hqGrenade, calm = E.calm(), c = curCam();
     if(GN.fx) GN.fx.blast(b.x, b.y, b.z, b.k, b.wet, calm);
+    if(HQV.cityPlay) HQV.cityPlay.emit("blast", {x: b.x, z: b.z, k: b.k, wet: !!b.wet, mine: !!b.mine});   // [3.22] police heat, people running
     var d = c ? Math.hypot(c.position.x - b.x, c.position.y - b.y, c.position.z - b.z) : 0;
     H.boomAt(E, {x: b.x, y: b.y, z: b.z}, d, b.wet);
     if(!calm && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, Math.max(0, 1 - d/40)*0.45);
@@ -1292,7 +1301,7 @@ function mount(el, api){
       var b = H.advance(g, env, now - g.t0);
       if(!g.m) g.m = GN.fx.ball();
       g.m.position.set(g.x, g.y, g.z); if(!g.rest && !g.wet) g.m.rotation.x += dt*9;
-      if(b) gnBlast(b);
+      if(b){ b.mine = GN.mine.indexOf(g) >= 0; gnBlast(b); }   // ([3.22] yours or someone else's: police heat is yours only)
       if(g.done){ g.m.free(); g.m = null; GN.live.splice(i, 1); }
     }
     GN.fx.step(dt);
@@ -1454,6 +1463,7 @@ function mount(el, api){
     if(tkGunner()){ D = peers[POOL.u]; if(D && D.bike && D.vkind === "tank"){ top = D.g; B = D.bike; } }
     else if(tkDriverGuns()){ top = avatar.g; B = ride.B; }
     else return false;
+    if(HQV.cityPlay) HQV.cityPlay.emit("shot", {x: avatar.x, z: avatar.z});   // [3.22]
     if(TK.cd > 0 || !B) return true;
     top.updateMatrixWorld(true);
     var m = B.muzzle.getWorldPosition(new THREE.Vector3()), q = new THREE.Vector3(0, 0, 1).transformDirection(B.muzzle.matrixWorld), sp = H.KINDS[1].muzzle;
@@ -2588,6 +2598,7 @@ function mount(el, api){
         else {
           if(d && Math.abs(ride.speed) > 2.5) E.sfx("hit");
           if(d) drvHit(ride.speed, d > 0 ? "f" : "r");                  // [3.12] a dent where it hit (cosmetic)
+          if(d && Math.abs(ride.speed) > 4 && HQV.cityPlay) HQV.cityPlay.emit("ram", {x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: Math.abs(ride.speed), ride: ride.base || ride.kind || null});   // [3.22]
           ride.speed *= -0.2; d = 0; ride.drift = false; ride.head = avatar.yaw; ride.slip = 0;
         }
       }
@@ -3122,6 +3133,8 @@ function mount(el, api){
     if(Q.ch && Q.ch.o.parent !== (Q.lean || Q.g)){ poseUndo(Q.ch); (Q.lean || Q.g).add(Q.ch.o); seatOn(Q.ch, Q.bike || null); }
   }
   // presence (ui/app/22-hq.js hqNetSend, only where the Arena lists "carpool"): {pb, ps} while you ride with someone
+  // [3.22] presence (ui/app/22-hq.js hqNetSend, only where the Arena lists "cityplay"): {pk, pi?, pj?, pq?} while in an Arena game
+  inst.playNet = function(){ return cur && cur === worlds.city && HQV.playArena && HQV.playArena.net ? HQV.playArena.net() : null; };
   inst.poolNet = function(){ return POOL.u && poolOn() ? {pb: POOL.u, ps: POOL.seat} : null; };
   inst.pool = function(){ return POOL.u ? {u: POOL.u, seat: POOL.seat} : null; };
   // every frame: the weather, your lights and spray and smoke, everyone else's lights, the convoy
@@ -3833,7 +3846,7 @@ function mount(el, api){
     }
     var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    var run = !!(keys.ShiftLeft || keys.ShiftRight), base = run ? FOOT.run : FOOT.walk;
+    var run = !!(keys.ShiftLeft || keys.ShiftRight), rm = HQV.cityPlay && HQV.cityPlay.sprintMul ? HQV.cityPlay.sprintMul() : 1, base = run ? FOOT.run*runMul({runMul: rm}) : FOOT.walk;   // [3.22] fed: a faster sprint
     if(fwd || side){ walkTo = null; walkDoor = null; }
     var yaw0 = avatar.yaw, sp0 = avatar.speed || 0, dx = 0, dz = 0;
     if(steering() && !walkTo){
@@ -3843,7 +3856,7 @@ function mount(el, api){
       var tn = HQV.camrig.absorb ? HQV.camrig.absorb(rig, PI) : 0;
       HQV.camrig.input(rig, {hold: true});
       var g = steerStep({yaw: avatar.yaw, speed: avatar.speed, speedV: avatar.sv, mdx: avatar.mdx, mdz: avatar.mdz},
-                        {fwd: fwd, side: side, run: run, turn: tn}, dt);
+                        {fwd: fwd, side: side, run: run, turn: tn, runMul: rm}, dt);
       avatar.rate += ((dt > 0 ? wrapPi(g.yaw - avatar.yaw)/dt : 0) - avatar.rate)*ease(12, dt);   // the lean and the shuffle
       avatar.yaw = g.yaw; avatar.speed = g.speed; avatar.sv = g.speedV; avatar.mdx = g.mdx; avatar.mdz = g.mdz; avatar.rv = 0;
       avatar.faceGoal = null; avatar.faceOff = 0; avatar.aboutV = 0; avatar.camHeld = false;
@@ -3859,7 +3872,7 @@ function mount(el, api){
       if(fwd > 0 && HQV.camrig.absorb){ var ab = HQV.camrig.absorb(rig, FOOT.steer*dt); if(ab) avatar.yaw = wrapPi(avatar.yaw + ab); }
       var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv, travelYaw: avatar.travelYaw,
                         aboutV: avatar.aboutV, faceGoal: avatar.faceGoal, faceOff: avatar.faceOff, camHeld: avatar.camHeld},
-                       {fwd: fwd, turn: side, run: run,
+                       {fwd: fwd, turn: side, run: run, runMul: rm,
                         // toward the camera: read ONCE as S goes down (latched in footStep's faceGoal), never followed
                         face: fwd < 0 && avatar.faceGoal == null && rig.moveYaw != null ? wrapPi(rig.moveYaw + PI) : null}, dt);
       avatar.yaw = f.yaw; avatar.rate = f.rate; avatar.rv = f.rateV; avatar.speed = f.speed; avatar.sv = f.speedV; avatar.aboutV = f.aboutV; avatar.faceGoal = f.faceGoal; avatar.faceOff = f.faceOff; avatar.camHeld = f.camHeld;
@@ -5085,6 +5098,14 @@ function mount(el, api){
           checkIn: function(f){ return cur && cur.air && cur.air.checkIn ? cur.air.checkIn(f) : null; }},
     travel: {link: function(world){ var TR = phoneTransit(); return TR ? TR.link(world) : false; }},
     photo: photoBlob,
+    // [3.22] the camera's pose when a photo is taken (city play's photo hunt): position, heading (yaw 0 faces +z), pitch
+    camPose: function(){
+      var cm = curCam(); if(!cm || !THREE) return null;
+      try {
+        var p = new THREE.Vector3(), d = new THREE.Vector3(); cm.getWorldPosition(p); cm.getWorldDirection(d);
+        return {x: p.x, y: p.y, z: p.z, yaw: Math.atan2(d.x, d.z), pitch: Math.asin(Math.max(-1, Math.min(1, d.y))), fov: cm.fov || 50, aspect: cm.aspect || 1.5};
+      } catch(e){ return null; }
+    },
     selfie: function(on){
       if(!rig || !HQV.camrig || !HQV.camrig.setMode) return false;
       if(on && !selfieOn){ selfieOn = true; rig.selfiePrev = rig.mode; HQV.camrig.setMode(rig, "selfie", {instant: true}); }
@@ -5649,6 +5670,9 @@ function mount(el, api){
       // [3.15] carpooling (the "carpool" capability): whose vehicle they ride in (pb) and in which seat (ps)
       P.pb = typeof p.pb === "string" && UR.test(p.pb) && (p.ps | 0) >= 1 && (p.ps | 0) <= 3 ? p.pb : null; P.ps = P.pb ? p.ps | 0 : 0;
       if(!P.pb) P.poolMe = false;
+      // [3.22] Arena play (the "cityplay" capability, games/playarena.js): the game (pk), whom they invite (pi), whose game
+      // they joined (pj), its small state (pq); checked whole by readNet, one bad field and none of it is kept
+      P.play = HQV.playArena && HQV.playArena.readNet ? HQV.playArena.readNet(p) : null;
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };

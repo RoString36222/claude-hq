@@ -24,13 +24,13 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","citylife","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
                   "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqvfx","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqgpvenue","hqcasinoui","hqcasino","hqcall","hqautopilot","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle",
                   "hqride","hqcommute","hqtramway","hqcoach","hqmetro","hqunderground","hqcityrail","hqgondola","hqferries","hqcabs","hqhelicall","hqphone","hqphoneapps","hqphonecabs","hqphonecomms","hqgallery","hqtransit",
-                  "hqstunts","hqgrenade","hqtank","cityevents3d","hqcity3d"];
+                  "hqstunts","hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playarena","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
 var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqgrenade:1, hqtank:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, citylife:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
                      hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqvfx:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqgpvenue:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqautopilot:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1, hqstunts:1,
-                     hqride:1, hqcommute:1, hqtramway:1, hqcoach:1, hqmetro:1, hqunderground:1, hqcityrail:1, hqgondola:1, hqferries:1, hqcabs:1, hqhelicall:1, hqphone:1, hqphoneapps:1, hqphonecabs:1, hqphonecomms:1, hqgallery:1, hqtransit:1, cityevents3d:1};
+                     hqride:1, hqcommute:1, hqtramway:1, hqcoach:1, hqmetro:1, hqunderground:1, hqcityrail:1, hqgondola:1, hqferries:1, hqcabs:1, hqhelicall:1, hqphone:1, hqphoneapps:1, hqphonecabs:1, hqphonecomms:1, hqgallery:1, hqtransit:1, cityevents3d:1, cityplay:1, playjobs:1, playheat:1, playraces:1, playfinds:1, playstreet:1, playarena:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
 function hqLoadScripts(){
@@ -105,7 +105,10 @@ function hqApi(){
         return typeof postConfig==="function" ? Promise.resolve(postConfig(b)).then(function(r){ return {ok: !r || r.ok!==false}; }, function(){ return {ok:false}; }) : Promise.resolve({ok:true});
       }
     },
-    social: function(){ return window.hqPhoneSocial || null; }
+    social: function(){ return window.hqPhoneSocial || null; },
+    // [3.22] a ghost race (games/playarena.js): your best ghost on a route to ONE player in a ghost race with you, over the
+    // hq presence socket (only where the Arena lists "cityplay"); the Arena relays it to that player only and keeps nothing
+    playGhost: function(to, r, g, t){ return hqPlayGhost(to, r, g, t); }
   };
 }
 // the Settings keys the phone may read and write from the 3D view (each with its check)
@@ -526,7 +529,7 @@ function hqNetSync(){
   if(shared){
     if(HQNET.ws===A.sock) return;
     hqNetClose();
-    HQNET.room=want; HQNET.ws=A.sock; HQNET.shared=true; HQNET.me=A.you.userId;
+    HQNET.room=want; HQNET.ws=A.sock; HQNET.shared=true; HQNET.me=A.you.userId; hqPlayWatch(A.sock);
     try { A.sock.send(JSON.stringify({type:"game", g:"hq", op:"join"})); } catch(e){}
     HQNET.lookSent=null;
     return;
@@ -541,7 +544,7 @@ function hqNetSync(){
     var ws;
     try { ws=new WebSocket(res.j.wsUrl+"/v1/rooms/"+encodeURIComponent(want)+"/ws?ticket="+encodeURIComponent(res.j.ticket)); }
     catch(e){ HQNET.room=null; return; }
-    HQNET.ws=ws;
+    HQNET.ws=ws; hqPlayWatch(ws);
     ws.onmessage=function(ev){
       if(gen!==HQNET.gen) return;
       var m; try { m=JSON.parse(ev.data); } catch(e){ return; }
@@ -552,6 +555,26 @@ function hqNetSync(){
     };
     ws.onclose=function(){ if(gen===HQNET.gen){ HQNET.ws=null; HQNET.room=null; HQNET.peers=[]; if(HQ3D.inst && HQ3D.inst.setPeers) HQ3D.inst.setPeers([]); hqRenderHere(); } };
   }).catch(function(){ if(gen===HQNET.gen) HQNET.room=null; });
+}
+// [3.22] Arena play's one directed frame, {type:"ghost", to, r, g, t}, checked as backend/src/cityplay.rs checks it
+function hqPlayGhost(to, r, g, t){
+  var ws=HQNET.ws; if(!ws || ws.readyState!==1 || !hqNetCan("cityplay")) return false;
+  if(typeof to!=="string" || !/^[A-Za-z0-9_-]{1,64}$/.test(to) || to===HQNET.me) return false;
+  if(typeof r!=="string" || !/^[A-Za-z0-9:_-]{1,40}$/.test(r)) return false;
+  if(typeof g!=="string" || g.length>12000 || !/^g1:[0-9a-z,-]*$/.test(g)) return false;
+  if((t|0)!==t || t<1 || t>360000) return false;
+  try { ws.send(JSON.stringify({type:"ghost", to:to, r:r, g:g, t:t})); return true; } catch(e){ return false; }
+}
+// ... and its way in: a ghost frame on the presence socket (own or the shared ARENA.sock) goes to games/playarena.js,
+// which takes it only from someone in a ghost race with you
+function hqPlayWatch(ws){
+  if(!ws || ws.__hqPlay || typeof ws.addEventListener!=="function") return;
+  ws.__hqPlay=true;
+  ws.addEventListener("message", function(ev){
+    if(typeof ev.data!=="string" || ev.data.indexOf('"ghost"')<0) return;
+    var m; try { m=JSON.parse(ev.data); } catch(e){ return; }
+    if(m && m.type==="ghost" && window.HQV && HQV.playArena && HQV.playArena.onGhost) HQV.playArena.onGhost(m);
+  });
 }
 // Does the Arena the presence goes to know this hq capability (e.g. "ride": a = 3 for riding a bike)?
 function hqNetCan(cap){
@@ -634,7 +657,14 @@ function hqNetSend(){
   // or driving it (14) while nobody is in that seat
   var tk = hqNetCan("tank") && (msg.pb || a===14) && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;
   if(tk && Array.isArray(tk.ta)) msg.ta=tk.ta;
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join(",")+","+msg.tk+","+msg.tv, now=Date.now();
+  // [3.22] "cityplay" (games/playarena.js): an Arena game you host or joined: the game (pk 1-3), whom you invite (pi) or
+  // whose game you're in (pj), and its small state (pq: at most 12 whole numbers: map points in dm, a step, stars, a clock)
+  var pg = hqNetCan("cityplay") && HQ3D.inst.playNet ? HQ3D.inst.playNet() : null;
+  if(pg && (pg.pk|0)===pg.pk && pg.pk>=1 && pg.pk<=3){ var PR=/^[A-Za-z0-9_-]{1,64}$/;
+    var pgOk = (pg.pi==null || PR.test(pg.pi)) && (pg.pj==null || PR.test(pg.pj)) && !(pg.pi && pg.pj) &&
+      (pg.pq==null || (Array.isArray(pg.pq) && pg.pq.length>=1 && pg.pq.length<=12 && pg.pq.every(function(v){ return (v|0)===v && Math.abs(v)<=16777216; })));
+    if(pgOk){ msg.pk=pg.pk; if(pg.pi) msg.pi=pg.pi; if(pg.pj) msg.pj=pg.pj; if(pg.pq) msg.pq=pg.pq.slice(); } }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join(",")+","+msg.tk+","+msg.tv+","+[msg.pk,msg.pi,msg.pj,JSON.stringify(msg.pq||0)].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}

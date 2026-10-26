@@ -156,7 +156,7 @@ function create(c, W, opts){
                 box: new THREE.Box3(new THREE.Vector3(ORIGIN + tx*TILE - 3, -50, ORIGIN + tz*TILE - 3), new THREE.Vector3(ORIGIN + (tx + 1)*TILE + 3, 200, ORIGIN + (tz + 1)*TILE + 3)),
                 ylo: Infinity, yhi: -Infinity, m: {}});
   }
-  var world = {parked: [], signs: [], gantries: [], furniture: [], built: false, meshes: {}, refillAt: null, furnGrid: null};
+  var world = {parked: [], signs: [], gantries: [], furniture: [], built: false, meshes: {}, refillAt: null, furnGrid: null, knocked: {}, nKnocked: 0};
 
   /* ----- materials and shader patches ----- */
   function std(o){ return new THREE.MeshStandardMaterial(Object.assign({vertexColors: true, roughness: 0.85, metalness: 0}, o || {})); }
@@ -602,7 +602,7 @@ function create(c, W, opts){
     var fm = [], fn = {};
     world.furniture.forEach(function(o){
       var im = mm["f:" + o.kind];
-      if(!im || !near(o)) return;
+      if(!im || !near(o) || (world.nKnocked && world.knocked[furnKeyOf(o)])) return;   // [play-street] knocked over: city play draws it
       var i = fn[o.kind] || 0;
       put(im, i, o, o.yaw);
       if(o.c){ col.setRGB(o.c[0], o.c[1], o.c[2], THREE.SRGBColorSpace); im.setColorAt(i, col); }
@@ -620,6 +620,8 @@ function create(c, W, opts){
 
   // furniture by FURN_CELL m cell (each in every cell its radius reaches, + 0.5 m for a pad), for furnitureAt
   function furnKey(i, j){ return (i + 4096)*8192 + (j + 4096); }
+  // [play-street] one piece of furniture's key (its kind and place, to the decimetre): what furnitureKnock takes
+  function furnKeyOf(o){ return o.kind + ":" + Math.round(o.x*10) + ":" + Math.round(o.z*10); }
   function furnGrid(list){
     if(!list.length) return null;
     var G = {};
@@ -860,8 +862,44 @@ function create(c, W, opts){
     var L = G[furnKey(Math.floor(x/FURN_CELL), Math.floor(z/FURN_CELL))];
     if(!L) return null;
     pad = +pad || 0;
-    for(var i = 0; i < L.length; i++){ var o = L[i], r = FURN_R[o.kind] + pad, dx = x - o.x, dz = z - o.z; if(dx*dx + dz*dz < r*r) return o.kind; }
+    for(var i = 0; i < L.length; i++){
+      var o = L[i], r = FURN_R[o.kind] + pad, dx = x - o.x, dz = z - o.z;
+      if(dx*dx + dz*dz < r*r && !(world.nKnocked && world.knocked[furnKeyOf(o)])) return o.kind;
+    }
     return null;
+  };
+  // [play-street] the piece itself ({kind, x, y, z, yaw, c?}, a knocked-over one skipped) at (x, z) with pad m more reach
+  wb.furnitureNear = function(x, z, pad){
+    var G = world.furnGrid; if(!G) return null;
+    var L = G[furnKey(Math.floor(x/FURN_CELL), Math.floor(z/FURN_CELL))]; if(!L) return null;
+    pad = +pad || 0;
+    var best = null, bd = Infinity;
+    for(var i = 0; i < L.length; i++){
+      var o = L[i], r = FURN_R[o.kind] + pad, dx = x - o.x, dz = z - o.z, d = dx*dx + dz*dz;
+      if(d < r*r && d < bd && !(world.nKnocked && world.knocked[furnKeyOf(o)])){ bd = d; best = o; }
+    }
+    return best;
+  };
+  wb.furnitureKey = furnKeyOf;
+  // [play-street] knock a piece over (on) or stand it up again: a knocked one is not drawn here and does not block
+  wb.furnitureKnock = function(o, on){
+    if(!o || !o.kind) return false;
+    var k = furnKeyOf(o), was = !!world.knocked[k];
+    if(!!on === was) return false;
+    if(on){ world.knocked[k] = 1; world.nKnocked++; } else { delete world.knocked[k]; world.nKnocked = Math.max(0, world.nKnocked - 1); }
+    var R = world.refillAt;
+    if(R && !R.map) refillWorld(R.x, R.z, R.map);
+    return true;
+  };
+  // [play-street] a one-off copy of a piece (its kind's own geometry and material, its colour) for city play to move:
+  // an InstancedMesh of one at the origin; dispose it with .dispose() (the geometry and material stay the City's)
+  wb.furnitureMesh = function(o){
+    var im = o && world.meshes["f:" + o.kind]; if(!im) return null;
+    var m = new THREE.InstancedMesh(im.geometry, im.material, 1);
+    m.setMatrixAt(0, new THREE.Matrix4());
+    if(o.c){ m.setColorAt(0, new THREE.Color().setRGB(o.c[0], o.c[1], o.c[2], THREE.SRGBColorSpace)); }
+    m.frustumCulled = false; m.castShadow = false; m.name = "furniture " + o.kind + " (knocked)";
+    return m;
   };
   // the weather on the ground (games/hqweather.js settled): snow cover and wetness, 0..1 each
   wb.setGround = function(snow, wet){ U.uSnow.value = Math.max(0, Math.min(1, +snow || 0)); U.uWet.value = Math.max(0, Math.min(1, +wet || 0)); };

@@ -622,6 +622,8 @@ HQV.hqWorlds.city3d = function(c, w){
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var transit = null;                             // [3.15] the City's transport (games/hqtransit.js): rides, metro, cabs, ...
   var cev = null;                                 // [3.21] city life's street events drawn (games/cityevents3d.js)
+  var street = null;                              // [3.22] traffic lights and parked cars (games/traffic.js street())
+  var play = null, playSkip = false;              // [3.22] city play (games/cityplay.js): jobs, heat, races, finds, ...
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
 
   function ground(x, z){ return W ? WD.groundAt(W, x, z) : 0; }
@@ -969,7 +971,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z)) return true;
-    if(wb && wb.furnitureAt && wb.furnitureAt(x, z)) return true;           // [city life] benches, stalls, cafe tables
+    if(wb && wb.furnitureAt && wb.furnitureAt(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [city life] benches, stalls, cafe tables ([play-street] a table, bin or stall you drive into fast goes over)
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
@@ -980,7 +982,9 @@ HQV.hqWorlds.city3d = function(c, w){
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
     if(trafficAt(x, z)) return true;                                       // [3.13.1] the cars, buses and trams going by
-    if(cev && cev.blocked(x, z)) return true;                              // [3.21] a market stall, roadworks barrier, parade rail
+    if(cev && cev.blocked(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [3.21] a market stall, roadworks barrier, parade rail ([play-street] a stall rammed fast goes over)
+    if(street && street.blocked(x, z)) return true;                        // [3.22] a traffic light's pole, a parked car
+    if(play && !playSkip && play.blocked(x, z)) return true;               // [3.22] what city play puts in the street
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z;
@@ -1032,6 +1036,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var CLEAR_UNDER = 2.4;     // m: a civic mass whose underside is higher than this off its site's ground does not block
   var BOAT_SIDE = 3;         // m: the two boats moored either side of a berth (a dock with no pier drawn)
   var NPC_BUDGET = 3;        // ms: residents whose update took longer than this update every other frame
+  var TRAFFIC_R = 420;       // m: [3.22] the traffic drawn around the camera (fog starts at 300 m; it was 320)
   var TALK_SHOW = 5;         // s a resident's line stays over their head
   function island(){ return !isCommons(worldId) && worldId !== LEGACY; }
   function say(t){ if(!t) return; if(api.announce) api.announce(t); if(api.toast) api.toast(t); }
@@ -1229,12 +1234,22 @@ HQV.hqWorlds.city3d = function(c, w){
       } catch(e){ tsim = null; tview = null; }
     }
     if(HQV.cityEvents3d){ try { cev = HQV.cityEvents3d.create(THREE, S, W); } catch(e){ cev = null; } }     // [3.21] markets, roadworks, the parade
+    if(HQV.traffic && HQV.traffic.street){ try { street = HQV.traffic.street(THREE, S, W); } catch(e){ street = null; } }   // [3.22] lights, parked cars
     if(HQV.npcSim && HQV.npcDraw){
       try {
         var sdoc = Object.assign({}, doc, {layers: Object.assign({}, doc.layers, {zones: simZones(doc.layers.zones)})});
         nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id, world: W});   // [crowds] W: citylife's land use and gathering spots
         ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
       } catch(e){ nsim = null; ndraw = null; }
+    }
+    if(HQV.cityPlay){                                                                                // [3.22] things to do
+      try {
+        play = HQV.cityPlay.create(THREE, {scene: S, W: W, worldId: worldId, tier: tier, c: c, api: api, tsim: tsim, nsim: nsim, cev: cev, ndraw: ndraw,
+          say: say, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms; },
+          calm: function(){ return !!(c.E && c.E.calm && c.E.calm()); }, night: function(){ return night; },
+          blocked: function(x, z){ playSkip = true; try { return blocked(x, z); } finally { playSkip = false; } },
+          groundY: groundY, waypoint: function(x, z){ navPick(x, z); }, wb: function(){ return wb; }});
+      } catch(e){ play = null; }
     }
   }
   /* ---------- [3.15] transport (games/hqtransit.js): every Service registered with hqRide, the views, the ride
@@ -2755,11 +2770,13 @@ HQV.hqWorlds.city3d = function(c, w){
 
   // the residents this City draws (read-only, for tests and tools)
   w.npcSim = function(){ return nsim; };
+  w.play = function(){ return play; };                         // [3.22] city play, for tools and the phone
   // the HUD's E prompt at a terminal's door (what E opens there), while nothing else holds E
   var promptK = null, promptV = null;
   w.prompt = function(p){
     if(!V2 || !p || menu || bus || w.carry()) return null;
     var tp = transit && transit.prompt ? transit.prompt(p) : null; if(tp) return tp;      // [3.15] a stop, a station, an entrance
+    var pp = play && play.prompt ? play.prompt(p) : null; if(pp) return pp;               // [3.22] city play: a race's start, a tag, a snack
     var k = Math.round(p.x) + "," + Math.round(p.z);
     if(k !== promptK){
       promptK = k;
@@ -2783,6 +2800,7 @@ HQV.hqWorlds.city3d = function(c, w){
       return true;
     }
     if(rail && rail.use()) return true;                  // rail: off the train before it leaves
+    if(play && play.use && play.use(p)) return true;     // [3.22] city play: a time trial, a tag, a snack
     if(ndraw){
       var line = ndraw.talk({x: p.x, z: p.z}, npcMs());
       if(line && line.text){ showTalk(line); return true; }
@@ -3016,11 +3034,19 @@ HQV.hqWorlds.city3d = function(c, w){
       var obs = boatNow || (mo && mo.air) ? [] : [{x: me0.x, z: me0.z, r: myR}];
       if(bridges) obs = obs.concat(bridges.obstacles());
       if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
-      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, 320, obs); } catch(e){}
+      if(nsim && nsim.passers && !(mo && mo.air)){        // [3.22] people crossing at a corner: the cars near you wait for them
+        try {
+          var px = nsim.passers(npcMs(), {x: me0.x, z: me0.z}, 160), pn = 0;
+          for(var pi = 0; pi < px.length && pn < 16; pi++) if(px[pi] && px[pi].cross){ obs.push({x: px[pi].x, z: px[pi].z, r: 0.8}); pn++; }
+        } catch(e){}
+      }
+      try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, TRAFFIC_R, obs); } catch(e){}
     }
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
     if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }
     if(cev && cam && cam.x != null){ try { cev.update(npcMs(), cam); } catch(e){} }                  // [3.21] the street events near you
+    if(street && cam && cam.x != null){ try { street.update(npcMs(), cam); } catch(e){} }            // [3.22] the lights' lenses, parked cars near you
+    if(play){ var ma = c.avatar() || me0; play.update(dt, {ms: nowMs, local: npcMs(), me: {x: ma.x, y: ma.hy != null ? ma.hy : groundY(ma.x, ma.z), z: ma.z, yaw: (c.motion && c.motion() || {}).yaw || 0}, motion: c.motion ? c.motion() : null, traffic: callTraffic, cam: cam, menu: !!menu || !!(nui && nui.isOpen())}); }   // [3.22] (menu: the City's own panels pause heat)
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
       else {
@@ -3052,6 +3078,8 @@ HQV.hqWorlds.city3d = function(c, w){
     surfaceShow(true);
     if(tview){ try { tview.dispose(); } catch(e){} }
     if(cev){ try { cev.dispose(); } catch(e){} cev = null; }                                         // [3.21]
+    if(street){ try { street.dispose(); } catch(e){} street = null; }                                // [3.22]
+    if(play){ try { play.dispose(); } catch(e){} play = null; }                                      // [3.22]
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);

@@ -14,7 +14,8 @@
  *                with cones in the middle, a digger and a compressor beside it
  *     parade     crowd barriers along both kerbs (a gap every few to let people through) and bunting across the
  *                road between poles on every edge of the route
- *   create(THREE, scene, W, opts) -> {group, update(localMs, cam), blocked(x, z), info(), drawCalls(), dispose()}
+ *   create(THREE, scene, W, opts) -> {group, update(localMs, cam), blocked(x, z), knockAt(x, z), unknock(key), info(),
+ *                            drawCalls(), dispose()}   ([play-street] knockAt: city play knocks a market stall over)
  *                            an event is built (one merged, vertex-coloured mesh; the roadworks' plates a second, with
  *                            the sign texture) while it is on and the camera is within NEAR m of it, dropped past FAR
  * Draw calls: one per event near you, two for roadworks (at most a market and three roadworks at once: 7).
@@ -289,7 +290,12 @@ function create(THREE, scene, W, opts){
     [-hl + 0.1, hl - 0.1].forEach(function(lz){ M.add(box(0.6, 0.04, 0.06), 0x8a9199, r.x, r.y, r.z, r.yaw, 0, 0.02, lz); });
   }
   function build(ev){
-    var P = pieces(W, ev), M = new Merge(false), S = new Merge(true);
+    var P = pieces(W, ev), M = new Merge(false), S = new Merge(true), K = knocked[ev.id];
+    // [play-street] a market's stall n is its solid n: stalls knocked over by city play are left out of both
+    if(ev.kind === "market"){
+      P.stalls.forEach(function(st, n){ st.n = n; }); P.solid.forEach(function(r, n){ r.n = n; });
+      if(K){ P.stalls = P.stalls.filter(function(st){ return !K[st.n]; }); P.solid = P.solid.filter(function(r){ return !K[r.n]; }); }
+    }
     P.stalls.forEach(function(s){ stall(M, s); });
     P.barriers.forEach(function(b){ barrier(M, b); });
     P.cones.forEach(function(c){ cone(M, c); });
@@ -358,6 +364,33 @@ function create(THREE, scene, W, opts){
     }
     return false;
   }
+  // [play-street] knock the market stall standing at (x, z) over: it is left out (not drawn, not solid) until unknock;
+  // -> {key, x, y, z, yaw, col, h} (the stall, for city play to draw falling) or null where no stall stands
+  var knocked = {};
+  function knockAt(x, z){
+    if(!group.visible) return null;
+    for(var id in built){
+      var B = built[id], b = B.bb;
+      if(B.ev.kind !== "market" || x < b[0] || x > b[2] || z < b[1] || z > b[3]) continue;
+      var S = B.P.solid;
+      for(var i = 0; i < S.length; i++){
+        var r = S[i], dx = x - r.x, dz = z - r.z, sn = Math.sin(r.yaw), c = Math.cos(r.yaw);
+        if(Math.abs(dx*sn + dz*c) > r.hz || Math.abs(dx*c - dz*sn) > r.hx) continue;
+        var st = null; B.P.stalls.forEach(function(q){ if(q.n === r.n) st = q; });
+        (knocked[id] = knocked[id] || {})[r.n] = 1;
+        var ev = B.ev; drop(id); built[id] = build(ev);
+        return st ? {key: id + "|" + r.n, x: st.x, y: st.y, z: st.z, yaw: st.yaw, col: st.col, h: st.h} : {key: id + "|" + r.n, x: r.x, y: 0, z: r.z, yaw: r.yaw, col: 0xd8443a, h: 0.5};
+      }
+    }
+    return null;
+  }
+  function unknock(key){
+    var s = String(key || ""), j = s.lastIndexOf("|"), id = s.slice(0, j), n = +s.slice(j + 1);
+    if(j < 0 || !knocked[id] || !knocked[id][n]) return false;
+    delete knocked[id][n]; if(!Object.keys(knocked[id]).length) delete knocked[id];
+    var B = built[id]; if(B){ var ev = B.ev; drop(id); built[id] = build(ev); }
+    return true;
+  }
   function info(){
     var o = {events: Object.keys(built).sort(), on: list.map(function(ev){ return ev.id; }), stalls: 0, barriers: 0, cones: 0, signs: 0, plant: 0, rails: 0, flags: 0, solid: 0};
     Object.keys(built).forEach(function(id){ var P = built[id].P; ["stalls", "barriers", "cones", "signs", "plant", "rails", "flags", "solid"].forEach(function(k){ o[k] += P[k].length; }); });
@@ -370,7 +403,7 @@ function create(THREE, scene, W, opts){
     mat.dispose(); signMat.dispose();
     if(group.parent) group.parent.remove(group);
   }
-  return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose};
+  return {group: group, update: update, blocked: blocked, knockAt: knockAt, unknock: unknock, info: info, drawCalls: drawCalls, dispose: dispose};
 }
 
 HQV.cityEvents3d = {pieces: pieces, create: create, NEAR: NEAR, FAR: FAR};

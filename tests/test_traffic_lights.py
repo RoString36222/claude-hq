@@ -173,6 +173,8 @@ class TrafficLights(unittest.TestCase):
             self.assertEqual(o["armless"], 0, w)
             self.assertTrue(o["same"], w + ": the lights are a pure function of the world")
         self.assertGreater(self.o["island"]["kinds"].get("local", 0), 0, "downtown crossroads get lights too")
+        # [3.22.1] and side streets: a main road crossing one, and crossroads out of town, spaced out (the commons had 17)
+        self.assertGreaterEqual(self.o["commons"]["lights"], 35, "side-street crossings get lights too")
 
     def test_every_light_cycles_and_its_axes_take_turns(self):
         for w in self.worlds():

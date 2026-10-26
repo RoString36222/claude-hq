@@ -1240,7 +1240,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     if(HQV.cityPlay){                                                                                // [3.22] things to do
       try {
-        play = HQV.cityPlay.create(THREE, {scene: S, W: W, worldId: worldId, c: c, api: api, tsim: tsim, nsim: nsim, cev: cev, ndraw: ndraw,
+        play = HQV.cityPlay.create(THREE, {scene: S, W: W, worldId: worldId, tier: tier, c: c, api: api, tsim: tsim, nsim: nsim, cev: cev, ndraw: ndraw,
           say: say, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms; },
           calm: function(){ return !!(c.E && c.E.calm && c.E.calm()); }, night: function(){ return night; },
           blocked: function(x, z){ playSkip = true; try { return blocked(x, z); } finally { playSkip = false; } },
@@ -2772,6 +2772,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.prompt = function(p){
     if(!V2 || !p || menu || bus || w.carry()) return null;
     var tp = transit && transit.prompt ? transit.prompt(p) : null; if(tp) return tp;      // [3.15] a stop, a station, an entrance
+    var pp = play && play.prompt ? play.prompt(p) : null; if(pp) return pp;               // [3.22] city play: a race's start, a tag
     var k = Math.round(p.x) + "," + Math.round(p.z);
     if(k !== promptK){
       promptK = k;
@@ -2795,6 +2796,7 @@ HQV.hqWorlds.city3d = function(c, w){
       return true;
     }
     if(rail && rail.use()) return true;                  // rail: off the train before it leaves
+    if(play && play.use && play.use(p)) return true;    // [3.22] city play: start a time trial, tag a wall
     if(ndraw){
       var line = ndraw.talk({x: p.x, z: p.z}, npcMs());
       if(line && line.text){ showTalk(line); return true; }

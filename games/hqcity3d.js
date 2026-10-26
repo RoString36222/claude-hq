@@ -970,7 +970,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z)) return true;
-    if(wb && wb.furnitureAt && wb.furnitureAt(x, z)) return true;           // [city life] benches, stalls, cafe tables
+    if(wb && wb.furnitureAt && wb.furnitureAt(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [city life] benches, stalls, cafe tables ([play-street] a table, bin or stall you drive into fast goes over)
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
     if(civics.length && civicBlocked(x, z)) return true;
@@ -981,7 +981,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(fount && Math.hypot(x - fount.g.position.x, z - fount.g.position.z) < fount.R + 0.35) return true;   // the fountain
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
     if(trafficAt(x, z)) return true;                                       // [3.13.1] the cars, buses and trams going by
-    if(cev && cev.blocked(x, z)) return true;                              // [3.21] a market stall, roadworks barrier, parade rail
+    if(cev && cev.blocked(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [3.21] a market stall, roadworks barrier, parade rail ([play-street] a stall rammed fast goes over)
     if(play && !playSkip && play.blocked(x, z)) return true;               // [3.22] what city play puts in the street
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
@@ -1244,7 +1244,7 @@ HQV.hqWorlds.city3d = function(c, w){
           say: say, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms; },
           calm: function(){ return !!(c.E && c.E.calm && c.E.calm()); }, night: function(){ return night; },
           blocked: function(x, z){ playSkip = true; try { return blocked(x, z); } finally { playSkip = false; } },
-          groundY: groundY, waypoint: function(x, z){ navPick(x, z); }});
+          groundY: groundY, waypoint: function(x, z){ navPick(x, z); }, wb: function(){ return wb; }});
       } catch(e){ play = null; }
     }
   }
@@ -2772,7 +2772,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.prompt = function(p){
     if(!V2 || !p || menu || bus || w.carry()) return null;
     var tp = transit && transit.prompt ? transit.prompt(p) : null; if(tp) return tp;      // [3.15] a stop, a station, an entrance
-    var pp = play && play.prompt ? play.prompt(p) : null; if(pp) return pp;               // [3.22] city play: a race's start, a tag
+    var pp = play && play.prompt ? play.prompt(p) : null; if(pp) return pp;               // [3.22] city play: a race's start, a tag, a snack
     var k = Math.round(p.x) + "," + Math.round(p.z);
     if(k !== promptK){
       promptK = k;
@@ -2796,7 +2796,7 @@ HQV.hqWorlds.city3d = function(c, w){
       return true;
     }
     if(rail && rail.use()) return true;                  // rail: off the train before it leaves
-    if(play && play.use && play.use(p)) return true;    // [3.22] city play: start a time trial, tag a wall
+    if(play && play.use && play.use(p)) return true;     // [3.22] city play: a time trial, a tag, a snack
     if(ndraw){
       var line = ndraw.talk({x: p.x, z: p.z}, npcMs());
       if(line && line.text){ showTalk(line); return true; }

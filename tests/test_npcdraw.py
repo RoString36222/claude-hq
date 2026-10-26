@@ -28,11 +28,11 @@ var doc = JSON.parse(fs.readFileSync(root + "/tests/fixtures/npc_town@2.json", "
 var H = S.HOUR, D0 = 20*S.DAY;
 function R(id, d, o){ var r = {id: id, x: d, y: 0.65, z: 0, yaw: 0, anim: "walk", mode: "walk", speed: 1.3, d2: d*d}; for(var k in o || {}) r[k] = o[k]; return r; }
 
-// LOD split: near under 40 m (44 m for those already near), at most 30; far to 150 m, at most 120; no drivers
+// LOD split: near under 40 m (44 m for those already near), at most 40; far to 150 m, at most 360 ([play-street]); no drivers
 var L1 = [R(1, 10), R(2, 39), R(3, 42), R(4, 45), R(5, 60), R(6, 20, {anim: "drive", mode: "car"}), R(7, 149), R(8, 151)];
 function ids(a){ return a.map(function(r){ return r.id; }); }
 var s1 = D.split(L1, {}), s2 = D.split(L1, {3: 1, 4: 1});
-var crowd = []; for(var i = 0; i < 200; i++) crowd.push(R(i, 5 + i*0.5));
+var crowd = []; for(var i = 0; i < 500; i++) crowd.push(R(i, 5 + i*0.25));
 var s3 = D.split(crowd, {});
 out.split = {near: ids(s1.near), far: ids(s1.far), nearHyst: ids(s2.near), farHyst: ids(s2.far), crowd: [s3.near.length, s3.far.length],
              crowdNearMax: s3.near[s3.near.length - 1].d2, crowdFarMin: s3.far[0].d2};
@@ -174,7 +174,7 @@ class NpcDrawTest(unittest.TestCase):
         self.assertEqual(s["far"], [3, 4, 5, 7])                 # the driver is in a car; 151 m is not drawn
         self.assertEqual(s["nearHyst"], [1, 2, 3])               # already near: stays near to 44 m
         self.assertEqual(s["farHyst"], [4, 5, 7])
-        self.assertEqual(s["crowd"], [30, 120])                  # the caps
+        self.assertEqual(s["crowd"], [40, 360])                  # the caps ([play-street]: 30 / 120 before)
         self.assertLessEqual(s["crowdNearMax"], s["crowdFarMin"])  # the nearest get the characters
 
     def test_avoidance(self):
@@ -229,10 +229,10 @@ class NpcDrawTest(unittest.TestCase):
         d = self.r["draw"]
         self.assertGreater(d["crowd"], 5)
         self.assertGreater(d["near"], 0)
-        self.assertLessEqual(d["near"], 30)
-        self.assertLessEqual(d["far"], 150)
+        self.assertLessEqual(d["near"], 40)
+        self.assertLessEqual(d["far"], 400)
         self.assertGreater(d["chars"], 0)
-        self.assertLessEqual(d["loads"], 36)                     # pooled: never more than the near cap + spares
+        self.assertLessEqual(d["loads"], 46)                     # pooled: never more than the near cap + spares
         self.assertLessEqual(d["off"], 0.8 + 1e-6)               # characters stand where the sim says (+ avoidance)
         self.assertEqual(d["outside"], 0)
         self.assertTrue(d["looks"])

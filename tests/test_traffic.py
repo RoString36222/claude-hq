@@ -116,6 +116,42 @@ out.hub = {};
   out.hubTimetable = {checked: errs.length, worst: Math.max.apply(null, errs)};
 })();
 
+// ---- [3.22.3] everyone keeps left: each car, bus and tram out along a road (clear of the junctions) is on the left of
+// its edge's centre line as it goes (the left of travel is (cos yaw, -sin yaw)); and a loop line runs round the way its
+// turns are kerb-side ones (left turns)
+(function(){
+  var s = sim(5), E = s._.edges, o = {n: 0, right: 0, kinds: {}, first: null, side: T.SIDE, minLeft: 1e9};
+  function nearest(x, z){
+    var best = null;
+    E.forEach(function(e){
+      var acc = 0, P = e.pts;
+      for(var i = 1; i < P.length; i++){
+        var ax = P[i-1][0], az = P[i-1][2], ux = P[i][0] - ax, uz = P[i][2] - az, l = Math.hypot(ux, uz);
+        if(l < 1e-9) continue;
+        var t = Math.max(0, Math.min(l, ((x - ax)*ux + (z - az)*uz)/l)), qx = ax + ux*t/l, qz = az + uz*t/l, d = Math.hypot(x - qx, z - qz);
+        if(!best || d < best.d) best = {d: d, s: acc + t, len: e.len, ux: ux/l, uz: uz/l, qx: qx, qz: qz};
+        acc += l;
+      }
+    });
+    return best;
+  }
+  for(var t = 0; t < 1200; t += 20) s.at(t*1000, ALL, FAR).forEach(function(v){
+    if(v.siren || !(v.kind === "car" || v.kind === "bus" || v.kind === "tram")) return;
+    var q = nearest(v.x, v.z), fx = Math.sin(v.yaw), fz = Math.cos(v.yaw);
+    if(!q || q.s < 25 || q.len - q.s < 25 || Math.abs(fx*q.ux + fz*q.uz) < 0.95) return;
+    var lat = (v.x - q.qx)*Math.cos(v.yaw) - (v.z - q.qz)*Math.sin(v.yaw);   // + the left of travel
+    o.n++; o.kinds[v.kind] = (o.kinds[v.kind] || 0) + 1; o.minLeft = Math.min(o.minLeft, lat);
+    if(lat < 0.5){ o.right++; o.first = o.first || [t, v.id, lat]; }
+  });
+  var b1 = s._.lines.filter(function(l){ return l.kind === "bus"; })[0], turned = 0, P = b1.pl, k = Math.max(1, Math.round(P.n/400));
+  for(var i = k; i + k < P.n; i += k){
+    var ax = P.x[i] - P.x[i-k], az = P.z[i] - P.z[i-k], bx = P.x[i+k] - P.x[i], bz = P.z[i+k] - P.z[i];
+    turned += Math.atan2(ax*bz - az*bx, ax*bx + az*bz);
+  }
+  o.loopTurn = turned;   // > 0 nets right turns (atan2 of d0 x d1, as traffic.js turnAngle)
+  out.keepLeft = o;
+})();
+
 // ---- tier gating ----
 out.tiers = {};
 [1, 2, 3, 4, 5].forEach(function(tier){
@@ -254,6 +290,18 @@ class Traffic(unittest.TestCase):
             self.assertGreater(o["maxCars"], 20, "tier %s has traffic" % tier)
             self.assertEqual(o["info"]["errors"], [])
             self.assertEqual(o["info"]["dropped"], 0)
+
+    def test_everyone_keeps_left(self):
+        # [3.22.3] left-hand traffic (India, the UK): a vehicle out along a road is left of the centre line as it goes
+        k = self.r["keepLeft"]
+        self.assertEqual(k["side"], -1, "traffic.js SIDE: the left")
+        self.assertGreater(k["n"], 500)
+        self.assertGreater(k["kinds"].get("bus", 0), 5)
+        self.assertGreater(k["kinds"].get("tram", 0), 5)
+        self.assertEqual(k["right"], 0, "on the right of the centre line: %s" % (k["first"],))
+        self.assertGreater(k["minLeft"], 0.5)
+        # the bus loop runs round with its centre on its left (left turns, the tight ones, never across the oncoming lanes)
+        self.assertLess(k["loopTurn"], -5, "the loop's turns are left turns: %s" % k["loopTurn"])
 
     def test_emergency_vehicles_overlap_nothing(self):
         # in the junction boxes and along the roads, on the way out, on scene and back

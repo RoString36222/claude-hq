@@ -70,7 +70,8 @@ if(T){
       NOW += S0.phase === "seated" || S0.phase === "standing" ? 2000 : 250; frame(wc, avatar.x, avatar.z);
       var p = wc.carry();
       if(p){ anims[p.anim] = 1; if(!p0) p0 = p; moved = Math.max(moved, Math.hypot(p.x - p0.x, p.z - p0.z)); avatar = {x: p.x, z: p.z};
-        if(p.anim === "sit" && !seatCam){ var cp = wc.camPose(); seatCam = cp ? {camera: !!cp.camera, fov: cp.fov, mode: cp.mode} : null;
+        // (seated, or at a pole when the bus is full)
+        if((p.anim === "sit" || p.anim === "stand") && !seatCam){ var cp = wc.camPose(); seatCam = cp ? {camera: !!cp.camera, fov: cp.fov, mode: cp.mode} : null;
           // V cycles the seat camera, S rings the bell
           var v1 = wc.transitKey(keyEv("KeyV")), m1 = (wc.camPose() || {}).mode, sOk = wc.transitKey(keyEv("KeyS"));
           keys = {v: v1, mode: m1, s: sOk, stop: T.debug.info().stopRequested, net: T.net()};

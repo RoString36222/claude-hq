@@ -267,10 +267,10 @@ function seatCam(seatPose, vehiclePose, look, mode, calm, extra){
 
 /* ---------- the ride session ---------- */
 var CAM_MODES = ["seat", "window", "chase"];
-function seatSide(trip, i, ms){   // the seat's lateral offset (m, + = the right of travel: the pavement side)
-  var p = call(trip, "pose", ms), s = call(trip, "seat", i, ms);
+function seatSide(trip, i, ms){   // the seat's lateral offset (m, + = the pavement side: [3.22.3] SIDE x the right of travel)
+  var p = call(trip, "pose", ms), s = call(trip, "seat", i, ms), T = HQV.traffic, sd = T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1;
   if(!p || !s) return 0;
-  return (num(s.x, 0) - num(p.x, 0))*(-Math.cos(num(p.yaw, 0))) + (num(s.z, 0) - num(p.z, 0))*Math.sin(num(p.yaw, 0));
+  return sd*((num(s.x, 0) - num(p.x, 0))*(-Math.cos(num(p.yaw, 0))) + (num(s.z, 0) - num(p.z, 0))*Math.sin(num(p.yaw, 0)));
 }
 // first free window seat on the pavement side, else any free seat, else a standing spot (hands on the rail)
 function chooseSeat(trip, occ, ms){

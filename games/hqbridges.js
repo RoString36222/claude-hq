@@ -446,7 +446,8 @@ function create(c, W, scene, opts){
       }
       return false;
     },
-    // the inbound half of the road at each barrier that is down or coming down (traffic drives on the right)
+    // the inbound half of the road at each barrier that is down or coming down ([3.22.3] traffic keeps to the left:
+    // games/traffic.js SIDE, the kerb SIDE x the right of travel)
     obstacles: function(){
       var out = [];
       items.forEach(function(it){
@@ -454,7 +455,8 @@ function create(c, W, scene, opts){
         if(!(it.st.bar > 0.05 || it.st.u > 0)) return;
         [[-BARRIER_AT - 0.8, -1], [b.len + BARRIER_AT + 0.8, 1]].forEach(function(e){
           for(var o = 0.6; o <= b.cw - 0.3; o += 1.0){
-            var lo = e[1]*o;    // inbound from a's side drives +axis, its right is -left; from b's side the other way
+            // inbound from a's side drives +axis, its right is -left; from b's side the other way
+            var T = HQV.traffic, lo = e[1]*o*(T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1);
             out.push({x: b.a.x + b.axis[0]*e[0] + b.left[0]*lo, z: b.a.z + b.axis[1]*e[0] + b.left[1]*lo, r: 0.3});
           }
         });

@@ -6,8 +6,9 @@
  * heading (and a helicopter its height). Any steering or throttle of yours takes over (games/hq3d.js).
  *
  * Pure (node-tested, tests/test_hqautopilot.py): metres, yaw 0 faces +z, increasing yaw turns LEFT, steer + is left,
- * the right of travel is (-dz, dx) for a direction (dx, dz) (as games/hqcall.js: everyone drives on the right).
- *   plan(pts, lane)            a route's [x0, z0, ...] -> P {pts, cum, len, s}: kept lane m right of the centre line,
+ * the right of travel is (-dz, dx) for a direction (dx, dz) (as games/hqcall.js: [3.22.3] everyone drives on the left,
+ * the kerb SIDE x the right, games/traffic.js SIDE = -1).
+ *   plan(pts, lane)            a route's [x0, z0, ...] -> P {pts, cum, len, s}: kept lane m kerbward of the centre line,
  *                              eased in over the first and out over the last EASE m (it starts and stops where you are
  *                              and where you are going)
  *   drive(P, pose, o)          pose {x, z, yaw, speed}; o {vmax, lat (m/s² in a corner), brake (m/s²), yawRate (rad/s at
@@ -28,7 +29,10 @@
 "use strict";
 var HQV = (typeof window !== "undefined" ? window : globalThis).HQV = (typeof window !== "undefined" ? window : globalThis).HQV || {};
 
-var LANE = 1.8;            // m right of the centre line (as games/hqcall.js)
+var LANE = 1.8;            // m kerbward of the centre line (as games/hqcall.js)
+// [3.22.3] the side traffic keeps to (games/traffic.js SIDE, the one switch): -1 the left, 1 the right; the kerb of the
+// way of travel is SIDE x its right. Left-hand traffic when traffic.js is not loaded
+function driveSide(){ var T = HQV.traffic; return T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1; }
 var EASE = 8;              // m over which the lane offset eases in and out
 var ARRIVE = 2.5;          // m from the end: there
 var MARGIN = 6;            // m: a boat keeps this far off the coast either side of its course
@@ -56,7 +60,7 @@ function plan(pts, lane){
     var an = hyp(ax, az) || 1; ax /= an; az /= an;
     var k = 1;                                                    // the bisector's offset grows at a corner (capped for hairpins)
     if(i > 0 && i < n - 1){ var d3 = hyp(q[2*i] - q[2*i - 2], q[2*i + 1] - q[2*i - 1]) || 1; k = 1/Math.max(0.5, ((q[2*i] - q[2*i - 2])/d3)*ax + ((q[2*i + 1] - q[2*i - 1])/d3)*az); }
-    var o = lane*k*clamp(Math.min(cum[i], len - cum[i])/EASE, 0, 1);
+    var o = lane*k*clamp(Math.min(cum[i], len - cum[i])/EASE, 0, 1)*driveSide();
     out[2*i] = q[2*i] - az*o; out[2*i + 1] = q[2*i + 1] + ax*o;
   }
   for(i = 1; i < n; i++) cum[i] = cum[i - 1] + hyp(out[2*i] - out[2*i - 2], out[2*i + 1] - out[2*i - 1]);

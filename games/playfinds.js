@@ -447,6 +447,14 @@ function renderApp(el){
   mk("p", "hp-hint", root, "Progress stays on this computer.");
   return {dispose: function(){}};
 }
+// the phone's Achievements app lists these too (local only; empty with no City)
+(HQV.hqAchSources = HQV.hqAchSources || []).push(function(){
+  var F = feature(); if(!F) return [];
+  var P = F.progress();
+  function a(id, name, desc, n, goal){ return {id: id, name: name, desc: desc, done: n >= goal, pct: Math.round(100*Math.min(1, n/Math.max(1, goal)))}; }
+  return [a("finds:half", "Collector", "Find 25 things hidden in this city", P.finds, 25), a("finds:all", "Nothing left unturned", "Find everything hidden in this city", P.finds, P.total),
+          a("finds:photos", "Shutterbug", "Finish every photo challenge this week", P.photos, P.photosTotal)];
+});
 (HQV.hqPhoneQueue = HQV.hqPhoneQueue || []).push({id: "finds", name: "Finds", order: 41, glyph: GLYPH, dock: false, needsCity: true, render: renderApp});
 
 HQV.playFinds = {finds: finds, challenges: challenges, targets: targets, judge: judge, busker: busker, week: week, weekday: weekday,

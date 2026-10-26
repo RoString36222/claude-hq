@@ -530,6 +530,13 @@ function renderApp(el){
   });
   return {dispose: function(){}};
 }
+// the phone's Achievements app lists these too (local only; empty with no City)
+(HQV.hqAchSources = HQV.hqAchSources || []).push(function(){
+  var F = feature(); if(!F) return [];
+  var R = F.routes(), n = R.filter(function(r){ return r.best != null; }).length;
+  function a(id, name, desc, goal){ return {id: id, name: name, desc: desc, done: n >= goal, pct: Math.round(100*Math.min(1, n/Math.max(1, goal)))}; }
+  return [a("races:three", "Street racer", "Set a time on 3 race routes in this city", 3), a("races:all", "Full grid", "Set a time on every race route in this city", R.length)];
+});
 (HQV.hqPhoneQueue = HQV.hqPhoneQueue || []).push({id: "races", name: "Races", order: 40, glyph: GLYPH, dock: false, needsCity: true, render: renderApp});
 
 HQV.playRaces = {plan: plan, graph: graph, encodeGhost: encodeGhost, decodeGhost: decodeGhost, ghostAt: ghostAt, fmt: fmt, segDist: segDist,

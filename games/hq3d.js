@@ -827,6 +827,11 @@ function mount(el, api){
                         trips.forEach(function(T){ if(T.C === cur && T.mode === "call") out.push({x: T.run.x, z: T.run.z, col: 0xffb347}); });   // your called vehicle
                         return out; },
     active: function(w){ return !!(inst.running && cur && cur === w); },
+    // [3.22] the other players in this world for the Arena games (games/playarena.js): where they are and their checked play fields
+    players: function(){ var here = cur && (cur.net || cur.name), out = [];
+                         Object.keys(peers).forEach(function(u){ var P = peers[u]; if(P.w !== here) return; var x = P.x != null ? P.x : P.tx, z = P.z != null ? P.z : P.tz;
+                           if(isFinite(x) && isFinite(z)) out.push({u: u, n: P.n || "Visitor", x: x, z: z, play: P.play || null}); });
+                         return out; },
     toggleMap: function(){ if(rigOn()) mapToggle(); },
     // voyages (games/hqcity3d.js, games/hqvoyage.js): the next city built while you sail, then moved into with no fade
     prebuildCity: function(world){ return inst.prebuildCity ? inst.prebuildCity(world) : false; },
@@ -3128,6 +3133,8 @@ function mount(el, api){
     if(Q.ch && Q.ch.o.parent !== (Q.lean || Q.g)){ poseUndo(Q.ch); (Q.lean || Q.g).add(Q.ch.o); seatOn(Q.ch, Q.bike || null); }
   }
   // presence (ui/app/22-hq.js hqNetSend, only where the Arena lists "carpool"): {pb, ps} while you ride with someone
+  // [3.22] presence (ui/app/22-hq.js hqNetSend, only where the Arena lists "cityplay"): {pk, pi?, pj?, pq?} while in an Arena game
+  inst.playNet = function(){ return cur && cur === worlds.city && HQV.playArena && HQV.playArena.net ? HQV.playArena.net() : null; };
   inst.poolNet = function(){ return POOL.u && poolOn() ? {pb: POOL.u, ps: POOL.seat} : null; };
   inst.pool = function(){ return POOL.u ? {u: POOL.u, seat: POOL.seat} : null; };
   // every frame: the weather, your lights and spray and smoke, everyone else's lights, the convoy
@@ -5662,6 +5669,9 @@ function mount(el, api){
       // [3.15] carpooling (the "carpool" capability): whose vehicle they ride in (pb) and in which seat (ps)
       P.pb = typeof p.pb === "string" && UR.test(p.pb) && (p.ps | 0) >= 1 && (p.ps | 0) <= 3 ? p.pb : null; P.ps = P.pb ? p.ps | 0 : 0;
       if(!P.pb) P.poolMe = false;
+      // [3.22] Arena play (the "cityplay" capability, games/playarena.js): the game (pk), whom they invite (pi), whose game
+      // they joined (pj), its small state (pq); checked whole by readNet, one bad field and none of it is kept
+      P.play = HQV.playArena && HQV.playArena.readNet ? HQV.playArena.readNet(p) : null;
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };

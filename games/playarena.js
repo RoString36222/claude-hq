@@ -10,7 +10,7 @@
  *                     whoever accepts is a cop. The cops are the police for the robber (games/playheat.js tag(): they see,
  *                     witness and bust: within 4 m for 3 s while the robber is slow). The robber wins by lasting TAG_S
  *                     s or by losing every cop's line of sight for TAG_LOS_S s; the cops win with a bust.
- *   3 Ghost race      pick a route you have a time on; on accept you swap best ghosts (games/playraces.js ghostRaw /
+ *   3 Ghost race      pick a route you have a ghost on; once they accept the host's ghost goes to them and theirs comes back (games/playraces.js ghostRaw /
  *                     loadGhost) and race them on your own; each side's best time shows to the other.
  *
  * Over the Arena (the page's hq presence, ui/app/22-hq.js hqNetSend, only where the Arena lists "cityplay"; checked
@@ -174,7 +174,7 @@ function create(ctx){
         if(!F("heat") || !F("heat").tag) return {ok: false, reason: "noheat"};
       } else if(kind === 3){
         var R = F("races"), rid = o.route;
-        if(!R || typeof rid !== "string" || !ROUTE_RE.test(rid) || !R.routes().some(function(r){ return r.id === rid; })) return {ok: false, reason: "route"};
+        if(!R || typeof rid !== "string" || !ROUTE_RE.test(rid) || !R.routes().some(function(r){ return r.id === rid; }) || !(R.ghostRaw && R.ghostRaw(rid))) return {ok: false, reason: "route"};
         H.route = rid; H.theirs = {};
       } else return {ok: false, reason: "kind"};
       S.host = H;
@@ -310,7 +310,6 @@ function create(ctx){
     }
     S.guest = G;
     toast("🎮 You joined " + inv.n + "'s " + NAMES[inv.kind] + (inv.kind === 2 ? ": you're a cop. Stay within 4 m of them for 3 s while they're slow." : "."));
-    if(inv.kind === 3) sendGhost(uid, G.route);
     changed();
     return {ok: true};
   }
@@ -400,6 +399,8 @@ function create(ctx){
     var R = F("races");
     if(!R || !R.loadGhost || !R.loadGhost(route, m.g, label || "a rival")) return false;
     toast("👻 " + (label || "Your rival") + "'s ghost (" + fmtCs(m.t) + ") is loaded: race it.");
+    // the host sends first (once they see you joined); your own goes back once, in reply
+    if(S.guest && S.guest.kind === 3 && !S.guest.replied){ S.guest.replied = true; sendGhost(u, route); }
     changed();
     return true;
   }

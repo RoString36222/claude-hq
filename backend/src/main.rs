@@ -10,6 +10,7 @@ mod boardstream;
 mod boss;
 mod cali;
 mod cities;
+mod cityplay; // HQ 3.22 Arena play's ghost frame
 mod config;
 mod cosmetics;
 mod crews;
@@ -445,6 +446,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
         let mut music_lim = music::ConnLimits::new();
         let mut chat_times: VecDeque<Instant> = VecDeque::with_capacity(rooms::CHAT_RATE_COUNT);
         let mut phone_lim = phone::Limits::default();
+        let mut ghost_lim = cityplay::Limits::default();
         while let Some(Ok(msg)) = recv.next().await {
             let Message::Text(text) = msg else { continue };
             // Both rejections are answered, not dropped: a client sending frames
@@ -478,6 +480,11 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                 let r2 = rid.clone();
                 phone::handle(&rooms, &rid, conn_id, &me, &v, &mut phone_lim, &mut chat_times,
                               move || pv.with_room(&r2, |rv| rv.hq.positions()).unwrap_or_default()).await;
+                continue;
+            }
+            // HQ 3.22 Arena play: a race ghost for one player in this hq room (cityplay.rs)
+            if kind == Some("ghost") {
+                cityplay::handle(&rooms, &rid, conn_id, &me, &v, &mut ghost_lim).await;
                 continue;
             }
             match kind {

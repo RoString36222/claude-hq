@@ -178,6 +178,11 @@ struct Person {
     /// Kept only from its gunner, in a carpool seat (`pb` / `ps`), or its driver (a = 14, aiming while nobody is in that
     /// seat): nobody else aims a turret. Per frame: a frame without `ta` has none.
     ta: Option<(i64, i64)>,
+    /// Arena play (the "cityplay" capability, HQ 3.22, games/playarena.js): the game (`pk`, 1 co-op delivery, 2 cops &
+    /// robber, 3 ghost race), whom they invite (`pi`) or whose game they joined (`pj`, never both, never their own id) and
+    /// its small state (`pq`, 1..=PLAY_Q_LEN whole numbers within +-PLAY_Q_ABS: map points in dm, a step, stars, a clock).
+    /// Per frame: a frame without `pk` has none.
+    play: Option<Play>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -225,6 +230,7 @@ impl Hq {
                 gl: false,
                 gn: None,
                 ta: None,
+                play: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -364,6 +370,8 @@ impl Hq {
         // [3.16] a tank's turret aim (`ta`, only from a carpool seat or its driver, a = 14); a bad one drops the whole frame.
         let Some(ta) = read_aim(msg.get("ta")) else { return false };
         let ta = ta.filter(|_| pool.is_some() || a.as_f64() == Some(14.0));
+        // [3.22] Arena play: pk with any of pi / pj / pq; a bad one (or pi / pj / pq without pk) drops the whole frame.
+        let Some(play) = read_play(uid, msg) else { return false };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -382,6 +390,7 @@ impl Hq {
         p.gl = gl == 1;
         p.gn = gn;
         p.ta = ta;
+        p.play = play;
         self.dirty = true;
         true
     }
@@ -502,6 +511,19 @@ impl Hq {
                     if let Some((yaw, pitch)) = p.ta {
                         m.insert("ta".into(), json!([yaw, pitch]));
                     }
+                    // only while they host or play an Arena game in the City ("cityplay", HQ 3.22)
+                    if let Some(g) = &p.play {
+                        m.insert("pk".into(), json!(g.pk));
+                        if let Some(pi) = &g.pi {
+                            m.insert("pi".into(), json!(pi));
+                        }
+                        if let Some(pj) = &g.pj {
+                            m.insert("pj".into(), json!(pj));
+                        }
+                        if let Some(pq) = &g.pq {
+                            m.insert("pq".into(), json!(pq));
+                        }
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -581,6 +603,50 @@ fn read_convoy(me: &str, msg: &Value) -> Option<Convoy> {
         }
     };
     Some(Convoy { ci: id("ci")?, cv: id("cv")?, cg })
+}
+
+/// Arena play's presence fields (HQ 3.22, the "cityplay" capability).
+#[derive(Clone, Debug, PartialEq)]
+struct Play {
+    pk: u8,
+    pi: Option<String>,
+    pj: Option<String>,
+    pq: Option<Vec<i64>>,
+}
+
+/// The games: 1 co-op delivery, 2 cops & robber, 3 ghost race.
+pub const PLAY_K_MAX: u8 = 3;
+/// `pq`: at most this many whole numbers, each within +-PLAY_Q_ABS (2^24: map points in decimetres, a 24-bit route hash).
+pub const PLAY_Q_LEN: usize = 12;
+pub const PLAY_Q_ABS: i64 = 16_777_216;
+
+/// `pk`, `pi`, `pj` and `pq` from a pos frame: Some(None) when none is sent, Some(the game) when good, None to drop the
+/// whole frame (a game out of range, a malformed or your own id, `pi` with `pj`, a `pq` that is not 1..=PLAY_Q_LEN
+/// whole numbers in range, or any of them without `pk`).
+fn read_play(me: &str, msg: &Value) -> Option<Option<Play>> {
+    let absent = |k: &str| matches!(msg.get(k), None | Some(Value::Null));
+    if absent("pk") {
+        return (absent("pi") && absent("pj") && absent("pq")).then_some(None);
+    }
+    let pk = msg.get("pk")?.as_u64().filter(|k| (1..=u64::from(PLAY_K_MAX)).contains(k))? as u8;
+    let id = |k: &str| -> Option<Option<String>> {
+        match msg.get(k) {
+            None | Some(Value::Null) => Some(None),
+            Some(v) => v.as_str().filter(|s| uid_ok(s) && *s != me).map(|s| Some(s.to_string())),
+        }
+    };
+    let (pi, pj) = (id("pi")?, id("pj")?);
+    if pi.is_some() && pj.is_some() {
+        return None;
+    }
+    let pq = match msg.get("pq") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let a = v.as_array().filter(|a| !a.is_empty() && a.len() <= PLAY_Q_LEN)?;
+            Some(a.iter().map(|n| n.as_i64().filter(|n| n.abs() <= PLAY_Q_ABS)).collect::<Option<Vec<i64>>>()?)
+        }
+    };
+    Some(Some(Play { pk, pi, pj, pq }))
 }
 
 /// The most passengers a vehicle carries: a scooter's two behind its rider, a car's three.
@@ -1004,6 +1070,42 @@ mod tests {
             assert!(!p.pos("u", &m, 2.0), "{bad}");
         }
         assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+    }
+
+    #[test]
+    fn an_arena_game_rides_in_the_listing_while_it_is_sent() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // a host inviting, with a co-op job's places; a guest's pj; a host alone
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 5, "pk": 1, "pi": "bob_1", "pq": [1, 0, -10240, 10240, 55, -66]}), 0.1));
+        assert_eq!(p.listing()[0].to_string(), r#"{"u":"u","n":"u","w":"city3d","x":0,"z":0,"r":0,"a":5,"pk":1,"pi":"bob_1","pq":[1,0,-10240,10240,55,-66]}"#);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "pk": 2, "pj": "host-9"}), 0.2));
+        assert_eq!((p.listing()[0]["pk"].clone(), p.listing()[0]["pj"].clone()), (json!(2), json!("host-9")));
+        assert!(p.listing()[0].get("pi").is_none() && p.listing()[0].get("pq").is_none());
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "pk": 3, "pq": [16777215, 360000]}), 0.3));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "pk": 3, "pq": [-16777216, 16777216], "pi": null, "pj": null}), 0.4));
+        assert_eq!(p.listing()[0]["pq"], json!([-16777216, 16777216]));
+        // a frame without them has no game, and an older page's listing is unchanged
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0}), 0.5));
+        for k in ["pk", "pi", "pj", "pq"] {
+            assert!(p.listing()[0].get(k).is_none(), "{k}");
+        }
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "pk": 2}), 0.6));
+        // anything off drops the whole frame
+        let long: Vec<i64> = vec![0; 13];
+        for bad in [json!({"pk": 0}), json!({"pk": 4}), json!({"pk": 1.5}), json!({"pk": "1"}), json!({"pk": -1}),
+                    json!({"pi": "bob"}), json!({"pj": "bob"}), json!({"pq": [1]}),
+                    json!({"pk": 1, "pi": ""}), json!({"pk": 1, "pi": "a b"}), json!({"pk": 1, "pi": "x".repeat(65)}), json!({"pk": 1, "pi": "u"}),
+                    json!({"pk": 1, "pj": "u"}), json!({"pk": 1, "pj": 7}), json!({"pk": 1, "pi": "a", "pj": "b"}),
+                    json!({"pk": 1, "pq": []}), json!({"pk": 1, "pq": long}), json!({"pk": 1, "pq": [1.5]}), json!({"pk": 1, "pq": ["1"]}),
+                    json!({"pk": 1, "pq": [16777217]}), json!({"pk": 1, "pq": [-16777217]}), json!({"pk": 1, "pq": "1,2"}), json!({"pk": 1, "pq": [true]}),
+                    json!({"pk": 1, "pq": [null]})] {
+            let mut m = json!({"w": "city3d", "x": 900, "z": 0, "r": 0, "a": 0});
+            m.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+            assert!(!p.pos("u", &m, 2.0), "{bad}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0), "the rejects moved nobody");
+        assert_eq!(p.listing()[0]["pk"], json!(2), "and kept the game as it was");
     }
 
     #[test]

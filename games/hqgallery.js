@@ -13,6 +13,8 @@
  *   store.add(blob, {at, world}) -> Promise<{id, at, world}>   store.list() -> Promise<[rec]> newest first
  *   store.get(id) -> Promise<rec | null>   store.remove(id) -> Promise<bool>   store.persistent() -> Promise<bool>
  * DOM: createElement / textContent only. Two apps pushed onto HQV.hqPhoneQueue: "camera" and "gallery".
+ * [3.22] Each photo taken also tells city play where the camera was (host.camPose(): {x, y, z, yaw, pitch, fov, aspect})
+ *   as HQV.cityPlay.emit("photo", pose), for the photo hunt (games/playfinds.js).
  */
 (function(){
 "use strict";
@@ -248,9 +250,11 @@ function renderCamera(el, host, nav){
       later(function(){ flash.className = "hg-flash hg-flash-on"; }, 0);
       later(function(){ flash.className = "hg-flash"; }, 260);
     }
-    var me = hcall(host, "me", [], {}) || {};
+    var me = hcall(host, "me", [], {}) || {}, pose = hcall(host, "camPose", [], null);
     photoOf(host).then(function(blob){
       if(!blob){ st.busy = false; say(host, "The camera could not take a photo"); return; }
+      // [3.22] city play's photo hunt: where the camera stood and looked (numbers only; the photo itself stays here)
+      if(HQV.cityPlay && pose && typeof pose === "object") HQV.cityPlay.emit("photo", {x: num(pose.x, 0), y: num(pose.y, 0), z: num(pose.z, 0), yaw: num(pose.yaw, 0), pitch: num(pose.pitch, 0), fov: num(pose.fov, 50), aspect: num(pose.aspect, 1.5)});
       drawBlob(blob);
       return store.add(blob, {at: Date.now(), world: typeof me.world === "string" ? me.world : ""}).then(function(){
         st.busy = false;

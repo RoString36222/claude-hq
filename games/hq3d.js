@@ -5088,6 +5088,14 @@ function mount(el, api){
           checkIn: function(f){ return cur && cur.air && cur.air.checkIn ? cur.air.checkIn(f) : null; }},
     travel: {link: function(world){ var TR = phoneTransit(); return TR ? TR.link(world) : false; }},
     photo: photoBlob,
+    // [3.22] the camera's pose when a photo is taken (city play's photo hunt): position, heading (yaw 0 faces +z), pitch
+    camPose: function(){
+      var cm = curCam(); if(!cm || !THREE) return null;
+      try {
+        var p = new THREE.Vector3(), d = new THREE.Vector3(); cm.getWorldPosition(p); cm.getWorldDirection(d);
+        return {x: p.x, y: p.y, z: p.z, yaw: Math.atan2(d.x, d.z), pitch: Math.asin(Math.max(-1, Math.min(1, d.y))), fov: cm.fov || 50, aspect: cm.aspect || 1.5};
+      } catch(e){ return null; }
+    },
     selfie: function(on){
       if(!rig || !HQV.camrig || !HQV.camrig.setMode) return false;
       if(on && !selfieOn){ selfieOn = true; rig.selfiePrev = rig.mode; HQV.camrig.setMode(rig, "selfie", {instant: true}); }

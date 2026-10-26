@@ -4,11 +4,13 @@
  * (jobs, police heat, races, finds, street reactions, the Arena games) register here, each in its own file:
  *
  *   HQV.cityPlay.register({id, order?, create(ctx) -> feat})
- *     feat: {update(dt, f)?, blocked(x, z)?, on(kind, data)?, dispose()?}   (every key optional)
+ *     feat: {update(dt, f)?, blocked(x, z)?, on(kind, data)?, prompt(p)?, use(p)?, dispose()?}   (every key optional)
+ *       prompt(p) -> text | null: the HUD's E prompt on foot at p {x, z} (the first feature with one wins);
+ *       use(p) -> bool: E on foot at p, true when the feature took it (hqcity3d's w.prompt / w.use ask these)
  *     f, each frame: {ms: Date.now(), local: the City's local ms (npcSim.localMs), me: {x, y, z, yaw},
  *                     motion: hq3d's c.motion() (ride, speed, air, boat), traffic: what traffic.js drew near you}
  *
- *   ctx: {THREE, scene, W (the packed world), worldId, c (hq3d's context), api, tsim, nsim, cev,
+ *   ctx: {THREE, scene, W (the packed world), worldId, tier (the City's tier: roads open by it), c (hq3d's context), api, tsim, nsim, cev,
  *         say(text), local(ms), calm(), night(), blocked(x, z) (the City's own, without the features'),
  *         emit(kind, data) (to every feature, and to HQV.cityPlay.on listeners),
  *         hud: {set(id, text, opts?), clear(id)} (one line each, top centre, textContent only: XSS-safe),
@@ -89,7 +91,7 @@ function create(THREE, o){
   }
   function beaconOff(id){ var b = beacons[id]; if(!b) return; bG.remove(b); b.geometry.dispose(); b.material.dispose(); delete beacons[id]; }
   var ctx = {
-    THREE: THREE, scene: S, W: W, worldId: o.worldId, c: o.c, api: o.api || {}, tsim: o.tsim || null, nsim: o.nsim || null, cev: o.cev || null,
+    THREE: THREE, scene: S, W: W, worldId: o.worldId, tier: o.tier != null ? o.tier | 0 : null, c: o.c, api: o.api || {}, tsim: o.tsim || null, nsim: o.nsim || null, cev: o.cev || null,
     seed: hashStr((W && (W.seed || W.id)) || "city"), mulberry32: mulberry32, hashStr: hashStr,
     say: function(t){ if(o.say) o.say(t); },
     local: function(ms){ return o.local ? o.local(ms) : ms; },
@@ -115,6 +117,16 @@ function create(THREE, o){
     },
     blocked: function(x, z){
       for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.blocked){ try { if(f.blocked(x, z)) return true; } catch(e){} } }
+      return false;
+    },
+    prompt: function(p){
+      if(dead || !p) return null;
+      for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.prompt){ try { var t = f.prompt(p); if(t) return String(t); } catch(e){} } }
+      return null;
+    },
+    use: function(p){
+      if(dead || !p) return false;
+      for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.use){ try { if(f.use(p)) return true; } catch(e){} } }
       return false;
     },
     emit: emit,

@@ -102,6 +102,10 @@ var EV_KINDS = ["fire", "ambulance", "police"];
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
 var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 80, lorry: 60, scooter: 60, bike: 60, taxi: 60};
+// [3.22] traffic lights: the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green, the window periods
+// that divide the cycle, the most cars in a platoon (on a ring through lights; elsewhere), the share of a platoon's
+// places that hold a car (by place), the speed a platoon pulls away from the line to
+var SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65], SIG_V = 8;
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */
@@ -395,10 +399,83 @@ function create(doc, o){
     radius[id] = Math.min(deg >= 3 ? maxC + 2 : deg === 2 ? 2.5 : 1, 0.4*minLen);
   });
 
+  // [3.22] traffic lights (HQV.cityLife.signals, on the packed world): at a signalised node every lane in stops at
+  // its arm's stop line (clear of the zebra), so the box reaches out to it, arm by arm
+  var CL = o.life === false ? null : HQV.cityLife, WQ = HQV.world, LW = o.W || (doc.districts && doc.edges && doc.edges.length && doc.edges[0].pts ? doc : null);
+  var SIGS = {}, sigAt = {}, sigStop = {};
+  if(CL && CL.signals && CL.signalAt && LW && o.signals !== false){ try { SIGS = CL.signals(LW) || {}; } catch(e){ SIGS = {}; } }
+  Object.keys(SIGS).forEach(function(id){
+    var sg = SIGS[id];
+    if(!nodes[id] || !used[id] || !sg || !sg.arms || !sg.green || num(sg.cycle, SIG_C) !== SIG_C) return;
+    sigAt[id] = sg; sigStop[id] = {};
+    sg.arms.forEach(function(a){ sigStop[id][a.edge] = num(a.stop, 0); });
+  });
+  var sigOn = Object.keys(sigAt).length > 0, LIGHT = (CL && CL.SIG) || {amber: 3, allRed: 2};
+  var localOf = typeof o.local === "function" ? o.local : (function(off){ return function(ms){ return ms + off; }; })(num(o.local, 0));
+  // the lights run on the local clock; the timetable on the shared one. Time zones are whole minutes and the cycle
+  // divides 15, so the two agree, but whatever the local clock adds is carried over (lo s)
+  var lo = 0;
+  if(sigOn){ try { lo = mod(num(localOf(0), 0)/1000, SIG_C); } catch(e){ lo = 0; } }
+  function trimOf(node, E){
+    var r = radius[node] || 0, st = sigStop[node];
+    if(st && st[E.id] != null) r = Math.max(r, Math.min(st[E.id], 0.4*E.len));
+    return r;
+  }
+
+  // [3.22] junction clusters: with lights, two junctions whose boxes are under MERGE m apart along a road with
+  // traffic (or a short link the lights treat as one junction: cityLife's sig.links) are one box to the timetable,
+  // so nothing ever queues on the link between them: clusterOf[node] -> "k" + the cluster's least node id
+  var clusterOf = null, MERGE = 30;
+  if(sigOn){
+    var boxy = {}, par = {}, links = {};
+    Object.keys(used).forEach(function(id){ if(sigAt[id] || used[id].length >= 3){ boxy[id] = 1; par[id] = id; } });
+    Object.keys(sigAt).forEach(function(id){ (sigAt[id].links || []).forEach(function(e){ links[e] = 1; }); });
+    var root = function(a){ while(par[a] !== a) a = par[a] = par[par[a]]; return a; };
+    edges.forEach(function(E){
+      var a = String(E.a), b = String(E.b);
+      if(!(E.cars || E.tram || E.bus[0] || E.bus[1]) || !boxy[a] || !boxy[b]) return;
+      // (two lights a road apart stay two boxes, each car stopping at each, unless the lights make them one: links)
+      if(!links[E.id] && (E.len - trimOf(E.a, E) - trimOf(E.b, E) >= MERGE || (sigAt[a] && sigAt[b]))) return;
+      var ra = root(a), rb = root(b);
+      if(ra === rb) return;
+      if((+ra) - (+rb) < 0 || ((+ra) === (+rb) && ra < rb)) par[rb] = ra; else par[ra] = rb;
+    });
+    var size = {};
+    Object.keys(par).forEach(function(id){ var k = root(id); size[k] = (size[k] || 0) + 1; });
+    clusterOf = {};
+    Object.keys(par).forEach(function(id){ var k = root(id); if(size[k] > 1) clusterOf[id] = "k" + k; });
+  }
+  // a route's passes as the timetable sees them: consecutive passes through one cluster are one pass (from the first
+  // box line to the last box's exit); every pass knows the light it goes by (sn: the first node it crosses with one;
+  // h: the heading it comes into that node on) and its box (node: the cluster's id at a cluster)
+  function boxes(P, spec){
+    var out = [];
+    P.forEach(function(p){
+      var c = clusterOf ? clusterOf[p.node] : null, last = out[out.length - 1];
+      var q = {};
+      for(var k in p) q[k] = p[k];
+      q.nodes = [p.node]; q.hs = [p.h];
+      if(c != null && last && last.box === c && p.sIn >= last.sOut - 1e-6 && last.nodes.indexOf(p.node) < 0 && p.v > V_UTURN && last.v > V_UTURN){
+        last.sOut = p.sOut; last.v = Math.min(last.v, p.v); last.curve = last.curve.concat(p.curve.slice(1));
+        last.nodes.push(p.node); last.hs.push(p.h); last.turn = last.turn || p.turn;
+        last.occ = (last.sOut - last.sIn + spec.len - last.front)/last.v + CLEAR;
+        return;
+      }
+      q.box = c;
+      out.push(q);
+    });
+    out.forEach(function(q){
+      q.sn = null;
+      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; }
+      if(q.box != null) q.node = q.box;
+    });
+    return out;
+  }
+
   // a lane: the edge's points in travel order, offset to the right, trimmed back from both nodes
   function lanePts(E, dir, off){
     var pts = dir ? E.pts.slice().reverse() : E.pts, from = dir ? E.b : E.a, to = dir ? E.a : E.b;
-    return trimPts(offsetPts(pts, off), radius[from] || 0, radius[to] || 0);
+    return trimPts(offsetPts(pts, off), trimOf(from, E), trimOf(to, E));
   }
   function laneNode(E, dir, end){ return end ? (dir ? E.a : E.b) : (dir ? E.b : E.a); }
 
@@ -447,9 +524,10 @@ function create(doc, o){
       var vb = Math.abs(ang) > 2.5 ? V_UTURN : Math.abs(ang) > 0.5 ? V_TURN : Math.min(V_STRAIGHT, spec.vmax);
       var sOut = last ? acc : acc + Math.hypot(Q[0][0] - pts[pts.length - 1][0], Q[0][2] - pts[pts.length - 1][2]);
       passes.push({node: node, sIn: sIn, sOut: sOut, v: vb, curve: curve, wid: spec.wid,
-                   occ: (sOut - sIn + spec.len - front)/vb + CLEAR, key: lanes[i].e.i*2 + lanes[i].dir, turn: Math.abs(ang) > 0.5});
+                   occ: (sOut - sIn + spec.len - front)/vb + CLEAR, key: lanes[i].e.i*2 + lanes[i].dir, turn: Math.abs(ang) > 0.5,
+                   h: Math.atan2(d0[0], d0[1]), front: front});
     }
-    return {pl: plOf(pts), passes: passes, cusps: cusps, lanes: lanes, ranges: ranges, rev: rev, open: !!open};
+    return {pl: plOf(pts), passes: clusterOf ? boxes(passes, spec) : passes, raw: passes, cusps: cusps, lanes: lanes, ranges: ranges, rev: rev, open: !!open};
   }
   // P (the inbound track) eased over onto Q (the other track, same direction) along XOVER m that end
   // a body length (keep) before the end, so the tram stands wholly on Q at the terminus
@@ -600,7 +678,7 @@ function create(doc, o){
     lines.forEach(function(r){
       if(r.kind !== "tram") return;
       var n = r.lanes.length, passOf = [], k = 0;
-      r.lanes.forEach(function(ln, i){ passOf[i] = r.rev[i] ? null : r.passes[k++]; });
+      r.lanes.forEach(function(ln, i){ passOf[i] = r.rev[i] ? null : (r.raw || r.passes)[k++]; });
       // the inbound track back from the end of lane i over `need` m (earlier lanes and their turns)
       function backTrack(i, need){
         var P = lanePts(r.lanes[i].e, r.lanes[i].dir, r.lanes[i].e.tramOff);
@@ -695,67 +773,216 @@ function create(doc, o){
     if(p.transit || q.transit) return (p.transit && bodyClash(p, q)) || (q.transit && bodyClash(q, p));
     return pathDist(p.curve, q.curve) < (p.wid + q.wid)/2 + CLASH;
   }
-  function colour(P){
+  // [3.22] at a node with lights, movements coming in on different axes never share a window (each colour is one
+  // axis's); sigAxis is the light's own (cityLife.sigAxis)
+  function passAxis(p){ var sg = p.sn != null ? sigAt[p.sn] : null; return sg ? (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0) : 0; }
+  function colour(P, sig){
     var colours = [], widths = [];
     P.forEach(function(p){
+      if(sig){ p.axis = passAxis(p); p.ak = p.sn != null ? p.sn + ":" + p.axis : ""; }
       for(var c = 0; ; c++){
-        if((colours[c] || []).some(function(q){ return clash(p, q); })) continue;
+        if((colours[c] || []).some(function(q){ return clash(p, q) || (sig && q.ak !== p.ak); })) continue;
         (colours[c] = colours[c] || []).push(p); p.colour = c; widths[c] = Math.max(widths[c] || 0, p.occ); return;
       }
     });
     return widths;
   }
-  var need = 0, nodeSlots = {}, slotIds = Object.keys(atNode).sort();
+  // [3.22] platoons. With lights, a car slot carries a platoon of up to r.P cars nose to tail (LP(n) m from the first
+  // nose to the last tail at most, whatever they are), and its box passes are held until the last one is out:
+  // the pass runs on to sClear (the first car's centre when the last car's tail leaves the box), at the box speed,
+  // or, at a light, pulling away from the line to it. A ring keeps a platoon's length (and a stop's run-in) clear
+  // between any two boxes, so a platoon queued at one line never stands in the box behind it.
+  // (only a platoon's first car may be a lorry: the rest are at most vans)
+  function LP(n){ return LMAX + (n - 1)*(SPEC.van.len + GAP); }
+  function accTime(D, v, a){ var d = v*v/(2*a); return D <= d ? Math.sqrt(2*Math.max(0, D)/a) : v/a + (D - d)/v; }
+  // the boxes cars wait at: nodes with lights, and those where car movements take turns (nodeSlots' carSlots, below);
+  // a platoon queued at one never reaches back into the one before. (At a box only buses and trams take turns at, the
+  // time a platoon takes to clear it is measured off its timetable, after: occOf.)
+  var boxNode = {};
+  if(sigOn) Object.keys(atNode).forEach(function(id){
+    var P = atNode[id], C = P.filter(function(p){ return !p.transit; });
+    if(C.some(function(p){ return p.sn != null; }) || colour(C).length > 1) boxNode[id] = 1;
+  });
+  // Planned in rounds (with lights): a box whose windows do not all fit in the cycle (overfull) takes a car off the
+  // platoons of the rings through it, and the plan is made again, until every box fits (or no platoon can shrink).
+  var pcap = {}, need = 0, nodeSlots = {}, slotIds = Object.keys(atNode).sort(), H = 0, HB = 0, overfull = 0, over = {};
+  function planCars(){
+    for(var round = 0; round < 8; round++){
+      over = {};
+      planBoxes();
+      if(!sigOn || !Object.keys(over).length) break;
+      var shrunk = false;
+      Object.keys(over).sort().forEach(function(id){
+        nodeSlots[id].car.forEach(function(p){ var r = p.route; if(r.P > 1 && (pcap[r.id] == null || pcap[r.id] >= r.P)){ pcap[r.id] = r.P - 1; shrunk = true; } });
+      });
+      if(!shrunk) break;
+    }
+  }
+  function planBoxes(){
+  if(sigOn) rings.forEach(function(r){
+    r.sig = r.passes.some(function(p){ return p.sn != null; });
+    var box = r.passes.filter(function(p){ return boxNode[p.node]; }), Lr = r.pl.len, gap = Infinity;
+    for(var i = 0; i < box.length; i++){
+      var a = box[i], b = box[(i + 1) % box.length], g = b.sIn - a.sOut + (i === box.length - 1 ? Lr : 0);
+      gap = Math.min(gap, g);
+    }
+    var n = Math.min(r.sig ? PMAX : PRING, pcap[r.id] != null ? pcap[r.id] : PMAX), fr = SPEC.car.len/2;
+    while(n > 1 && LP(n) - fr + 2 > gap) n--;
+    r.P = n; r.gapMin = gap;
+    r.passes.forEach(function(p){
+      var D = p.sOut - p.sIn + LP(n) - fr;
+      p.sClear = box.indexOf(p) >= 0 ? p.sOut + LP(n) - fr : null;
+      p.sig = p.sn != null;
+      p.occ = (p.sig ? accTime(D, p.v, SPEC.car.acc) : D/p.v) + CLEAR;
+      p.enter = p.sig ? accTime(Math.max(0, LP(n) - SPEC.bike.len), p.v, SPEC.car.acc) : (LP(n) - SPEC.bike.len)/p.v;
+    });
+  });
+  need = 0; nodeSlots = {};
   slotIds.forEach(function(id){
     var P = atNode[id].sort(function(a, b){ return a.key - b.key || (a.transit ? 1 : 0) - (b.transit ? 1 : 0) || a.sIn - b.sIn; });
-    var C = P.filter(function(p){ return !p.transit; }), Tp = P.filter(function(p){ return p.transit; });
+    var C = P.filter(function(p){ return !p.transit; }), Tp = P.filter(function(p){ return p.transit; }), sg = sigOn && P.some(function(p){ return p.sn != null; });
     P.forEach(function(p){ p.slot = null; });
-    var N = {car: C, tr: Tp, widths: colour(C), twidths: colour(Tp)};
+    var N = {car: C, tr: Tp, widths: colour(C, sg), twidths: colour(Tp, sg), sig: sg || null};
     N.sum = N.widths.reduce(function(a, b){ return a + b; }, 0);
     N.tsum = N.twidths.reduce(function(a, b){ return a + b; }, 0);
-    N.carSlots = N.widths.length > 1;
-    N.trSlots = Tp.length > 0 && (N.twidths.length > 1 || Tp.some(function(p){ return C.some(function(q){ return clash(p, q); }); }));
+    N.carSlots = sg ? C.length > 0 : N.widths.length > 1;
+    N.trSlots = Tp.length > 0 && (!!sg || N.twidths.length > 1 || Tp.some(function(p){ return C.some(function(q){ return clash(p, q); }); }));
     // room in every cycle for the widest transit window too, so a bus fits between the car windows
-    if(N.carSlots) need = Math.max(need, N.sum + (N.trSlots ? Math.max.apply(null, N.twidths) : 0));
+    if(N.carSlots && !sg) need = Math.max(need, N.sum + (N.trSlots ? Math.max.apply(null, N.twidths) : 0));
     if(N.carSlots || N.trSlots) nodeSlots[id] = N;
   });
-  var H = clamp(Math.ceil(need*2)/2, H_MIN, H_MAX), HB = REPS*H, overfull = 0;
+  // with lights every window period divides the lights' cycle, which is the long cycle HB (laps are multiples of
+  // it): a node without lights takes the shortest period that holds its windows, a node with lights the cycle
+  function periodFor(w){ for(var i = 0; i < SIG_DIVS.length; i++) if(SIG_DIVS[i] >= w - 1e-9) return SIG_DIVS[i]; return SIG_C; }
+  H = sigOn ? SIG_C : clamp(Math.ceil(need*2)/2, H_MIN, H_MAX); HB = sigOn ? SIG_C : REPS*H; overfull = 0;
   slotIds.forEach(function(id){
     var N = nodeSlots[id];
-    if(!N || !N.carSlots) return;
-    var k = N.sum > H ? H/N.sum : 1, base = h01(seed, hash32(id), 7)*H, off = 0;
-    if(k < 1) overfull++;
-    N.starts = N.widths.map(function(w){ var s = mod(base + off, H); off += w*k; return s; });
-    N.car.forEach(function(p){ p.slot = N.starts[p.colour]; });
+    if(!N) return;
+    if(N.sig){ sigPlace(id, N); return; }
+    if(!N.carSlots) return;
+    var Hn = sigOn ? periodFor(N.sum + (N.trSlots ? Math.max.apply(null, N.twidths) : 0)) : H;
+    var k = N.sum > Hn ? Hn/N.sum : 1, base = h01(seed, hash32(id), 7)*Hn, off = 0;
+    if(k < 1){ overfull++; over[id] = 1; }
+    N.starts = N.widths.map(function(w){ var s = mod(base + off, Hn); off += w*k; return s; });
+    N.car.forEach(function(p){ p.slot = N.starts[p.colour]; p.per = Hn; p.flo = 0; });
   });
+  }
+  // [3.22] a box with lights (a junction, or a cluster of them): every colour is one light's axis's (or goes by no
+  // light: a way into a cluster without one), and each goes in at the first time from SIG_LEAD s into its green
+  // where its window is clear of those placed, early enough for its whole platoon to be in before the amber (else
+  // overfull); one with no light anywhere it is clear. Then each floats as far as the next window, its deadline and
+  // the room its green's buses and trams need (they go in the green too: N.trRange): a platoon that comes up on
+  // green drives straight on.
+  function greenOf(sg, ax){
+    var s = ax ? sg.green[0] + LIGHT.amber + LIGHT.allRed : 0;
+    return {start: mod(num(sg.off, 0) - lo + s, SIG_C), len: sg.green[ax]};
+  }
+  function sigPlace(id, N){
+    N.starts = []; N.flo = []; N.trRange = []; N.twinPre = [];
+    var cols = N.widths.map(function(w, c){ return {c: c, w: w, ent: 0, g: null, P: []}; }), placed = [];
+    N.car.forEach(function(p){
+      var o = cols[p.colour];
+      o.ent = Math.max(o.ent, p.enter || 0); o.P.push(p);
+      if(!o.g && p.sn != null) o.g = greenOf(sigAt[p.sn], p.axis);
+    });
+    // windows only keep apart from those they clash with (a bus going straight on beside the cars may share their time)
+    function against(P){ return placed.filter(function(q){ return P.some(function(p){ return q.P.some(function(x){ return clash(p, x); }); }); }); }
+    function clearOf(Q, t, w){ return Q.every(function(q){ return !ov(mod(t, SIG_C), w, q.s, q.w); }); }
+    function first(Q, from, to, w){ for(var t = from; t <= to + 1e-9; t += 0.25) if(clearOf(Q, t, w)) return t; return null; }
+    function put(o, P, from, to){
+      var Q = against(P), at = first(Q, from, to, o.w);
+      // (no room in its green: the first clear time after it, late; never over a window it clashes with)
+      if(at == null){ overfull++; over[id] = 1; at = first(Q, to, from + SIG_C, o.w); if(at == null) at = from; }
+      o.s = mod(at, SIG_C); o.P = P;
+      placed.push(o);
+      return o;
+    }
+    cols.filter(function(o){ return o.g; }).sort(function(a, b){ return a.g.start - b.g.start || a.c - b.c; }).forEach(function(o){
+      var s0 = o.g.start + SIG_LEAD;
+      o.dl = o.g.len - SIG_LEAD - o.ent - 0.3;            // the latest it may go in, s after s0
+      put(o, o.P, s0, s0 + o.dl);
+    });
+    cols.filter(function(o){ return !o.g; }).forEach(function(o){ var b = h01(seed, hash32(id), 7)*SIG_C; put(o, o.P, b, b + SIG_C - 0.25); });
+    // then the buses and trams: each at the first clear time in its green (N.twinPre; one with no light is placed with
+    // the others, later, where it blocks the fewest cars)
+    N.tr.forEach(function(p){
+      if(N.trRange[p.colour] !== undefined) return;
+      if(p.sn == null){ N.trRange[p.colour] = null; return; }
+      var g = greenOf(sigAt[p.sn], p.axis), P = N.tr.filter(function(x){ return x.colour === p.colour; });
+      N.trRange[p.colour] = [g.start + SIG_LEAD, g.start + g.len - 1];
+      var o = put({w: N.twidths[p.colour] || 0}, P, g.start + SIG_LEAD, g.start + g.len - 1);
+      N.twinPre[p.colour] = [o.s, o.w];
+    });
+    // a car colour floats on as far as its deadline and the next window it clashes with allow
+    cols.forEach(function(o){
+      var F = 0;
+      if(o.g){
+        var into = mod(o.s - o.g.start - SIG_LEAD, SIG_C), nxt = Infinity;
+        against(o.P).forEach(function(q){ var d = mod(q.s - o.s, SIG_C); if(q !== o && d > 1e-6 && d < nxt) nxt = d; });
+        if(into <= o.dl + 1e-6) F = Math.max(0, Math.min(o.dl - into, nxt - o.w));
+      }
+      N.starts[o.c] = o.s; N.flo[o.c] = F;
+    });
+    N.car.forEach(function(p){ p.slot = N.starts[p.colour]; p.per = SIG_C; p.flo = N.flo[p.colour] || 0; });
+  }
+  // a ring's slots: with lights a cycle apart on a ring through any, else the least common multiple of its windows'
+  // periods (every slot meets every window); HB/Hr residues for the transit windows to block
+  function ringSlots(){
+    rings.forEach(function(r){
+      if(!sigOn){ r.Hr = H; r.R = REPS; r.P = 1; return; }
+      var q = 0;
+      r.passes.forEach(function(p){ if(p.slot != null && p.per){ var k = Math.round(p.per*2); q = q ? q*k/gcdI(q, k) : k; } });
+      r.Hr = r.sig ? SIG_C : q ? Math.min(SIG_C, q/2) : 10;
+      r.R = Math.max(1, Math.round(HB/r.Hr));
+    });
+  }
+  function gcdI(a, b){ while(b){ var t = a % b; a = b; b = t; } return a; }
 
   // ---- profiles ----
   // events along the route (turns and stops), from the first slotted turn; slack before a slotted turn
   // is waited out at the stop before it when there is one, else on the road (slower, or at the line)
   function profileOf(r, spec, stops, pad){
     var ev = [], cyc = r.kind === "car" ? H : HB;
-    r.passes.forEach(function(p){ ev.push({s: p.sIn, s2: p.sOut, v: p.v, slot: p.slot, pass: p}); });
+    r.passes.forEach(function(p){
+      // [3.22] with lights a car pass runs on until its platoon is out (sClear), and at a light it stops on the line
+      var car = r.kind === "car" && sigOn;
+      ev.push({s: p.sIn, s2: car && p.sClear != null ? p.sClear : p.sOut, v: p.v, slot: p.slot, pass: p, per: car ? p.per : null, flo: car ? p.flo || 0 : 0, sig: car && !!p.sig});
+    });
     (stops || []).forEach(function(st, i){ ev.push({s: st.s, s2: st.s, v: 0, stop: st, idx: i}); });
     (r.cusps || []).forEach(function(c){ ev.push({s: c, s2: c, v: 0, stop: {id: null, s: c}}); });
     if(pad && pad.s != null) ev.push({s: pad.s, s2: pad.s, v: 0, stop: pad.stop = {id: null, s: pad.s, pad: true}});
     ev.sort(function(a, b){ return a.s - b.s || (a.stop ? -1 : 1); });
-    var k0 = 0, i;
-    for(i = 0; i < ev.length; i++) if(ev[i].slot != null){ k0 = i; break; }
+    var k0 = 0, i, Lr = r.pl.len, dbb = r.kind === "car" && sigOn;
+    // (with platoons the lap starts at a slotted turn a platoon can wait at clear of the box behind it, when there is one)
+    for(i = 0; i < ev.length; i++) if(ev[i].slot != null && (!dbb || clearBehind(ev, i, r, Lr))){ k0 = i; break; }
+    if(i === ev.length) for(i = 0; i < ev.length; i++) if(ev[i].slot != null){ k0 = i; break; }
     if(i === ev.length) for(i = 0; i < ev.length; i++) if(ev[i].stop){ k0 = i; break; }
-    var Lr = r.pl.len, s0 = ev[k0].s, order = ev.slice(k0).concat(ev.slice(0, k0).map(function(e){ var c = {}; for(var q in e) c[q] = e[q]; c.s += Lr; c.s2 += Lr; return c; }));
+    var s0 = ev[k0].s, order = ev.slice(k0).concat(ev.slice(0, k0).map(function(e){ var c = {}; for(var q in e) c[q] = e[q]; c.s += Lr; c.s2 += Lr; return c; }));
+    if(dbb) relays(order, r);
     var base = ev[k0].slot != null ? ev[k0].slot : h01(seed, hash32(String(r.id)), r.kind === "car" ? 3 : 5)*cyc;
     var P = new Profile(), hold = null, stopsT = [];
     P.cur.s = s0; P.cur.v = order[0].v;
     for(i = 0; i <= order.length; i++){
       var e = i < order.length ? order[i] : {s: s0 + Lr, v: order[0].v, close: true};
       if(i > 0){
-        var Lm = Math.max(0, e.s - P.cur.s), D = fastest(Lm, P.cur.v, e.v, spec.vmax, spec.acc).T, m = e.close ? HB : cyc;
+        var Lm = Math.max(0, e.s - P.cur.s), D = fastest(Lm, P.cur.v, e.v, spec.vmax, spec.acc).T, m = e.close ? HB : e.per || cyc;
         var target = e.close ? 0 : e.slot != null ? e.slot - base : null;
-        var slack = target != null ? mod(target - (P.cur.t + D), m) : 0;
-        if(slack > m - 1e-6) slack = 0;
+        var slack = target != null ? waitFor(target, P.cur.t + D, m, e.flo) : 0;
         if(e.close && pad && !pad.stop) slack += pad.t;
         if(hold && slack > 0){ P.cur.t += slack; hold.dep += slack; slack = 0; }
-        P.segment(Lm, e.v, D + slack, spec);
+        if(e.relay != null){
+          // [3.22] the wait for a window a little way on, taken here: roll straight through to it, or stop on this
+          // line and go when that gets there on time
+          var tg = order[e.relay], mR = tg.per || cyc, tT = tg.slot - base;
+          if(waitFor(tT, P.cur.t + D + rollTo(order, i, e.relay, e.v, spec), mR, tg.flo) > 0){
+            var D1 = fastest(Lm, P.cur.v, 0, spec.vmax, spec.acc).T;
+            P.segment(Lm, 0, D1 + waitFor(tT - rollTo(order, i, e.relay, 0, spec), P.cur.t + D1, mR, tg.flo), spec);
+          } else P.segment(Lm, e.v, D, spec);
+        } else if(e.sig && slack > 0){
+          // [3.22] red: brake to a stop with the nose on the line, wait for the window (the green), pull away
+          var D0 = fastest(Lm, P.cur.v, 0, spec.vmax, spec.acc).T;
+          P.segment(Lm, 0, D0 + waitFor(target, P.cur.t + D0, m, e.flo), spec);
+        } else P.segment(Lm, e.v, D + slack, spec);
       }
       hold = null;
       if(e.close) break;
@@ -766,16 +993,72 @@ function create(doc, o){
         P.piece(w, 0); hold = rec;
       } else {
         e.pass.tIn = P.cur.t;
-        // through the junction at its speed, from where you are: an earlier pass (or a stop inside it) may already
-        // reach past this one's start, and starting again from e.s would set you back (3.15: no backward jumps)
-        var from = Math.max(P.cur.s, e.s);
-        if(e.s2 > from){ P.cur.v = e.v; P.piece((e.s2 - from)/e.v, 0); }
-        P.cur.s = Math.max(P.cur.s, e.s2);
+        traverse(P, e, spec);
       }
     }
     P.T = P.cur.t; P.L = Lr; P.s0 = s0; P.base = base;
     P.stops = stopsT;
     return P;
+  }
+  // through the junction at its speed, from where you are: an earlier pass (or a stop inside it) may already reach
+  // past this one's start, and starting again from e.s would set you back (3.15: no backward jumps)
+  function traverse(P, e, spec){
+    var from = Math.max(P.cur.s, e.s);
+    if(e.s2 > from){
+      if((e.sig || e.relay != null) && P.cur.v < e.v - 1e-6){
+        // [3.22] off the line: up to the box speed at the car's acceleration, then on at it
+        var a = spec.acc, v0 = P.cur.v, run = (e.v*e.v - v0*v0)/(2*a), Ls = e.s2 - from;
+        if(run >= Ls) P.piece((Math.sqrt(v0*v0 + 2*a*Ls) - v0)/a, a);
+        else { P.piece((e.v - v0)/a, a); P.cur.v = e.v; P.piece((Ls - run)/e.v, 0); }
+      } else { P.cur.v = e.v; P.piece((e.s2 - from)/e.v, 0); }
+    }
+    P.cur.s = Math.max(P.cur.s, e.s2);
+  }
+  // [3.22] Don't block the box. A platoon waiting on event i's line stands back LP(P) m from its nose: where that
+  // reaches into the box behind (one a bus or tram takes its turn through), it waits at that box's line instead
+  // (order[j].relay = i: the first box back it can wait at clear of the one behind, with no window of its own on the
+  // way) and rolls on through to i's window. clearBehind: can a platoon wait at ev[i] clear of the box before it?
+  function boxExit(e){ return e.s + (e.pass.sOut - e.pass.sIn); }
+  function prevBox(order, i, wrapL){
+    for(var k = i - 1; k >= -order.length; k--){
+      var q = order[(k + order.length) % order.length];
+      if(q.pass && nodeSlots[q.pass.node]) return {e: q, exit: boxExit(q) - (k < 0 ? wrapL : 0), k: k};
+    }
+    return null;
+  }
+  function clearBehind(order, i, r, wrapL){
+    var e = order[i], b = prevBox(order, i, wrapL);
+    return !b || b.e === e || e.s + SPEC.car.len/2 - LP(r.P) >= b.exit + 1;
+  }
+  function relays(order, r){
+    for(var i = 1; i < order.length; i++){
+      var e = order[i];
+      if(e.stop || e.slot == null || clearBehind(order, i, r, r.pl.len)) continue;
+      for(var j = i - 1; j >= 1; j--){
+        var q = order[j];
+        if(q.stop || q.slot != null) break;
+        if(!q.pass || !nodeSlots[q.pass.node]) continue;
+        if(clearBehind(order, j, r, r.pl.len)){ if(q.relay == null) q.relay = i; break; }
+      }
+    }
+  }
+  // the time from order[j]'s line (at speed v0) to order[i]'s, straight through as the lap would go
+  function rollTo(order, j, i, v0, spec){
+    var Q = new Profile();
+    Q.cur.s = order[j].s; Q.cur.v = v0;
+    for(var k = j; k < i; k++){
+      traverse(Q, order[k], spec);
+      var nx = order[k + 1], Lm = Math.max(0, nx.s - Q.cur.s);
+      Q.segment(Lm, nx.v, fastest(Lm, Q.cur.v, nx.v, spec.vmax, spec.acc).T, spec);
+    }
+    return Q.cur.t;
+  }
+  // the wait from arriving at arr (lap s) for a window at target, period m; a window that floats flo s takes you
+  // as you come within it
+  function waitFor(target, arr, m, flo){
+    if(flo > 0 && mod(arr - target, m) <= flo + 1e-9) return 0;
+    var w = mod(target - arr, m);
+    return w > m - 1e-6 ? 0 : w;
   }
   // min over the lap of S(t) - S(t - shift): the closest two vehicles shift seconds apart come
   function minGap(P, shift){
@@ -783,13 +1066,29 @@ function create(doc, o){
     for(var t = 0; t < P.T; t += 0.2){ var d = P.S(t, a).s - P.S(t - shift, b).s; if(d < best) best = d; }
     return best;
   }
-  rings.forEach(function(r){ r.prof = profileOf(r, SPEC.car); });
+  // [3.22] with platoons: how long each car pass really holds its box (the first car's nose in to the last car's tail
+  // out, off the timetable), which the buses, trams and emergency runs keep clear of
+  function measureOcc(){ if(sigOn) rings.forEach(function(r){
+    var o = {}, fr = SPEC.car.len/2, T = r.prof.T;
+    r.passes.forEach(function(p){
+      if(p.tIn == null) return;
+      var end = r.prof.S(p.tIn, o).s + (p.sOut - p.sIn) + LP(r.P) - fr, t = 0;
+      while(t < T && r.prof.S(p.tIn + t, o).s < end) t += 0.1;
+      p.occ = Math.max(p.occ, t + CLEAR);
+    });
+  }); }
 
   // ---- transit windows: per node, each colour placed where it blocks the fewest ring residues ----
   // Colours go widest first, each on a half-second grid of the long cycle, never over a window
   // already placed at the node; a window in a gap between the clashing car windows costs nothing.
   function ov(a, la, b, lb){ return mod(b - a, HB) < la || mod(a - b, HB) < lb; }
-  var FULL = (1 << REPS) - 1;
+  // the residues of ring h[0] (slots Hr apart, R of them in HB) whose car would meet window [s0, s0 + w]
+  function resHits(h, s0, w, add){
+    var R = rings[h[0]].R, Hr = rings[h[0]].Hr;
+    for(var rho = 0; rho < R; rho++) if(ov(mod(h[1] + rho*Hr, HB), h[2], s0, w)) add[h[0]] = (add[h[0]] || 0) | (1 << rho);
+  }
+  function placeTransit(){
+  rings.forEach(function(r){ r.blocked = 0; });
   slotIds.forEach(function(id){
     var N = nodeSlots[id];
     if(!N || !N.trSlots) return;
@@ -802,26 +1101,31 @@ function create(doc, o){
     });
     var order = N.twidths.map(function(w, c){ return c; }).sort(function(a, b){ return N.twidths[b] - N.twidths[a] || a - b; });
     order.forEach(function(c){
-      var w = N.twidths[c]*scale, best = null, bestC = Infinity, bestAdd = null;
+      // [3.22] at a light, only where it goes in on its own axis's green
+      var w = N.twidths[c]*scale, best = null, bestC = Infinity, bestAdd = null, rg = N.trRange && N.trRange[c], pre = N.twinPre && N.twinPre[c];
+      if(pre){
+        bestAdd = {};
+        hits[c].forEach(function(h){ resHits(h, pre[0], w, bestAdd); });
+        Object.keys(bestAdd).forEach(function(rid){ rings[rid].blocked |= bestAdd[rid]; });
+        win[c] = [pre[0], w]; placed.push(win[c]);
+        return;
+      }
       for(var j = 0, J = Math.ceil(HB*2); j < J; j++){
         var s0 = mod(rot + j/2, HB), cost = 0, add = {};
+        if(rg && mod(s0 - rg[0], HB) > rg[1] - rg[0]) continue;
         if(scale >= 1 && placed.some(function(q){ return ov(s0, w, q[0], q[1]); })) continue;
-        hits[c].forEach(function(h){
-          for(var rho = 0; rho < REPS; rho++) if(ov(mod(h[1] + rho*H, HB), h[2], s0, w)) add[h[0]] = (add[h[0]] || 0) | (1 << rho);
-        });
+        hits[c].forEach(function(h){ resHits(h, s0, w, add); });
         Object.keys(add).forEach(function(rid){
           var was = rings[rid].blocked, now = was | add[rid];
-          if(now !== was) cost += now === FULL ? 100 : 1;
+          if(now !== was) cost += now === (1 << rings[rid].R) - 1 ? 100 : 1;
         });
         if(cost < bestC){ bestC = cost; best = s0; bestAdd = add; }
       }
       if(best == null){
         // no room left in the cycle (overfull): straight after the last window
         var q = placed[placed.length - 1];
-        best = q ? mod(q[0] + q[1], HB) : rot; bestAdd = {};
-        hits[c].forEach(function(h){
-          for(var rho = 0; rho < REPS; rho++) if(ov(mod(h[1] + rho*H, HB), h[2], best, w)) bestAdd[h[0]] = (bestAdd[h[0]] || 0) | (1 << rho);
-        });
+        best = rg ? mod(rg[0], HB) : q ? mod(q[0] + q[1], HB) : rot; bestAdd = {};
+        hits[c].forEach(function(h){ resHits(h, best, w, bestAdd); });
       }
       Object.keys(bestAdd).forEach(function(rid){ rings[rid].blocked |= bestAdd[rid]; });
       win[c] = [best, w]; placed.push(win[c]);
@@ -829,24 +1133,44 @@ function create(doc, o){
     N.tr.forEach(function(tp){ tp.slot = win[tp.colour][0]; });
     N.twin = win;
   });
+  }
+  // The plan; with lights, again with a car off the platoons of a ring the buses and trams would otherwise shut out
+  // altogether (a platoon queued back over the box they turn through, every cycle), until none is
+  for(var attempt = 0; attempt < 6; attempt++){
+    planCars(); ringSlots();
+    rings.forEach(function(r){ r.prof = profileOf(r, SPEC.car); });
+    measureOcc(); placeTransit();
+    if(!sigOn) break;
+    var cut = false;
+    rings.forEach(function(r){ if(r.blocked === (1 << r.R) - 1 && r.P > 1){ pcap[r.id] = r.P - 1; cut = true; } });
+    if(!cut) break;
+  }
 
   // ---- cars in their slots, transit vehicles a headway apart ----
+  // [3.22] with lights a slot holds a platoon: place j of slot i holds a car when its own hash is under the density
+  // times FILL[j] (place 0 is the slot's car of old); the cars of a platoon close up nose to tail behind the first
+  // one out (at()), so a lap's missing cars leave no holes
   var cars = [], totalSlots = 0;
   rings.forEach(function(r){
-    var m = Math.round(r.prof.T/H), G = SPEC.car.len + GAP, k = 1, cand = [], last = -Infinity;
-    while(k < m && minGap(r.prof, k*H) < G) k++;
-    r.k = k; r.m = m; r.cars = [];
+    var Hr = r.Hr, Pn = r.P || 1, m = Math.round(r.prof.T/Hr), G = sigOn ? LP(Pn) + GAP : SPEC.car.len + GAP, k = 1, cand = [], last = -Infinity;
+    while(k < m && minGap(r.prof, k*Hr) < G) k++;
+    r.k = k; r.m = m; r.cars = []; r.leads = [];
     if(r.pl.len < 2*G) return;
     for(var i = 0; i < m; i++){
-      if((r.blocked >> (i % REPS)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k)) continue;
+      if((r.blocked >> (i % r.R)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k)) continue;
       cand.push(i); last = i;
     }
     cand.forEach(function(i){
       totalSlots++;
-      if(h01(seed, r.id*977 + 11, i) >= dens) return;
-      var c = {id: "c" + r.id + "." + i, ring: r, kind: "car", shift: i*H, paint: Math.floor(h01(seed, r.id, i*31 + 5)*PAINT.length),
-               slot: i, hv: h01(seed, r.id*977 + 11, i), ut: h01(seed, r.id*613 + 29, i)};
-      r.cars.push(c); cars.push(c);
+      var lead = null;
+      for(var j = 0; j < Pn; j++){
+        var fill = sigOn ? FILL[Math.min(j, FILL.length - 1)] : 1, hv = h01(seed, r.id*977 + 11 + 7*j, i);
+        if(hv >= dens*fill) continue;
+        var c = {id: "c" + r.id + "." + i + (j ? "." + j : ""), ring: r, kind: "car", shift: i*Hr, paint: Math.floor(h01(seed, r.id, i*31 + 5 + 7919*j)*PAINT.length),
+                 slot: i, fol: j, fill: fill, hv: hv, ut: h01(seed, r.id*613 + 29 + 7*j, i)};
+        r.cars.push(c); cars.push(c);
+        if(!lead){ lead = c; r.leads.push(c); }
+      }
     });
   });
 
@@ -860,9 +1184,7 @@ function create(doc, o){
   // window and every bus's timetable). The type is pick(mix(the district group where the car is at the ring's base
   // time, the ring's kind, the hour), ut): fixed per lap, so a car changes only out of sight at the lap start.
   // Everything is per lap, memoised on the car, and a pure function of (doc, tier, seed, o.local, the clock).
-  var CL = o.life === false ? null : HQV.cityLife, WQ = HQV.world, LW = o.W || (doc.districts && doc.edges && doc.edges.length && doc.edges[0].pts ? doc : null);
   var life = !!(CL && CL.demand && CL.mix && CL.pick);
-  var localOf = typeof o.local === "function" ? o.local : (function(off){ return function(ms){ return ms + off; }; })(num(o.local, 0));
   var closedFn = typeof o.closed === "function" ? o.closed : life && LW && CL.closed ? function(ms){ return CL.closed(LW, ms); } : null;
   var closedMemo = {}, closedKeys = [];
   // (by the minute, floored: the events start and end on whole minutes, so a time is in one exactly when its minute is)
@@ -900,9 +1222,14 @@ function create(doc, o){
       // each car's room: the closest its neighbours (a slot ahead and behind, of every car the slots hold) come
       var gaps = {}, n = r.cars.length, q = {};
       function gapTo(d){ d = mod(d, r.m) || r.m; if(gaps[d] == null) gaps[d] = d >= r.m ? r.pl.len : minGap(r.prof, d*H); return gaps[d]; }
+      var prev = null;
       r.cars.forEach(function(c, j){
-        var ahead = r.cars[(j + n - 1) % n], behind = r.cars[(j + 1) % n];
-        c.room = n < 2 ? r.pl.len : Math.min(gapTo(c.slot - ahead.slot), gapTo(behind.slot - c.slot));
+        // [3.22] a platoon's cars close up by their own lengths (at()) and its slots keep the longest platoon apart
+        if(sigOn){ c.room = Infinity; if(prev && prev.slot === c.slot){ c.grp = prev.grp; return; } prev = c; }
+        else {
+          var ahead = r.cars[(j + n - 1) % n], behind = r.cars[(j + 1) % n];
+          c.room = n < 2 ? r.pl.len : Math.min(gapTo(c.slot - ahead.slot), gapTo(behind.slot - c.slot));
+        }
         r.prof.S(-c.shift, q);
         var sm = mod(q.s, r.pl.len), p = ringPose(r, sm, SPEC.car.wb, {}), li = 0;
         while(li < r.ranges.length - 1 && r.ranges[li][1] < sm) li++;
@@ -930,10 +1257,10 @@ function create(doc, o){
     if(c.st && c.st.k === k) return c.st;
     if(!life) return (c.st = {k: k, show: true, type: "car", hour: null});
     var t0 = r.prof.base + c.shift + k*r.prof.T, h = CL.hourOf ? CL.hourOf(localOf(t0*1000)) : mod(localOf(t0*1000)/36e5, 24);
-    var show = c.hv < dens*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
+    var show = c.hv < dens*(c.fill || 1)*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
     var type = CL.pick(CL.mix(c.grp || "home", r.kindL, h), c.ut);
     if(!SPEC[type] || TYPES.indexOf(type) < 0) type = "car";
-    if(type === "lorry" && !fitsType(c, "lorry")) type = "van";
+    if(type === "lorry" && (!fitsType(c, "lorry") || (sigOn && c.fol > 0))) type = "van";
     if(type === "van" && !fitsType(c, "van")) type = "car";
     return (c.st = {k: k, show: show, type: type, hour: h});
   }
@@ -1224,7 +1551,7 @@ function create(doc, o){
     for(var moved = true; moved && t <= t1; ){
       moved = false;
       p.against.forEach(function(q){
-        var r = q.route, vs = r.kind === "car" ? r.cars : r.vehicles, T = r.prof.T;
+        var r = q.route, vs = r.kind === "car" ? r.leads || r.cars : r.vehicles, T = r.prof.T;   // (a platoon's box time is its slot's)
         vs.forEach(function(veh){
           var a = r.prof.base + veh.shift + q.tIn, k = Math.ceil((t - M - q.occ - a)/T), s0 = a + k*T;
           if(s0 < t + p.occ + M && s0 + q.occ + M > t + 1e-6){ t = s0 + q.occ + M; moved = true; }
@@ -1345,13 +1672,18 @@ function create(doc, o){
     var evs = activeIncidents(t).map(function(I){ return evPose(I, t, {id: I.id, kind: I.kind}); });
     function near(b){ return cx >= b[0] - rad - 30 && cx <= b[2] + rad + 30 && cz >= b[1] - rad - 30 && cz <= b[3] + rad + 30; }
     function run(r, list, spec){
-      var anyLag = false, st = [];
+      var anyLag = false, st = [], pl = null;
       if(!near(r.box) && !hasLag(list)) return;
       list.forEach(function(veh){
         // [3.21] a car out on this lap (city life), as its type: a long one sits back (nose where a car's is)
         var cs = veh.kind === "car" ? carState(veh, t) : null, vs = cs ? SPEC[cs.type] : spec, back = cs ? (vs.len - spec.len)/2 : 0;
         if(cs && !cs.show){ delete lag[veh.id]; return; }
-        var q = r.prof.S(t - r.prof.base - veh.shift, {}), sBase = q.s, l0 = lag[veh.id] || 0, l = l0;
+        var same = sigOn && cs && pl && pl.slot === veh.slot, q = same ? pl.q : r.prof.S(t - r.prof.base - veh.shift, {}), sBase = q.s, l0 = lag[veh.id] || 0, l = l0;
+        // [3.22] a platoon: the first car out on its slot's timetable, each next one nose to tail behind the one before
+        if(sigOn && cs){
+          if(same){ sBase = pl.c - (pl.len + vs.len)/2 - GAP; back = 0; }
+          pl = {slot: veh.slot, q: q, c: sBase - back, len: vs.len};
+        }
         if(obs || l > 0){
           var gapAhead = obs ? obstacleNeed(r, sBase - back - l, q.v, vs.wid, vs.len, obs) : null;
           // brake smoothly to a stop 1.2 m short of it; once clear, ease back onto the timetable
@@ -1418,6 +1750,32 @@ function create(doc, o){
     return out;
   }
 
+  /* ---------- [3.22] the light ahead ---------- */
+  // lightAt(x, z, heading, ms) -> {state, sig, dist} for the nearest light ahead of someone at (x, z) going along
+  // heading (radians, atan2(dx, dz)): an arm coming in that way (within ~45 degrees) whose stop line is at most LOOK_SIG
+  // m in front, or behind but still inside its junction (dist < 0 once past the line), and whose incoming half of the
+  // road they are on or beside; state is the light's for that heading at ms (the clock at() takes), else null.
+  var LOOK_SIG = 40, sigList = Object.keys(SIGS).map(function(k){ return SIGS[k]; }).filter(function(sg){ return sg && sg.arms && sg.green; });
+  function lightAt(x, z, heading, ms){
+    x = num(x, NaN); z = num(z, NaN); heading = num(heading, NaN);
+    if(!isFinite(x) || !isFinite(z) || !isFinite(heading) || !CL || !CL.signalAt) return null;
+    var best = null, bd = Infinity;
+    sigList.forEach(function(sg){
+      if(Math.abs(sg.x - x) > LOOK_SIG + 40 || Math.abs(sg.z - z) > LOOK_SIG + 40) return;
+      sg.arms.forEach(function(a){
+        if(Math.cos(a.heading - heading) < 0.7) return;
+        var ax = Math.sin(a.heading), az = Math.cos(a.heading), dx = a.stopX - x, dz = a.stopZ - z;
+        var along = dx*ax + dz*az, lat = Math.abs(dx*az - dz*ax);
+        if(along > LOOK_SIG || along < -2*num(a.stop, sg.r) || lat > num(a.half, 3)/2 + 2.5) return;
+        if(along < bd){ bd = along; best = {sig: sg, dist: along}; }
+      });
+    });
+    if(!best) return null;
+    var t = ms != null ? num(ms, 0) : lastT != null ? lastT*1000 : 0;
+    best.state = CL.signalAt(best.sig, localOf(t), heading);
+    return best;
+  }
+
   /* ---------- riding ---------- */
   function lineStops(){
     var map = {};
@@ -1482,18 +1840,19 @@ function create(doc, o){
   }
 
   return {
-    tier: tier, grow: grow, H: H, at: at, sirens: sirens, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
+    tier: tier, grow: grow, H: H, at: at, lightAt: lightAt, signals: function(){ return sigList.slice(); }, sirens: sirens, stopsNear: stopsNear, nextArrival: nextArrival, rideTo: rideTo,
     onFare: function(fn){ fareHook = typeof fn === "function" ? fn : null; },
     incidents: function(timeMs){ return activeIncidents(num(timeMs, 0)/1000).map(function(I){ return {id: I.id, kind: I.kind, station: I.station, node: I.node, start: Math.round(I.start*1000), end: Math.round(I.end*1000)}; }); },
     lines: function(){ return lines.map(function(r){ return {id: r.id, kind: r.kind, tier: r.tier, lap: r.prof.T, headway: r.headway, vehicles: r.vehicles.length,
                                                               stops: r.prof.stops.map(function(st){ return {id: st.id, arr: st.arr, dep: st.dep}; })}; }); },
     info: function(){ return {H: H, rings: rings.length, cars: cars.length, slots: totalSlots, lines: lines.length, overfull: overfull, errors: errors.slice(), dropped: dropped,
-                              slotted: Object.keys(nodeSlots).length, life: life}; },
+                              slotted: Object.keys(nodeSlots).length, life: life, lights: Object.keys(sigAt).length,
+                              platoons: sigOn ? rings.reduce(function(a, r){ return a + (r.leads ? r.leads.length : 0); }, 0) : null}; },
     // [3.21] every car's lap state at timeMs (out or not, its type, the local hour its lap started), and what is closed
     cars: function(timeMs){ var t = num(timeMs, 0)/1000; return cars.map(function(c){ var q = carState(c, t); return {id: c.id, ring: c.ring.id, show: q.show, type: q.type, hour: q.hour, group: c.grp || null}; }); },
     closed: function(timeMs){ return closedFn ? closedAt(localOf(num(timeMs, 0))) : {}; },
     layout: layout, doc: doc, seed: seed,
-    _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; },
+    _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; }, sigAt: sigAt,
         sites: sites, stopIndex: stopIndex, partPose: partPose, sections: sections, mod: mod,
         incidentsAt: function(t){ return activeIncidents(num(t, 0)); }}
   };

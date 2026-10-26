@@ -434,6 +434,8 @@ and feature guide.
   12,000 characters, and its time) goes only to the one player racing you, at most 6 a minute, and the Arena relays
   it without storing it. None of it reads transcripts, sessions, paths or names; jobs, rep, races and finds stay in
   this browser.
+- **3.21.1 — The City waits for a slow machine.** Entering the 3D City now allows 45 s to build it (was 15 s) before
+  falling back to the classic City, so a slower computer gets the living City instead of the fallback.
 - **3.21.0 — A city that lives.** Built around the planned City Gen v4, never into it: everything reads the finished
   world through one adapter (games/citylife.js), so it works on today's worlds and on v4's the day it ships. Every
   building has a use (homes, offices, warehouses, workshops) and a ground floor: shopfronts with awnings and signs,

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.21.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.21.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,8 @@ and feature guide.
 
 ## Changelog
 
+- **3.21.1 — The City waits for a slow machine.** Entering the 3D City now allows 45 s to build it (was 15 s) before
+  falling back to the classic City, so a slower computer gets the living City instead of the fallback.
 - **3.21.0 — A city that lives.** Built around the planned City Gen v4, never into it: everything reads the finished
   world through one adapter (games/citylife.js), so it works on today's worlds and on v4's the day it ships. Every
   building has a use (homes, offices, warehouses, workshops) and a ground floor: shopfronts with awnings and signs,

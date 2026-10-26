@@ -127,7 +127,7 @@ var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 1
 // its check's step; the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green comes on, the window
 // periods (each divides the next, and the cycle), the most cars in a platoon (on a ring through lights; elsewhere),
 // the share of a platoon's places j that hold a car
-var SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65];
+var SIG_BACK = 1.5, SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65];
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */
@@ -456,8 +456,9 @@ function create(doc, o){
     edges.forEach(function(E){
       var a = String(E.a), b = String(E.b);
       if(!(E.cars || E.tram || E.bus[0] || E.bus[1]) || !boxy[a] || !boxy[b]) return;
-      // (two lights a road apart stay two boxes, each car stopping at each, unless the lights make them one: links)
-      if(!links[E.id] && (E.len - trimOf(E.a, E) - trimOf(E.b, E) >= MERGE || (sigAt[a] && sigAt[b]))) return;
+      // (a road with a light's head on it stays between two boxes, each car stopping at each line, unless the lights
+      // make the two one junction: links)
+      if(!links[E.id] && (E.len - trimOf(E.a, E) - trimOf(E.b, E) >= MERGE || (sigStop[a] && sigStop[a][E.id] != null) || (sigStop[b] && sigStop[b][E.id] != null))) return;
       var ra = root(a), rb = root(b);
       if(ra === rb) return;
       if((+ra) - (+rb) < 0 || ((+ra) === (+rb) && ra < rb)) par[rb] = ra; else par[ra] = rb;
@@ -665,6 +666,8 @@ function create(doc, o){
       st.s += (k % 2 ? -1 : 1)*B*Math.ceil(k/2);
       if(rg) st.s = rg[1] - rg[0] > 2*h ? clamp(st.s, rg[0] + h, rg[1] - h) : (rg[0] + rg[1])/2;
       st.s = clamp(st.s, 0, r.pl.len);
+      // [3.22] with lights, never with its nose over a box's line (a red light's), wherever the berth fell
+      if(sigOn) r.passes.forEach(function(p){ if(st.s > p.sIn - 1 && st.s < p.sOut + 1) st.s = Math.max(0, p.sIn - 1); });
     });
     r.stops.sort(function(a, b){ return a.s - b.s; });
   });
@@ -849,14 +852,15 @@ function create(doc, o){
       gap = Math.min(gap, g);
     }
     var n = Math.min(r.sig ? PMAX : PRING, pcap[r.id] != null ? pcap[r.id] : PMAX), fr = SPEC.car.len/2;
-    while(n > 1 && LP(n) - fr + 2 > gap) n--;
+    while(n > 1 && LP(n) - fr + 2 + SIG_BACK > gap) n--;
     r.P = n; r.gapMin = gap;
     r.passes.forEach(function(p){
       var D = p.sOut - p.sIn + LP(n) - fr;
       p.sClear = box.indexOf(p) >= 0 ? p.sOut + LP(n) - fr : null;
       p.sig = p.sn != null;
-      p.occ = (p.sig ? accTime(D, p.v, SPEC.car.acc) : D/p.v) + CLEAR;
-      p.enter = p.sig ? accTime(Math.max(0, LP(n) - SPEC.bike.len), p.v, SPEC.car.acc) : (LP(n) - SPEC.bike.len)/p.v;
+      // (from a stop SIG_BACK m short of the line)
+      p.occ = (p.sig ? accTime(D + SIG_BACK, p.v, SPEC.car.acc) : D/p.v) + CLEAR;
+      p.enter = p.sig ? accTime(Math.max(0, LP(n) - SPEC.bike.len) + SIG_BACK, p.v, SPEC.car.acc) : (LP(n) - SPEC.bike.len)/p.v;
     });
   });
   need = 0; nodeSlots = {};
@@ -985,7 +989,7 @@ function create(doc, o){
     var base = ev[k0].slot != null ? ev[k0].slot : h01(seed, hash32(String(r.id)), r.kind === "car" ? 3 : 5)*cyc;
     var P = new Profile(), hold = null, stopsT = [];
     // (a lap that starts at a light starts from the line: every lap ends stopped there, waiting for its green)
-    P.cur.s = s0; P.cur.v = order[0].sig ? 0 : order[0].v;
+    P.cur.s = order[0].sig ? s0 - SIG_BACK : s0; P.cur.v = order[0].sig ? 0 : order[0].v;
     for(i = 0; i <= order.length; i++){
       var e = i < order.length ? order[i] : {s: s0 + Lr, v: order[0].v, close: true, sig: order[0].sig};
       if(i > 0){
@@ -999,13 +1003,14 @@ function create(doc, o){
           // line and go when that gets there on time
           var tg = order[e.relay], mR = tg.per || cyc, tT = tg.slot - base;
           if(waitFor(tT, P.cur.t + D + rollTo(order, i, e.relay, e.v, spec), mR, tg.flo) > SIG_EPS){
-            var D1 = fastest(Lm, P.cur.v, 0, spec.vmax, spec.acc).T;
-            P.segment(Lm, 0, D1 + waitFor(tT - rollTo(order, i, e.relay, 0, spec), P.cur.t + D1, mR, tg.flo), spec);
+            var L1 = Math.max(0, Lm - SIG_BACK), D1 = fastest(L1, P.cur.v, 0, spec.vmax, spec.acc).T;
+            P.segment(L1, 0, D1 + waitFor(tT - rollTo(order, i, e.relay, 0, spec, SIG_BACK), P.cur.t + D1, mR, tg.flo), spec);
           } else P.segment(Lm, e.v, D, spec);
         } else if(e.sig && (slack > SIG_EPS || e.close)){
           // [3.22] red: brake to a stop with the nose on the line, wait for the window (the green), pull away
-          var D0 = fastest(Lm, P.cur.v, 0, spec.vmax, spec.acc).T;
-          P.segment(Lm, 0, D0 + waitFor(target, P.cur.t + D0, m, e.flo), spec);
+          // (SIG_BACK m short of it: a long body swinging out of the box beside never reaches the one waiting)
+          var L0 = Math.max(0, Lm - SIG_BACK), D0 = fastest(L0, P.cur.v, 0, spec.vmax, spec.acc).T;
+          P.segment(L0, 0, D0 + waitFor(target, P.cur.t + D0, m, e.flo), spec);
         } else P.segment(Lm, e.v, D + slack, spec);
       }
       hold = null;
@@ -1027,7 +1032,7 @@ function create(doc, o){
   // through the junction at its speed, from where you are: an earlier pass (or a stop inside it) may already reach
   // past this one's start, and starting again from e.s would set you back (3.15: no backward jumps)
   function traverse(P, e, spec){
-    var from = Math.max(P.cur.s, e.s);
+    var from = (e.sig || e.relay != null) && P.cur.v < 1e-6 && P.cur.s < e.s ? P.cur.s : Math.max(P.cur.s, e.s);
     if(e.s2 > from){
       if((e.sig || e.relay != null) && P.cur.v < e.v - 1e-6){
         // [3.22] off the line: up to the box speed at the car's acceleration, then on at it
@@ -1043,16 +1048,24 @@ function create(doc, o){
   // (order[j].relay = i: the first box back it can wait at clear of the one behind, with no window of its own on the
   // way) and rolls on through to i's window. clearBehind: can a platoon wait at ev[i] clear of the box before it?
   function boxExit(e){ return e.s + (e.pass.sOut - e.pass.sIn); }
+  // a box nobody stands in: one where movements take turns, or that another route drives through too (a long body
+  // turning there sweeps wider than the clash test's car)
+  function standOff(id){
+    if(nodeSlots[id]) return true;
+    var P = atNode[id] || [], r0 = P.length ? P[0].route : null;
+    for(var i = 1; i < P.length; i++) if(P[i].route !== r0) return true;
+    return false;
+  }
   function prevBox(order, i, wrapL){
     for(var k = i - 1; k >= -order.length; k--){
       var q = order[(k + order.length) % order.length];
-      if(q.pass && nodeSlots[q.pass.node]) return {e: q, exit: boxExit(q) - (k < 0 ? wrapL : 0), k: k};
+      if(q.pass && standOff(q.pass.node)) return {e: q, exit: boxExit(q) - (k < 0 ? wrapL : 0), k: k};
     }
     return null;
   }
   function clearBehind(order, i, r, wrapL){
     var e = order[i], b = prevBox(order, i, wrapL);
-    return !b || b.e === e || e.s + SPEC.car.len/2 - LP(r.P) >= b.exit + 1;
+    return !b || b.e === e || e.s + SPEC.car.len/2 - LP(r.P) - SIG_BACK >= b.exit + 1;
   }
   function relays(order, r){
     for(var i = 1; i < order.length; i++){
@@ -1061,15 +1074,15 @@ function create(doc, o){
       for(var j = i - 1; j >= 1; j--){
         var q = order[j];
         if(q.stop || q.slot != null) break;
-        if(!q.pass || !nodeSlots[q.pass.node]) continue;
+        if(!q.pass || !standOff(q.pass.node)) continue;
         if(clearBehind(order, j, r, r.pl.len)){ if(q.relay == null) q.relay = i; break; }
       }
     }
   }
   // the time from order[j]'s line (at speed v0) to order[i]'s, straight through as the lap would go
-  function rollTo(order, j, i, v0, spec){
+  function rollTo(order, j, i, v0, spec, back){
     var Q = new Profile();
-    Q.cur.s = order[j].s; Q.cur.v = v0;
+    Q.cur.s = order[j].s - (back || 0); Q.cur.v = v0;
     for(var k = j; k < i; k++){
       traverse(Q, order[k], spec);
       var nx = order[k + 1], Lm = Math.max(0, nx.s - Q.cur.s);
@@ -1092,7 +1105,8 @@ function create(doc, o){
   function queueOk(r, k, Pn){
     var P = r.prof, Lr = r.pl.len, fr = SPEC.car.len/2, ext = LP(Pn), n = Math.floor(Math.round(P.T/r.Hr)/k), o = {}, x = [], y = [];
     if(n < 2) return true;
-    var B = r.passes.filter(function(p){ return nodeSlots[p.node]; }).map(function(p){ return [p.sIn + fr, p.sOut]; });
+    if(n*(ext + GAP) > Lr) return false;                 // (the ring holds them all, queued)
+    var B = r.passes.filter(function(p){ return standOff(p.node); }).map(function(p){ return [p.sIn + fr, p.sOut]; });
     function inBox(c){
       var a = c + fr - ext, b = c + fr;
       for(var i = 0; i < B.length; i++) for(var w = -1; w <= 1; w++){ var lo = B[i][0] + w*Lr, hi = B[i][1] + w*Lr; if(b > lo && a < hi) return true; }
@@ -1100,11 +1114,17 @@ function create(doc, o){
     }
     for(var t = 0; t < P.T; t += QSTEP){
       for(var j = 0; j < n; j++){ x[j] = P.S(t - j*k*r.Hr, o).s; y[j] = x[j]; }
+      if(x[0] - x[n - 1] >= Lr - ext - GAP) return false;   // (slot order is road order: none a lap on)
       for(var pass = 0; pass < 2; pass++) for(j = 0; j < n; j++){
         var ahead = j ? y[j - 1] : y[n - 1] + Lr*Math.round((x[0] - y[n - 1])/Lr + 0.5);
         y[j] = smin(x[j], ahead - ext - GAP);
       }
-      for(j = 0; j < n; j++) if(y[j] < x[j] - 0.05 && inBox(y[j])) return false;
+      for(j = 0; j < n; j++){
+        if(y[j] < x[j] - 0.05 && inBox(y[j])) return false;
+        // (and the queue closes up: a ring too short for them all is not)
+        var ah = j ? y[j - 1] : y[n - 1] + Lr*Math.round((x[0] - y[n - 1])/Lr + 0.5);
+        if(ah - y[j] < ext + GAP - 0.05) return false;
+      }
     }
     return true;
   }
@@ -1190,7 +1210,9 @@ function create(doc, o){
     measureOcc(); placeTransit();
     if(!sigOn) break;
     var cut = false;
-    rings.forEach(function(r){ if(r.blocked === (1 << r.R) - 1 && r.P > 1){ pcap[r.id] = r.P - 1; cut = true; } });
+    rings.forEach(function(r){
+      if(r.blocked === (1 << r.R) - 1 && r.P > 1){ pcap[r.id] = r.P - 1; cut = true; }
+    });
     if(!cut) break;
   }
 
@@ -1288,6 +1310,9 @@ function create(doc, o){
   function fitsType(c, type){
     var r = c.ring, L0 = SPEC[type].len;
     if(type === "lorry" && (r.uturn || (r.kindL !== "main" && r.kindL !== "fast"))) return false;
+    // [3.22] nor where it turns through a junction others drive (and queue) through without taking turns: its long body
+    // swings wider than the car the clash test keeps apart
+    if(type === "lorry" && sigOn && r.passes.some(function(p){ return p.turn && !nodeSlots[p.node] && standOff(p.node); })) return false;
     // nose-aligned, so it reaches back (L0 - car.len)/2 further: room for it and the longest neighbour, both shifted
     return !LONG[type] || c.room >= (L0 + LMAX)/2 + GAP + (LMAX - SPEC.car.len)/2;
   }

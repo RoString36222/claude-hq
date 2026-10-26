@@ -609,6 +609,7 @@ function parked(W){
         var u = lot ? landUse(W)[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name);
         if(h >= (PARK_FILL[g] != null ? PARK_FILL[g] : 0.4)) return;
         if(F.stopDist(x, z) < 14) return;
+        for(var sid in SG) if(Math.hypot(SG[sid].x - x, SG[sid].z - z) < SG[sid].r + 4) return;     // (another street's light)
         // a door or a loading bay: its kerb kept clear
         if(lot && lot.door && Math.hypot(cm(lot.door[0]) - x, cm(lot.door[2]) - z) < cm(e.width)/2 + 5) return;
         // wholly on this street's carriageway: both ends and the middle

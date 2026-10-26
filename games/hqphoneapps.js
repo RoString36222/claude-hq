@@ -14,7 +14,8 @@
  *                 station for its board, tap a vehicle to Track it (host.track), chips, +/- zoom, pinch, wheel, arrow
  *                 keys pan, and a text list of every line and station for screen readers
  *   achievements  host.ride.achievements.list() with progress bars, and the Claude Cabs driver score, rating and fares
- *                 (HQV.hqCabs.driverStats) when present
+ *                 (HQV.hqCabs.driverStats) when present; plus every HQV.hqAchSources function's list (local:
+ *                 city play's jobs, games/playjobs.js)
  *   notes         patch notes from /games/patchnotes.json (local), newest first, the newest expanded
  *   settings      transit voice, text-only announcements, 12/24 h clock, default cab class (HQV.hqPhone.prefs); the
  *                 SMS / Nearby / Calls opt-ins through host.social.enabled() / setEnabled() with "what is shared"
@@ -956,6 +957,7 @@ function renderAchievements(el, host){
   var root = mk("div", "hp-app", el);
   var R = rideOfHost(host), list = [];
   try { list = (R && R.achievements && R.achievements.list()) || []; } catch(e){ list = []; }
+  (HQV.hqAchSources || []).forEach(function(src){ try { var x = src(); if(Array.isArray(x)) list = list.concat(x); } catch(e){} });   // [3.22] city play's own (local)
   var stats = null;
   try { if(HQV.hqCabs && typeof HQV.hqCabs.driverStats === "function") stats = HQV.hqCabs.driverStats(); } catch(e){ stats = null; }
   var m = achModel(list, stats);

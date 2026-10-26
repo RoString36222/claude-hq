@@ -210,7 +210,7 @@ class GrenadeWiring(unittest.TestCase):
         self.assertIn('var gr = hqNetCan("grenade") && HQ3D.inst.grenadeNet ? HQ3D.inst.grenadeNet() : null;', self.ui)
         self.assertIn("msg.gn=gr.gn.slice(0,4)", self.ui)
         self.assertIn("msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join", self.ui)
-        self.assertIn('"hqstunts","hqgrenade","hqtank","cityevents3d","hqcity3d"]', self.ui)
+        self.assertIn('"hqstunts","hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playarena","hqcity3d"]', self.ui)
         self.assertIn("hqgrenade:1", self.ui)
         net = self.hq[self.hq.index("inst.grenadeNet = function(){"):]
         self.assertIn("H.toWire(g.launch,", net[:400])                # the launch, never where it is now

@@ -622,6 +622,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var oc = null, sea = null, arch = null, tsim = null, tview = null, nsim = null, ndraw = null;
   var transit = null;                             // [3.15] the City's transport (games/hqtransit.js): rides, metro, cabs, ...
   var cev = null;                                 // [3.21] city life's street events drawn (games/cityevents3d.js)
+  var play = null, playSkip = false;              // [3.22] city play (games/cityplay.js): jobs, heat, races, finds, ...
   var bus = null, menu = null, menuKey = null, talkL = null, ui = null, statsEl = null, statsAt = 0, fadeEl = null, landing = false, npcSkip = 0;
 
   function ground(x, z){ return W ? WD.groundAt(W, x, z) : 0; }
@@ -981,6 +982,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(skate && SP.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
     if(trafficAt(x, z)) return true;                                       // [3.13.1] the cars, buses and trams going by
     if(cev && cev.blocked(x, z)) return true;                              // [3.21] a market stall, roadworks barrier, parade rail
+    if(play && !playSkip && play.blocked(x, z)) return true;               // [3.22] what city play puts in the street
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z;
@@ -1235,6 +1237,15 @@ HQV.hqWorlds.city3d = function(c, w){
         nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id, world: W});   // [crowds] W: citylife's land use and gathering spots
         ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
       } catch(e){ nsim = null; ndraw = null; }
+    }
+    if(HQV.cityPlay){                                                                                // [3.22] things to do
+      try {
+        play = HQV.cityPlay.create(THREE, {scene: S, W: W, worldId: worldId, c: c, api: api, tsim: tsim, nsim: nsim, cev: cev, ndraw: ndraw,
+          say: say, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms; },
+          calm: function(){ return !!(c.E && c.E.calm && c.E.calm()); }, night: function(){ return night; },
+          blocked: function(x, z){ playSkip = true; try { return blocked(x, z); } finally { playSkip = false; } },
+          groundY: groundY, waypoint: function(x, z){ navPick(x, z); }});
+      } catch(e){ play = null; }
     }
   }
   /* ---------- [3.15] transport (games/hqtransit.js): every Service registered with hqRide, the views, the ride
@@ -2755,6 +2766,7 @@ HQV.hqWorlds.city3d = function(c, w){
 
   // the residents this City draws (read-only, for tests and tools)
   w.npcSim = function(){ return nsim; };
+  w.play = function(){ return play; };                         // [3.22] city play, for tools and the phone
   // the HUD's E prompt at a terminal's door (what E opens there), while nothing else holds E
   var promptK = null, promptV = null;
   w.prompt = function(p){
@@ -3021,6 +3033,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
     if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }
     if(cev && cam && cam.x != null){ try { cev.update(npcMs(), cam); } catch(e){} }                  // [3.21] the street events near you
+    if(play){ var ma = c.avatar() || me0; play.update(dt, {ms: nowMs, local: npcMs(), me: {x: ma.x, y: ma.hy != null ? ma.hy : groundY(ma.x, ma.z), z: ma.z, yaw: (c.motion && c.motion() || {}).yaw || 0}, motion: c.motion ? c.motion() : null, traffic: callTraffic, cam: cam}); }   // [3.22]
     if(ndraw && cam){
       if(npcSkip > 0) npcSkip--;
       else {
@@ -3052,6 +3065,7 @@ HQV.hqWorlds.city3d = function(c, w){
     surfaceShow(true);
     if(tview){ try { tview.dispose(); } catch(e){} }
     if(cev){ try { cev.dispose(); } catch(e){} cev = null; }                                         // [3.21]
+    if(play){ try { play.dispose(); } catch(e){} play = null; }                                      // [3.22]
     if(ndraw){ try { ndraw.dispose(); } catch(e){} }
     if(oc){ try { oc.dispose(); } catch(e){} }
     S.remove(civicG); S.remove(boatG);

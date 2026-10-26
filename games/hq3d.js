@@ -1251,6 +1251,7 @@ function mount(el, api){
   function gnBlast(b){
     var H = HQV.hqGrenade, calm = E.calm(), c = curCam();
     if(GN.fx) GN.fx.blast(b.x, b.y, b.z, b.k, b.wet, calm);
+    if(HQV.cityPlay) HQV.cityPlay.emit("blast", {x: b.x, z: b.z, k: b.k, wet: !!b.wet, mine: !!b.mine});   // [3.22] police heat, people running
     var d = c ? Math.hypot(c.position.x - b.x, c.position.y - b.y, c.position.z - b.z) : 0;
     H.boomAt(E, {x: b.x, y: b.y, z: b.z}, d, b.wet);
     if(!calm && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, Math.max(0, 1 - d/40)*0.45);
@@ -1292,7 +1293,7 @@ function mount(el, api){
       var b = H.advance(g, env, now - g.t0);
       if(!g.m) g.m = GN.fx.ball();
       g.m.position.set(g.x, g.y, g.z); if(!g.rest && !g.wet) g.m.rotation.x += dt*9;
-      if(b) gnBlast(b);
+      if(b){ b.mine = GN.mine.indexOf(g) >= 0; gnBlast(b); }   // ([3.22] yours or someone else's: police heat is yours only)
       if(g.done){ g.m.free(); g.m = null; GN.live.splice(i, 1); }
     }
     GN.fx.step(dt);
@@ -1454,6 +1455,7 @@ function mount(el, api){
     if(tkGunner()){ D = peers[POOL.u]; if(D && D.bike && D.vkind === "tank"){ top = D.g; B = D.bike; } }
     else if(tkDriverGuns()){ top = avatar.g; B = ride.B; }
     else return false;
+    if(HQV.cityPlay) HQV.cityPlay.emit("shot", {x: avatar.x, z: avatar.z});   // [3.22]
     if(TK.cd > 0 || !B) return true;
     top.updateMatrixWorld(true);
     var m = B.muzzle.getWorldPosition(new THREE.Vector3()), q = new THREE.Vector3(0, 0, 1).transformDirection(B.muzzle.matrixWorld), sp = H.KINDS[1].muzzle;
@@ -2588,6 +2590,7 @@ function mount(el, api){
         else {
           if(d && Math.abs(ride.speed) > 2.5) E.sfx("hit");
           if(d) drvHit(ride.speed, d > 0 ? "f" : "r");                  // [3.12] a dent where it hit (cosmetic)
+          if(d && Math.abs(ride.speed) > 4 && HQV.cityPlay) HQV.cityPlay.emit("ram", {x: avatar.x, z: avatar.z, yaw: avatar.yaw, speed: Math.abs(ride.speed), ride: ride.base || ride.kind || null});   // [3.22]
           ride.speed *= -0.2; d = 0; ride.drift = false; ride.head = avatar.yaw; ride.slip = 0;
         }
       }

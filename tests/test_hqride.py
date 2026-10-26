@@ -169,9 +169,9 @@ var byId = {}; N1.forEach(function(r){ byId[r.id] = r.name; });
 out.names = {n1: N1, same: JSON.stringify(N1) === JSON.stringify(N2), reverseSame: N3.every(function(r){ return byId[r.id] === r.name; }), again: again, bare: bare};
 
 // ---- board text ----
-var D = new Date(T0 + 45*60*S);
+var D = new Date(T0 + 45*60*S + 330*60000);   // [3.23] the City's clock: Koramangala (IST)
 out.due = {boarding: R.dueText(T0 + 10*S, T0, true), due: R.dueText(T0 + 30*S, T0, false), min: R.dueText(T0 + 5.5*60*S, T0, false),
-           clock: R.dueText(T0 + 45*60*S, T0, false), hhmm: (D.getHours() < 10 ? "0" : "") + D.getHours() + ":" + (D.getMinutes() < 10 ? "0" : "") + D.getMinutes(),
+           clock: R.dueText(T0 + 45*60*S, T0, false), hhmm: (D.getUTCHours() < 10 ? "0" : "") + D.getUTCHours() + ":" + (D.getUTCMinutes() < 10 ? "0" : "") + D.getUTCMinutes(),
            rows: R.boardRows([{short: "T1", to: "Harbour", at: T0 + 120*S, boarding: false, delay: 0, plat: "1"}, {short: "M2", to: "Central", at: T0, boarding: true},
                               {short: "T2", to: "Park", at: T0 + 300*S, delay: 180}, {short: "B", to: "X", at: T0}, {short: "C", to: "Y", at: T0}], T0),
            noCanvas: R.boardTexture({}, [], {})};

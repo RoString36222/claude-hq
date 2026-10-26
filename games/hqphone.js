@@ -472,7 +472,7 @@ function mount(stageEl, host){
     var h = state.handle;
     if(h && typeof h.tick === "function"){ try { h.tick(num(hcall(host, "now", [], Date.now()), Date.now())); } catch(e){} }
   }
-  function nowClock(){ var d = new Date(); return {h: d.getHours(), m: d.getMinutes()}; }
+  function nowClock(){ var d = new Date(Date.now() + 330*60000); return {h: d.getUTCHours(), m: d.getUTCMinutes()}; }   // [3.23] the City's (IST)
   function open(appId, arg){
     if(state.disposed) return false;
     if(!state.open){

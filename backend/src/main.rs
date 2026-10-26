@@ -57,6 +57,7 @@ mod casino; // HQ 3.7
 mod garages; // [basement 3.4]
 mod tuning; // HQ 3.13 the Tuning shop
 mod pets; // HQ 3.14
+mod weather; // HQ 3.23 live weather (Weather Union)
 mod weeks;
 mod world;
 // The world generator (HQ 3.0), served by world.rs. Parts (queries the City
@@ -996,6 +997,7 @@ async fn serve() -> anyhow::Result<()> {
     );
     // City tax and market ticks (HQ 3.x); reads also catch up lazily.
     cities::spawn_hourly(pool.clone());
+    weather::spawn_hourly(); // HQ 3.23: off without WEATHERUNION_API_KEY
     let state = AppState {
         pool,
         cfg: Arc::new(cfg),
@@ -1049,6 +1051,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(garages::routes()) // [basement 3.4]
         .merge(tuning::routes()) // HQ 3.13
         .merge(pets::routes()) // HQ 3.14
+        .merge(weather::routes()) // HQ 3.23 live weather
         .layer(middleware::from_fn_with_state(state.clone(), require_device));
 
     let public = Router::new()

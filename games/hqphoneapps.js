@@ -63,7 +63,7 @@ function mulberry32(a){
 function chipOf(id){ for(var i = 0; i < CHIPS.length; i++) if(CHIPS[i].id === id) return CHIPS[i]; return CHIPS[0]; }
 function chipMatch(chipId, mode){ var c = chipOf(chipId); return !c.modes || c.modes.indexOf(mode) >= 0; }
 function fmtClock(ms, h24){
-  var d = new Date(num(ms, 0)), h = d.getHours(), m = d.getMinutes();
+  var d = new Date(num(ms, 0) + 330*60000), h = d.getUTCHours(), m = d.getUTCMinutes();   // [3.23] the City's clock (IST)
   if(h24) return pad2(h) + ":" + pad2(m);
   return ((h % 12) || 12) + ":" + pad2(m) + (h < 12 ? " am" : " pm");
 }

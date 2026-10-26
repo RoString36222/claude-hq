@@ -395,7 +395,7 @@ var B = 120000*1000;
 function step(t){ NOW = t; soundStep(); return captured[captured.length - 1]; }
 var f0 = step(B + 239500), f1 = step(B + 240500), f2 = step(B + 240516);
 out.f1 = f1; out.f0horns = f0.horns.length; out.f2horns = f2.horns.length; out.madeOnce = made;
-out.localMs = f1.localMs - (B + 240500 - new Date(B + 240500).getTimezoneOffset()*60000);
+out.localMs = f1.localMs - (B + 240500 + 330*60000);   // [3.23] the City's clock: Koramangala (IST)
 out.sirArgs = sirArgs[1]; out.bridgeArgs = bridgeArgs[1];
 // a hull along its keel: off the beam it is heard from abeam, ahead of the bow from the bow
 LIS = {x: 60, y: 1.6, z: -100, rx: -1, rz: 0, fx: 0, fz: 1}; out.abeam = step(B + 240532).ships.filter(s => s.id === "ferry:0")[0];
@@ -762,7 +762,7 @@ class Gather(unittest.TestCase):
         self.assertEqual([b["id"] for b in f["bells"]], ["townhall:1:bell"])
         self.assertEqual(f["bridges"], [{"id": "br"}])
         self.assertFalse(f["under"])
-        self.assertEqual(self.o["localMs"], 0, "the bells keep the local wall clock")
+        self.assertEqual(self.o["localMs"], 0, "the bells keep the City's wall clock (Koramangala, IST)")
         self.assertEqual(self.o["madeOnce"], 1, "one citySound, kept")
         h = f["helis"]
         self.assertEqual([x["id"] for x in h], ["heli:u1"], "a near, drawn tower's helicopter only")

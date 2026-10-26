@@ -860,8 +860,13 @@ function mount(el, api){
     }
   };
 
-  /* ---------- day / night from the local clock ---------- */
-  function isNight(){ if(SMOKE && SMOKE.on) return SMOKE.night; var h = new Date().getHours(); return h < 7 || h >= 19; }
+  /* ---------- day / night from the City's clock ---------- */
+  // [3.23] Koramangala's (IST) and Bengaluru's own sunrise and sunset (games/npcsim.js), not the viewer's clock
+  function isNight(){
+    if(SMOKE && SMOKE.on) return SMOKE.night;
+    if(HQV.npcSim && HQV.npcSim.isNight) return HQV.npcSim.isNight(new Date());
+    var h = new Date(Date.now() + 330*60000).getUTCHours(); return h < 6 || h >= 19;
+  }
   function skyTex(day){
     return canvasTex(512, 256, function(g, w, h){
       var gr = g.createLinearGradient(0, 0, 0, h);
@@ -5073,7 +5078,7 @@ function mount(el, api){
   }
   var phoneHost = {
     announce: function(t){ if(api.announce) api.announce(t); }, toast: function(t){ if(api.toast) api.toast(t); },
-    now: function(){ return Date.now(); }, clock: function(){ var d = new Date(); return {h: d.getHours(), m: d.getMinutes()}; },
+    now: function(){ return Date.now(); }, clock: function(){ if(HQV.npcSim && HQV.npcSim.cityClock) return HQV.npcSim.cityClock(new Date()); var d = new Date(Date.now() + 330*60000); return {h: d.getUTCHours(), m: d.getUTCMinutes()}; },   // [3.23] the City's (IST)
     calm: function(){ return E.calm(); },
     reducedMotion: function(){ try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch(e){ return false; } },
     inCity: phoneInCity,

@@ -72,12 +72,88 @@ function at(world, ms){
 }
 // the wind's heading for a slot (unit vector), so the rain slants and the clouds drift one way all slot long
 function windDir(world, slot){ var a = (hash32("wind:" + (world || "") + ":" + slot) % 3600)/3600*Math.PI*2; return {x: Math.cos(a), z: Math.sin(a)}; }
-function look(world, ms){
+function made(world, ms){
   var A = at(world, ms), p = LOOK[A.prev], q = LOOK[A.kind], k = A.e, o = {kind: A.kind, prev: A.prev, e: k};
   ["dim", "fogNear", "fogFar", "tintK", "rain", "snow", "cloud", "wind", "storm"].forEach(function(f){ o[f] = lerp(p[f], q[f], k); });
   o.tint = lerpHex(p.tint, q.tint, k);
   var w = windDir(world, A.slot); o.wx = w.x; o.wz = w.z;
   return o;
+}
+
+/* ---------- [3.23] live weather: the Arena's hourly Weather Union reading (Koramangala, Bengaluru) ---------- */
+// The Arena fetches one place's reading at the start of every hour (backend/src/weather.rs) and the page asks for it
+// through the local server (/api/arena/weather), so everyone in every city sees the same sky. While a reading is
+// fresh (LIVE_STALE) it replaces the made-up forecast; without one (no Arena, no key) the forecast carries on.
+// Every number Weather Union gives is used:
+//   rain_intensity (mm/h)     how much rain falls: drizzle to a downpour (more streaks, faster, longer, louder),
+//                             a thunderstorm in a heavy one (STORM_MM, sooner in a strong wind)
+//   rain_accumulation (mm)    how wet the ground is, and stays after the rain stops (puddles, the sheen)
+//   humidity (%)              the haze and the clouds; a near-saturated dry hour is a mist
+//   wind_speed (m/s), wind_direction (degrees, where it blows from)
+//                             how hard and which way the rain slants and the clouds drift
+//   temperature (°C)          the light: a warmer sky in the heat, a cooler one when it is cold
+//   aqi_pm_2_point_5, aqi_pm_10  smog: a browner, closer haze on a bad-air day
+// A new reading eases in over EASE. look() carries the numbers (live: {...}) for the phone and the HUD.
+var LIVE = null, LIVE_PREV = null, LIVE_T = 0, LIVE_STALE = 3*3600*1000, WIND_FULL = 12, STORM_MM = 25;
+function num(v){ if(v === null || v === undefined || v === "") return null; v = +v; return isFinite(v) ? v : null; }
+function fromLive(d, place){
+  d = d || {};
+  var r = Math.max(0, num(d.rain_intensity) || 0), acc = Math.max(0, num(d.rain_accumulation) || 0), hum = num(d.humidity),
+      tc = num(d.temperature), ws = Math.max(0, num(d.wind_speed) || 0), wd = num(d.wind_direction),
+      pm25 = num(d.aqi_pm_2_point_5), pm10 = num(d.aqi_pm_10);
+  // rain on a log scale: 0.5 mm/h about 0.22, 2.5 about 0.42, 7.5 about 0.6, 20 about 0.84, 40 and more 1
+  var rain = r > 0.05 ? clamp(0.12 + 0.88*Math.log(1 + r)/Math.log(41), 0, 1) : 0;
+  var wind = clamp(ws/WIND_FULL, 0, 1);
+  var storm = r >= STORM_MM ? 1 : r >= 10 ? clamp((r - 10)/(STORM_MM - 10) + wind*0.5, 0, 1) : 0;
+  var humid = hum == null ? 0.4 : clamp((hum - 55)/40, 0, 1);
+  var smog = clamp(Math.max(pm25 == null ? 0 : (pm25 - 35)/115, pm10 == null ? 0 : (pm10 - 60)/190), 0, 1);
+  var mist = rain === 0 && hum != null && hum >= 92 ? clamp((hum - 92)/6, 0, 1) : 0;
+  var cloud = Math.max(rain > 0 ? 0.85 + 0.15*rain : 0, 0.2 + 0.65*humid, mist*0.6);
+  var kind = storm > 0.5 ? "storm" : rain > 0 ? "rain" : mist > 0.5 ? "fog" : cloud > 0.7 ? "cloudy" : "clear";
+  var fogFar = Math.max(140, 1600*(1 - 0.62*rain)*(1 - 0.35*humid*(1 - rain))*(1 - 0.55*smog)*(1 - 0.85*mist)*(1 - 0.3*storm));
+  var tint = lerpHex(lerpHex(0x9aa6b2, 0x6f7c88, rain), 0x3a434e, storm);
+  if(smog > 0) tint = lerpHex(tint, 0xa89a80, 0.65*smog);
+  if(tc != null && tc > 30) tint = lerpHex(tint, 0xe2d4ae, clamp((tc - 30)/10, 0, 1)*0.35);
+  else if(tc != null && tc < 18) tint = lerpHex(tint, 0xb6c6dc, clamp((18 - tc)/10, 0, 1)*0.35);
+  // where the wind blows to (from wind_direction + 180), +z north, +x east
+  var b = ((wd == null ? 225 : wd) + 180)*Math.PI/180;
+  return {kind: kind, prev: kind, e: 1, live: {place: place || "", rainMm: r, accMm: acc, humidity: hum, temp: tc, windMs: ws,
+          windDeg: wd, pm25: pm25, pm10: pm10, smog: smog, mist: mist},
+          dim: clamp(0.08 + 0.12*cloud + 0.5*rain + 0.2*storm + 0.15*smog, 0, 0.88), fogNear: fogFar*0.16, fogFar: fogFar,
+          tint: tint, tintK: clamp(0.25*cloud + 0.5*rain + 0.15*storm + 0.5*smog + 0.6*mist, 0, 0.95),
+          rain: rain, snow: 0, cloud: clamp(cloud, 0, 1), wind: wind, storm: storm, wx: Math.sin(b), wz: Math.cos(b),
+          wet: clamp(Math.max(rain > 0 ? 0.5 + 0.5*rain : 0, acc/12), 0, 1)};
+}
+// A reading from /api/arena/weather ({ok, place, at (unix s), data}); a new one eases in from what was showing.
+function setLive(j, now){
+  now = now == null ? Date.now() : +now;
+  if(!j || !j.ok || !j.data){ if(LIVE && now - LIVE.t > LIVE_STALE) LIVE = null; return false; }
+  var at = (+j.at || 0)*1000;
+  if(LIVE && LIVE.at === at) return false;
+  LIVE_PREV = LIVE ? look("", now) : null;
+  LIVE = {at: at, t: now, L: fromLive(j.data, j.place)};
+  LIVE_T = now;
+  return true;
+}
+function liveOn(ms){ return !!(LIVE && (+ms || 0) - LIVE.t < LIVE_STALE && (+ms || 0) - LIVE.at < LIVE_STALE + 3600*1000); }
+function look(world, ms){
+  if(!liveOn(ms)) return made(world, ms);
+  var q = LIVE.L, p = LIVE_PREV || made(world, LIVE_T), k = smooth(((+ms || 0) - LIVE_T)/EASE), o = {kind: q.kind, prev: p.kind, e: k, live: q.live};
+  ["dim", "fogNear", "fogFar", "tintK", "rain", "snow", "cloud", "wind", "storm"].forEach(function(f){ o[f] = lerp(p[f], q[f], k); });
+  o.tint = lerpHex(p.tint, q.tint, k);
+  var ax = lerp(p.wx, q.wx, k), az = lerp(p.wz, q.wz, k), al = Math.hypot(ax, az) || 1; o.wx = ax/al; o.wz = az/al;
+  o.wet = q.wet;
+  return o;
+}
+function liveName(L){
+  var v = L && L.live; if(!v) return null;
+  var bits = [NAME[L.kind] + (L.kind === "rain" ? (v.rainMm < 1 ? " (drizzle)" : v.rainMm >= 7.5 ? " (heavy)" : "") : "")];
+  if(v.rainMm > 0) bits.push(v.rainMm.toFixed(1) + " mm/h");
+  if(v.temp != null) bits.push(Math.round(v.temp) + "°C");
+  if(v.humidity != null) bits.push(Math.round(v.humidity) + "% humidity");
+  if(v.windMs) bits.push(Math.round(v.windMs*3.6) + " km/h wind");
+  if(v.pm25 != null) bits.push("PM2.5 " + Math.round(v.pm25));
+  return bits.join(" · ") + (v.place ? " in " + v.place : "");
 }
 // Up to two strikes per window, anywhere over the city (world-anchored, so everyone sees the same bolt).
 function strikes(world, sec){
@@ -104,10 +180,12 @@ function settledAt(world, m0){
   return {snow: snow, wet: wet};
 }
 function settled(world, ms){
+  if(liveOn(ms)){ var Lv = look(world, ms); return {snow: 0, wet: Math.max(Lv.wet || 0, Lv.rain)}; }   // [3.23] live: no snow in Bengaluru
   var m0 = Math.floor((+ms || 0)/60000), f = (+ms || 0)/60000 - m0, a = settledAt(world, m0), b = settledAt(world, m0 + 1);
   return {snow: lerp(a.snow, b.snow, f), wet: Math.max(lerp(a.wet, b.wet, f), look(world, ms).rain)};
 }
 function forecast(world, ms, n){
+  if(liveOn(ms)){ var Lf = look(world, ms); return [{kind: Lf.kind, name: liveName(Lf), icon: ICON[Lf.kind], at: +ms || 0, live: true}]; }   // [3.23]
   var A = at(world, ms), out = [];
   for(var i = 0; i <= Math.max(0, n | 0); i++){
     var k = kindAt(world, A.slot + i);
@@ -116,10 +194,29 @@ function forecast(world, ms, n){
   return out;
 }
 
+// [3.23] asks the local server for the Arena's reading: now, then every POLL_MS and just after each hour starts (the
+// Arena fetches on the hour). One poller for the page; only ever local /api.
+var POLL_MS = 10*60*1000, polling = false;
+function livePoll(){
+  // (a real page only: never under node, where a pending timer would keep the process alive)
+  if(polling || typeof fetch !== "function" || typeof setTimeout !== "function" || typeof location === "undefined" || !location.origin) return;
+  polling = true;
+  function ask(){
+    try {
+      fetch("/api/arena/weather", {cache: "no-store"}).then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ setLive(j); }, function(){});
+    } catch(e){}
+    var now = Date.now(), toHour = 3600000 - now % 3600000 + 90000;   // a minute and a half past the hour
+    setTimeout(ask, Math.min(POLL_MS, toHour));
+  }
+  ask();
+}
+
 /* ---------- drawing ---------- */
 function create(c, o){
   o = o || {};
   var THREE = c.THREE, E = c.E, S = o.scene, world = String(o.world || "");
+  livePoll();
   var g = new THREE.Group(); g.name = "weather"; S.add(g);
   var R = c.rng((hash32("wx-draw:" + world) % 100000) + 1);
   var V3 = function(x, y, z){ return new THREE.Vector3(x, y, z); };
@@ -227,12 +324,13 @@ function create(c, o){
     } catch(e){}
   }
 
-  var hiss = null, said = null, lastStrike = -1, pending = [], flash = 0, boltLeft = 0, cur = null, night = false, gnd = null, gndAt = -9;
+  var saidMm = null, hiss = null, said = null, lastStrike = -1, pending = [], flash = 0, boltLeft = 0, cur = null, night = false, gnd = null, gndAt = -9;
   function amt(v){ return Math.max(0, Math.min(1, v)); }
   var inst = {
     setNight: function(n){ night = !!n; },
     kind: function(){ return cur ? cur.kind : "clear"; },
-    name: function(k){ return NAME[k || (cur && cur.kind) || "clear"]; },
+    name: function(k){ return (!k && cur && liveName(cur)) || NAME[k || (cur && cur.kind) || "clear"]; },
+    live: function(){ return cur && cur.live ? cur.live : null; },
     icon: function(k){ return ICON[k || (cur && cur.kind) || "clear"]; },
     forecast: function(n){ return forecast(world, Date.now(), n); },
     update: function(t, dt, cam){
@@ -243,12 +341,17 @@ function create(c, o){
       // say it once it has mostly arrived (not on the first frame: you walked into it, nothing changed)
       if(said == null) said = L.kind;
       else if(L.kind !== said && L.e > 0.5){ said = L.kind; if(o.say) o.say(SAY[L.kind]); }
+      // [3.23] a new live reading: say how the rain changed (it eased in over EASE)
+      if(L.live && saidMm != null && L.e > 0.5 && Math.abs(L.live.rainMm - saidMm) >= 2 && L.kind === said && o.say)
+        o.say(L.live.rainMm > saidMm ? "The rain is getting heavier." : L.live.rainMm > 0 ? "The rain is easing off." : "The rain stops.");
+      if(L.live && L.e > 0.5) saidMm = L.live.rainMm;
       // rain and snow: nothing falls in Calm
       var rainA = show && !calm ? amt(L.rain) : 0, snowA = show && !calm ? amt(L.snow) : 0;
       rain.visible = rainA > 0.01; snow.visible = snowA > 0.01;
       if(rain.visible){
         RU.uTime.value = t; RU.uCam.value.set(cx, cy, cz); RU.uAmt.value = rainA;
-        RU.uVel.value.set(L.wx*L.wind*7, -26, L.wz*L.wind*7);
+        // ([3.23] a drizzle drifts down in short streaks, a downpour drives down long and fast)
+        RU.uVel.value.set(L.wx*L.wind*7, -(16 + 14*rainA), L.wz*L.wind*7); RU.uLen.value = 0.022 + 0.018*rainA;
         RU.uAlpha.value = night ? 0.3 : 0.42;
       }
       if(snow.visible){
@@ -304,5 +407,6 @@ function create(c, o){
 
 HQV.hqWeather = {thunderVol: thunderVol, THUNDER_M: THUNDER_M, SLOT: SLOT, EASE: EASE, KINDS: KINDS, WEIGHT: WEIGHT, LOOK: LOOK, NAME: NAME, ICON: ICON, STRIKE_WIN: STRIKE_WIN,
   hash32: hash32, kindAt: kindAt, at: at, look: look, strikes: strikes, forecast: forecast, lerpHex: lerpHex,
-  settled: settled, SNOW_MAX: SNOW_MAX, create: create};
+  settled: settled, SNOW_MAX: SNOW_MAX, create: create,
+  made: made, fromLive: fromLive, setLive: setLive, liveOn: liveOn, liveName: liveName, clearLive: function(){ LIVE = null; LIVE_PREV = null; }, STORM_MM: STORM_MM};
 })();

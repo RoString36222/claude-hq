@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.22.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.23.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,22 @@ and feature guide.
 
 ## Changelog
 
+- **3.23.0 — Live weather and time from Bengaluru.** The City keeps Koramangala's time (IST) for every player,
+  whatever their own timezone: day and night, residents' days, rush hours, the bells, and the phone's and departure
+  boards' clocks. Night falls at Bengaluru's real sunset and lifts at its sunrise (worked out for each day of the
+  year, with about 20 minutes of twilight), no longer at a fixed 7 pm and 7 am. The sky also follows the real
+  weather in Koramangala, Bengaluru:
+  the Arena reads Zomato's Weather Union at the start of every hour (Koramangala's rain gauge, with temperature,
+  humidity and wind from the nearest full station in Domlur) and every player's City shows it, easing in over
+  a minute and a half. Every number it reports is used. Rain intensity sets how hard it rains, from a drizzle to a
+  downpour (more, faster, longer streaks and a louder hiss), with a thunderstorm in a heavy one. Rain accumulation
+  keeps the ground wet after the rain stops. Humidity brings haze, cloud and, near saturation, mist. Wind speed and
+  direction slant the rain and drift the clouds. Temperature warms or cools the light, and PM2.5 / PM10 bring a
+  brown, closer haze on a bad-air day. The City panel shows the live reading (for example "Rain (heavy) · 12.0 mm/h ·
+  24°C · 88% humidity"). Without a reading (no Arena, or the Arena has no key) the made-up forecast carries on.
+  **Egress / privacy:** the only new outbound call is the **Arena server's** hourly request to Weather Union. It
+  carries the fixed coordinates and the server's key, nothing about any player. The page reads the reading only
+  through local `/api/arena/weather`. Needs the Arena release and `WEATHERUNION_API_KEY` in the host's `backend/.env`.
 - **3.22.3 — Drive on the left.** The City's traffic keeps left, as in India and the UK: cars, vans, buses, trams,
   cabs and emergency vehicles, with kerb-side bus and tram stops, doors and lay-bys on the left, traffic-light poles on
   the left kerb, parked cars facing the way their side goes, and a left turn now the tight one. The buses themselves are

@@ -501,10 +501,8 @@ function lineShort(svc, id){
   var l = (call(svc, "lines") || []).filter(function(x){ return x && x.id === id; })[0];
   return l ? String(l.short || l.id) : String(id);
 }
-function hourOf(ms){
-  var off = 0; try { off = new Date(ms).getTimezoneOffset(); } catch(e){}
-  var l = ms - off*MIN; return (((l % DAY) + DAY) % DAY)/HOUR;
-}
+// [3.23] on the City's clock (Koramangala, IST)
+function hourOf(ms){ var l = ms + 330*MIN; return (((l % DAY) + DAY) % DAY)/HOUR; }
 
 /* ---------- station names (pure, unique per world, independent of the order they are asked in) ---------- */
 // A stop on a named road (within 90 m) is named from its place along that road: the road's length is cut into
@@ -584,7 +582,7 @@ function stationName(W, x, z, kind){
 function pad2(n){ return (n < 10 ? "0" : "") + n; }
 function clockText(ms, o){
   o = o || {};
-  var d = new Date(num(ms, 0)), h = d.getHours(), m = d.getMinutes();
+  var d = new Date(num(ms, 0) + 330*60000), h = d.getUTCHours(), m = d.getUTCMinutes();   // [3.23] the City's clock (IST)
   if(o.h12){ var ap = h < 12 ? "am" : "pm"; h = h % 12 || 12; return h + ":" + pad2(m) + ap; }
   return pad2(h) + ":" + pad2(m);
 }

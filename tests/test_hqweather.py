@@ -122,12 +122,107 @@ class SourceTests(unittest.TestCase):
         self.assertIn("L.flash = calm ? 0 : flash;", self.js)
 
     def test_nothing_is_fetched_and_nothing_random_is_seen_twice(self):
-        self.assertNotIn("fetch(", self.js)
+        # [3.23] the one fetch: the Arena's live reading through the local server
+        self.assertEqual(self.js.count("fetch("), 1)
+        self.assertIn('fetch("/api/arena/weather"', self.js)
         self.assertNotIn("Math.random(", self.js)
 
     def test_thunder_goes_through_the_engines_volume(self):
         self.assertIn("E.audioOut ? E.audioOut() : null", self.js)
         self.assertIn("gn.connect(A.out)", self.js)
+
+
+LIVE = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}};
+eval(fs.readFileSync(path.join(R0, 'games', 'hqweather.js'), 'utf8'));
+const X = window.HQV.hqWeather, out = {};
+const base = {temperature: 24, humidity: 70, wind_speed: 2, wind_direction: 270, rain_intensity: 0, rain_accumulation: 0, aqi_pm_10: 40, aqi_pm_2_point_5: 20};
+function L(d){ return X.fromLive(Object.assign({}, base, d), 'Koramangala'); }
+out.rain = [0, 0.3, 1, 2.5, 7.5, 20, 40, 80].map(r => L({rain_intensity: r}).rain);
+out.kinds = [L({}).kind, L({rain_intensity: 1}).kind, L({rain_intensity: 30}).kind, L({rain_intensity: 14, wind_speed: 12}).kind,
+             L({humidity: 97}).kind, L({humidity: 92}).kind, L({humidity: 30}).kind];
+out.fog = [L({}).fogFar, L({rain_intensity: 10}).fogFar, L({aqi_pm_2_point_5: 180}).fogFar, L({humidity: 98}).fogFar];
+out.dim = [L({}).dim, L({rain_intensity: 10}).dim, L({rain_intensity: 40}).dim];
+out.wet = [L({}).wet, L({rain_accumulation: 6}).wet, L({rain_intensity: 5}).wet];
+out.smogTint = [L({}).tint, L({aqi_pm_2_point_5: 200}).tint];
+out.hotTint = [L({temperature: 24}).tint, L({temperature: 38}).tint, L({temperature: 12}).tint];
+const wW = L({wind_direction: 270, wind_speed: 12});             // from the west: it blows east (+x)
+out.wind = [Math.round(wW.wx*100)/100, Math.round(wW.wz*100)/100, wW.wind];
+const nul = X.fromLive({rain_intensity: null, temperature: null, humidity: null, wind_speed: null, wind_direction: null, aqi_pm_10: null, aqi_pm_2_point_5: null});
+out.nulls = [nul.kind, isFinite(nul.fogFar), isFinite(nul.dim), isFinite(nul.wx)];
+// setLive: eases in, the forecast says what it is doing now, a stale or missing reading falls back
+const t = 1792000000000, at = Math.floor(t/1000);
+out.before = X.liveOn(t);
+out.set = X.setLive({ok: true, place: 'Koramangala, Bengaluru', at: at, data: Object.assign({}, base, {rain_intensity: 12})}, t);
+out.again = X.setLive({ok: true, place: 'Koramangala, Bengaluru', at: at, data: base}, t + 1000);
+const e0 = X.look('w', t), e1 = X.look('w', t + X.EASE + 1);
+out.ease = [e0.e, e1.e, e1.kind, Math.abs(e1.rain - X.fromLive(Object.assign({}, base, {rain_intensity: 12})).rain) < 1e-9, !!e1.live];
+const f = X.forecast('w', t + X.EASE + 1, 1);
+out.forecast = [f.length, f[0].live, f[0].name];
+out.ground = X.settled('w', t + X.EASE + 1);
+out.stale = [X.liveOn(t + 4*3600*1000), X.look('w', t + 4*3600*1000).live === undefined];
+X.clearLive();
+out.off = X.setLive({ok: false}, t);
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class LiveWeatherTests(unittest.TestCase):
+    """[3.23] the Arena's Weather Union reading (Koramangala) drives the sky: every number it gives is used."""
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", LIVE, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_rain_follows_the_intensity(self):
+        r = self.o["rain"]
+        self.assertEqual(r[0], 0)
+        self.assertTrue(all(b > a for a, b in zip(r, r[1:-1])), r)
+        self.assertEqual(r[-1], 1)
+        self.assertLess(r[1], 0.35, "a drizzle is light")
+        self.assertGreater(r[5], 0.75, "20 mm/h is heavy")
+
+    def test_kinds(self):
+        self.assertEqual(self.o["kinds"], ["clear", "rain", "storm", "storm", "fog", "cloudy", "clear"])
+
+    def test_haze_rain_smog_and_mist_close_the_view(self):
+        clear, rain, smog, mist = self.o["fog"]
+        self.assertLess(rain, clear)
+        self.assertLess(smog, clear)
+        self.assertLess(mist, rain)
+        d = self.o["dim"]
+        self.assertTrue(d[0] < d[1] < d[2])
+
+    def test_the_ground_and_the_light(self):
+        w = self.o["wet"]
+        self.assertEqual(w[0], 0)
+        self.assertGreater(w[1], 0.3, "yesterday's rain leaves the ground wet")
+        self.assertGreater(w[2], 0.5)
+        self.assertNotEqual(*self.o["smogTint"])
+        hot = self.o["hotTint"]
+        self.assertNotEqual(hot[0], hot[1])
+        self.assertNotEqual(hot[0], hot[2])
+        self.assertEqual(self.o["wind"], [1, 0, 1])
+        self.assertEqual(self.o["nulls"], ["clear", True, True, True])
+
+    def test_a_reading_eases_in_and_falls_back(self):
+        o = self.o
+        self.assertFalse(o["before"])
+        self.assertTrue(o["set"])
+        self.assertFalse(o["again"], "the same reading twice changes nothing")
+        self.assertEqual(o["ease"][0], 0)
+        self.assertEqual(o["ease"][1:], [1, "rain", True, True])
+        self.assertEqual(o["forecast"][:2], [1, True])
+        self.assertIn("12.0 mm/h", o["forecast"][2])
+        self.assertIn("Koramangala", o["forecast"][2])
+        self.assertEqual(o["ground"]["snow"], 0)
+        self.assertGreater(o["ground"]["wet"], 0.5)
+        self.assertEqual(o["stale"], [False, True])
+        self.assertFalse(o["off"])
 
 
 if __name__ == "__main__":

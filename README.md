@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.22.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.22.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,10 @@ and feature guide.
 
 ## Changelog
 
+- **3.22.3 — Drive on the left.** The City's traffic keeps left, as in India and the UK: cars, vans, buses, trams,
+  cabs and emergency vehicles, with kerb-side bus and tram stops, doors and lay-bys on the left, traffic-light poles on
+  the left kerb, parked cars facing the way their side goes, and a left turn now the tight one. The buses themselves are
+  mirrored (doors on the left, driver on the right), and a cab you call pulls up on the left. As many cars as before.
 - **3.22.2 — F to interact.** On foot, F now does what the prompt offers (a door, a stop, a terminal, a race's
   start, a tag, a snack stall, the Pet shop, taking a pet out or leaving it), and the prompts say F. E is for getting on
   and off things: a vehicle, a board, and a pet you can ride, so a door or a stop beside you no longer takes E from your

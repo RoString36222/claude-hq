@@ -3034,6 +3034,12 @@ HQV.hqWorlds.city3d = function(c, w){
       var obs = boatNow || (mo && mo.air) ? [] : [{x: me0.x, z: me0.z, r: myR}];
       if(bridges) obs = obs.concat(bridges.obstacles());
       if(callObs) obs.push(callObs);                       // a vehicle you called, on its way: traffic stops behind it
+      if(nsim && nsim.passers && !(mo && mo.air)){        // [3.22] people crossing at a corner: the cars near you wait for them
+        try {
+          var px = nsim.passers(npcMs(), {x: me0.x, z: me0.z}, 160), pn = 0;
+          for(var pi = 0; pi < px.length && pn < 16; pi++) if(px[pi] && px[pi].cross){ obs.push({x: px[pi].x, z: px[pi].z, r: 0.8}); pn++; }
+        } catch(e){}
+      }
       try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, TRAFFIC_R, obs); } catch(e){}
     }
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set

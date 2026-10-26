@@ -303,6 +303,9 @@ class PlayStreetTest(unittest.TestCase):
                 return f.read()
         city = read("games", "hqcity3d.js")
         self.assertIn("play.through(x, z)", city)                    # knocked props stop blocking
+        self.assertIn("nsim.passers(npcMs(), {x: me0.x, z: me0.z}, 160)", city)   # cars wait for people crossing
+        # walkAt takes the walker's heading: a passer-by crossing street e walks at a right angle to its arm
+        self.assertIn("walkFrom(dir > 0 ? P.sb : P.sa, t1, (dir > 0 ? P.hb : P.ha) + Math.PI/2)", read("games", "npcsim.js"))
         self.assertIn("play.prompt(p)", city)
         self.assertIn("play.use(p)", city)
         self.assertIn("wb: function(){ return wb; }", city)

@@ -1036,7 +1036,8 @@ function create(doc, opts){
       }
       var t1 = t + Math.abs(to - s)/v*1000;
       legs.push({k: "w", t0: t, t1: t1, s0: s, s1: to, side: side});
-      var tw = walkFrom(dir > 0 ? P.sb : P.sa, t1, dir > 0 ? P.hb : P.ha);
+      // (walkAt takes the walker's own heading: across street e, a right angle to its arm)
+      var tw = walkFrom(dir > 0 ? P.sb : P.sa, t1, (dir > 0 ? P.hb : P.ha) + Math.PI/2);
       if(tw > t1) legs.push({k: "i", t0: t1, t1: tw, s0: to, s1: to, side: side});
       var tc = tw + 2*P.kerb/v*1000/0.76;
       legs.push({k: "c", t0: tw, t1: tc, s0: to, s1: to, side: side, kerb: tw > t1});

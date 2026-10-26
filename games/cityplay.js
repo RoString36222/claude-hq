@@ -4,13 +4,16 @@
  * (jobs, police heat, races, finds, street reactions, the Arena games) register here, each in its own file:
  *
  *   HQV.cityPlay.register({id, order?, create(ctx) -> feat})
- *     feat: {update(dt, f)?, blocked(x, z)?, on(kind, data)?, prompt(p)?, use(p)?, dispose()?}   (every key optional)
- *       prompt(p) -> text | null: the HUD's E prompt on foot at p {x, z} (the first feature with one wins);
- *       use(p) -> bool: E on foot at p, true when the feature took it (hqcity3d's w.prompt / w.use ask these)
+ *     feat: {update(dt, f)?, blocked(x, z)?, on(kind, data)?, prompt(p)?, use(p)?, through(x, z)?, sprintMul()?, dispose()?}
+ *       (every key optional) prompt(p) -> text | null: the HUD's E prompt on foot at p {x, z} (the first feature with one wins);
+ *       use(p) -> bool: E on foot at p, true when the feature took it (hqcity3d's w.prompt / w.use ask these);
+ *       through(x, z) -> true: the City's own furniture or market stall at (x, z) gives way (knocked over);
+ *       sprintMul() -> your sprint x (the largest wins, at most 1.3)
  *     f, each frame: {ms: Date.now(), local: the City's local ms (npcSim.localMs), me: {x, y, z, yaw},
  *                     motion: hq3d's c.motion() (ride, speed, air, boat), traffic: what traffic.js drew near you}
  *
  *   ctx: {THREE, scene, W (the packed world), worldId, tier (the City's tier: roads open by it), c (hq3d's context), api, tsim, nsim, cev,
+ *         ndraw (npcdraw), wb() (worldbuild, once built),
  *         say(text), local(ms), calm(), night(), blocked(x, z) (the City's own, without the features'),
  *         emit(kind, data) (to every feature, and to HQV.cityPlay.on listeners),
  *         hud: {set(id, text, opts?), clear(id)} (one line each, top centre, textContent only: XSS-safe),
@@ -92,6 +95,7 @@ function create(THREE, o){
   function beaconOff(id){ var b = beacons[id]; if(!b) return; bG.remove(b); b.geometry.dispose(); b.material.dispose(); delete beacons[id]; }
   var ctx = {
     THREE: THREE, scene: S, W: W, worldId: o.worldId, tier: o.tier != null ? o.tier | 0 : null, c: o.c, api: o.api || {}, tsim: o.tsim || null, nsim: o.nsim || null, cev: o.cev || null,
+    ndraw: o.ndraw || null, wb: function(){ try { return (typeof o.wb === "function" ? o.wb() : o.wb) || null; } catch(e){ return null; } },
     seed: hashStr((W && (W.seed || W.id)) || "city"), mulberry32: mulberry32, hashStr: hashStr,
     say: function(t){ if(o.say) o.say(t); },
     local: function(ms){ return o.local ? o.local(ms) : ms; },
@@ -118,6 +122,16 @@ function create(THREE, o){
     blocked: function(x, z){
       for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.blocked){ try { if(f.blocked(x, z)) return true; } catch(e){} } }
       return false;
+    },
+    // [play-street] the first feature that lets the City's own prop at (x, z) give way; how much faster you sprint
+    through: function(x, z){
+      for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.through){ try { if(f.through(x, z)) return true; } catch(e){} } }
+      return false;
+    },
+    sprintMul: function(){
+      var m = 1;
+      feats.forEach(function(f){ if(f.sprintMul){ try { var v = +f.sprintMul(); if(v > m) m = v; } catch(e){} } });
+      return Math.min(1.3, m);
     },
     prompt: function(p){
       if(dead || !p) return null;
@@ -148,6 +162,7 @@ HQV.cityPlay = {
   features: function(){ return FEATS.map(function(f){ return f.id; }); },
   live: function(){ return LIVE; },
   emit: function(kind, d){ if(LIVE) LIVE.emit(kind, d); },
+  sprintMul: function(){ return LIVE ? LIVE.sprintMul() : 1; },          // [play-street] hq3d.js: your sprint's pace x this
   on: function(fn){ if(typeof fn === "function") LISTEN.push(fn); return function(){ var i = LISTEN.indexOf(fn); if(i >= 0) LISTEN.splice(i, 1); }; }
 };
 })();

@@ -2,17 +2,20 @@
  *
  * HQV.npcDraw.create(THREE, parent, sim, opts) -> draw. Levels of detail by distance from the camera
  * (its height too, when cam.y is given: the map's camera high over the plaza draws nobody skinned):
- *   under NEAR (40 m)   up to MAX_NEAR (30) skinned Kenney characters (the six of hq3d.js, look.char picks
+ *   under NEAR (40 m)   up to MAX_NEAR (40) skinned Kenney characters (the six of hq3d.js, look.char picks
  *                       one, the outfit tints their material) playing walk / idle, nudged around the
  *                       player and each other (avoid: a spring toward a capped push, so the pure sim
  *                       position is never far off). Out at NEAR_OUT (44 m), so the edge does not flicker.
- *   NEAR..FAR (150 m)   up to MAX_FAR (120) instances of one low-poly body (bodyGeometry, 6 boxes) in one
+ *   NEAR..FAR (150 m)   up to MAX_FAR (360) instances of one low-poly body (bodyGeometry, 6 boxes) in one
  *                       draw call; a vertex shader swings the legs and arms from a per-instance gait
  *                       (phase, cycles/s, swing), the outfit comes from per-instance colours.
  *   over FAR            not drawn (sim.at is asked for FAR only).
  * [crowds] sim.at's rows may also carry lk (the resident whose look they wear: the gathering spots' people and the
  * parade, games/npcsim.js gather), size (a child: under 1) and the anims "sit" (Kenney's sit clip; a far body
  * sinks to the seat) and "jog" (the sprint clip at the runner's pace; a far body's longer, wider gait).
+ * [play-street] rows with dog (a dog walker) get a dog on a lead ahead of them, rows with isDog are a loose dog (one
+ * instanced dog, DOG_FAR m, MAX_DOGS); draw.setExtras(fn) adds rows (city play's buskers and the like), draw.setOverride(fn)
+ * moves this frame's rows before they are drawn (city play's people running from a blast): view only, the sim never moves.
  * A near resident whose character is still loading is drawn as a body until it is ready. Drivers
  * (anim "drive") are inside their cars, which games/traffic.js draws; riders on a bus are not in sim.at.
  *   draw.update(tMs, cam {x, y?, z}, player {x, z} | null, dt)   once a frame; tMs is the City's local clock
@@ -32,7 +35,7 @@ var root = typeof window !== "undefined" ? window : self;
 var HQV = root.HQV = root.HQV || {};
 
 var NEAR = 40, NEAR_OUT = 44, FAR = 150;
-var MAX_NEAR = 30, MAX_FAR = 120;
+var MAX_NEAR = 40, MAX_FAR = 360;   // [play-street] 30 / 120 before: the passers-by fill the centre's pavements
 var POOL_SPARE = 6;                 // characters kept loaded beyond MAX_NEAR, for the near set's churn
 // the six Kenney Mini Characters, as hq3d.js CHAR_FILES (index = look.char)
 var CHAR_FILES = ["character-female-a", "character-male-a", "character-female-c", "character-male-c", "character-female-e", "character-male-e"];
@@ -46,6 +49,8 @@ var TALK_REACH = 3.2;
 var WARM_MS = 0.6;                  // route planning per frame (sim.warm), ms
 var JOG_STRIDE = 2.4, SPRINT_CLIP = 3.2;   // [crowds] metres per jog cycle; the sprint clip's own pace (m/s)
 var SIT_SINK = 0.42;                // [crowds] a far body sitting: how far it sinks (no sit pose at that distance)
+var DOG_FAR = 80, MAX_DOGS = 48;    // [play-street] dogs (a walker's on its lead, a loose one) drawn within this of the camera, at most
+var DOG_COLS = [0x8a5a2b, 0xf0e6d2, 0x2b2b2b, 0xc89b5a, 0x6b4a2f, 0xdedede, 0xa0522d];
 
 /* ---------- pure helpers ---------- */
 // Critically damped spring, exact closed form (as hq3d.js): -> [x, v]
@@ -194,6 +199,48 @@ function bodyGeometry(){
           pivot: new Float32Array(piv), idx: new Uint16Array(idx)};
 }
 
+// [play-street] a small dog, facing +z, standing on y 0: boxes (body, head, snout, ears, four legs, tail), flat-shaded.
+// -> {pos, nrm, idx}
+function dogGeometry(){
+  var P = [], N = [], idx = [];
+  // [cx, cy, cz, w, h, d, tilt about x]
+  var BOX = [[0, 0.36, 0, 0.24, 0.2, 0.52, 0], [0, 0.5, 0.31, 0.19, 0.19, 0.2, 0], [0, 0.46, 0.45, 0.11, 0.09, 0.12, 0],
+    [-0.07, 0.62, 0.27, 0.05, 0.08, 0.04, 0], [0.07, 0.62, 0.27, 0.05, 0.08, 0.04, 0],
+    [-0.08, 0.13, 0.18, 0.06, 0.26, 0.06, 0], [0.08, 0.13, 0.18, 0.06, 0.26, 0.06, 0], [-0.08, 0.13, -0.18, 0.06, 0.26, 0.06, 0], [0.08, 0.13, -0.18, 0.06, 0.26, 0.06, 0],
+    [0, 0.47, -0.32, 0.04, 0.04, 0.2, 0.6]];
+  var FACES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+  BOX.forEach(function(b){
+    var hx = b[3]/2, hy = b[4]/2, hz = b[5]/2, c = Math.cos(b[6]), sn = Math.sin(b[6]);
+    FACES.forEach(function(f){
+      var u = f[0] ? [0, 1, 0] : f[1] ? [0, 0, 1] : [1, 0, 0];
+      var v = [f[1]*u[2] - f[2]*u[1], f[2]*u[0] - f[0]*u[2], f[0]*u[1] - f[1]*u[0]];
+      var base = P.length/3;
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function(q){
+        var x = f[0]*hx + (u[0]*q[0] + v[0]*q[1])*hx, y = f[1]*hy + (u[1]*q[0] + v[1]*q[1])*hy, z = f[2]*hz + (u[2]*q[0] + v[2]*q[1])*hz;
+        // the tail tilts up about x
+        P.push(b[0] + x, b[1] + y*c - z*sn, b[2] + y*sn + z*c); N.push(f[0], f[1]*c - f[2]*sn, f[1]*sn + f[2]*c);
+      });
+      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    });
+  });
+  return {pos: new Float32Array(P), nrm: new Float32Array(N), idx: new Uint16Array(idx)};
+}
+// [play-street] the dogs to draw from this frame's rows: a walker's (r.dog) on its lead ahead to the right, a loose one
+// (r.isDog) where it is; nearest first, within far m of the camera, at most max. -> [{id, x, y, z, yaw, speed, lead: [hx, hy, hz] | null}]
+function dogsOf(rows, far, max){
+  far = far != null ? +far : DOG_FAR; max = max != null ? max | 0 : MAX_DOGS;
+  var out = [];
+  for(var i = 0; i < (rows || []).length && out.length < max; i++){
+    var r = rows[i]; if(!r || !(r.dog || r.isDog) || (r.d2 != null && r.d2 > far*far)) continue;
+    var x = r.ax != null ? r.ax : r.x, z = r.az != null ? r.az : r.z, y = +r.y || 0, yaw = +r.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw);
+    if(r.isDog){ out.push({id: r.id, x: x, y: y, z: z, yaw: yaw, speed: +r.speed || 0, lead: null}); continue; }
+    var sz = r.size > 0 ? +r.size : 1, rx = -fz, rz = fx;      // the right of facing (fx, fz)
+    out.push({id: r.id, x: x + fx*1.25 + rx*0.35, y: y, z: z + fz*1.25 + rz*0.35, yaw: yaw, speed: +r.speed || 0,
+              lead: [x + rx*0.28*sz + fx*0.15, y + 0.95*sz, z + rz*0.28*sz + fz*0.15]});
+  }
+  return out;
+}
+
 // The nearest drawn resident within reach of the player: items carry {id, x, z} (or ax, az). -> item | null
 function pickTalk(items, player, reach){
   if(!player || player.x == null) return null;
@@ -323,12 +370,64 @@ function create(THREE, parent, sim, opts){
   }
 
   var drawn = [];   // this frame's drawn residents (near + far), for talk()
+  var extrasFn = null, overrideFn = null;   // [play-street] setExtras, setOverride
+
+  /* [play-street] dogs: one instanced low-poly dog (a trot bob from its speed) and their leads, one line segment each */
+  var DG = dogGeometry(), dgeo = new THREE.BufferGeometry();
+  dgeo.setAttribute("position", new THREE.BufferAttribute(DG.pos, 3));
+  dgeo.setAttribute("normal", new THREE.BufferAttribute(DG.nrm, 3));
+  dgeo.setIndex(new THREE.BufferAttribute(DG.idx, 1));
+  var dogs = new THREE.InstancedMesh(dgeo, new THREE.MeshLambertMaterial({color: 0xffffff}), MAX_DOGS);
+  dogs.count = 0; dogs.frustumCulled = false; dogs.castShadow = false; dogs.name = "npc dogs";
+  dogs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  group.add(dogs);
+  var leadPos = new Float32Array(6*MAX_DOGS), lgeo = new THREE.BufferGeometry();
+  lgeo.setAttribute("position", new THREE.BufferAttribute(leadPos, 3));
+  lgeo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+  lgeo.setDrawRange(0, 0);
+  var leads = new THREE.LineSegments(lgeo, new THREE.LineBasicMaterial({color: 0x30261c}));
+  leads.frustumCulled = false; leads.name = "npc dog leads";
+  group.add(leads);
+  var dm = new THREE.Matrix4(), dq = new THREE.Quaternion(), dp = new THREE.Vector3(), ds = new THREE.Vector3(1, 1, 1), de = new THREE.Euler(0, 0, 0, "YXZ"), dc = new THREE.Color();
+  function packDogs(dl, dt){
+    var nl = 0;
+    for(var i = 0; i < dl.length; i++){
+      var d = dl[i], ph = clock*Math.max(0, d.speed)*3.2 + frac(d.id)*6.2831853, mv = d.speed > 0.2;
+      de.set(mv ? Math.sin(ph*2)*0.06 : 0, d.yaw, 0); dq.setFromEuler(de);
+      dp.set(d.x, d.y + (mv ? Math.abs(Math.sin(ph))*0.05 : 0), d.z); dm.compose(dp, dq, ds);
+      dogs.setMatrixAt(i, dm);
+      dc.setHex(DOG_COLS[Math.floor(frac(d.id + 7)*DOG_COLS.length)]); dogs.setColorAt(i, dc);
+      if(d.lead){
+        var fx = Math.sin(d.yaw), fz = Math.cos(d.yaw), o = 6*nl;
+        leadPos[o] = d.lead[0]; leadPos[o + 1] = d.lead[1]; leadPos[o + 2] = d.lead[2];
+        leadPos[o + 3] = d.x + fx*0.32; leadPos[o + 4] = d.y + 0.45; leadPos[o + 5] = d.z + fz*0.32;
+        nl++;
+      }
+    }
+    dogs.count = dl.length; dogs.instanceMatrix.needsUpdate = true; if(dogs.instanceColor) dogs.instanceColor.needsUpdate = true;
+    dogs.visible = dl.length > 0;
+    lgeo.setDrawRange(0, 2*nl); lgeo.attributes.position.needsUpdate = true; leads.visible = nl > 0;
+  }
   draw.update = function(tMs, cam, player, dt){
     var t0 = Date.now(); dt = Math.max(0, +dt || 0);
     cam = cam || {}; clock = (clock + dt) % 3600; U.uNpcTime.value = clock;
     sim.warm(tMs, WARM_MS);
     var list = sim.at(tMs, {x: +cam.x || 0, z: +cam.z || 0}, FAR), cy = cam.y != null ? +cam.y : NaN;
+    // [play-street] the street's own people and loose dogs (city play: buskers, a driver by a broken-down car), then its
+    // view-side reactions (people running from a blast, stepping out of a speeding car's way): rows are fresh each frame,
+    // so a reaction moves only what is drawn, never the sim
+    if(extrasFn){
+      var ex = null; try { ex = extrasFn(tMs, cam); } catch(e){ ex = null; }
+      if(ex && ex.length){
+        var cx0 = +cam.x || 0, cz0 = +cam.z || 0;
+        ex.forEach(function(r){ if(!r) return; var dx = r.x - cx0, dz = r.z - cz0; r.d2 = dx*dx + dz*dz; if(r.d2 <= FAR*FAR) list.push(r); });
+        list.sort(function(a, b){ return a.d2 - b.d2 || a.id - b.id; });
+      }
+    }
+    if(overrideFn){ try { overrideFn(list, tMs, dt, player); } catch(e){} }
     if(isFinite(cy)) list.forEach(function(r){ var dy = cy - (+r.y || 0); r.d2 = (r.d2 || 0) + dy*dy; });   // sim.at's rows are fresh
+    var loose = [];
+    if(list.some(function(r){ return r.isDog; })){ loose = list.filter(function(r){ return r.isDog; }); list = list.filter(function(r){ return !r.isDog; }); }
     var sp = split(list, nearIds);
     avoid(sp.near, player, avoidSt, dt);
     var keep = {}, far = sp.far, lo = [], need = {};
@@ -360,17 +459,26 @@ function create(THREE, parent, sim, opts){
     bodies.instanceMatrix.needsUpdate = true;
     ["aGait", "aShirt", "aPants", "aSkin"].forEach(function(k){ inst[k].needsUpdate = true; });
     drawn = sp.near.concat(far);
-    draw.stats = {near: sp.near.length - lo.length, far: n, loading: loading, ms: Date.now() - t0};
+    // [play-street] the dogs: the walkers' (where they are drawn, avoidance included) and the loose ones
+    var dl = dogsOf(loose.length ? drawn.concat(loose).sort(function(a, b){ return (a.d2 || 0) - (b.d2 || 0); }) : drawn, DOG_FAR, MAX_DOGS);
+    packDogs(dl, dt);
+    draw.stats = {near: sp.near.length - lo.length, far: n, loading: loading, dogs: dl.length, ms: Date.now() - t0};
   };
   draw.talk = function(player, tMs){
     var r = pickTalk(drawn, player, TALK_REACH);
-    return r ? {id: r.id, text: sim.speak(r.id, tMs), x: r.ax != null ? r.ax : r.x, y: r.y, z: r.az != null ? r.az : r.z} : null;
+    return r ? {id: r.id, text: r.say ? String(r.say) : sim.speak(r.id, tMs), x: r.ax != null ? r.ax : r.x, y: r.y, z: r.az != null ? r.az : r.z} : null;
   };
   draw.setLoader = function(fn){ loader = typeof fn === "function" ? fn : null; };
+  // [play-street] fn(tMs, cam) -> extra rows to draw this frame (sim.at's shape plus lk: the resident whose look they
+  // wear, say: their line for talk(); isDog: a loose dog, not a person); fn(rows, tMs, dt, player) moves rows (view only)
+  draw.setExtras = function(fn){ extrasFn = typeof fn === "function" ? fn : null; };
+  draw.setOverride = function(fn){ overrideFn = typeof fn === "function" ? fn : null; };
+  draw.drawn = function(){ return drawn; };
   draw.dispose = function(){
     draw.dead = true;
     parent.remove(group);
     geo.dispose(); bodies.material.dispose();
+    dgeo.dispose(); dogs.material.dispose(); if(dogs.dispose) dogs.dispose(); lgeo.dispose(); leads.material.dispose();
     Object.keys(free).forEach(function(k){ free[k].forEach(function(ch){ ch.mats.forEach(function(m){ m.dispose(); }); }); });
     Object.keys(slots).forEach(function(id){ slots[id].ch.mats.forEach(function(m){ m.dispose(); }); });
     slots = {}; free = {};
@@ -382,5 +490,5 @@ function create(THREE, parent, sim, opts){
 HQV.npcDraw = {create: create, split: split, avoid: avoid, packFar: packFar, farBuffers: farBuffers, colours: colours,
                bodyGeometry: bodyGeometry, bodyMaterial: bodyMaterial, pickTalk: pickTalk, lin: lin, spring: spring, ease: ease,
                NEAR: NEAR, NEAR_OUT: NEAR_OUT, FAR: FAR, MAX_NEAR: MAX_NEAR, MAX_FAR: MAX_FAR, AV: AV,
-               TALK_REACH: TALK_REACH, CHAR_FILES: CHAR_FILES};
+               TALK_REACH: TALK_REACH, CHAR_FILES: CHAR_FILES, dogGeometry: dogGeometry, dogsOf: dogsOf, DOG_FAR: DOG_FAR, MAX_DOGS: MAX_DOGS};
 })();

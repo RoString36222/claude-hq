@@ -1378,7 +1378,8 @@ HQV.hqWorlds.city3d = function(c, w){
       if(av && Math.hypot(av.x - bus.at.x, av.z - bus.at.z) > STOP_R*2){ bus = null; say("You left the stop."); return; }
       if(now >= bus.trip.arrive){ bus.phase = "ride"; say("All aboard."); }
     } else if(bus.phase === "ride" && now >= bus.trip.reach){
-      var p = bus.trip.pose(now), right = 3.5;       // step off onto the kerb, on the right of travel
+      // step off onto the kerb ([3.22.3] SIDE x the right of travel: the left)
+      var p = bus.trip.pose(now), sd = HQV.traffic && HQV.traffic.SIDE === 1 ? 1 : -1, right = 3.5*sd;
       var x = p.x - Math.cos(p.yaw)*right, z = p.z + Math.sin(p.yaw)*right;
       bus = null; if(c.teleport) c.teleport(x, z, p.yaw); say("You're at your stop.");
     }

@@ -1,6 +1,7 @@
 """Calling your vehicle (games/hqcall.js, docs/plans/dealership-spec.md "Calling your vehicle").
 
-node: the kerb spot beside you (on the right of the way it arrives), the route held a lane right of the centre line and
+node: the kerb spot beside you (on the left of the way it arrives: [3.22.3] traffic keeps left), the route held a lane
+left of the centre line and
 ending at the kerb, the run along it (slowing for the corner, stopping at the spot, the same at 30 and 120 Hz), stopping
 for an obstacle and going on once it moves, a redirect keeping its speed, and the out-of-sight spawn choice. Python:
 hq3d's wiring (C, the call list keeping its keys, the step every frame, your vehicles put back in their world).
@@ -61,8 +62,8 @@ function drive(hz, obsAt, clearAt){
   return {t, vmax, vCorner, offMax, minGap, done: R.done, x: R.x, z: R.z, yaw: R.yaw, len: R.len};
 }
 out.d60 = drive(60); out.d30 = drive(30); out.d120 = drive(120);
-// a car stopped on its lane 50 m up the first leg, gone after 20 s
-out.obs = drive(60, [-1.8, 50], 20);
+// a car stopped on its lane (the left: +x going +z) 50 m up the first leg, gone after 20 s
+out.obs = drive(60, [1.8, 50], 20);
 // a redirect: a new run started at speed keeps it
 const R2 = H.run(P, 9); H.step(R2, 1/60, Infinity); out.redirectV = R2.v;
 // out of sight: the nearest candidate over 40 m away that is not on screen (here: x < 0 is "on screen")
@@ -117,12 +118,13 @@ class CallNode(unittest.TestCase):
             raise AssertionError(r.stderr[-3000:])
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
 
-    def test_kerb_is_on_the_right_of_the_way_it_arrives(self):
+    def test_kerb_is_on_the_left_of_the_way_it_arrives(self):
         n, s = self.o["kerbN"], self.o["kerbS"]
-        # heading +z the right of travel is -x; heading -z it is +x; 5 m half carriageway, 1.3 m in from its edge
-        self.assertAlmostEqual(n["x"], -3.7, places=6); self.assertAlmostEqual(n["z"], 0, places=6)
+        # [3.22.3] traffic keeps left: heading +z the left of travel is +x; heading -z it is -x; 5 m half carriageway,
+        # 1.3 m in from its edge
+        self.assertAlmostEqual(n["x"], 3.7, places=6); self.assertAlmostEqual(n["z"], 0, places=6)
         self.assertAlmostEqual(n["yaw"], 0, places=6)
-        self.assertAlmostEqual(s["x"], 3.7, places=6)
+        self.assertAlmostEqual(s["x"], -3.7, places=6)
         self.assertAlmostEqual(abs(s["yaw"]), math.pi, places=6)
         self.assertAlmostEqual(abs(self.o["kerbNarrow"]["x"]), 1.6, places=6, msg="never closer to the middle than 1.6 m")
 
@@ -130,16 +132,16 @@ class CallNode(unittest.TestCase):
         self.assertAlmostEqual(self.o["arr"][0], 1, places=6)
         self.assertAlmostEqual(self.o["arr"][1], 0, places=6)
 
-    def test_path_keeps_right_and_ends_at_the_kerb(self):
+    def test_path_keeps_left_and_ends_at_the_kerb(self):
         p, sp = self.o["path"], self.o["spot"]
         self.assertAlmostEqual(p[0], 0, places=6, msg="it starts where it stands (the offset eases in)")
         self.assertAlmostEqual(p[1], 0, places=6)
         self.assertAlmostEqual(p[-2], sp["x"], places=6); self.assertAlmostEqual(p[-1], sp["z"], places=6)
-        # the first leg (going +z) on its right: x < 0, LANE m off
+        # the first leg (going +z) on its left: x > 0, LANE m off
         mid = [(p[i], p[i + 1]) for i in range(0, len(p), 2) if 20 < p[i + 1] < 100]
         self.assertTrue(mid)
         for x, _ in mid:
-            self.assertAlmostEqual(x, -self.o["consts"]["LANE"], places=6)
+            self.assertAlmostEqual(x, self.o["consts"]["LANE"], places=6)
 
     def test_run_reaches_the_spot_slowing_for_the_corner(self):
         d, c, sp = self.o["d60"], self.o["consts"], self.o["spot"]

@@ -1,7 +1,7 @@
 /* Claude HQ: Claude Cabs (HQV.hqCabs), docs/plans/transport-revamp.md 3.9 and 5.9 (part `cabs`).
  *
  * Ride: pick a destination and a class in the phone; a driver is matched (a seeded name, rating, plate and model),
- * the cab drives to the kerb beside you on the hqCall engine (games/hqcall.js), E gets you in (rear right seat,
+ * the cab drives to the kerb beside you on the hqCall engine (games/hqcall.js), E gets you in (rear kerb-side seat,
  * pillion on a bike), the NPC driver takes the hqnav route at street speed, and at the end you get out at the kerb.
  * Everything is free (D4): there is no price anywhere. Heli and water taxi classes hand over to deps.heli
  * (games/hqhelicall.js) and deps.water (part `water`).
@@ -24,7 +24,7 @@
  *   scoreTrip(log)                    -> {points, stars, parts: {distance, onTime, smooth}}  log also {metres, secs, expect}
  *   driverStats() / recordFare(r)     -> {score, fares, rating (average stars, 0 with none)}  localStorage, guarded
  *   etaSay(prev, eta)                 -> true when an ETA announcement is due (each 30 s mark, and at 1 min)
- *   seatOf(cls) / seatWorld(pose, seat) the rear right seat (pillion on a bike) in the vehicle's frame / in the world
+ *   seatOf(cls) / seatWorld(pose, seat) the rear kerb-side seat (pillion on a bike) in the vehicle's frame / in the world
  *   revs(v, electric)                 -> the cab engine's revs at v m/s (engineSound's 900..7600); voices: by class
  * Controller (THREE optional: with no c.THREE it runs headless, for the tests and a hidden tab):
  *   mount(c, w, deps) -> {request(dest, cls, ms) -> handle, cancel(), state(), quote(dest, cls), classes(), use(),
@@ -141,7 +141,11 @@ function roadEdges(W){
   M.edges = out;
   return out;
 }
-// the point f (0..1) along road r, its direction, and the kerb spot / pavement point on the side `side` (1 right, -1 left)
+// [3.22.3] the side traffic keeps to (games/traffic.js SIDE, the one switch): -1 the left, 1 the right; the kerb of the
+// way of travel is SIDE x its right. Left-hand traffic when traffic.js is not loaded
+function driveSide(){ var T = HQV.traffic; return T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1; }
+// the point f (0..1) along road r, its direction (side 1 a->b, -1 b->a), and the kerb spot / pavement point on the kerb of
+// that way ([3.22.3] SIDE x its right: the left)
 function roadAt(r, f, side){
   var p = r.e.pts, cum = r.cum, s = clamp(f, 0, 1)*r.len, k = 1;
   while(k < cum.length - 1 && cum[k] < s) k++;
@@ -149,7 +153,7 @@ function roadAt(r, f, side){
   var ax = p[3*k - 3]/100, az = p[3*k - 1]/100, bx = p[3*k]/100, bz = p[3*k + 2]/100;
   var dx = (bx - ax)/L, dz = (bz - az)/L, x = ax + (bx - ax)*t, z = az + (bz - az)*t;
   if(side < 0){ dx = -dx; dz = -dz; }
-  var off = clamp(r.carriage - 1.3, 1.6, 7), pav = r.carriage + 1.4;
+  var sd = driveSide(), off = clamp(r.carriage - 1.3, 1.6, 7)*sd, pav = (r.carriage + 1.4)*sd;
   // the right of travel is (-dz, dx)
   return {x: x, z: z, dx: dx, dz: dz, yaw: Math.atan2(dx, dz),
           kerb: {x: x - dz*off, z: z + dx*off, yaw: Math.atan2(dx, dz)}, pav: {x: x - dz*pav, z: z + dx*pav}, name: r.name};
@@ -324,7 +328,8 @@ function etaSay(prev, eta){
 function etaText(s){ s = Math.max(0, Math.round(num(s, 0))); return s < 60 ? s + " s" : Math.round(s/60) + " min"; }
 // seats in the vehicle's frame: forward +z, model-local +x is LEFT (as hqheli / hqVehicleModels)
 function seatOf(cls){
-  return classOf(cls).id === "bike" ? {x: 0, y: 0.95, z: -0.42, anim: "sit", pillion: true} : {x: -0.42, y: 0.42, z: -0.62, anim: "sit", pillion: false};
+  // (the rear seat on the kerb side: x + is the left, [3.22.3] -SIDE x 0.42)
+  return classOf(cls).id === "bike" ? {x: 0, y: 0.95, z: -0.42, anim: "sit", pillion: true} : {x: -0.42*driveSide(), y: 0.42, z: -0.62, anim: "sit", pillion: false};
 }
 function seatWorld(pose, seat){
   var yaw = num(pose.yaw, 0), fx = Math.sin(yaw), fz = Math.cos(yaw), lx = Math.cos(yaw), lz = -Math.sin(yaw);
@@ -540,7 +545,7 @@ function mount(c, w, deps){
   function finish(J){
     J.phase = "done"; J.doneAt = clock(); J.skipping = false;
     var R = J.R, yaw = num(R.yaw, 0);
-    J.exit = {x: R.x - Math.cos(yaw)*1.8, z: R.z + Math.sin(yaw)*1.8, yaw: yaw};   // out on the kerb side (the right)
+    J.exit = {x: R.x - Math.cos(yaw)*1.8*driveSide(), z: R.z + Math.sin(yaw)*1.8*driveSide(), yaw: yaw};   // out on the kerb side ([3.22.3] the left)
     show(null);
     sfx("door-chime", {pos: cabAt(J), kind: "door"});
     say("You've arrived at " + J.dest.name + ". Thanks for riding Claude Cabs.");
@@ -685,7 +690,7 @@ function mount(c, w, deps){
       var J = job;
       if(!J || J.delegated || J.phase !== "riding" || !J.R) return null;
       var y = vehicleY(J.R.x, J.R.z), s = seatOf(J.cls.id), p = seatWorld({x: J.R.x, y: y, z: J.R.z, yaw: J.R.yaw}, s);
-      return {x: p.x, y: p.y, z: p.z, yaw: p.yaw, anim: "sit", pillion: s.pillion, seat: s.pillion ? "pillion" : "rear-right"};
+      return {x: p.x, y: p.y, z: p.z, yaw: p.yaw, anim: "sit", pillion: s.pillion, seat: s.pillion ? "pillion" : driveSide() < 0 ? "rear-left" : "rear-right"};
     },
     camPose: function(ms, look){
       var J = job; look = look || {};

@@ -33,6 +33,9 @@
 var root = typeof window !== "undefined" ? window : self;
 var HQV = root.HQV = root.HQV || {};
 function WQ(){ return HQV.world; }
+// [3.22.3] the side traffic keeps to (games/traffic.js SIDE, the one switch): -1 the left, 1 the right; the kerb of the
+// way of travel is SIDE x its right. Left-hand traffic when traffic.js is not loaded
+function driveSide(){ var T = HQV.traffic; return T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1; }
 
 /* ---------- the adapter: road classes ---------- */
 // kind: "res" a street people live on, "shop" a street people shop on, "main" a through road, "fast" no frontage.
@@ -499,9 +502,11 @@ function signals(W){
       // a short link to the next junction: one box with this one (traffic.js), no head of its own
       var far = String(a.e.a) === String(id) ? a.e.b : a.e.a;
       if(kind === "main" && a.len < LINK && junction(far)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
-      // the middle of the stop line: across the lane coming in (the right of the way in: (uz, -ux))
+      // the middle of the stop line: across the lane coming in (the right of the way in is (uz, -ux); [3.22.3] the
+      // lane is on its kerb side, SIDE x that: the left)
+      var sd = driveSide();
       sig.arms.push({heading: heading, edge: a.e.id, stop: a.stop, half: a.c, axis: ax,
-                     stopX: x + a.ux*a.stop + a.uz*a.c/2, stopZ: z + a.uz*a.stop - a.ux*a.c/2});
+                     stopX: x + a.ux*a.stop + sd*a.uz*a.c/2, stopZ: z + a.uz*a.stop - sd*a.ux*a.c/2});
       sig.r = Math.max(sig.r, a.stop);
       rk[ax] = Math.max(rk[ax], a.rank);
     });
@@ -661,7 +666,8 @@ function parked(W){
           var qx = x + p.dx*q*2.4, qz = z + p.dz*q*2.4, n = Q.nearestRoad(W, qx, qz, 12);
           if(!n || n.edge !== e.id || Q.surfaceAt(W, qx, qz) !== "road") return;
         }
-        var yaw = sg > 0 ? Math.atan2(-p.dx, -p.dz) : Math.atan2(p.dx, p.dz), t2 = hash01(W.hash + ":parkt:" + e.id + ":" + Math.round(s*10) + ":" + sg);
+        // (sg > 0 is the left of a->b: [3.22.3] with traffic on the left, its cars face a->b)
+        var yaw = sg*driveSide() < 0 ? Math.atan2(p.dx, p.dz) : Math.atan2(-p.dx, -p.dz), t2 = hash01(W.hash + ":parkt:" + e.id + ":" + Math.round(s*10) + ":" + sg);
         var ny = Q.nearestRoad(W, x, z, 12);
         out.push({x: x, y: ny ? ny.y : y0, z: z, yaw: yaw, type: t2 < (g === "industry" ? 0.3 : 0.1) ? "van" : "car", paint: t2, edge: e.id, side: sg});
       });

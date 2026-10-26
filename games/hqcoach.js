@@ -54,6 +54,9 @@ function h01(seed, a, b){
 function T(){ return HQV.traffic || {}; }
 function seatsOf(kind){ var S = T().SEATS; return S && S[kind] ? S[kind] : []; }
 function standsOf(kind){ var S = T().STANDS; return S && S[kind] ? S[kind] : []; }
+// [3.22.3] the side traffic keeps to (traffic.js SIDE, -1 the left): the bus is drawn for the right (doors on the
+// right, the driver on the left) and mirrored by it, so its doors are on the kerb side
+function sideOf(){ var S = T().SIDE; return S === 1 || S === -1 ? S : -1; }
 function floorOf(kind){ var F = T().FLOOR; return F && F[kind] != null ? F[kind] : 0.36; }
 
 /* ---------- the destination atlas ---------- */
@@ -139,7 +142,8 @@ function nearOn(line, p, dy){
 }
 
 /* ---------- geometry builders (plain arrays; THREE only wraps them) ---------- */
-function Builder(rgba){ this.pos = []; this.col = []; this.uv = []; this.rgba = !!rgba; }
+// (mx = -1 mirrors x: each quad is turned over so it still faces out, and its uv rect still reads the right way round)
+function Builder(rgba, mx){ this.pos = []; this.col = []; this.uv = []; this.rgba = !!rgba; this.mx = mx === -1 ? -1 : 1; }
 Builder.prototype.tri = function(a, b, c, col, uv){
   this.pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
   for(var i = 0; i < 3; i++){ this.col.push(col[0], col[1], col[2]); if(this.rgba) this.col.push(col[3] != null ? col[3] : 1); }
@@ -148,6 +152,7 @@ Builder.prototype.tri = function(a, b, c, col, uv){
 // a quad a-b-c-d (counter-clockwise from its front), uv rect [u0, v0, u1, v1]
 Builder.prototype.quad = function(a, b, c, d, col, r){
   var u = r || [0, 0, 0, 0];
+  if(this.mx < 0){ var m = function(p){ return [-p[0], p[1], p[2]]; }, a0 = a; a = m(b); b = m(a0); var c0 = c; c = m(d); d = m(c0); }
   this.tri(a, b, c, col, [u[0], u[1], u[2], u[1], u[2], u[3]]);
   this.tri(a, c, d, col, [u[0], u[1], u[2], u[3], u[0], u[3]]);
 };
@@ -190,7 +195,7 @@ var GLASS = [0.55, 0.7, 0.8, 0.2], LED = [1, 0.98, 0.92, 1], AMBER = [1, 0.62, 0
 
 // The bus, vehicle-local (+x left, +z forward, y from the road), floor at FLOOR; opaque body and fittings
 function busBody(lineCol){
-  var B = new Builder(false), F = floorOf("bus"), L = 12, hw = 1.275, top = 3.0, doors = T().DOORS ? T().DOORS.bus : [5.0, 0.3, -2.75], dw = 0.6;
+  var B = new Builder(false, sideOf()), F = floorOf("bus"), L = 12, hw = 1.275, top = 3.0, doors = T().DOORS ? T().DOORS.bus : [5.0, 0.3, -2.75], dw = 0.6;
   B.box(0, F - 0.04, 0, 2.5, 0.04, 11.9, C.floor);                               // grey speckle floor
   for(var k = -5; k <= 5; k += 2) B.box(0, F + 0.001, k, 2.3, 0.002, 0.9, C.floor2);
   B.box(0, top - 0.06, 0, 2.55, 0.06, 12, C.roof);                              // roof
@@ -215,11 +220,12 @@ function busBody(lineCol){
   [[-1.1, 3.6], [1.1, 3.6], [-1.1, -3.8], [1.1, -3.8]].forEach(function(w){ B.box(w[0], 0, w[1], 0.32, 1.0, 1.0, C.wheel); });
   B.box(1.1, F, 3.6, 0.5, 0.45, 1.3, C.frame); B.box(-1.1, F, 3.6, 0.5, 0.45, 1.3, C.frame);     // wheel arches
   // seats from SEATS (priority seats in red): pan, back, frame leg
+  // ([3.22.3] SEATS are already mirrored for the side traffic keeps to: drawn as laid out for the right, B mirrors them back)
   seatsOf("bus").forEach(function(s){
-    var col = s.priority ? C.seatPri : C.seat;
-    B.box(s.x, F + s.y - 0.08, s.z, 0.44, 0.08, 0.44, col);
-    B.box(s.x, F + s.y, s.z - 0.2, 0.44, 0.5, 0.06, col);
-    B.box(s.x, F, s.z, 0.06, s.y - 0.08, 0.06, C.frame);
+    var col = s.priority ? C.seatPri : C.seat, x = s.x*B.mx;
+    B.box(x, F + s.y - 0.08, s.z, 0.44, 0.08, 0.44, col);
+    B.box(x, F + s.y, s.z - 0.2, 0.44, 0.5, 0.06, col);
+    B.box(x, F, s.z, 0.06, s.y - 0.08, 0.06, C.frame);
   });
   // the wheelchair bay: a fold-down seat against the wall, a blue floor mark, a back pad
   B.box(1.15, F + 0.42, 0.25, 0.08, 0.06, 0.44, C.seat); B.box(0.6, F + 0.002, 0.25, 0.9, 0.003, 1.3, C.bay);
@@ -241,7 +247,7 @@ function busBody(lineCol){
 }
 // glass, LED strips, door-edge lights, the displays: rgba vertex colours and uvs into the per-vehicle canvas
 function busLit(R){
-  var B = new Builder(true), F = floorOf("bus"), hw = 1.275, top = 3.0, doors = T().DOORS ? T().DOORS.bus : [5.0, 0.3, -2.75], dw = 0.6, idx = {};
+  var B = new Builder(true, sideOf()), F = floorOf("bus"), hw = 1.275, top = 3.0, doors = T().DOORS ? T().DOORS.bus : [5.0, 0.3, -2.75], dw = 0.6, idx = {};
   [1, -1].forEach(function(side){ B.side(side*(hw + 0.005), 1.05, 2.55, -5.95, 5.95, side, GLASS, R.white); });
   B.end(5.98, 1.15, 2.55, -1.2, 1.2, 1, GLASS, R.white);                          // windscreen
   B.end(-5.98, 1.3, 2.4, -1.0, 1.0, -1, GLASS, R.white);
@@ -262,8 +268,8 @@ function busLit(R){
   B.idx = idx;
   return B;
 }
-// door leaves: [{x, z, side (+1 left), dir (+1 opens toward +z)}] vehicle-local
-function busLeaves(){ var D = T().DOORS ? T().DOORS.bus : [5.0, 0.3, -2.75], out = []; D.forEach(function(z){ out.push({x: -1.24, z: z - 0.3, side: -1, dir: -1}, {x: -1.24, z: z + 0.3, side: -1, dir: 1}); }); return out; }
+// door leaves: [{x, z, side (+1 left), dir (+1 opens toward +z)}] vehicle-local ([3.22.3] on the kerb side: -SIDE)
+function busLeaves(){ var D = T().DOORS ? T().DOORS.bus : [5.0, 0.3, -2.75], out = [], sd = -sideOf(); D.forEach(function(z){ out.push({x: 1.24*sd, z: z - 0.3, side: sd, dir: -1}, {x: 1.24*sd, z: z + 0.3, side: sd, dir: 1}); }); return out; }
 
 // One tram section, section-local: the cab at +z (z 5..6.5), the articulation at -z (-6.5..-7); the rear section
 // is this one turned round, so seats are SEATS.tram[0..23] shifted by -7
@@ -483,8 +489,9 @@ function view(c, sim, opts){
         put(M.body, k, p.x, p.y - kn, p.z, p.yaw); put(M.lit, k, p.x, p.y - kn, p.z, p.yaw);
         var c0 = Math.cos(p.yaw), s0 = Math.sin(p.yaw);
         M.leaves.forEach(function(L, j){
-          // doors on the kerb side (right of travel) open: a tram's rear section is turned round, so its left
-          var opens = v.kind === "bus" ? L.side < 0 : (k === 0 ? L.side < 0 : L.side > 0), o = opens ? dOpen : 0;
+          // doors on the kerb side (SIDE x the right of travel: [3.22.3] the left) open: a tram's rear section is turned
+          // round, so its other side
+          var ks = -sideOf(), opens = v.kind === "bus" ? L.side === ks : (k === 0 ? L.side === ks : L.side === -ks), o = opens ? dOpen : 0;
           var lx = L.x + L.side*DOOR_OUT*Math.min(1, o*3), lz = L.z + L.dir*DOOR_SLIDE*o;
           put(M.doors, k*M.leaves.length + j, p.x + lx*c0 + lz*s0, p.y - kn, p.z - lx*s0 + lz*c0, p.yaw);
         });
@@ -585,7 +592,8 @@ function view(c, sim, opts){
         if(!isNear){
           // destination display on the front of this section (a tram's rear section is turned round: its back)
           quadW(w(-0.75, y0, hl + 0.03), w(0.75, y0, hl + 0.03), w(0.75, y1, hl + 0.03), w(-0.75, y1, hl + 0.03), [1, 1, 1], rc);
-          if(kind === "bus") quadW(w(-hw, y0, 3.0), w(-hw, y0, 4.3), w(-hw, y1, 4.3), w(-hw, y1, 3.0), [1, 1, 1], rc);
+          // (the bus's door side display: [3.22.3] on the kerb side, -SIDE x +x, wound to face out)
+          if(kind === "bus"){ var sx = -sideOf()*hw, za = sx < 0 ? 3.0 : 4.3, zb = 7.3 - za; quadW(w(sx, y0, za), w(sx, y0, zb), w(sx, y1, zb), w(sx, y1, za), [1, 1, 1], rc); }
           // route colour bands both sides
           var by = kind === "tram" ? 0.45 : 0.55;
           quadW(w(hw, by, -hl), w(hw, by, hl), w(hw, by + 0.16, hl), w(hw, by + 0.16, -hl), lc, whiteR);
@@ -642,7 +650,7 @@ function view(c, sim, opts){
     var list = lastList || rowsAt(lastMs);
     function veh(kind){ return list.filter(function(v){ return v.kind === kind && v.id === focusId; })[0] || list.filter(function(v){ return v.kind === kind; })[0]; }
     function cam(kind, v, a, b, fov){ var p = toWorld(kind, v, a), l = toWorld(kind, v, b); return {pos: {x: p.x, y: p.y, z: p.z}, look: {x: l.x, y: l.y, z: l.z}, fov: fov}; }
-    if(name === "bus-interior"){ var b = veh("bus"); return b ? cam("bus", b, {x: -0.2, y: 1.55, z: -4.6}, {x: 0.2, y: 1.2, z: 5}, 70) : null; }
+    if(name === "bus-interior"){ var b = veh("bus"); return b ? cam("bus", b, {x: 0.2*sideOf(), y: 1.55, z: -4.6}, {x: -0.2*sideOf(), y: 1.2, z: 5}, 70) : null; }
     if(name === "tram-interior"){ var t = veh("tram"); return t ? cam("tram", t, {x: -0.2, y: 1.6, z: 11.4}, {x: 0, y: 1.2, z: -11}, 70) : null; }
     if(name === "tram-stop" && svc.tram){
       var st = svc.tram.stops()[0];

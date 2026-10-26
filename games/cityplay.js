@@ -5,10 +5,12 @@
  *
  *   HQV.cityPlay.register({id, order?, create(ctx) -> feat})
  *     feat: {update(dt, f)?, blocked(x, z)?, on(kind, data)?, dispose()?}   (every key optional)
+ *           [play-street] also through(x, z)? (true: the City's own furniture or market stall at (x, z) gives way: knocked
+ *           over), prompt(p)? -> the E line on foot at p, use(p)? -> true when E was its, sprintMul()? -> your sprint x
  *     f, each frame: {ms: Date.now(), local: the City's local ms (npcSim.localMs), me: {x, y, z, yaw},
  *                     motion: hq3d's c.motion() (ride, speed, air, boat), traffic: what traffic.js drew near you}
  *
- *   ctx: {THREE, scene, W (the packed world), worldId, c (hq3d's context), api, tsim, nsim, cev,
+ *   ctx: {THREE, scene, W (the packed world), worldId, c (hq3d's context), api, tsim, nsim, cev, ndraw (npcdraw), wb() (worldbuild, once built),
  *         say(text), local(ms), calm(), night(), blocked(x, z) (the City's own, without the features'),
  *         emit(kind, data) (to every feature, and to HQV.cityPlay.on listeners),
  *         hud: {set(id, text, opts?), clear(id)} (one line each, top centre, textContent only: XSS-safe),
@@ -90,6 +92,7 @@ function create(THREE, o){
   function beaconOff(id){ var b = beacons[id]; if(!b) return; bG.remove(b); b.geometry.dispose(); b.material.dispose(); delete beacons[id]; }
   var ctx = {
     THREE: THREE, scene: S, W: W, worldId: o.worldId, c: o.c, api: o.api || {}, tsim: o.tsim || null, nsim: o.nsim || null, cev: o.cev || null,
+    ndraw: o.ndraw || null, wb: function(){ try { return (typeof o.wb === "function" ? o.wb() : o.wb) || null; } catch(e){ return null; } },
     seed: hashStr((W && (W.seed || W.id)) || "city"), mulberry32: mulberry32, hashStr: hashStr,
     say: function(t){ if(o.say) o.say(t); },
     local: function(ms){ return o.local ? o.local(ms) : ms; },
@@ -117,6 +120,25 @@ function create(THREE, o){
       for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.blocked){ try { if(f.blocked(x, z)) return true; } catch(e){} } }
       return false;
     },
+    // [play-street] the first feature that lets the City's own prop at (x, z) give way, says what E does on foot at p,
+    // or takes E; and how much faster you sprint (the largest feature's say, 1 to 1.3)
+    through: function(x, z){
+      for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.through){ try { if(f.through(x, z)) return true; } catch(e){} } }
+      return false;
+    },
+    prompt: function(p){
+      for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.prompt){ try { var t = f.prompt(p); if(t) return String(t); } catch(e){} } }
+      return null;
+    },
+    use: function(p){
+      for(var i = 0; i < feats.length; i++){ var f = feats[i]; if(f.use){ try { if(f.use(p)) return true; } catch(e){} } }
+      return false;
+    },
+    sprintMul: function(){
+      var m = 1;
+      feats.forEach(function(f){ if(f.sprintMul){ try { var v = +f.sprintMul(); if(v > m) m = v; } catch(e){} } });
+      return Math.min(1.3, m);
+    },
     emit: emit,
     dispose: function(){
       if(dead) return; dead = true;
@@ -136,6 +158,7 @@ HQV.cityPlay = {
   features: function(){ return FEATS.map(function(f){ return f.id; }); },
   live: function(){ return LIVE; },
   emit: function(kind, d){ if(LIVE) LIVE.emit(kind, d); },
+  sprintMul: function(){ return LIVE ? LIVE.sprintMul() : 1; },          // [play-street] hq3d.js: your sprint's pace x this
   on: function(fn){ if(typeof fn === "function") LISTEN.push(fn); return function(){ var i = LISTEN.indexOf(fn); if(i >= 0) LISTEN.splice(i, 1); }; }
 };
 })();

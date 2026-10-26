@@ -119,10 +119,12 @@ function travelYawOf(yaw, speed, rate, prev){
 // travelYaw is null meanwhile, so the camera holds its heading and only backs up with you; once you walk with W
 // it swings round behind you again. A / D during it nudge where you head.
 // -> a new state plus travelYaw.
+// [3.22] inp.runMul: your sprint's pace x this (city play's "fed" after a snack), 1..1.3
+function runMul(inp){ var m = +(inp && inp.runMul); return m > 1 ? Math.min(1.3, m) : 1; }
 function footStep(st, inp, dt){
   st = st || {}; inp = inp || {}; dt = Math.max(0, +dt || 0);
   var fwd = Math.max(-1, Math.min(1, +inp.fwd || 0)), turn = Math.max(-1, Math.min(1, +inp.turn || 0));
-  var base = inp.run ? FOOT.run : FOOT.walk, rate0 = +st.rate || 0, yaw0 = +st.yaw || 0;
+  var base = inp.run ? FOOT.run*runMul(inp) : FOOT.walk, rate0 = +st.rate || 0, yaw0 = +st.yaw || 0;
   if(fwd < 0){
     var faceGoal = inp.face != null && isFinite(inp.face) ? +inp.face : st.faceGoal != null ? +st.faceGoal : wrapPi(yaw0 + Math.PI);
     var faceOff = (+st.faceOff || 0) + turn*FOOT.turn*dt;
@@ -159,7 +161,7 @@ function steerStep(st, inp, dt){
   if(l){
     var bk = fwd < 0 ? -1 : 1;
     mdx = bk*(fwd*sn + side*cs)/l; mdz = bk*(fwd*cs - side*sn)/l;
-    goal = bk*(inp.run ? FOOT.run : FOOT.walk)*(fwd < 0 ? FOOT.back : 1);
+    goal = bk*(inp.run ? FOOT.run*runMul(inp) : FOOT.walk)*(fwd < 0 ? FOOT.back : 1);
   }
   var s = spring(st.speed, st.speedV, goal, FOOT.speedW, dt);
   return {yaw: yaw, speed: s[0], speedV: s[1], mdx: mdx, mdz: mdz};
@@ -3836,7 +3838,7 @@ function mount(el, api){
     }
     var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    var run = !!(keys.ShiftLeft || keys.ShiftRight), base = run ? FOOT.run : FOOT.walk;
+    var run = !!(keys.ShiftLeft || keys.ShiftRight), rm = HQV.cityPlay && HQV.cityPlay.sprintMul ? HQV.cityPlay.sprintMul() : 1, base = run ? FOOT.run*runMul({runMul: rm}) : FOOT.walk;   // [3.22] fed: a faster sprint
     if(fwd || side){ walkTo = null; walkDoor = null; }
     var yaw0 = avatar.yaw, sp0 = avatar.speed || 0, dx = 0, dz = 0;
     if(steering() && !walkTo){
@@ -3846,7 +3848,7 @@ function mount(el, api){
       var tn = HQV.camrig.absorb ? HQV.camrig.absorb(rig, PI) : 0;
       HQV.camrig.input(rig, {hold: true});
       var g = steerStep({yaw: avatar.yaw, speed: avatar.speed, speedV: avatar.sv, mdx: avatar.mdx, mdz: avatar.mdz},
-                        {fwd: fwd, side: side, run: run, turn: tn}, dt);
+                        {fwd: fwd, side: side, run: run, turn: tn, runMul: rm}, dt);
       avatar.rate += ((dt > 0 ? wrapPi(g.yaw - avatar.yaw)/dt : 0) - avatar.rate)*ease(12, dt);   // the lean and the shuffle
       avatar.yaw = g.yaw; avatar.speed = g.speed; avatar.sv = g.speedV; avatar.mdx = g.mdx; avatar.mdz = g.mdz; avatar.rv = 0;
       avatar.faceGoal = null; avatar.faceOff = 0; avatar.aboutV = 0; avatar.camHeld = false;
@@ -3862,7 +3864,7 @@ function mount(el, api){
       if(fwd > 0 && HQV.camrig.absorb){ var ab = HQV.camrig.absorb(rig, FOOT.steer*dt); if(ab) avatar.yaw = wrapPi(avatar.yaw + ab); }
       var f = footStep({yaw: avatar.yaw, rate: avatar.rate, rateV: avatar.rv, speed: avatar.speed, speedV: avatar.sv, travelYaw: avatar.travelYaw,
                         aboutV: avatar.aboutV, faceGoal: avatar.faceGoal, faceOff: avatar.faceOff, camHeld: avatar.camHeld},
-                       {fwd: fwd, turn: side, run: run,
+                       {fwd: fwd, turn: side, run: run, runMul: rm,
                         // toward the camera: read ONCE as S goes down (latched in footStep's faceGoal), never followed
                         face: fwd < 0 && avatar.faceGoal == null && rig.moveYaw != null ? wrapPi(rig.moveYaw + PI) : null}, dt);
       avatar.yaw = f.yaw; avatar.rate = f.rate; avatar.rv = f.rateV; avatar.speed = f.speed; avatar.sv = f.speedV; avatar.aboutV = f.aboutV; avatar.faceGoal = f.faceGoal; avatar.faceOff = f.faceOff; avatar.camHeld = f.camHeld;

@@ -819,7 +819,8 @@ function mount(el, api){
     // view: the camera's heading (the heading-up minimap turns with it, so map, camera and compass agree)
     motion: function(){ return avatar ? {yaw: avatar.yaw || 0, view: camHeading(), air: !!(ride && (ride.heli || ride.plane)), y: avatar.g.position.y,
                                          craft: ride && ride.plane ? ride.kind : ride && ride.heli ? "heli" : null, speed: Math.abs(ride ? (ride.speed || 0) : (avatar.speed || 0)),
-                                         ride: ride ? ride.base || ride.kind || null : null, boat: !!(ride && ride.boat)} : null; },
+                                         ride: ride ? ride.base || ride.kind || null : null, boat: !!(ride && ride.boat),
+                                         body: ride && ride.V && ride.V.cat ? ride.V.cat.body || null : null} : null; },   // [3.22] body: a catalogue vehicle's (suv, sedan, ...)
     others: function(){ var out = []; Object.keys(peers).forEach(function(u){ var P = peers[u]; if(cur && P.g.parent === cur.scene) out.push({x: P.x, z: P.z, col: bikeColor(u)}); });
                         trips.forEach(function(T){ if(T.C === cur && T.mode === "call") out.push({x: T.run.x, z: T.run.z, col: 0xffb347}); });   // your called vehicle
                         return out; },

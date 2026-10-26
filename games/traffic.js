@@ -71,7 +71,7 @@
  *    the cars', each where it is clear of the windows it clashes with, early enough for its whole platoon to be in
  *    before the amber, floating on to its deadline (a platoon that comes up on green drives on); a box that does not
  *    fit (overfull) takes a car off the platoons through it and the plan is made again (planCars);
- *  - at a red the platoon stops with its nose on the line and pulls away on its window (profileOf); where its queue
+ *  - at a red the platoon stops SIG_BACK m short of the line and pulls away on its window (profileOf); where its queue
  *    would reach back into the box behind it waits at that box's line instead and rolls on through (relays: don't
  *    block the box); boxes closer than MERGE m along a road (or a light's short link, sig.links) are one box
  *    (clusterOf), so nothing queues between them; a ring no bus or tram lets through at all has a car off its platoons

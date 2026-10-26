@@ -101,11 +101,11 @@ var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEA
 var EV_KINDS = ["fire", "ambulance", "police"];
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
-var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 80, lorry: 60, scooter: 60, bike: 60, taxi: 60};
+var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
 // [3.22] traffic lights: the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green, the window periods
 // that divide the cycle, the most cars in a platoon (on a ring through lights; elsewhere), the share of a platoon's
 // places that hold a car (by place), the speed a platoon pulls away from the line to
-var SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65], SIG_V = 8;
+var SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65], SIG_V = 8;
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */
@@ -889,22 +889,17 @@ function create(doc, o){
     function against(P){ return placed.filter(function(q){ return P.some(function(p){ return q.P.some(function(x){ return clash(p, x); }); }); }); }
     function clearOf(Q, t, w){ return Q.every(function(q){ return !ov(mod(t, SIG_C), w, q.s, q.w); }); }
     function first(Q, from, to, w){ for(var t = from; t <= to + 1e-9; t += 0.25) if(clearOf(Q, t, w)) return t; return null; }
-    function put(o, P, from, to){
-      var Q = against(P), at = first(Q, from, to, o.w);
+    function latest(Q, from, to, w){ for(var t = to; t >= from - 1e-9; t -= 0.25) if(clearOf(Q, t, w)) return t; return null; }
+    function put(o, P, from, to, late){
+      var Q = against(P), at = late ? latest(Q, from, to, o.w) : first(Q, from, to, o.w);
       // (no room in its green: the first clear time after it, late; never over a window it clashes with)
       if(at == null){ overfull++; over[id] = 1; at = first(Q, to, from + SIG_C, o.w); if(at == null) at = from; }
       o.s = mod(at, SIG_C); o.P = P;
       placed.push(o);
       return o;
     }
-    cols.filter(function(o){ return o.g; }).sort(function(a, b){ return a.g.start - b.g.start || a.c - b.c; }).forEach(function(o){
-      var s0 = o.g.start + SIG_LEAD;
-      o.dl = o.g.len - SIG_LEAD - o.ent - 0.3;            // the latest it may go in, s after s0
-      put(o, o.P, s0, s0 + o.dl);
-    });
-    cols.filter(function(o){ return !o.g; }).forEach(function(o){ var b = h01(seed, hash32(id), 7)*SIG_C; put(o, o.P, b, b + SIG_C - 0.25); });
-    // then the buses and trams: each at the first clear time in its green (N.twinPre; one with no light is placed with
-    // the others, later, where it blocks the fewest cars)
+    // the buses and trams first, each at the first clear time in its green (N.twinPre; one with no light is placed with
+    // the others, later, where it blocks the fewest cars); then the cars, each colour free to float to its deadline
     N.tr.forEach(function(p){
       if(N.trRange[p.colour] !== undefined) return;
       if(p.sn == null){ N.trRange[p.colour] = null; return; }
@@ -913,6 +908,12 @@ function create(doc, o){
       var o = put({w: N.twidths[p.colour] || 0}, P, g.start + SIG_LEAD, g.start + g.len - 1);
       N.twinPre[p.colour] = [o.s, o.w];
     });
+    cols.filter(function(o){ return o.g; }).sort(function(a, b){ return a.g.start - b.g.start || a.c - b.c; }).forEach(function(o){
+      var s0 = o.g.start + SIG_LEAD;
+      o.dl = o.g.len - SIG_LEAD - o.ent - 0.3;            // the latest it may go in, s after s0
+      put(o, o.P, s0, s0 + o.dl);
+    });
+    cols.filter(function(o){ return !o.g; }).forEach(function(o){ var b = h01(seed, hash32(id), 7)*SIG_C; put(o, o.P, b, b + SIG_C - 0.25); });
     // a car colour floats on as far as its deadline and the next window it clashes with allow
     cols.forEach(function(o){
       var F = 0;
@@ -961,9 +962,10 @@ function create(doc, o){
     if(dbb) relays(order, r);
     var base = ev[k0].slot != null ? ev[k0].slot : h01(seed, hash32(String(r.id)), r.kind === "car" ? 3 : 5)*cyc;
     var P = new Profile(), hold = null, stopsT = [];
-    P.cur.s = s0; P.cur.v = order[0].v;
+    // (a lap that starts at a light starts from the line: every lap ends stopped there, waiting for its green)
+    P.cur.s = s0; P.cur.v = order[0].sig ? 0 : order[0].v;
     for(i = 0; i <= order.length; i++){
-      var e = i < order.length ? order[i] : {s: s0 + Lr, v: order[0].v, close: true};
+      var e = i < order.length ? order[i] : {s: s0 + Lr, v: order[0].v, close: true, sig: order[0].sig};
       if(i > 0){
         var Lm = Math.max(0, e.s - P.cur.s), D = fastest(Lm, P.cur.v, e.v, spec.vmax, spec.acc).T, m = e.close ? HB : e.per || cyc;
         var target = e.close ? 0 : e.slot != null ? e.slot - base : null;
@@ -974,11 +976,11 @@ function create(doc, o){
           // [3.22] the wait for a window a little way on, taken here: roll straight through to it, or stop on this
           // line and go when that gets there on time
           var tg = order[e.relay], mR = tg.per || cyc, tT = tg.slot - base;
-          if(waitFor(tT, P.cur.t + D + rollTo(order, i, e.relay, e.v, spec), mR, tg.flo) > 0){
+          if(waitFor(tT, P.cur.t + D + rollTo(order, i, e.relay, e.v, spec), mR, tg.flo) > SIG_EPS){
             var D1 = fastest(Lm, P.cur.v, 0, spec.vmax, spec.acc).T;
             P.segment(Lm, 0, D1 + waitFor(tT - rollTo(order, i, e.relay, 0, spec), P.cur.t + D1, mR, tg.flo), spec);
           } else P.segment(Lm, e.v, D, spec);
-        } else if(e.sig && slack > 0){
+        } else if(e.sig && (slack > SIG_EPS || e.close)){
           // [3.22] red: brake to a stop with the nose on the line, wait for the window (the green), pull away
           var D0 = fastest(Lm, P.cur.v, 0, spec.vmax, spec.acc).T;
           P.segment(Lm, 0, D0 + waitFor(target, P.cur.t + D0, m, e.flo), spec);
@@ -1059,6 +1061,30 @@ function create(doc, o){
     if(flo > 0 && mod(arr - target, m) <= flo + 1e-9) return 0;
     var w = mod(target - arr, m);
     return w > m - 1e-6 ? 0 : w;
+  }
+  // [3.22] Queues. A platoon a slot behind another may come up on it while it waits (at a light, for most of a cycle):
+  // at() holds it back nose to tail behind the one ahead (softly: smin, QSOFT m), never ahead of its own timetable. A
+  // ring may space its platoons so (queueOk) only when the held-back platoons never stand in a box: every platoon
+  // k slots apart (k*Hr s), as at() places them, each lap's sample QSTEP s apart.
+  function smin(a, b){ var m = Math.min(a, b), d = Math.abs(a - b); return m - QSOFT*Math.log(1 + Math.exp(-d/QSOFT)); }
+  function queueOk(r, k, Pn){
+    var P = r.prof, Lr = r.pl.len, fr = SPEC.car.len/2, ext = LP(Pn), n = Math.floor(Math.round(P.T/r.Hr)/k), o = {}, x = [], y = [];
+    if(n < 2) return true;
+    var B = r.passes.filter(function(p){ return nodeSlots[p.node]; }).map(function(p){ return [p.sIn + fr, p.sOut]; });
+    function inBox(c){
+      var a = c + fr - ext, b = c + fr;
+      for(var i = 0; i < B.length; i++) for(var w = -1; w <= 1; w++){ var lo = B[i][0] + w*Lr, hi = B[i][1] + w*Lr; if(b > lo && a < hi) return true; }
+      return false;
+    }
+    for(var t = 0; t < P.T; t += QSTEP){
+      for(var j = 0; j < n; j++){ x[j] = P.S(t - j*k*r.Hr, o).s; y[j] = x[j]; }
+      for(var pass = 0; pass < 2; pass++) for(j = 0; j < n; j++){
+        var ahead = j ? y[j - 1] : y[n - 1] + Lr*Math.round((x[0] - y[n - 1])/Lr + 0.5);
+        y[j] = smin(x[j], ahead - ext - GAP);
+      }
+      for(j = 0; j < n; j++) if(y[j] < x[j] - 0.05 && inBox(y[j])) return false;
+    }
+    return true;
   }
   // min over the lap of S(t) - S(t - shift): the closest two vehicles shift seconds apart come
   function minGap(P, shift){
@@ -1153,7 +1179,7 @@ function create(doc, o){
   var cars = [], totalSlots = 0;
   rings.forEach(function(r){
     var Hr = r.Hr, Pn = r.P || 1, m = Math.round(r.prof.T/Hr), G = sigOn ? LP(Pn) + GAP : SPEC.car.len + GAP, k = 1, cand = [], last = -Infinity;
-    while(k < m && minGap(r.prof, k*Hr) < G) k++;
+    while(k < m && minGap(r.prof, k*Hr) < G && !(sigOn && queueOk(r, k, Pn))) k++;
     r.k = k; r.m = m; r.cars = []; r.leads = [];
     if(r.pl.len < 2*G) return;
     for(var i = 0; i < m; i++){
@@ -1672,18 +1698,16 @@ function create(doc, o){
     var evs = activeIncidents(t).map(function(I){ return evPose(I, t, {id: I.id, kind: I.kind}); });
     function near(b){ return cx >= b[0] - rad - 30 && cx <= b[2] + rad + 30 && cz >= b[1] - rad - 30 && cz <= b[3] + rad + 30; }
     function run(r, list, spec){
-      var anyLag = false, st = [], pl = null;
+      var anyLag = false, st = [], heads = sigOn && r.kind === "car" ? platoons(r, list) : null;
       if(!near(r.box) && !hasLag(list)) return;
       list.forEach(function(veh){
         // [3.21] a car out on this lap (city life), as its type: a long one sits back (nose where a car's is)
         var cs = veh.kind === "car" ? carState(veh, t) : null, vs = cs ? SPEC[cs.type] : spec, back = cs ? (vs.len - spec.len)/2 : 0;
         if(cs && !cs.show){ delete lag[veh.id]; return; }
-        var same = sigOn && cs && pl && pl.slot === veh.slot, q = same ? pl.q : r.prof.S(t - r.prof.base - veh.shift, {}), sBase = q.s, l0 = lag[veh.id] || 0, l = l0;
-        // [3.22] a platoon: the first car out on its slot's timetable, each next one nose to tail behind the one before
-        if(sigOn && cs){
-          if(same){ sBase = pl.c - (pl.len + vs.len)/2 - GAP; back = 0; }
-          pl = {slot: veh.slot, q: q, c: sBase - back, len: vs.len};
-        }
+        var at = heads ? heads.at[veh.id] : null, q = at ? at.q : r.prof.S(t - r.prof.base - veh.shift, {}), sBase = q.s, l0 = lag[veh.id] || 0, l = l0;
+        // [3.22] a platoon: its first car on its slot's timetable (held back behind the platoon ahead), each next one
+        // nose to tail behind the one before
+        if(at){ sBase = at.c + (at.head ? back : 0); if(!at.head) back = 0; }
         if(obs || l > 0){
           var gapAhead = obs ? obstacleNeed(r, sBase - back - l, q.v, vs.wid, vs.len, obs) : null;
           // brake smoothly to a stop 1.2 m short of it; once clear, ease back onto the timetable
@@ -1740,6 +1764,32 @@ function create(doc, o){
       return i < 0 ? 0 : smooth(Math.min(sm - r.ranges[i][0], r.ranges[i][1] - sm)/PULL_TAPER);
     }
     function hasLag(list){ for(var i = 0; i < list.length; i++) if(lag[list[i].id]) return true; return false; }
+    // [3.22] a ring's platoons at t: each car out's body centre (c) and its slot's timetable (q), by id. Platoons in
+    // road order (slot order; the first follows the last a lap ahead), each held back nose to tail behind the one
+    // ahead (queueOk: never in a box)
+    function platoons(r, list){
+      var G = [], cur = null, out = {};
+      list.forEach(function(veh){
+        var cs = carState(veh, t);
+        if(!cs.show) return;
+        var vs = SPEC[cs.type];
+        if(!cur || cur.slot !== veh.slot){
+          var q = r.prof.S(t - r.prof.base - veh.shift, {});
+          cur = {slot: veh.slot, q: q, own: q.s - (vs.len - SPEC.car.len)/2, cars: [], off: 0, tail: 0};
+          G.push(cur);
+        } else cur.off += (cur.cars[cur.cars.length - 1].len + vs.len)/2 + GAP;
+        cur.cars.push({veh: veh, len: vs.len, off: cur.off});
+      });
+      if(!G.length) return {at: out};
+      var Lr = r.pl.len;
+      G.forEach(function(g){ var c = g.cars[g.cars.length - 1]; g.tail = c.off + c.len/2; g.hl = g.cars[0].len/2; g.c = g.own; });
+      for(var pass = 0; pass < 2 && G.length > 1; pass++) G.forEach(function(g, j){
+        var a = j ? G[j - 1] : G[G.length - 1], ac = a.c + (j ? 0 : Lr*Math.round((G[0].own - a.c)/Lr + 0.5));
+        g.c = smin(g.own, ac - a.tail - GAP - g.hl);
+      });
+      G.forEach(function(g){ g.cars.forEach(function(c, j){ out[c.veh.id] = {q: g.q, c: g.c - c.off, head: !j}; }); });
+      return {at: out};
+    }
     rings.forEach(function(r){ if(r.cars.length) run(r, r.cars, SPEC.car); });
     lines.forEach(function(r){ run(r, r.vehicles, SPEC[r.kind]); });
     evs.forEach(function(e){
@@ -2356,7 +2406,195 @@ function view(c){
   return {group: group, meshes: meshes, update: update, drawCalls: drawCalls, dispose: dispose};
 }
 
-HQV.traffic = {create: create, view: view, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
+/* ---------- [3.22] the street: traffic lights and parked cars (THREE only inside street()) ---------- */
+// street(THREE, scene, W, o) -> {group, update(localMs, cam), blocked(x, z), info(), drawCalls(), dispose()}
+// The lights of HQV.cityLife.signals(W): at each arm a pole on the kerb beside the stop line, a three-aspect head on top
+// facing the traffic coming in and a walk head facing across the arm, and the stop line across the lane coming in.
+// The parked cars of cityLife.parked(W). Four instanced meshes in all, built once: poles and housings, lenses (lit by
+// the light's state through their instance colours: near the camera every frame, the rest every LENS_ALL s), stop
+// lines, and the parked cars within PARK_NEAR m of the camera (rebuilt as it moves on; none on a street that is closed,
+// where the market stands). Poles and parked cars are solid (blocked). Below the street (the metro) none of it.
+var LENS_NEAR = 320, LENS_ALL = 2000, PARK_NEAR = 240, PARK_CAP = 900, PARK_MOVE = 24;
+var LENS_ON = [0xff2a1a, 0xffb020, 0x2aff6a, 0xff3a24, 0xe8fff0], LENS_OFF = [0x34100c, 0x34260c, 0x0c2e16, 0x2a0e0a, 0x1c2420];
+function street(THREE, scene, W, o){
+  o = o || {};
+  var CL = HQV.cityLife, WQ = HQV.world, group = new THREE.Group();
+  group.name = "city-street";
+  if(scene && scene.add) scene.add(group);
+  var SIGS = {}, PARK = [];
+  try { SIGS = CL && CL.signals ? CL.signals(W) || {} : {}; } catch(e){ SIGS = {}; }
+  try { PARK = CL && CL.parked ? CL.parked(W) || [] : []; } catch(e){ PARK = []; }
+  var UP = WQ && WQ.SIDEWALK_UP != null ? WQ.SIDEWALK_UP : 0.15;
+  function roadY(x, z, d){ var n = WQ && WQ.nearestRoad ? WQ.nearestRoad(W, x, z, 30) : null; return n ? n.y : d; }
+  // each arm: its pole (on the kerb beside the stop line, a step back), the way its head faces, the ground there
+  var arms = [];
+  Object.keys(SIGS).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
+    var sg = SIGS[id];
+    (sg.arms || []).forEach(function(a){
+      var h = a.heading, ax = Math.sin(h), az = Math.cos(h), rx = -Math.cos(h), rz = Math.sin(h), c = num(a.half, 3);
+      // (on the pavement: a little further out where the kerb bends away)
+      for(var out = 0.75, px, pz; out < 4; out += 0.75){
+        px = a.stopX + rx*(c/2 + out) - ax*0.9; pz = a.stopZ + rz*(c/2 + out) - az*0.9;
+        if(!WQ || !WQ.surfaceAt || WQ.surfaceAt(W, px, pz) !== "road") break;
+      }
+      if(WQ && WQ.surfaceAt && WQ.surfaceAt(W, px, pz) === "road") return;     // (no pavement there: in another road)
+      var y = roadY(a.stopX, a.stopZ, 0);
+      arms.push({sig: sg, a: a, x: px, z: pz, y: y + UP, yaw: h + Math.PI, sx: a.stopX, sz: a.stopZ, sy: y, c: c});
+    });
+  });
+  var m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), eu = new THREE.Euler(0, 0, 0, "YXZ"), v3 = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1), col = new THREE.Color();
+  function merge(parts){
+    var P = [], N = [], C = [];
+    parts.forEach(function(pt){
+      var g = pt[0].index ? pt[0].toNonIndexed() : pt[0], k = new THREE.Color(pt[1]);
+      eu.set(pt[5] || 0, pt[6] || 0, pt[7] || 0); qq.setFromEuler(eu); v3.set(pt[2] || 0, pt[3] || 0, pt[4] || 0);
+      m4.compose(v3, qq, sc); g.applyMatrix4(m4);
+      var a = g.attributes.position.array, n = g.attributes.normal.array, i;
+      for(i = 0; i < a.length; i++){ P.push(a[i]); N.push(n[i]); }
+      for(i = 0; i < a.length/3; i++) C.push(k.r, k.g, k.b);
+      if(g !== pt[0]) g.dispose();
+      pt[0].dispose();
+    });
+    var out = new THREE.BufferGeometry();
+    out.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+    out.setAttribute("normal", new THREE.Float32BufferAttribute(N, 3));
+    out.setAttribute("color", new THREE.Float32BufferAttribute(C, 3));
+    out.computeBoundingSphere();
+    return out;
+  }
+  function bx(w, h, d){ return new THREE.BoxGeometry(w, h, d); }
+  function cy(r, h){ return new THREE.CylinderGeometry(r, r, h, 8); }
+  // the pole, local: +z faces the traffic coming in, +x is the pavement side; the walk head faces across (-x)
+  var poleG = merge([[cy(0.07, 3.3), 0x3a3f46, 0, 1.65, 0], [bx(0.36, 1.0, 0.26), 0x22262c, 0, 2.78, 0.05], [bx(0.5, 1.14, 0.03), 0x111316, 0, 2.78, -0.09],
+                     [bx(0.24, 0.05, 0.12), 0x22262c, 0, 3.15, 0.2], [bx(0.24, 0.05, 0.12), 0x22262c, 0, 2.83, 0.2], [bx(0.24, 0.05, 0.12), 0x22262c, 0, 2.51, 0.2],
+                     [bx(0.24, 0.58, 0.3), 0x22262c, -0.13, 1.95, 0], [bx(0.36, 0.08, 0.36), 0x3a3f46, 0, 0.04, 0]]);
+  var lensG = new THREE.BoxGeometry(0.2, 0.2, 0.04);
+  var lineG = new THREE.BoxGeometry(1, 0.025, 0.4);
+  var mat = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.6, metalness: 0.2});
+  var lensM = new THREE.MeshBasicMaterial({toneMapped: false});
+  var lineM = new THREE.MeshStandardMaterial({color: 0xeeeeea, roughness: 0.8});
+  function inst(name, geo, n, m){
+    var I = new THREE.InstancedMesh(geo, m, Math.max(1, n));
+    I.name = "street-" + name; I.count = 0; I.frustumCulled = false;
+    group.add(I); return I;
+  }
+  function put(I, i, x, y, z, yaw, sx, sy, sz){
+    eu.set(0, yaw, 0); qq.setFromEuler(eu); v3.set(x, y, z); m4.compose(v3, qq, sx != null ? new THREE.Vector3(sx, sy, sz) : sc); I.setMatrixAt(i, m4);
+  }
+  var poles = inst("poles", poleG, arms.length, mat), lenses = inst("lenses", lensG, arms.length*5, lensM), lines = inst("stoplines", lineG, arms.length, lineM);
+  poles.castShadow = true;
+  // a lens j of an arm (0 red, 1 amber, 2 green; 3 the red man, 4 the green man): its place in the pole's frame
+  var LENS = [[0, 3.15, 0.2], [0, 2.83, 0.2], [0, 2.51, 0.2], [-0.26, 2.08, 0], [-0.26, 1.8, 0]];
+  arms.forEach(function(A, k){
+    put(poles, k, A.x, A.y, A.z, A.yaw);
+    var s = Math.sin(A.yaw), c = Math.cos(A.yaw);
+    LENS.forEach(function(L, j){
+      var lx = L[0], lz = L[2];
+      put(lenses, k*5 + j, A.x + lx*c + lz*s, A.y + L[1], A.z - lx*s + lz*c, j < 3 ? A.yaw : A.yaw - Math.PI/2);
+      col.setHex(LENS_OFF[j]); lenses.setColorAt(k*5 + j, col);
+    });
+    put(lines, k, A.sx, A.sy + 0.03, A.sz, A.a.heading, A.c, 1, 1);
+  });
+  poles.count = arms.length; lenses.count = arms.length*5; lines.count = arms.length;
+  [poles, lenses, lines].forEach(function(I){ I.instanceMatrix.needsUpdate = true; if(I.instanceColor) I.instanceColor.needsUpdate = true; });
+  var state = [];                     // the lit lenses per arm, as a number (so a colour is set only when it changes)
+  function lightArm(A, k, ms){
+    var st = CL.signalAt(A.sig, ms, A.a.heading), walk = CL.walkAt(A.sig, ms, A.a.heading + Math.PI/2);
+    var key = (st === "red" ? 1 : st === "amber" ? 2 : 4) + (walk ? 16 : 8);
+    if(state[k] === key) return false;
+    state[k] = key;
+    for(var j = 0; j < 5; j++){
+      var on = j === 0 ? st === "red" : j === 1 ? st === "amber" : j === 2 ? st === "green" : j === 3 ? !walk : walk;
+      col.setHex(on ? LENS_ON[j] : LENS_OFF[j]); lenses.setColorAt(k*5 + j, col);
+    }
+    return true;
+  }
+  // the parked cars: one body, painted per instance (a van is the car drawn longer and taller)
+  var carG = merge([[bx(1.78, 0.6, 3.86), 0xffffff, 0, 0.56, 0], [bx(1.56, 0.5, 2.0), 0x28323e, 0, 1.1, -0.25], [bx(1.5, 0.06, 1.9), 0xffffff, 0, 1.38, -0.25],
+                    [cy(0.33, 0.22), 0x1c1d21, 0.8, 0.33, 1.25, 0, 0, Math.PI/2], [cy(0.33, 0.22), 0x1c1d21, -0.8, 0.33, 1.25, 0, 0, Math.PI/2],
+                    [cy(0.33, 0.22), 0x1c1d21, 0.8, 0.33, -1.25, 0, 0, Math.PI/2], [cy(0.33, 0.22), 0x1c1d21, -0.8, 0.33, -1.25, 0, 0, Math.PI/2],
+                    [bx(0.3, 0.12, 0.04), 0xfff4d0, 0.58, 0.68, 1.94], [bx(0.3, 0.12, 0.04), 0xfff4d0, -0.58, 0.68, 1.94],
+                    [bx(0.3, 0.12, 0.04), 0xc0202a, 0.6, 0.7, -1.94], [bx(0.3, 0.12, 0.04), 0xc0202a, -0.6, 0.7, -1.94]]);
+  var parkM = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.45, metalness: 0.25});
+  var parkI = inst("parked", carG, Math.min(PARK_CAP, PARK.length), parkM);
+  parkI.castShadow = true; parkI.receiveShadow = true;
+  var SZ = {car: [1, 1, 1], van: [1.08, 1.3, 1.19]}, DIM = {car: [SPEC.car.wid, SPEC.car.len], van: [SPEC.van.wid, SPEC.van.len]};
+  // solid things in 16 m cells: [kind, index]
+  var cells = {};
+  function cellOf(x, z){ return Math.floor(x/16) + ":" + Math.floor(z/16); }
+  arms.forEach(function(A, k){ (cells[cellOf(A.x, A.z)] = cells[cellOf(A.x, A.z)] || []).push([0, k]); });
+  PARK.forEach(function(P, k){
+    var R = 3, x0 = Math.floor((P.x - R)/16), x1 = Math.floor((P.x + R)/16), z0 = Math.floor((P.z - R)/16), z1 = Math.floor((P.z + R)/16);
+    for(var i = x0; i <= x1; i++) for(var j = z0; j <= z1; j++) (cells[i + ":" + j] = cells[i + ":" + j] || []).push([1, k]);
+  });
+  var closedNow = {}, closedKey = null, last = {x: null, z: null, ms: -Infinity}, parkDirty = true, shown = 0;
+  function parkBuild(cx, cz){
+    var near = [];
+    PARK.forEach(function(P, k){
+      if(closedNow[P.edge]) return;
+      var d = Math.hypot(P.x - cx, P.z - cz);
+      if(d <= PARK_NEAR) near.push([d, k]);
+    });
+    near.sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; });
+    var n = Math.min(near.length, parkI.instanceMatrix.count);
+    for(var i = 0; i < n; i++){
+      var P = PARK[near[i][1]], S = SZ[P.type] || SZ.car, pal = P.type === "van" ? VAN_PAINT : PAINT;
+      put(parkI, i, P.x, P.y, P.z, P.yaw, S[0], S[1], S[2]);
+      col.setHex(pal[Math.floor(num(P.paint, 0)*pal.length) % pal.length]); parkI.setColorAt(i, col);
+    }
+    parkI.count = n; shown = n;
+    parkI.instanceMatrix.needsUpdate = true;
+    if(parkI.instanceColor) parkI.instanceColor.needsUpdate = true;
+  }
+  function update(localMs, cam){
+    if(!CL || !W) return;
+    var U = HQV.hqUnderground, under = !!(U && U.under && U.under());
+    if(group.visible === under) group.visible = !under;
+    if(under) return;
+    var ms = num(+localMs, 0), cx = cam && cam.x != null ? +cam.x : 0, cz = cam && cam.z != null ? +cam.z : 0, key = Math.floor(ms/5000);
+    // closed streets: no parked cars on them (looked up every 5 s)
+    if(key !== closedKey && CL.closed){
+      closedKey = key;
+      var cl = {};
+      try { cl = CL.closed(W, ms) || {}; } catch(e){ cl = {}; }
+      if(JSON.stringify(cl) !== JSON.stringify(closedNow)){ closedNow = cl; parkDirty = true; }
+    }
+    if(parkDirty || last.x == null || Math.hypot(cx - last.x, cz - last.z) > PARK_MOVE){ parkBuild(cx, cz); parkDirty = false; last.x = cx; last.z = cz; }
+    // the lenses: near you every frame, all of them now and then
+    var all = ms - last.ms >= LENS_ALL || ms < last.ms, changed = false;
+    if(all) last.ms = ms;
+    for(var k = 0; k < arms.length; k++){
+      var A = arms[k];
+      if(!all && (Math.abs(A.x - cx) > LENS_NEAR || Math.abs(A.z - cz) > LENS_NEAR)) continue;
+      if(lightArm(A, k, ms)) changed = true;
+    }
+    if(changed && lenses.instanceColor) lenses.instanceColor.needsUpdate = true;
+  }
+  function blocked(x, z){
+    if(!group.visible) return false;
+    var L = cells[cellOf(x, z)];
+    if(!L) return false;
+    for(var i = 0; i < L.length; i++){
+      var it = L[i];
+      if(it[0] === 0){ var A = arms[it[1]]; if(Math.hypot(x - A.x, z - A.z) < 0.3) return true; continue; }
+      var P = PARK[it[1]];
+      if(closedNow[P.edge]) continue;
+      var D = DIM[P.type] || DIM.car, dx = x - P.x, dz = z - P.z, s = Math.sin(P.yaw), c = Math.cos(P.yaw);
+      if(Math.abs(dx*s + dz*c) <= D[1]/2 + 0.1 && Math.abs(dx*c - dz*s) <= D[0]/2 + 0.1) return true;
+    }
+    return false;
+  }
+  function drawCalls(){ var n = 0; group.children.forEach(function(m){ if(m.count > 0) n++; }); return group.visible ? n : 0; }
+  function info(){ return {lights: Object.keys(SIGS).length, heads: arms.length, parked: PARK.length, shown: shown, closed: Object.keys(closedNow).length, drawCalls: drawCalls()}; }
+  function dispose(){
+    group.children.slice().forEach(function(m){ m.geometry.dispose(); if(m.dispose) m.dispose(); });
+    mat.dispose(); lensM.dispose(); lineM.dispose(); parkM.dispose();
+    if(group.parent) group.parent.remove(group);
+  }
+  return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose, arms: arms};
+}
+
+HQV.traffic = {create: create, view: view, street: street, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
                lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
                _: {plOf: plOf, plAt: plAt, offsetPts: offsetPts, trimPts: trimPts, Profile: Profile, fastest: fastest, ease: ease}};

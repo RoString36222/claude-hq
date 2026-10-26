@@ -439,7 +439,7 @@ function signals(W){
     return {e: e, len: L, ux: ux/ul, uz: uz/ul, half: cm(e.width)/2, c: Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2),
             rank: mainRoad(e.cls) ? 2 : road(e.cls).kind === "shop" ? 1 : 0};
   }
-  function junction(id){ return (inc[id] || []).filter(function(e){ return carRoad(e.cls); }).length >= 3; }
+  function junction(id){ return (inc[id] || []).filter(through).length >= 3; }
   var link = {}, prio = {};
   var ids = Object.keys(inc).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); });
   ids.forEach(function(id){
@@ -479,7 +479,7 @@ function signals(W){
       var heading = Math.atan2(-a.ux, -a.uz), ax = axisDist(heading, h1) < axisDist(heading, h0) ? 1 : 0;
       // a short link to the next junction: one box with this one (traffic.js), no head of its own
       var far = String(a.e.a) === String(id) ? a.e.b : a.e.a;
-      if(a.len < LINK && junction(far)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
+      if(kind === "main" && a.len < LINK && junction(far)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
       // the middle of the stop line: across the lane coming in (the right of the way in: (uz, -ux))
       sig.arms.push({heading: heading, edge: a.e.id, stop: a.stop, half: a.c, axis: ax,
                      stopX: x + a.ux*a.stop + a.uz*a.c/2, stopZ: z + a.uz*a.stop - a.ux*a.c/2});
@@ -555,9 +555,74 @@ function walkAt(sig, ms, heading){
   return sigInto(sig, ms, ax) < sig.green[ax] - SIG.walkClear;
 }
 
+/* ---------- [3.22] parked cars ---------- */
+// parked(W) -> [{x, y, z, yaw, type: "car" | "van", paint (0..1), edge, side}]: cars along the kerbs of local and
+// shopping streets (not shared streets, slip roads or anything with a bus or tram on it), facing the way the traffic
+// on their side goes, a bay every PARK_STEP m, clear of the junctions (and their zebras), the stops, the doors and
+// driveways of the lots behind and the hq lots, each bay full by a hash and the place (downtown most). Every car is
+// wholly on its own street's carriageway. Drawn and made solid by traffic.js street(); hidden while its street is
+// closed (cityLife.closed: the market's stalls stand there).
+var PARK_STEP = 6.2, PARK_IN = 1.05, PARK_FILL = {centre: 0.72, home: 0.6, work: 0.5, civic: 0.45, industry: 0.35, green: 0.2};
+var PARK_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
+function parked(W){
+  var out = PARK_CACHE && W && typeof W === "object" ? PARK_CACHE.get(W) : null;
+  if(out) return out;
+  out = [];
+  if(!W || !W.edges) return out;
+  var Q = WQ(), F = facts(W), pair = {}, transit = {}, inc = {};
+  W.edges.forEach(function(e){ pair[Math.min(e.a, e.b) + ":" + Math.max(e.a, e.b)] = e.id; (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
+  ((W.transit && W.transit.lines) || []).forEach(function(l){
+    var P = l.path || [];
+    for(var i = 1; i < P.length; i++){ var id = pair[Math.min(P[i - 1], P[i]) + ":" + Math.max(P[i - 1], P[i])]; if(id != null) transit[id] = true; }
+  });
+  // how far from a node its junction (patch and zebra) reaches along e
+  var SG = signals(W);
+  function clearOf(node, e){
+    var m = 0;
+    (inc[node] || []).forEach(function(o){ if(o !== e) m = Math.max(m, cm(o.width)/2); });
+    m = (inc[node] || []).length >= 3 ? m + 7 : (inc[node] || []).length === 2 ? 3 : 2;
+    return SG[node] ? Math.max(m, SG[node].r + 3) : m;                 // (a light: clear of its whole junction)
+  }
+  W.edges.forEach(function(e){
+    var c = normCls(e.cls), k = road(c).kind;
+    if((k !== "res" && k !== "shop") || c === "shared" || c === "lane" || transit[e.id]) return;
+    var half = (cm(e.width) - 2*cm(e.walk))/2;
+    if(half < 2.9) return;
+    var P = edgePts(e);
+    if(P.length < 2) return;
+    var y0 = P[0].y, L = 0;
+    for(var i = 1; i < P.length; i++) L += Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z);
+    var from = clearOf(e.a, e) + PARK_STEP/2, to = clearOf(e.b, e) + PARK_STEP/2;
+    if(L - from - to < PARK_STEP) return;
+    walkAlong(P, PARK_STEP, from, to, function(p, s){
+      [1, -1].forEach(function(sg){
+        var o = sg*(half - PARK_IN), x = p.x + p.lx*o, z = p.z + p.lz*o;
+        var h = hash01(W.hash + ":park:" + e.id + ":" + Math.round(s*10) + ":" + sg);
+        var bx = p.x + p.lx*sg*(cm(e.width)/2 + 3), bz = p.z + p.lz*sg*(cm(e.width)/2 + 3), lot = Q.lotAt(W, bx, bz);
+        if(lot && (lot.kind === "hq" || lot.kind === "garage")) return;
+        var u = lot ? landUse(W)[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name);
+        if(h >= (PARK_FILL[g] != null ? PARK_FILL[g] : 0.4)) return;
+        if(F.stopDist(x, z) < 14) return;
+        // a door or a loading bay: its kerb kept clear
+        if(lot && lot.door && Math.hypot(cm(lot.door[0]) - x, cm(lot.door[2]) - z) < cm(e.width)/2 + 5) return;
+        // wholly on this street's carriageway: both ends and the middle
+        for(var q = -1; q <= 1; q++){
+          var qx = x + p.dx*q*2.4, qz = z + p.dz*q*2.4, n = Q.nearestRoad(W, qx, qz, 12);
+          if(!n || n.edge !== e.id || Q.surfaceAt(W, qx, qz) !== "road") return;
+        }
+        var yaw = sg > 0 ? Math.atan2(-p.dx, -p.dz) : Math.atan2(p.dx, p.dz), t2 = hash01(W.hash + ":parkt:" + e.id + ":" + Math.round(s*10) + ":" + sg);
+        var ny = Q.nearestRoad(W, x, z, 12);
+        out.push({x: x, y: ny ? ny.y : y0, z: z, yaw: yaw, type: t2 < (g === "industry" ? 0.3 : 0.1) ? "van" : "car", paint: t2, edge: e.id, side: sg});
+      });
+    });
+  });
+  if(PARK_CACHE) PARK_CACHE.set(W, out);
+  return out;
+}
+
 HQV.cityLife = {ROAD: ROAD, normCls: normCls, road: road, groupOfName: groupOfName, facts: facts,
   USES: USES, GROUNDS: GROUNDS, LIT: LIT, landUse: landUse, litShare: litShare, litCode: litCode, litAt: litAt, LIT_GLSL: LIT_GLSL,
   furniture: furniture, hotspots: hotspots, crowd: crowd, hourOf: hourOf, weekday: weekday,
   demand: demand, mix: mix, pick: pick, events: events, closed: closed,
-  SIG: SIG, signals: signals, signalAt: signalAt, walkAt: walkAt, sigAxis: sigAxis};
+  SIG: SIG, signals: signals, signalAt: signalAt, walkAt: walkAt, sigAxis: sigAxis, parked: parked};
 })();

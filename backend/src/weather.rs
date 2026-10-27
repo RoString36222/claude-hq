@@ -17,8 +17,8 @@
 //! ARENA_WEATHER_PLACE (the name shown), ARENA_WEATHER_URL (the endpoint; tests point it elsewhere).
 //!
 //! Route (behind `require_device`):
-//! - GET /v1/weather -> {ok: true, source, place, at (unix s of the reading), data: {field: number | null}}
-//!                    | {ok: false} (no key, or no reading yet)
+//! - GET /v1/weather -> {ok: true, source, place, at (unix s of the reading), data: {field: number | null}},
+//!   or {ok: false} (no key, or no reading yet)
 
 use axum::{response::IntoResponse, routing::get, Json, Router};
 use serde_json::{json, Map, Value};
@@ -110,7 +110,7 @@ pub fn merge(own: Option<Map<String, Value>>, fill: Option<Map<String, Value>>) 
                 if o.len() >= MAX_FIELDS && !o.contains_key(&k) {
                     continue;
                 }
-                if o.get(&k).map_or(true, |x| x.is_null()) {
+                if o.get(&k).is_none_or(|x| x.is_null()) {
                     o.insert(k, v);
                 }
             }

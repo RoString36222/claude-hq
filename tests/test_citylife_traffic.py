@@ -43,8 +43,10 @@ out.off = {n: offCars.length, cars: off.info().cars, types: offCars.filter(funct
 
 // ---- the mix: the district and the hour ----
 const ind = sim({groupAt: function(){ return "industry"; }}), indCars = ind.cars(MON + 9*HR), allCars = s.cars(MON + 9*HR);
-out.mix = {industry: share(indCars, ["van", "lorry"]), lorries: indCars.filter(function(c){ return c.type === "lorry"; }).length,
-           city: share(allCars, ["van", "lorry"]), taxiNight: share(s.cars(MON + 23*HR), ["taxi"]), taxiDay: share(s.cars(MON + 13*HR), ["taxi"]),
+// (on the main roads: how much of the traffic is on them, and how much on the ring, moves with the world's road widths)
+function onMain(sim, cs){ return cs.filter(function(c){ return sim._.rings[c.ring].kindL === "main"; }); }
+out.mix = {industry: share(onMain(ind, indCars), ["van", "lorry"]), lorries: indCars.filter(function(c){ return c.type === "lorry"; }).length,
+           city: share(onMain(s, allCars), ["van", "lorry"]), taxiNight: share(s.cars(MON + 23*HR), ["taxi"]), taxiDay: share(s.cars(MON + 13*HR), ["taxi"]),
            kinds: {}, groups: {}};
 indCars.concat(allCars).forEach(function(c){ if(c.type === "lorry") out.mix.kinds[s._.rings[c.ring].kindL] = 1; });
 allCars.forEach(function(c){ out.mix.groups[c.group] = 1; });
@@ -169,7 +171,7 @@ class CityLifeTraffic(unittest.TestCase):
 
     def test_the_mix_follows_the_district_and_the_hour(self):
         m = self.o["mix"]
-        self.assertGreater(m["industry"], 0.35, "the industrial district sends vans and lorries")
+        self.assertGreater(m["industry"], 0.35, "the industrial district sends vans and lorries onto its main roads")
         self.assertGreater(m["lorryPicks"], 0, "the mix picks lorries (a platoon's first car drives one)")
         self.assertTrue(m["lorryLead"], "only a platoon's first car is a lorry")
         self.assertGreater(m["industry"], m["city"])
@@ -218,7 +220,12 @@ class CityLifeTraffic(unittest.TestCase):
         for k in ("wed15", "thu10", "sat14", "mon10", "sun1530"):
             self.assertEqual(e[k]["stalls"], 0, k)
         self.assertGreater(e["mon10"]["barriers"], 0, "the week's roadworks")
-        self.assertEqual(e["mon10"]["signs"], 2 * e["monWorks"], "a ROAD CLOSED plate at each end")
+        # a plate at each end of every roadworks the view has built (it drops one 560 m behind the camera, which visits
+        # each in turn: how many stay built depends on how far apart the week's streets are)
+        built = [k for k in e["mon10"]["events"] if k.startswith("works:")]
+        self.assertGreater(len(built), 0)
+        self.assertLessEqual(len(built), e["monWorks"])
+        self.assertEqual(e["mon10"]["signs"], 2 * len(built), "a ROAD CLOSED plate at each end")
         self.assertGreater(e["mon10"]["plant"], 0)
         self.assertGreater(e["mon10"]["cones"], 0)
         for k in ("mon0859", "mon16", "sat10", "sun10", "sun1530", "sun17"):

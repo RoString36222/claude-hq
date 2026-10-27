@@ -61,6 +61,24 @@ pub struct Edge {
     /// Some(true) on a bridge over a river: straight, and level across.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bridge: Option<bool>,
+    /// City Gen v4 (phase 2, @3): the road's class (classes.rs), e.g. "avenue"; `class`
+    /// keeps today's kind for older dashboards. `lanes` then counts its lanes each way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v4: Option<&'static str>,
+    /// City Gen v4: the median between the two directions (cm), where it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub median: Option<i64>,
+}
+
+impl Edge {
+    /// City Gen v4: make it a road of class `name` (its lanes and median from classes.rs).
+    pub fn classed(mut self, name: Option<&'static str>) -> Edge {
+        let Some(c) = name.and_then(super::classes::class) else { return self };
+        self.v4 = Some(c.name);
+        self.lanes = c.lanes;
+        self.median = (c.median_cm > 0).then_some(c.median_cm);
+        self
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -71,6 +89,24 @@ pub struct Roads {
 
 /// Longest step (cm) between consecutive points of a city edge: the terrain's spacing.
 pub const STEP_CM: i64 = 800;
+
+impl Roads {
+    /// City Gen v4 (phase 2): no median on an edge a tram line runs along (its track is
+    /// down the middle, where the median would be, until phase 8's tram beds).
+    pub fn trams_in_the_middle(&mut self, transit: &super::transit::Transit) {
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            if e.median.is_some() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                e.median = None;
+            }
+        }
+    }
+}
 
 /// Highways and the ring are graded (cut and filled to `country_grade_pm`).
 pub fn is_graded(class: &str) -> bool {
@@ -146,7 +182,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
@@ -348,7 +384,7 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
-        min_tier: None, bridge: None,
+        min_tier: None, bridge: None, v4: None, median: None,
     }
 }
 
@@ -560,7 +596,7 @@ fn cut(e: &Edge, cuts: &[(usize, u32)], drop: Option<usize>) -> Vec<Edge> {
 const JUNCTION_FLAT: i64 = 150;
 
 /// How far either side of a road's edge the land is blended into it (cm).
-const SHOULDER_CM: i64 = 400;
+pub const SHOULDER_CM: i64 = 400;
 
 /// A bridge's deck stands this far (cm) over the higher of its two banks, and a city
 /// street climbs to it no steeper than this (per mille).

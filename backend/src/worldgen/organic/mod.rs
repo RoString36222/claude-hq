@@ -29,6 +29,8 @@ pub mod zoning;
 #[cfg(test)]
 mod tests;
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::city::{Block, City, Facing, Lot, Site};
 use super::districts::{Districts, CELL_CM};
 use super::noise::{isqrt, value, ONE};
@@ -231,7 +233,8 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
         l.id = k as u32;
     }
     // the layout is final: pave the roads wider into the strip of block and lot along them
-    let paving = widen::widen(p, seed, base, &g, &mut blocks, &mut lots, &mut sites);
+    let roles = if p.v4 { v4_roles(&g, &zoning) } else { Vec::new() };
+    let paving = widen::widen(p, seed, base, &g, &mut blocks, &mut lots, &mut sites, &roles, river);
     // City Gen v4 (@3 Commons): the airport claims its land before the graded roads are
     // routed, so the highways and the ring go round it (claims.rs)
     let mut city = City { blocks, lots, sites };
@@ -259,8 +262,9 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
             Edge {
                 id: 0, a: renum[e.a as usize], b: renum[e.b as usize], class, width, walk, lanes: 1, route: None,
                 name: name.clone(), points: roads::resample(g.nodes[e.a as usize], g.nodes[e.b as usize]), min_tier: None,
-                bridge: e.bridge.then_some(true),
+                bridge: e.bridge.then_some(true), v4: None, median: None,
             }
+            .classed(paving.class(k as u32))
         })
         .collect();
     roads::graded(&mut rng, p, base, &blocks, &mut nodes, &mut edges, &mut ways.iter().copied(), river, claim.as_ref())?;
@@ -268,6 +272,54 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
 
     let districts = district_map(seed, p, base, &ctx, &g, &blocks, claim.as_ref());
     Ok((City { blocks, lots, sites }, roads, districts))
+}
+
+/// City Gen v4 (phase 2): the class each graph edge's street starts its paving ladder at
+/// (widen.rs), by the street's role: a main road a boulevard where every block along it is
+/// at least `BOULEVARD_BLOCK_CM` long (a 36.5 m road's junctions need the room), else an
+/// avenue; a local street in the old
+/// town or the plaza a shared street; one with a dead end, or under 60 m, a lane; one
+/// 150 m or more that joins main roads at two places or more a collector (it gathers the
+/// local streets to them); any other a local street.
+const BOULEVARD_BLOCK_CM: i64 = 5_000;
+
+fn v4_roles(g: &Graph, zoning: &Zoning) -> Vec<Option<&'static str>> {
+    let alive = |e: &u32| g.edges[*e as usize].alive && g.edges[*e as usize].kind != Kind::Water;
+    let mut by_road: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for (k, e) in g.edges.iter().enumerate() {
+        if e.alive && e.kind != Kind::Water {
+            by_road.entry(e.road).or_default().push(k as u32);
+        }
+    }
+    let mut out = vec![None; g.edges.len()];
+    for es in by_road.values() {
+        let first = &g.edges[es[0] as usize];
+        let seg = |e: u32| geom::len(geom::sub(g.nodes[g.edges[e as usize].b as usize], g.nodes[g.edges[e as usize].a as usize]));
+        let role = if first.kind == Kind::Arterial {
+            if es.iter().all(|&e| seg(e) >= BOULEVARD_BLOCK_CM) { "boulevard" } else { "avenue" }
+        } else {
+            let len: i64 = es.iter().map(|&e| geom::len(geom::sub(g.nodes[g.edges[e as usize].b as usize], g.nodes[g.edges[e as usize].a as usize]))).sum();
+            let nodes: BTreeSet<u32> = es.iter().flat_map(|&e| [g.edges[e as usize].a, g.edges[e as usize].b]).collect();
+            let dead = nodes.iter().any(|&n| g.adj[n as usize].iter().filter(|e| alive(e)).count() == 1);
+            let joins = nodes.iter().filter(|&&n| g.adj[n as usize].iter().any(|&e| alive(&e) && g.edges[e as usize].kind == Kind::Arterial)).count();
+            let mid = es[es.len() / 2];
+            let m = &g.edges[mid as usize];
+            let at = geom::lerp(g.nodes[m.a as usize], g.nodes[m.b as usize], 1, 2);
+            if matches!(zoning.district(at), Some(district::OLDTOWN) | Some(district::PLAZA)) {
+                "shared"
+            } else if dead || len < 6_000 {
+                "lane"
+            } else if joins >= 2 && len >= 15_000 {
+                "collector"
+            } else {
+                "local"
+            }
+        };
+        for &e in es {
+            out[e as usize] = Some(role);
+        }
+    }
+    out
 }
 
 /// Drop every road steeper than the city's grade (measured as the world will be:

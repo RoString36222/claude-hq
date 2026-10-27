@@ -132,36 +132,30 @@ fn v3_docs_stay_small_and_fast() {
     }
 }
 
-/// HQ 3.20.1: @3's streets are paved by tier (organic/widen.rs). Every local road and
-/// arterial is at one of its kind's tiers, @2's paved width or its layout width (with
-/// sidewalks to match); the Commons has side streets, streets and wide streets, avenues
-/// and boulevards; most of its streets are wider than @2 paved them, and no more are
-/// kept at the layout width than @2 keeps.
+/// City Gen v4 (phase 2): every town street is paved by a road class of the plan (the
+/// validator holds each to its class's carriageway, lanes and median, a bend to one class
+/// at a time); the Commons has every town class but the service road and the boulevard
+/// (none of its main roads has 50 m blocks all along: a boulevard's junctions need them),
+/// and few lanes left at the layout width.
 #[test]
-fn v3_streets_are_paved_by_tier() {
-    use std::collections::BTreeSet;
+fn v3_streets_are_paved_by_v4_class() {
+    use std::collections::BTreeMap;
     for w in [commons3(), island3()] {
-        let p = profile_for(&w.id[..w.id.rfind('@').unwrap()], 3);
-        let mut seen: [BTreeSet<i64>; 2] = [BTreeSet::new(), BTreeSet::new()];
-        let (mut wider, mut layout, mut city) = (0, 0, 0);
-        for e in &w.layers.roads.edges {
-            let (k, tiers, paved, walk, lay) = match e.class {
-                "local" => (0, p.local_tiers, p.paved_road_cm, p.street_walk_cm, p.road_cm),
-                "arterial" => (1, p.arterial_tiers, p.paved_avenue_cm, p.avenue_walk_cm, p.avenue_cm),
-                _ => continue,
-            };
-            let ok = tiers.iter().any(|t| (e.width, e.walk) == (t.cm, t.walk_cm)) || (e.width, e.walk) == (paved, walk) || (e.width, e.walk) == (lay, walk * lay / paved);
-            assert!(ok, "{}: edge {} at {} cm, {} walk", w.id, e.id, e.width, e.walk);
-            seen[k].insert(e.width);
+        let mut by: BTreeMap<&str, usize> = BTreeMap::new();
+        let (mut city, mut layout) = (0, 0);
+        for e in w.layers.roads.edges.iter().filter(|e| matches!(e.class, "local" | "arterial")) {
+            let c = e.v4.unwrap_or_else(|| panic!("{}: edge {} has no class", w.id, e.id));
+            *by.entry(c).or_default() += 1;
             city += 1;
-            wider += (e.width > paved) as usize;
-            layout += (e.width == lay) as usize;
+            layout += (c == "lane" && e.width < 900) as usize;
         }
-        assert!(wider * 100 >= city * 55, "{}: {wider} of {city} streets wider than @2's", w.id);
+        assert!(validate::hard(&w.layers).iter().all(|v| !v.rule.starts_with("class")), "{}", w.id);
         assert!(layout * 100 <= city * 4, "{}: {layout} of {city} streets at the layout width", w.id);
         if w.id == COMMONS3 {
-            assert!(p.local_tiers.iter().all(|t| seen[0].contains(&t.cm)), "{}: local widths {:?}", w.id, seen[0]);
-            assert!(p.arterial_tiers.iter().all(|t| seen[1].contains(&t.cm)), "{}: arterial widths {:?}", w.id, seen[1]);
+            for c in ["shared", "lane", "local", "collector", "avenue"] {
+                assert!(by.get(c).is_some_and(|&n| n > 0), "{}: no {c} in {by:?}", w.id);
+            }
+            assert!(by["avenue"] >= by["collector"] / 2, "{}: main roads {by:?}", w.id);
         }
     }
 }

@@ -25,7 +25,9 @@
  *                 (by rank; else sorted by user id as on @1); an island: its owner's, by the town hall.
  *   residents     games/npcsim.js + npcdraw.js, ticked each frame inside NPC_BUDGET; E on one: its line.
  *   traffic       games/traffic.js (cars, buses, trams); E at a stop: pick a stop, wait, ride (the fare
- *                 goes through POST /api/arena/city/<owner>/fare).
+ *                 goes through POST /api/arena/city/<owner>/fare). [3.27] E by a stopped car: take it (city play's
+ *                 carjack, games/playcarjack.js: w.jackPrompt / w.jack for hq3d); the car you hold is dropped from
+ *                 the traffic this City draws, collides with and hands its features (this client only).
  *   the sea       games/ocean.js (the water, the other islands from /api/arena/archipelago) and the boats
  *                 of games/hqboat.js moored alongside every dock's pier (its deck is walked on, and the
  *                 sea's land for the boats); a boat that reaches another island lands you there.
@@ -2786,6 +2788,17 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     return promptV;
   };
+  // [3.27] carjack (city play's games/playcarjack.js): on foot by a stopped traffic car, hq3d's E prompt and E (getting
+  // into a vehicle is E, as with your own; F stays talking and doors)
+  function jackFeat(){ try { return play && play.feature ? play.feature("carjack") : null; } catch(e){ return null; } }
+  w.jackPrompt = function(p){
+    if(!V2 || !p || menu || bus || w.carry()) return null;
+    var J = jackFeat(); return J && J.jackPrompt ? J.jackPrompt(p) : null;
+  };
+  w.jack = function(p){
+    if(!V2 || !p || menu || bus || w.carry()) return false;
+    var J = jackFeat(); return !!(J && J.take && J.take(p));
+  };
   // E: a resident's line, a stop's lines, a terminal's trips (and E again cancels a wait)
   w.use = function(p){
     if(!V2 || !p) return false;
@@ -3045,6 +3058,8 @@ HQV.hqWorlds.city3d = function(c, w){
         } catch(e){}
       }
       try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, TRAFFIC_R, obs); } catch(e){}
+      var JK = jackFeat();                                 // [3.27] the car you took is yours now: not the traffic's
+      if(JK && JK.hide && callTraffic){ try { callTraffic = JK.hide(callTraffic); } catch(e){} }
     }
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
     if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }

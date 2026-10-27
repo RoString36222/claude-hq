@@ -3,8 +3,9 @@
 Under node on the @3 fixture (tests/fixtures/claude-hq@3.json.gz) with the vendored three and the real City play core
 (games/cityplay.js), a fake traffic sim (cars placed where a test wants them, optional lightAt), a fake engine (its
 siren pool records what it is asked to play) and a fake hq3d context (teleport recorded):
-your own blasts near traffic raise the stars, someone else's don't; the stars decay when no police car can see you and
-"You lost them" pays a little rep; the pursuit cars come along the road graph toward you; standing still by one is
+your own blasts near traffic raise the stars, someone else's don't; [3.27] most offences are half a star or less (one
+slip is a warning, the second a star; it is forgotten when no police car is near) and a star goes in 6 + 3 a star s
+unseen; the stars decay when no police car can see you and "You lost them" pays a little rep; the pursuit cars come along the road graph toward you; standing still by one is
 "Busted" (station door, heat 0, rep down, never below 0); a red light run in front of the police counts; Calm has no
 siren and steady lightbars; dispose takes every mesh out.
 """
@@ -68,17 +69,38 @@ function world(o){
   CP.emit("blast", {x: P0.x + 500, z: P0.z + 500, k: 0, mine: true});
   const empty = w.heat.stars();
   CP.emit("blast", {x: P0.x, z: P0.z, k: 0, mine: true});
-  out.blast = {theirs: theirs, empty: empty, mine: w.heat.stars(), heat: w.kinds("heat")};
-  // rams: slow ones don't, a fast one into a car does; a person; props add a little at a time
-  w.heat.clear();
+  out.blast = {theirs: theirs, empty: empty, mine: w.heat.stars(), h: w.heat.heat(), heat: w.kinds("heat")};
+  w.play.dispose(); w.off();
+  // one car by a blast: half a star, no star yet
+  const w1 = world({cars: [{kind: "car", x: P0.x + 5, z: P0.z}]});
+  CP.emit("blast", {x: P0.x, z: P0.z, k: 0, mine: true});
+  out.blast.small = [w1.heat.stars(), w1.heat.heat()];
+  w1.play.dispose(); w1.off();
+})();
+
+// ---- rams: slow ones don't; a fast one is half a star, the same again within 3 s nothing, a spree is a star ----
+(function(){
+  const w = world({cars: [{kind: "car", x: P0.x + 5, z: P0.z}]});
+  w.step(0.5);
   CP.emit("ram", {x: P0.x + 4, z: P0.z, speed: 5});
-  const slow = w.heat.stars();
-  CP.emit("ram", {x: P0.x + 4, z: P0.z, speed: 12});
-  out.ram = {slow: slow, fast: w.heat.stars()};
-  w.heat.clear(); CP.emit("ram", {what: "person", x: P0.x, z: P0.z}); out.ram.person = w.heat.stars();
+  const slow = w.heat.heat();
+  const spree = [];
+  CP.emit("ram", {x: P0.x + 4, z: P0.z, speed: 12}); spree.push([w.heat.stars(), w.heat.heat()]);
+  CP.emit("ram", {x: P0.x + 4, z: P0.z, speed: 12}); spree.push([w.heat.stars(), w.heat.heat()]);
+  w.step(3.1); CP.emit("ram", {x: P0.x + 4, z: P0.z, speed: 12}); spree.push([w.heat.stars(), w.heat.heat()]);
+  w.step(3.1); CP.emit("ram", {x: P0.x + 4, z: P0.z, speed: 12}); spree.push([w.heat.stars(), w.heat.heat()]);
+  out.ram = {slow: slow, spree: spree, why: w.kinds("heat").map(function(h){ return h.why; })};
+  w.heat.clear(); CP.emit("ram", {what: "person", x: P0.x, z: P0.z}); out.ram.person = [w.heat.stars(), w.heat.heat()];
   w.heat.clear(); CP.emit("ram", {what: "prop", x: P0.x, z: P0.z}); out.ram.prop = [w.heat.stars(), w.heat.heat()];
-  w.heat.clear(); CP.emit("shot", {x: P0.x, z: P0.z}); out.shot = w.heat.stars();
+  w.heat.clear(); CP.emit("shot", {x: P0.x, z: P0.z}); out.shot = [w.heat.stars(), w.heat.heat()];
+  // a slip is forgotten: half a star, unseen, gone in 9 s (FRAC_S 18 s a star); with a police car by, it stays
+  w.heat.clear(); w.heat.add(0.5, "test"); const f0 = w.heat.heat(); w.step(8); const f8 = w.heat.heat(); w.step(1.5);
+  out.frac = {f0: f0, f8: f8, f10: w.heat.heat(), FRAC_S: H.playHeat.FRAC_S, lose: [1, 2, 3, 4, 5].map(H.playHeat.lose)};
   w.heat.clear(); w.play.dispose(); w.off();
+  const c = world({traffic: [{kind: "police", x: P0.x + 20, z: P0.z}]});
+  c.heat.add(0.5, "test"); c.step(12);
+  out.frac.copNear = c.heat.heat();
+  c.play.dispose(); c.off();
 })();
 
 // ---- the chase: cars come along the roads toward you (you drive away, unseen behind walls: they lose you) ----
@@ -151,7 +173,7 @@ function world(o){
   c.step(1.5, {speed: 12, ride: "car"});
   const g = world({lightAt: lights(plain, "green"), traffic: [{kind: "police", x: P0.x + 20, z: P0.z}]});
   g.step(1.5, {speed: 12, ride: "car"});
-  out.red = {seen: a.heat.stars(), unseen: b.heat.stars(), camera: c.heat.stars(), green: g.heat.stars(), why: a.kinds("heat").map(function(h){ return h.why; })};
+  out.red = {seen: a.heat.heat(), unseen: b.heat.heat(), camera: c.heat.heat(), green: g.heat.heat(), stars: a.heat.stars()};
   [a, b, c, g].forEach(function(w){ w.play.dispose(); w.off(); });
 })();
 
@@ -208,18 +230,41 @@ class PlayHeat(unittest.TestCase):
         b = self.o["blast"]
         self.assertEqual(b["theirs"], 0, "someone else's grenade is not your heat")
         self.assertEqual(b["empty"], 0, "a blast with nobody near")
-        self.assertEqual(b["mine"], 2, "your blast by three cars")
-        self.assertEqual(b["heat"][-1]["stars"], 2)
+        self.assertEqual(b["mine"], 1, "your blast by three cars: a star (was 2)")
+        self.assertAlmostEqual(b["h"], 1, 6)
+        self.assertEqual(b["heat"][-1]["stars"], 1)
         self.assertTrue(b["heat"][-1]["why"])
+        self.assertEqual(b["small"][0], 0, "a blast by one car: no star yet")
+        self.assertAlmostEqual(b["small"][1], 0.5, 6)
 
     def test_rams_props_and_shots(self):
         r = self.o["ram"]
         self.assertEqual(r["slow"], 0)
-        self.assertEqual(r["fast"], 1)
-        self.assertEqual(r["person"], 1)
+        sp = r["spree"]
+        self.assertEqual(sp[0][0], 0, "one ram: a warning, not a star")
+        self.assertAlmostEqual(sp[0][1], 0.5, 6)
+        self.assertAlmostEqual(sp[1][1], 0.5, 6, "the same again within 3 s adds nothing")
+        self.assertEqual(sp[2][0], 0)
+        self.assertGreater(sp[2][1], 0.75)
+        self.assertLess(sp[2][1], 0.9, "the first half wore off a little meanwhile")
+        self.assertEqual(sp[3][0], 1, "a spree is a star")
+        self.assertIn("ramming a car", r["why"])
+        self.assertEqual(r["person"][0], 0)
+        self.assertAlmostEqual(r["person"][1], 0.5, 6)
         self.assertEqual(r["prop"][0], 0)
-        self.assertGreater(r["prop"][1], 0)
-        self.assertEqual(self.o["shot"], 1)
+        self.assertAlmostEqual(r["prop"][1], 0.1, 6)
+        self.assertEqual(self.o["shot"][0], 0)
+        self.assertAlmostEqual(self.o["shot"][1], 0.25, 6)
+
+    def test_a_slip_is_forgotten_unless_the_police_are_by(self):
+        f = self.o["frac"]
+        self.assertEqual(f["FRAC_S"], 18)
+        self.assertEqual(f["lose"], [9, 12, 15, 18, 21], "6 + 3 a star (was 12 + 6 a star)")
+        self.assertAlmostEqual(f["f0"], 0.5, 6)
+        self.assertGreater(f["f8"], 0)
+        self.assertLess(f["f8"], 0.1)
+        self.assertEqual(f["f10"], 0)
+        self.assertAlmostEqual(f["copNear"], 0.5, 6, "a police car close by: it stays")
 
     def test_chasers_drive_the_roads_toward_you(self):
         c = self.o["chase"]
@@ -244,7 +289,7 @@ class PlayHeat(unittest.TestCase):
         self.assertTrue(s["seen"])
         m = self.o["metro"]
         self.assertEqual(m["stars"], 0)
-        self.assertLess(m["t"], 0.5 * ((12 + 6 * 2) + (12 + 6)))   # 2 stars unseen in the open: 24 + 18 s
+        self.assertLess(m["t"], 0.5 * ((6 + 3 * 2) + (6 + 3)))   # 2 stars unseen in the open: 12 + 9 s
 
     def test_busted_on_foot_and_in_a_car(self):
         b = self.o["busted"]
@@ -262,11 +307,11 @@ class PlayHeat(unittest.TestCase):
 
     def test_red_light_needs_a_witness(self):
         r = self.o["red"]
-        self.assertEqual(r["seen"], 1)
+        self.assertAlmostEqual(r["seen"], 0.5, 6, "half a star (was a whole one)")
+        self.assertEqual(r["stars"], 0)
         self.assertEqual(r["unseen"], 0)
-        self.assertEqual(r["camera"], 1, "a camera junction sees it")
+        self.assertGreater(r["camera"], 0.4, "a camera junction sees it (wearing off since: no police car by)")
         self.assertEqual(r["green"], 0)
-        self.assertIn("ran a red light", r["why"])
 
     def test_roadblock_at_four_stars_is_solid(self):
         b = self.o["block"]

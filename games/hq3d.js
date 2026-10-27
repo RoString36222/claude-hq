@@ -841,6 +841,8 @@ function mount(el, api){
     night: function(){ return isNight(); },
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
     dealer: {open: function(){ return dealerOpen(); }},
+    // [3.27] carjack (games/playcarjack.js): seat you in that traffic car's look where it stood; the one you hold (its id)
+    carjack: function(o){ return jackTake(o); }, carjacked: function(){ return jack ? jack.vid : null; },
     tuning: {open: function(){ return tuneOpen(); }},   // [3.13] the Tuning shop (games/hqtuning.js via games/hqcity3d.js)
     gp: {open: function(){ return gpOpen(); }},         // [3.17] the Grand Prix Circuit (games/hqgpvenue.js via games/hqcity3d.js)
     held: function(code){ return !!keys[code]; },
@@ -4185,6 +4187,8 @@ function mount(el, api){
   // once said "E  Ride the bike" by a rowboat). The worlds still write their prompts "E  ...": shown as F.
   function hudPrompt(){
     if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "F  Enter " + (d.label || d.tip || "the door"); }
+    // [3.27] a stopped traffic car you can take: E, as getting into any vehicle is (not by one of your own: E is that one's)
+    if(!ride && !POOL.u && nearIdx < 0 && cur && cur.jackPrompt && avatar){ var jp = null; try { jp = cur.jackPrompt({x: avatar.x, z: avatar.z}); } catch(e){ jp = null; } if(jp) return String(jp); }
     if(!ride && cur && cur.prompt && avatar){ var w = cur.prompt({x: avatar.x, z: avatar.z}); return w ? String(w).replace(/^E(\s)/, "F$1") : null; }   // the world's (a terminal's door)
     return null;
   }
@@ -5056,6 +5060,48 @@ function mount(el, api){
     placeProp(T.prop, x, z, yaw);
     if(B.s >= B.len && !B.told){ B.told = true; if(api.announce) api.announce("The " + T.name + " is back at the dealership."); }
   }
+  /* [3.27] Carjack (games/playcarjack.js through games/hqcity3d.js): E on foot by a stopped traffic car. The City's play
+     feature finds the car and its look (traffic.carLook: the catalogue model and paint the street draws it as); this
+     builds that catalogue vehicle where the traffic car stood, facing its way, and seats you in it: driven like any
+     catalogue car (VEHICLES[id]), sent in presence as any vehicle you ride (its id and paint index, nothing new). Getting
+     out parks it there (stay: this page only); once you are JACK_FAR m from it on foot, take another, or leave the world,
+     it goes (jackDrop), and the feature lets the traffic car back onto the street. One at a time. */
+  var jack = null, JACK_FAR = 150;
+  function jackTake(o){
+    o = o || {};
+    var V = VEHICLES[o.model], C = cur;
+    if(ride || POOL.u || !avatar || !V || !V.cat || !C || !C.bikes || !HQV.hqVehicleModels) return false;
+    var x = +o.x, z = +o.z, yaw = isFinite(+o.yaw) ? +o.yaw : 0;
+    if(!isFinite(x) || !isFinite(z)) return false;
+    jackDrop();
+    var ps = V.cat.paints || [], pi = Math.max(0, Math.min(Math.max(0, ps.length - 1), o.paint | 0));
+    var col = ps[pi] && /^#[0-9a-fA-F]{6}$/.test(ps[pi].hex) ? parseInt(ps[pi].hex.slice(1), 16) : isFinite(+o.hex) ? +o.hex : null;
+    var R = null;
+    try { R = HQV.hqVehicleModels.build(ctx, V.cat, col); } catch(e){ R = null; }
+    if(!R || !R.g) return false;
+    var g = new THREE.Group(); g.add(R.g);
+    g.position.set(x, groundAt(x, z), z); g.rotation.y = yaw; (C.scene || scene).add(g);
+    var prop = {g: g, x: x, z: z, yaw: yaw, color: col, paint: pi, kind: o.model, id: "carjack", stay: true, world: C, home: {x: x, z: z, yaw: yaw}};
+    C.bikes.push(prop);
+    jack = {prop: prop, world: C, vid: String(o.vid != null ? o.vid : "?")};
+    mountOn(prop, C.bikes.indexOf(prop));
+    if(!(ride && ride.id === "carjack")){ jackDrop(); return false; }
+    return true;
+  }
+  function jackDrop(){
+    var J = jack; if(!J) return; jack = null;
+    if(ride && ride.id === "carjack") dismount(true);
+    if(J.prop.g.parent) J.prop.g.parent.remove(J.prop.g);
+    var bs = J.world && J.world.bikes, i = bs ? bs.indexOf(J.prop) : -1; if(i >= 0) bs.splice(i, 1);
+    delete parked[J.prop.id];
+  }
+  function jackStep(){
+    var J = jack; if(!J) return;
+    if(cur !== J.world || !J.world.bikes){ jackDrop(); return; }
+    if(ride && ride.id === "carjack") return;
+    if(avatar && Math.hypot(avatar.x - J.prop.x, avatar.z - J.prop.z) > JACK_FAR) jackDrop();   // left far behind: gone
+  }
+  inst.carjack = function(){ var J = jack; return J ? {vid: J.vid, id: J.prop.kind, paint: J.prop.paint, x: J.prop.x, z: J.prop.z, riding: !!(ride && ride.id === "carjack")} : null; };
   inst.dealer = {open: function(){ return dealerOpen(); }, isOpen: function(){ return !!(dealUi && dealUi.isOpen()); },
                  test: function(id, hex){ return dealerTest(id, hex); }, get: dealerGet,
                  testDrive: function(){ var T = testDrive; return T ? {id: T.prop.kind, x: T.prop.x, z: T.prop.z, left: Math.max(0, T.until - Date.now()),
@@ -5303,6 +5349,7 @@ function mount(el, api){
     if(!ride && nearTank()){ mountTank(); return true; }                 // [3.16] your own tank (others' seat you through carpool)
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
     if(!ride && POOL.near){ poolBoard(POOL.near); return true; }
+    if(!ride && cur && cur.jack && avatar){ var jk = false; try { jk = cur.jack({x: avatar.x, z: avatar.z, yaw: avatar.yaw}); } catch(e){ jk = false; } if(jk) return true; }   // [3.27] take that car
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
     // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
     if(cur && cur.use && avatar && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
@@ -5446,6 +5493,7 @@ function mount(el, api){
     motionStep(dt);
     propHomeStep();                                                    // [3.13.4] your roof's helicopter back on its pad
     testStep(dt);                                                      // a dealership test drive
+    jackStep();                                                        // [3.27] a car you took, left far behind
     gnFrame(dt);                                                       // [3.16] grenades in flight, blasts, your knock
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.pet ? "heli" : ride.kind} : null);                          // flying on to another island (a dragon: as a helicopter)
@@ -5984,6 +6032,8 @@ function mount(el, api){
                          },
                          // hold (true) or let go of a key, as if pressed: tools drive with it
                          press: function(code, on){ keys[code] = !!on; },
+                         // [3.27] carjack, for tools: "take" (E by the traffic car you stand at), "out" (E again); -> the car you hold
+                         carjack: function(a){ if(a === "take" && !ride && cur && cur.jack && avatar) cur.jack({x: avatar.x, z: avatar.z, yaw: avatar.yaw}); else if(a === "out" && ride) dismount(); return inst.carjack(); },
                          // [stunts] the City's stunts, and where you are in one (tools drive them headless)
                          stunts: function(){ var S = stuntsNow(); return S ? S.list.map(function(s){ return {id: s.id, kind: s.kind, name: s.name, x: s.x, z: s.z, yaw: s.yaw, respawn: s.respawn,
                            pad: s.pads[0] ? {x: s.pads[0].x, z: s.pads[0].z, v: s.pads[0].v} : null, jump: s.jump ? {D: s.jump.D, v: s.jump.v, t: s.jump.t, apex: s.jump.apex, lip: s.jump.lip, target: s.jump.target} : null}; }) : null; },

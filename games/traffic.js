@@ -84,6 +84,15 @@
  * Emergency runs ignore the lights (they take each box when it is clear, as before). lightAt(x, z, heading, ms) ->
  * {state, sig, dist} the light ahead (for the police); signals() the lights. Without lights the plan is today's.
  * street(THREE, scene, W): the lights (poles, lit heads, stop lines) and cityLife.parked(W)'s cars, drawn near you.
+ * HQ 3.27 the garage's cars on the street: an ordinary car (type "car"; a taxi keeps its yellow and its roof sign) is drawn
+ * as one of the dealership's cars (games/vehicles/catalogue.json, bodies by games/hqvehiclemodels.js) once the catalogue
+ * and the models are loaded. streetCars(cat) picks MODEL_N everyday cars (hatch, sedan, SUV, coupe in turn; no hyper or
+ * super cars, no Formula 1, no bikes), carLook(id, models) gives a vehicle its model and one of that model's paints
+ * from a hash of its id (pure: every client and the carjack feature, games/playcarjack.js, agree). view() bakes each model
+ * once into one vertex-coloured geometry (its paint parts marked, so the per-instance paint colours only them), scaled
+ * uniformly to fit the car's SPEC (len x wid: collisions and the clash tests are unchanged), one InstancedMesh per model:
+ * MODEL_N draw calls at most instead of the box car's two, for the MODEL_NEAR cars nearest the camera (the list is
+ * nearest first); farther ones, and every car while no model is ready (node, the tests, a failed load), are the box car.
  */
 (function(){
 "use strict";
@@ -122,6 +131,9 @@ var DENS = [0.3, 0.45, 0.6, 0.72, 0.85];  // share of a ring's slots with a car,
 var HEADWAY = {bus: 240, tram: 300};      // target seconds between vehicles on a line
 var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEAR = 120, EV_FAR = 1200, EV_HW = 1.25, EV_TRY = 90, EV_HOLD = 90;
 var EV_KINDS = ["fire", "ambulance", "police"];
+// [3.27] the garage's cars on the street: how many models, the body types they come from (in turn), how many of the
+// nearest cars are drawn as one (the rest: the box car), and each model's instances at most
+var MODEL_N = 6, MODEL_TYPES = ["hatch", "sedan", "suv", "coupe"], MODEL_NEAR = 40, MODEL_CAP = 40;   // (about 5k triangles a model: 40 of them ~210k)
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
 var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
@@ -2373,6 +2385,34 @@ function soundOf(v){
   return {sk: sk, voice: voice, rpm: Math.round(rpm)};
 }
 
+/* ---------- [3.27] the garage's cars on the street (pure) ---------- */
+function bodyOf(v){ return String((v && v.body) || String((v && v["class"]) || "").split(".")[1] || ""); }
+// MODEL_N everyday cars of the catalogue: listed (a numbered slot, not a reserve or the starter), with dims, a hatch, a
+// sedan, an SUV and a coupe in turn (each type by id), so the street has a bit of everything and the same everywhere
+function streetCars(cat){
+  var L = ((cat && cat.vehicles) || []).filter(function(v){
+    return v && typeof v.id === "string" && String(v["class"] || "").split(".")[0] === "car" && typeof v.slot === "number" && v.dims
+      && MODEL_TYPES.indexOf(bodyOf(v)) >= 0;
+  }).sort(function(a, b){ return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+  var by = MODEL_TYPES.map(function(t){ return L.filter(function(v){ return bodyOf(v) === t; }); }), out = [];
+  for(var r = 0; out.length < MODEL_N; r++){
+    var any = false;
+    for(var k = 0; k < by.length && out.length < MODEL_N; k++) if(by[k][r]){ out.push(by[k][r]); any = true; }
+    if(!any) break;
+  }
+  return out;
+}
+// a car's look, from its id: which of the models (i, its catalogue id) and which of its paints (an index into
+// entry.paints, as hq3d's presence sends it, `vp`), and that paint's colour. null: no models (draw the box car)
+function carLook(id, models){
+  if(id == null || !models || !models.length) return null;
+  var h = hash32(String(id) + ":look"), i = h % models.length, e = models[i] || {}, ps = Array.isArray(e.paints) ? e.paints : [];
+  var pi = ps.length ? (h >>> 7) % ps.length : 0, hx = ps[pi] && /^#[0-9a-fA-F]{6}$/.test(ps[pi].hex) ? parseInt(ps[pi].hex.slice(1), 16) : PAINT[h % PAINT.length];
+  return {i: i, id: e.id || null, paint: pi, hex: hx};
+}
+// does this vehicle (as at() lists it) get a garage model? an ordinary car; a taxi, van, lorry or two-wheeler keeps its own
+function modelled(v){ return !!v && v.kind === "car" && (!v.type || v.type === "car"); }
+
 /* ---------- drawing: instanced bodies (THREE from c.THREE, only inside view()) ---------- */
 function view(c){
   var THREE = c.THREE, group = new THREE.Group(), meshes = {}, mtx = new THREE.Matrix4(), q = new THREE.Quaternion(),
@@ -2507,6 +2547,95 @@ function view(c){
   inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), CAP.fire*2 + CAP.ambulance*2 + CAP.police*2 + CAP.taxi, beaconM);   // (and the taxis' roof signs)
   var BEACON_Y = {fire: 2.6, ambulance: 2.8, police: 1.55}, BEACON_Z = {fire: 3.3, ambulance: 2.6, police: -0.2};
 
+  /* [3.27] the garage's cars: each model baked into one geometry (positions, normals, its colours, a paint mask), one
+     InstancedMesh each. The material colours a vertex by its own colour, and a painted one also by the instance's paint
+     (the shader's instance colour, mixed in by the mask: trim, glass, tyres and lamps keep their own). */
+  var MODELS = [], modelM = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.42, metalness: 0.3}), modelGen = 0, dead = false;
+  var CV = THREE.ShaderChunk && THREE.ShaderChunk.color_vertex, CV_LINE = "vColor.rgb *= instanceColor.rgb;";
+  if(CV && CV.indexOf(CV_LINE) >= 0){
+    modelM.onBeforeCompile = function(sh){
+      sh.vertexShader = sh.vertexShader.replace("#include <color_pars_vertex>", "#include <color_pars_vertex>\nattribute float hqPaint;")
+        .replace("#include <color_vertex>", CV.replace(CV_LINE, "vColor.rgb *= mix(vec3(1.0), instanceColor.rgb, hqPaint);"));
+    };
+    modelM.customProgramCacheKey = function(){ return "hq-traffic-paint"; };
+  }
+  // a rig's visible meshes as one geometry, centred, wheels on the ground, scaled to the car's footprint; null if empty
+  function bake(R){
+    if(!R || !R.g) return null;
+    var P = [], N = [], C = [], K = [], k = new THREE.Color();
+    R.g.position.set(0, 0, 0); R.g.rotation.set(0, 0, 0); R.g.scale.set(1, 1, 1);
+    R.g.updateMatrixWorld(true);
+    R.g.traverseVisible(function(o){
+      if(!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+      var g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+      if(!g.attributes.normal) g.computeVertexNormals();
+      g.applyMatrix4(o.matrixWorld);
+      var mats = Array.isArray(o.material) ? o.material : null, pos = g.attributes.position, nor = g.attributes.normal, vc = g.attributes.color;
+      var groups = mats && g.groups.length ? g.groups : [{start: 0, count: pos.count, materialIndex: 0}];
+      groups.forEach(function(gr){
+        var m = mats ? mats[gr.materialIndex] : o.material;
+        if(!m || m.visible === false) return;
+        var paint = !!(m.userData && m.userData.paint), end = Math.min(pos.count, gr.start + (isFinite(gr.count) ? gr.count : pos.count));
+        if(paint || !m.color) k.setRGB(1, 1, 1); else k.copy(m.color);
+        for(var i = Math.max(0, gr.start); i < end; i++){
+          P.push(pos.getX(i), pos.getY(i), pos.getZ(i)); N.push(nor.getX(i), nor.getY(i), nor.getZ(i));
+          if(vc && m.vertexColors && !paint) C.push(k.r*vc.getX(i), k.g*vc.getY(i), k.b*vc.getZ(i)); else C.push(k.r, k.g, k.b);
+          K.push(paint ? 1 : 0);
+        }
+      });
+      g.dispose();
+    });
+    if(P.length < 9) return null;
+    var out = new THREE.BufferGeometry();
+    out.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+    out.setAttribute("normal", new THREE.Float32BufferAttribute(N, 3));
+    out.setAttribute("color", new THREE.Float32BufferAttribute(C, 3));
+    out.setAttribute("hqPaint", new THREE.Float32BufferAttribute(K, 1));
+    out.computeBoundingBox();
+    var bb = out.boundingBox, sx = bb.max.x - bb.min.x, sz = bb.max.z - bb.min.z;
+    if(!(sx > 0.1 && sz > 0.1)){ out.dispose(); return null; }
+    // uniformly, to fit the sim's car (SPEC.car: what collides and what the clash tests measure)
+    var s = Math.min(SPEC.car.len/sz, SPEC.car.wid/sx);
+    out.translate(-(bb.min.x + bb.max.x)/2, -bb.min.y, -(bb.min.z + bb.max.z)/2);
+    out.scale(s, s, s);
+    out.computeBoundingBox(); out.computeBoundingSphere();
+    return out;
+  }
+  function modelOf(i, geo){
+    var key = "model" + i, m = meshes[key];
+    if(m){ group.remove(m); m.geometry.dispose(); m.dispose(); delete meshes[key]; }
+    if(geo) inst(key, geo, MODEL_CAP, modelM);
+  }
+  // the catalogue (games/vehicles/catalogue.json) -> the models drawn; false while hqvehiclemodels.js is not loaded
+  function setModels(cat){
+    var VM = HQV.hqVehicleModels, gen = ++modelGen;
+    for(var j = 0; j < MODEL_N; j++) modelOf(j, null);
+    MODELS = [];
+    if(!VM || !VM.build || !cat || dead) return false;
+    var list = streetCars(cat);
+    list.forEach(function(entry, i){
+      var R = null, geo = null;
+      try { R = VM.build(c, entry, null); } catch(err){ R = null; }
+      try { geo = bake(R); } catch(err){ geo = null; }
+      modelOf(i, geo);                                  // (none: the cars of this model stay box cars)
+      // a real model (entry.model3d) swaps in when it has loaded: bake it again then
+      if(R && R.ready && typeof R.ready.then === "function") R.ready.then(function(){
+        if(gen !== modelGen || dead) return;
+        var g2 = null; try { g2 = bake(R); } catch(err){ g2 = null; }
+        if(g2) modelOf(i, g2);
+      }, function(){});
+    });
+    MODELS = list;
+    return MODELS.length > 0;
+  }
+  // the catalogue, if the City has it or can load it (nothing here without hqvehiclemodels.js: the box cars stay)
+  if(HQV.hqVehicleModels){
+    var cat0 = null;
+    try { cat0 = typeof c.catalogue === "function" ? c.catalogue() : null; } catch(err){ cat0 = null; }
+    if(cat0) setModels(cat0);
+    else if(HQV.hqVehicles && HQV.hqVehicles.load){ try { HQV.hqVehicles.load().then(function(cat){ if(!MODELS.length && !dead) setModels(cat); }, function(){}); } catch(err){} }
+  }
+
   var sc2 = new THREE.Vector3(1, 1, 1);
   function put(m, i, x, y, z, yaw, hex, sx, sy, sz){
     e.set(0, yaw, 0); q.setFromEuler(e); p.set(x, y, z); mtx.compose(p, q, sx ? sc2.set(sx, sy, sz) : sc); m.setMatrixAt(i, mtx);
@@ -2515,7 +2644,7 @@ function view(c){
   // opts.hide: {vehicleId: true} for the vehicles a detailed model draws instead (games/hqcoach.js near())
   function update(vehicles, timeMs, opts){
     var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0, van: 0, lorry: 0, scooter: 0, bike: 0}, flash = Math.floor(num(timeMs, 0)/250) & 1;
-    var hide = opts && opts.hide;
+    var hide = opts && opts.hide, box = 0, mn = 0, mc = MODELS.map(function(){ return 0; });   // [3.27] box cars, model cars (each model's)
     (vehicles || []).forEach(function(v){
       var k = v.kind;
       if(n[k] == null || (hide && hide[v.id])) return;
@@ -2535,8 +2664,11 @@ function view(c){
         return;
       }
       if(n[k] >= CAP[k]) return;
+      // [3.27] one of the garage's cars, for the nearest ordinary ones (each model's mesh while it has room)
+      var lk = MODELS.length && mn < MODEL_NEAR && modelled(v) ? carLook(v.id, MODELS) : null, mm = lk && meshes["model" + lk.i];
+      if(mm && mc[lk.i] < MODEL_CAP){ put(mm, mc[lk.i]++, v.x, v.y, v.z, v.yaw, lk.hex); mn++; n.car++; return; }
       if(k === "car"){
-        put(meshes.car, n.car, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, n.car, v.x, v.y, v.z, v.yaw);
+        put(meshes.car, box, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, box, v.x, v.y, v.z, v.yaw); box++;
         if(v.type === "taxi" && n.beacon < meshes.beacon.instanceMatrix.count){
           var ts = Math.sin(v.yaw), tc = Math.cos(v.yaw);
           put(meshes.beacon, n.beacon++, v.x - 0.36*ts, v.y + 1.87, v.z - 0.36*tc, v.yaw, TAXI_SIGN, 2.1, 1.3, 1.2);
@@ -2561,15 +2693,22 @@ function view(c){
         if(m.instanceColor) m.instanceColor.needsUpdate = true;
       });
     });
+    // [3.27] the box cars drew from their own count; each model's mesh its own
+    meshes.car.count = meshes.carDetail.count = box;
+    mc.forEach(function(cn, i){ var m = meshes["model" + i]; if(!m) return; m.count = cn; m.instanceMatrix.needsUpdate = true; if(m.instanceColor) m.instanceColor.needsUpdate = true; });
+    n.model = mn;
     return n;
   }
   function drawCalls(){ var d = 0; for(var k in meshes) if(meshes[k].count > 0) d++; return d; }
   function dispose(){
+    dead = true; modelGen++;
     for(var k in meshes){ meshes[k].geometry.dispose(); meshes[k].dispose(); }
-    vc.dispose(); paintM.dispose(); beaconM.dispose();
+    vc.dispose(); paintM.dispose(); beaconM.dispose(); modelM.dispose();
     if(group.parent) group.parent.remove(group);
   }
-  return {group: group, meshes: meshes, update: update, drawCalls: drawCalls, dispose: dispose};
+  // [3.27] models(): the catalogue entries drawn on the street (empty: the box cars); look(v): a vehicle's, as drawn
+  return {group: group, meshes: meshes, update: update, drawCalls: drawCalls, dispose: dispose, setModels: setModels,
+          models: function(){ return MODELS.slice(); }, look: function(v){ return modelled(v) ? carLook(v.id, MODELS) : null; }};
 }
 
 /* ---------- [3.22] the street: traffic lights and parked cars (THREE only inside street()) ---------- */
@@ -2765,5 +2904,6 @@ function street(THREE, scene, W, o){
 HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
                lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
+               streetCars: streetCars, carLook: carLook, modelled: modelled, MODEL_N: MODEL_N, MODEL_NEAR: MODEL_NEAR,
                _: {plOf: plOf, plAt: plAt, offsetPts: offsetPts, trimPts: trimPts, Profile: Profile, fastest: fastest, ease: ease}};
 })();

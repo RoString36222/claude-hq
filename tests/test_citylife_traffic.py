@@ -49,6 +49,14 @@ out.mix = {industry: share(indCars, ["van", "lorry"]), lorries: indCars.filter(f
 indCars.concat(allCars).forEach(function(c){ if(c.type === "lorry") out.mix.kinds[s._.rings[c.ring].kindL] = 1; });
 allCars.forEach(function(c){ out.mix.groups[c.group] = 1; });
 out.mix.lorryOnTwo = indCars.filter(function(c){ return c.type === "lorry"; }).every(function(c){ var r = ind._.rings[c.ring]; return !r.uturn; });
+// the mix picks lorries; only a platoon's first car drives one (a follower's pick is a van), so whether any is out at
+// 09:00 depends on which slots lead: count the picks, and check every lorry out leads its platoon
+var lorryPicks = 0, lorryLead = true;
+ind._.rings.forEach(function(r){ (r.cars || []).forEach(function(c){
+  if(L.pick(L.mix("industry", r.kindL, 9), c.ut) === "lorry") lorryPicks++;
+  if(c.st && c.st.type === "lorry" && c.fol > 0) lorryLead = false;
+}); });
+out.mix.lorryPicks = lorryPicks; out.mix.lorryLead = lorryLead;
 
 // ---- closures: no car on a closed edge while it is closed; back on it afterwards ----
 function corridor(id){
@@ -95,6 +103,9 @@ out.tz = tzA.filter(even).length > tzA.length/2 && JSON.stringify(tzA.filter(eve
 // ---- the view: the types drawn, a few draw calls ----
 const V = T.view({THREE: THREE}), list = cars(ind, MON + 8.25*HR).concat(cars(s, MON + 23*HR).filter(function(v){ return v.type === "taxi"; }),
                                                 cars(s, MON + 8.25*HR).filter(function(v){ return v.type === "scooter" || v.type === "bike"; }));
+// a lorry body too, if none of these is one (a lorry is out only where a platoon's first car picks one)
+const lv = list.filter(function(v){ return v.type === "van"; })[0];
+if(lv && !list.some(function(v){ return v.type === "lorry"; })) list.push(Object.assign({}, lv, {type: "lorry", x: lv.x + 20}));
 const n = V.update(list, 0), tally = {};
 list.forEach(function(v){ tally[v.type] = (tally[v.type] || 0) + 1; });
 out.view = {n: n, tally: tally, calls: V.drawCalls(), solidSpec: ["van", "lorry", "scooter", "bike", "taxi"].every(function(k){ return T.SPEC[k] && T.SPEC[k].len > 0 && T.SPEC[k].wid > 0; })};
@@ -159,7 +170,8 @@ class CityLifeTraffic(unittest.TestCase):
     def test_the_mix_follows_the_district_and_the_hour(self):
         m = self.o["mix"]
         self.assertGreater(m["industry"], 0.35, "the industrial district sends vans and lorries")
-        self.assertGreater(m["lorries"], 0)
+        self.assertGreater(m["lorryPicks"], 0, "the mix picks lorries (a platoon's first car drives one)")
+        self.assertTrue(m["lorryLead"], "only a platoon's first car is a lorry")
         self.assertGreater(m["industry"], m["city"])
         self.assertGreater(m["taxiNight"], m["taxiDay"], "more taxis at night")
         self.assertTrue(set(m["kinds"]) <= {"main", "fast"}, "lorries only on main and fast roads")

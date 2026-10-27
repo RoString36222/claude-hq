@@ -159,7 +159,7 @@ fn wider_roads_move_no_lot() {
         let run = |p: &profile::Profile| {
             let river = river::River::new(seed, p).unwrap();
             let base = terrain::generate_with(seed, p, river.as_ref());
-            super::generate(seed, p, &base, river.as_ref()).unwrap()
+            super::generate(seed, p, &base, river.as_ref(), &[]).unwrap()
         };
         let ((was, r0, _), (now, r1, _)) = (run(&laid), run(&p));
         assert_eq!(was.lots.len(), now.lots.len(), "{id}: lots");

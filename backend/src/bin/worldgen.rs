@@ -4,6 +4,7 @@
 //!   cargo run --release --bin worldgen -- claude-hq@1 --json > w.json
 //!   cargo run --release --bin worldgen -- claude-hq@1 --edits edits.json --json
 //!   cargo run --release --bin worldgen -- claude-hq@1 --samples       probe points for client tests
+//!   cargo run --release --bin worldgen -- claude-hq@3 --validate      the v4 validator's report (exit 1 on a hard rule)
 //!   cargo run --release --bin worldgen -- claude-hq@2                 the Commons (organic)
 //!   cargo run --release --bin worldgen -- user:<uuid>@2               a personal island
 //!   cargo run --release --bin worldgen -- claude-hq@3                 the Commons with water and lines (HQ 3.15)
@@ -35,6 +36,16 @@ fn main() {
         }
     };
     let ms = t0.elapsed().as_millis();
+    if args.iter().any(|a| a == "--validate") {
+        let v = worldgen::validate::check(&w.layers);
+        print!("world {}  validator\n{}", w.id, worldgen::validate::report(&v));
+        let mut by: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for e in &w.layers.roads.edges {
+            *by.entry(worldgen::classes::legacy(e.class, e.width)).or_default() += 1;
+        }
+        println!("  roads as v4 classes: {by:?}");
+        std::process::exit(if v.iter().any(|x| x.hard) { 1 } else { 0 });
+    }
     if args.iter().any(|a| a == "--json") {
         println!("{}", serde_json::to_string(&w).unwrap());
         return;

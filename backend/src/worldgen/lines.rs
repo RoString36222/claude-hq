@@ -321,7 +321,8 @@ impl<'a> Land<'a> {
             site_grid,
             water: water.collect(),
             coast: c.coast.map(pts),
-            taken: Vec::new(),
+            // City Gen v4: the airport's claim (claims.rs) is taken before any line plans
+            taken: super::claims::Airport::of(c.sites).map_or(Vec::new(), |a| [a.polys, vec![a.corridor]].concat()),
         }
     }
 

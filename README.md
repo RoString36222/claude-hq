@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.23.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.24.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,22 @@ and feature guide.
 
 ## Changelog
 
+- **3.24.0 — City Gen v4, phase 1: the airport gets its own land.** The Commons' airport now claims its land before
+  any road is laid. The claim covers:
+  - the terminal with its forecourt, car park and control tower
+  - the airside out to the runway
+  - the runway's safety zones past each end
+
+  The two west highways that boxed in the terminal now meet the ring north and south of the airport. The Ring Road
+  keeps its place behind the terminal, under the skybridge, as the airport was designed. It is the only road allowed
+  there, until phase 6 takes it under the airport. The dock, port, stadium, rail and metro keep off the airport's land
+  too, and its grounds grow no trees. The airport, its runway, the metro, the City's traffic and every HQ stay as they
+  were.
+
+  Behind the scenes, a world validator checks every generated world and fails one where anything stands in the
+  airport's land. Its report lists what the next phases will fix
+  (`cargo run --release --bin worldgen -- claude-hq@3 --validate`). The 11 road classes of the v4 plan are in as data,
+  ready for phase 2.
 - **3.23.0 — Live weather and time from Bengaluru.** The City keeps Koramangala's time (IST) for every player,
   whatever their own timezone: day and night, residents' days, rush hours, the bells, and the phone's and departure
   boards' clocks. Night falls at Bengaluru's real sunset and lifts at its sunrise (worked out for each day of the

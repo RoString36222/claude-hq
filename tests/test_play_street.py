@@ -34,7 +34,12 @@ var pass = sim.passers(NOON, ALL, BIG), best = null;
 pass.forEach(function(r, i){ if(i % 7) return; var n = sim.at(NOON, r, 60).length; if(!best || n > best.n) best = {n: n, x: r.x, z: r.z}; });
 function people(rows){ return rows.filter(function(r){ return r.anim !== "drive"; }).length; }
 var c = {x: best.x, z: best.z};
-out.pop = {with: people(sim.at(NOON, c, 150)), without: people(noPass.at(NOON, c, 150)), night: sim.passers(at(26, 3.5), ALL, BIG).length,
+// with and without the passers-by round the 10 busiest sampled spots: the median of their ratios (one spot alone may be
+// a resident-heavy corner)
+var spots = []; pass.forEach(function(r, i){ if(!(i % 7)) spots.push({n: sim.at(NOON, r, 60).length, x: r.x, z: r.z}); });
+spots.sort(function(a, b){ return b.n - a.n || a.x - b.x || a.z - b.z; });
+var ratios = spots.slice(0, 10).map(function(s){ return people(sim.at(NOON, s, 150))/Math.max(1, people(noPass.at(NOON, s, 150))); }).sort(function(a, b){ return a - b; });
+out.pop = {with: people(sim.at(NOON, c, 150)), without: people(noPass.at(NOON, c, 150)), ratio: (ratios[4] + ratios[5])/2, night: sim.passers(at(26, 3.5), ALL, BIG).length,
            all: pass.length, streets: sim.passStreets().length, maxNear: D.MAX_NEAR, maxFar: D.MAX_FAR};
 var t0 = Date.now(); for(var i = 0; i < 60; i++) sim.at(NOON + i*16, c, 150); out.pop.ms = (Date.now() - t0)/60;
 
@@ -201,7 +206,8 @@ class PlayStreetTest(unittest.TestCase):
 
     def test_more_people_on_the_pavements(self):
         p = self.o["pop"]
-        self.assertGreaterEqual(p["with"], 2*p["without"], p)       # at least twice the people round the busiest street
+        self.assertGreaterEqual(p["ratio"], 2, p)                    # at least twice the people round the busiest streets
+        self.assertGreater(p["with"], p["without"], p)
         self.assertGreater(p["all"], 300)
         self.assertGreater(p["streets"], 50)
         self.assertLess(p["night"], p["all"]*0.2, "fewer by night")

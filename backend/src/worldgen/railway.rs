@@ -320,10 +320,12 @@ struct Link {
 
 /// The Island Link: straight from Central's platforms to a coast point (seeded, away from
 /// the river's mouth and the airport), climbing at no more than 4 %; the portal's trench on
-/// open land, the stretch at grade off the streets and lots.
+/// open land, the stretch at grade off the streets and lots, nothing above ground in the
+/// airport's claim.
 fn island_link(c: &Ctx, land: &Land, centre: P, coast: &[[i64; 2]], rng: &mut Rng) -> Option<Link> {
     let mouth = c.river.and_then(|r| r.center.first().map(|&p| (p[0], p[1])));
     let airport = c.sites.iter().find(|s| s.kind == "airport").map(|s| (s.x, s.z));
+    let claim = super::claims::Airport::of(c.sites);
     let sea_y = c.profile.sea_cm.unwrap_or(0);
     // coast points, best first: far from the mouth, a little seeded jitter
     let mut cands: Vec<(i64, P)> = coast
@@ -395,6 +397,12 @@ fn island_link(c: &Ctx, land: &Land, centre: P, coast: &[[i64; 2]], rng: &mut Rn
                 "viaduct"
             };
             kinds.push(k);
+        }
+        // City Gen v4: above ground it keeps off the airport's claim (claims.rs), and on the
+        // ground off the ring's corridor behind the terminal
+        let on_ground = |k: &str| !matches!(k, "tunnel" | "viaduct" | "bridge");
+        if claim.as_ref().is_some_and(|a| (0..kinds.len()).any(|i| (kinds[i] != "tunnel" && a.meets_seg(path[i], path[i + 1], 400)) || (on_ground(kinds[i]) && a.in_corridor(path[i], path[i + 1], 400)))) {
+            continue;
         }
         if !ok || trench_pts.is_empty() {
             continue;

@@ -68,11 +68,19 @@ var G = F.ghost(r.id);
 out.ghostN = G ? G.length : 0; out.ghost0 = G ? Math.hypot(G[0].x - r.start.x, G[0].z - r.start.z) : null;
 out.ghostEnd = G ? Math.hypot(G[G.length - 1].x - r.cps[r.cps.length - 1].x, G[G.length - 1].z - r.cps[r.cps.length - 1].z) : null;
 out.store = city.ctx.store.get("races:" + city.ctx.seed + ":best:" + r.id, null) != null;
-// the second run: checkpoint 2 missed by 60 m
+// the second run: checkpoint 2 missed by 60 m, on whichever side keeps the straight lines in and out of the miss
+// farthest from it (on the inside of a turn, the line on to checkpoint 3 would cross it)
 car.speed = 0; for(var w8 = 0; w8 < 70; w8++) tick(0.1);          // the finish line's banner, then back to the start
 events.length = 0; me.x = r.start.x; me.z = r.start.z;
 out.phases2 = arm();
-r.cps.forEach(function(c, i){ var o = i === 1 ? 60 : 0; driveTo(c.x + o*Math.cos(c.yaw), c.z - o*Math.sin(c.yaw), 25); });
+function segD(p, a, b){ var dx = b.x - a.x, dz = b.z - a.z, l = dx*dx + dz*dz, t = l ? Math.max(0, Math.min(1, ((p.x - a.x)*dx + (p.z - a.z)*dz)/l)) : 0; return Math.hypot(p.x - a.x - dx*t, p.z - a.z - dz*t); }
+var c0 = r.cps[0], c1 = r.cps[1], c2 = r.cps[2] || r.cps[0], miss = null;
+for(var q = 0; q < 16; q++){
+  var m = {x: c1.x + 60*Math.cos(q*Math.PI/8), z: c1.z + 60*Math.sin(q*Math.PI/8)}, d = Math.min(segD(c1, c0, m), segD(c1, m, c2));
+  if(!miss || d > miss.d) miss = {x: m.x, z: m.z, d: d};
+}
+out.missBy = miss.d;
+r.cps.forEach(function(c, i){ if(i === 1) driveTo(miss.x, miss.z, 25); else driveTo(c.x, c.z, 25); });
 for(var k = 0; k < 80; k++) tick(0.1);
 out.events2 = events.slice(); out.next2 = F.state().next; out.phase2 = F.state().phase;
 out.bestAfter = F.best(r.id).t === out.best.t;
@@ -151,6 +159,7 @@ class PlayRaces(unittest.TestCase):
     def test_a_checkpoint_missed_by_more_than_25_m_does_not_count(self):
         o = self.o
         self.assertEqual(o["phases2"], ["count", "run"])
+        self.assertGreater(o["missBy"], 25)
         self.assertNotIn("finish", o["events2"])
         self.assertTrue(o["phase2"] == "idle" or o["next2"] == 1, o)
         self.assertTrue(o["bestAfter"])

@@ -19,6 +19,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use serde::Serialize;
 
 use super::city::{Block, Grid};
+use super::claims::Airport;
 use super::noise::{isqrt, smoothstep, ONE};
 use super::profile::Profile;
 use super::river::River;
@@ -148,7 +149,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
             Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None }
         })
         .collect();
-    graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None)?;
+    graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
     Ok(Roads { nodes, edges })
 }
 
@@ -156,8 +157,12 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
 /// highway from the city node nearest each seeded gate out to it, and the ring
 /// joining the highways. Appends them (split into junctions where they meet) and
 /// numbers every edge. `names` gives each highway its name. No gates, no roads. A
-/// road crosses the `river` (if any) quickly, on a bridge.
-#[allow(clippy::too_many_arguments)] // the city the roads join, and the river they cross
+/// road crosses the `river` (if any) quickly, on a bridge. Nothing enters the airport's
+/// `claim` (claims.rs, City Gen v4): a gate in it, or cut off by it, slides along the
+/// world's edge until it is clear; no step of a highway or the ring comes within its half
+/// width and 3 m of it, nor a highway's of the ring's corridor behind the terminal; and a
+/// ring section that could only pass it the long way round is left out.
+#[allow(clippy::too_many_arguments)] // the city the roads join, the river they cross, the land they keep off
 pub fn graded<'a>(
     rng: &mut Rng,
     p: &Profile,
@@ -167,6 +172,7 @@ pub fn graded<'a>(
     edges: &mut Vec<Edge>,
     it: &mut impl Iterator<Item = &'a str>,
     river: Option<&River>,
+    claim: Option<&Airport>,
 ) -> Result<(), String> {
     if p.gates == 0 {
         for (k, e) in edges.iter_mut().enumerate() {
@@ -182,15 +188,32 @@ pub fn graded<'a>(
     let step = perim / p.gates;
     let start = rng.range(0, step - 1);
     let mut gates = Vec::new();
-    for k in 0..p.gates {
-        let t = (start + k * step + rng.range(-step / 5, step / 5)).rem_euclid(perim);
+    let at = |t: i64| {
+        let t = t.rem_euclid(perim);
         let (side, off) = (t / (2 * half), t % (2 * half) - half);
-        gates.push(match side {
+        match side {
             0 => (off, -half),
             1 => (half, off),
             2 => (-off, half),
             _ => (-half, -off),
-        });
+        }
+    };
+    // the blocks and streets: graded roads keep their full width off them, and off the
+    // airport's claim
+    let keep = Keep::new(base, blocks, edges, p.highway_cm.max(p.ring_cm) / 2, claim);
+    // a gate in the airport's claim, or cut off from the city by it, moves along the edge,
+    // a cell at a time, whichever way first clears it
+    let reach = claim.map(|_| reachable(base, &keep));
+    let ok = |q: (i64, i64)| {
+        reach.as_ref().is_none_or(|r| {
+            let v = base.vertex_of(q.0, q.1);
+            r[v.1 * base.n + v.0] && !keep.claimed(q, base.vertex_pos(v.0, v.1), false)
+        })
+    };
+    for k in 0..p.gates {
+        let t = start + k * step + rng.range(-step / 5, step / 5);
+        let moved = (0..perim / base.cell_cm).flat_map(|i| [t + i * base.cell_cm, t - i * base.cell_cm]).find(|&s| ok(at(s)));
+        gates.push(at(moved.unwrap_or(t)));
     }
     // route numbers go round the compass: gate 1 is the first clockwise from -z (atan2(x, z) from -PI)
     let mut order: Vec<usize> = (0..gates.len()).collect();
@@ -200,8 +223,6 @@ pub fn graded<'a>(
         number[k] = r + 1;
     }
 
-    // the blocks and streets: graded roads keep their full width off them
-    let keep = Keep::new(base, blocks, edges, p.highway_cm.max(p.ring_cm) / 2);
     let mut graded: Vec<Edge> = Vec::new();
     let mut junctions = Vec::new();
     // the highways laid so far: a highway that would touch one pays for every point it
@@ -252,8 +273,17 @@ pub fn graded<'a>(
         let forbid = |t: &Taken, f: bool| Taken { forbid: f, ..t.clone() };
         let path = [(true, true), (false, true), (false, false)]
             .into_iter()
-            .find_map(|(h, r)| route(base, p, pa, pb, p.ring_r_cm * 4 / 5, out_r, &keep, &[forbid(&laid, h), forbid(&ring, r)], false, river))
-            .ok_or_else(|| format!("no ring road from junction {k}"))?;
+            .find_map(|(h, r)| route(base, p, pa, pb, p.ring_r_cm * 4 / 5, out_r, &keep, &[forbid(&laid, h), forbid(&ring, r)], false, river));
+        // where the airport stands in the ring's way with no room landside of it (the only
+        // way round it is the long way, past the far side of the city from its two ends),
+        // the ring stops at the junctions either side and the highways carry its traffic
+        // into town
+        let mid = (pa.0 + pb.0, pa.1 + pb.1);
+        let detour = |q: &[(i64, i64)]| q.iter().any(|v| (v.0 as i128) * (mid.0 as i128) + (v.1 as i128) * (mid.1 as i128) < 0);
+        if claim.is_some() && path.as_ref().is_none_or(|q| detour(q)) {
+            continue;
+        }
+        let path = path.ok_or_else(|| format!("no ring road from junction {k}"))?;
         ring.add(&path, base);
         graded.push(Edge { route: Some("R1".to_string()), ..graded_edge(a, b, &path, &format!("Ring Road {}", k + 1), "ring", p.ring_cm) });
     }
@@ -267,6 +297,30 @@ pub fn graded<'a>(
         e.id = k as u32;
     }
     Ok(())
+}
+
+/// The terrain's vertices a graded road can reach from the middle of the world without
+/// a step onto claimed land (`keep.claim`), by the steps `route` takes.
+fn reachable(t: &Terrain, keep: &Keep) -> Vec<bool> {
+    let n = t.n;
+    let mut seen = vec![false; n * n];
+    let s = t.vertex_of(0, 0);
+    let mut todo = vec![s];
+    seen[s.1 * n + s.0] = true;
+    while let Some((x, z)) = todo.pop() {
+        for (dx, dz) in [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)] {
+            let (vx, vz) = (x as i64 + dx, z as i64 + dz);
+            if vx < 0 || vz < 0 || vx >= n as i64 || vz >= n as i64 || seen[vz as usize * n + vx as usize] {
+                continue;
+            }
+            if keep.claimed(t.vertex_pos(x, z), t.vertex_pos(vx as usize, vz as usize), false) {
+                continue;
+            }
+            seen[vz as usize * n + vx as usize] = true;
+            todo.push((vx as usize, vz as usize));
+        }
+    }
+    seen
 }
 
 /// The gates' compass order from integers only (no trig): the angle atan2(x, z)
@@ -769,10 +823,12 @@ struct Keep {
     rects: Vec<((i64, i64, i64, i64), Option<[(i64, i64); 2]>)>,
     near: Vec<Vec<u32>>,
     clear: i64,
+    /// Land claimed before the graded roads (claims.rs): never entered.
+    claim: Option<Airport>,
 }
 
 impl Keep {
-    fn new(t: &Terrain, blocks: &[Block], streets: &[Edge], clear: i64) -> Self {
+    fn new(t: &Terrain, blocks: &[Block], streets: &[Edge], clear: i64, claim: Option<&Airport>) -> Self {
         let mut rects: Vec<_> = blocks.iter().map(|b| ((b.x - b.w / 2, b.x + b.w / 2, b.z - b.d / 2, b.z + b.d / 2), None)).collect();
         for e in streets {
             let (a, b) = (e.points[0], e.points[e.points.len() - 1]);
@@ -791,7 +847,7 @@ impl Keep {
                 }
             }
         }
-        Keep { rects, near, clear }
+        Keep { rects, near, clear, claim: claim.cloned() }
     }
 
     /// Does segment ab, leaving vertex `from`, come within `clear` of a block or street?
@@ -801,6 +857,12 @@ impl Keep {
             let (r, ends) = self.rects[k as usize];
             !ends.is_some_and(|n| flare.is_some_and(|f| n.contains(&f))) && !clear_of(a, b, r, self.clear)
         })
+    }
+
+    /// Does segment ab come within the road's half width and 3 m of claimed land (or of
+    /// the airport's ring corridor, unless it is the `ring`)?
+    fn claimed(&self, a: (i64, i64), b: (i64, i64), ring: bool) -> bool {
+        self.claim.as_ref().is_some_and(|c| c.meets_seg(a, b, self.clear + 300) || (!ring && c.in_corridor(a, b, self.clear + 300)))
     }
 }
 
@@ -926,6 +988,10 @@ fn route(
             }
             let at = |w: usize| if w == idx(s) { a } else if w == idx(g) { b } else { t.vertex_pos(w % n, w / n) };
             let flare = (city_start && (at(u).0 - a.0).abs().max((at(u).1 - a.1).abs()) <= FLARE * cell).then_some(a);
+            // (a highway leaves the city; the ring, which does not, may use the airport's corridor)
+            if keep.claimed(at(u), at(idx(v)), !city_start) {
+                continue;
+            }
             if keep.hits(u, at(u), at(idx(v)), flare) {
                 if strict {
                     continue;

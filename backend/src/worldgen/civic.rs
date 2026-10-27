@@ -35,6 +35,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 
 use super::city::{Block, City, Facing, Lot, Site};
+use super::claims::Airport;
 use super::noise::{isqrt, ONE};
 use super::organic::blocks::KERB_CM;
 use super::organic::geom::{self, along, centroid, dist2, inside, left, len, nearest_on, obb, seg_dist2, DIR16, P};
@@ -639,30 +640,22 @@ pub fn outside(p: &Profile, t: &Terrain, roads: &Roads, city: &mut City, river: 
     let downtown: Vec<&Block> = city.blocks.iter().filter(|b| b.district == district::DOWNTOWN).collect();
     let n = downtown.len().max(1) as i64;
     let mid = (downtown.iter().map(|b| b.x).sum::<i64>() / n, downtown.iter().map(|b| b.z).sum::<i64>() / n);
+    // an airport placed before the roads (`airport_first`) keeps its claim: nothing else here stands in it
+    let claim = Airport::of(&city.sites);
     for row in CIVIC {
         let spot = match row.place {
             Place::Shore => match river {
-                Some(r) => on_river(r, roads, city, row),
-                None => shore(p, t, roads, city, row),
+                Some(r) => on_river(r, roads, city, row, claim.as_ref()),
+                None => shore(p, t, roads, city, row, claim.as_ref()),
             },
-            Place::Edge => edge(p, t, roads, city, river, row, |rise, r, k, _| (rise, r, k as i64)),
+            Place::Edge if !city.sites.iter().any(|s| s.kind == row.kind) => edge(p, t, roads, city, river, row, claim.as_ref(), &[], |rise, r, k, _| (rise, r, k as i64)),
             Place::Park if !city.sites.iter().any(|s| s.kind == row.kind) => {
-                edge(p, t, roads, city, river, row, |rise, _, k, c| ((rise > 2 * p.site_flat_cm) as i64, dist2(c, mid), rise * 16 + k as i64))
+                edge(p, t, roads, city, river, row, claim.as_ref(), &[], |rise, _, k, c| ((rise > 2 * p.site_flat_cm) as i64, dist2(c, mid), rise * 16 + k as i64))
             }
             _ => continue,
         };
         let Some((c, f)) = spot else { continue };
-        let poly = rect(c, f, row.w_cm, row.d_cm);
-        // outside the city its block is the nearest one
-        let block = city.blocks.iter().min_by_key(|b| (dist2((b.x, b.z), c), b.id)).map_or(0, |b| b.id);
-        let n = city.sites.iter().filter(|s| s.kind == row.kind).count();
-        let mut site = Site {
-            id: format!("{}:{n}", row.kind), kind: row.kind, block, x: c.0, y: 0, z: c.1, w: row.w_cm, d: row.d_cm,
-            facing: if f.1 >= 0 { Facing::North } else { Facing::South },
-            tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
-        };
-        let foot = site.foot();
-        site.y = t.height_at(foot.0, foot.1);
+        let site = outside_site(t, city, row, c, f);
         city.sites.push(site);
     }
     for (view, kind) in VIEWS {
@@ -670,6 +663,37 @@ pub fn outside(p: &Profile, t: &Terrain, roads: &Roads, city: &mut City, river: 
             s.view = Some(view);
         }
     }
+}
+
+/// City Gen v4 (phase 1): the airport placed BEFORE the graded roads, so they can keep
+/// off its claim (claims.rs): the flattest open land outside the city, off the river,
+/// as `outside` would, but with no roads yet to keep clear of; its claim clear of every
+/// block and site. `outside` then leaves it be. None (and nothing placed) where no spot
+/// has room.
+pub fn airport_first(p: &Profile, t: &Terrain, city: &mut City, river: Option<&River>, water: &[Vec<P>]) -> Option<Airport> {
+    let row = CIVIC.iter().find(|r| r.kind == "airport")?;
+    let none = Roads { nodes: Vec::new(), edges: Vec::new() };
+    let (c, f) = edge(p, t, &none, city, river, row, None, water, |rise, r, k, _| (rise, r, k as i64))?;
+    let site = outside_site(t, city, row, c, f);
+    let claim = Airport::of(std::slice::from_ref(&site));
+    city.sites.push(site);
+    claim
+}
+
+/// The site a row outside the city's lots puts at `c`, its front `f`.
+fn outside_site(t: &Terrain, city: &City, row: &Civic, c: P, f: P) -> Site {
+    let poly = rect(c, f, row.w_cm, row.d_cm);
+    // outside the city its block is the nearest one
+    let block = city.blocks.iter().min_by_key(|b| (dist2((b.x, b.z), c), b.id)).map_or(0, |b| b.id);
+    let n = city.sites.iter().filter(|s| s.kind == row.kind).count();
+    let mut site = Site {
+        id: format!("{}:{n}", row.kind), kind: row.kind, block, x: c.0, y: 0, z: c.1, w: row.w_cm, d: row.d_cm,
+        facing: if f.1 >= 0 { Facing::North } else { Facing::South },
+        tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
+    };
+    let foot = site.foot();
+    site.y = t.height_at(foot.0, foot.1);
+    site
 }
 
 /// Water: past the coast, or at or below the sea.
@@ -706,7 +730,7 @@ pub(super) fn open(roads: &Roads, city: &City, poly: &[P]) -> bool {
 /// On the shore, its front to the sea: of the 16 compass directions, the one whose
 /// shore is nearest the city (the first free one, a quarter turn from the last of
 /// the kind's sites), straddling the shoreline (a dock) or mostly on land (a port).
-fn shore(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic) -> Option<(P, P)> {
+fn shore(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic, claim: Option<&Airport>) -> Option<(P, P)> {
     p.coast_r_cm.or(p.sea_cm)?;
     let mut shores: Vec<(i64, usize)> = (0..16)
         .filter_map(|k| {
@@ -732,7 +756,8 @@ fn shore(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic) -> O
         }
         let s = along((0, 0), f, r);
         let c = if row.d_cm > 3_000 { along(s, f, -row.d_cm / 4) } else { s };
-        open(roads, city, &rect(c, f, row.w_cm, row.d_cm)).then_some((c, f))
+        let poly = rect(c, f, row.w_cm, row.d_cm);
+        (open(roads, city, &poly) && !claim.is_some_and(|a| a.meets_poly(&poly, 0))).then_some((c, f))
     })
 }
 
@@ -740,17 +765,34 @@ fn shore(p: &Profile, t: &Terrain, roads: &Roads, city: &City, row: &Civic) -> O
 /// the river says its back goes, its front out over the water; clear of the roads,
 /// blocks and sites (the river's bank keeps them off), else stepped up to 8 m further
 /// out over the water, clear of a road that ends at the bank behind it.
-fn on_river(r: &River, roads: &Roads, city: &City, row: &Civic) -> Option<(P, P)> {
+fn on_river(r: &River, roads: &Roads, city: &City, row: &Civic, claim: Option<&Airport>) -> Option<(P, P)> {
     let (back, f) = if row.kind == "dock" { r.dock } else { r.port };
-    (0..=4).map(|k| along(back, f, row.d_cm / 2 + k * 200)).find(|&c| open(roads, city, &rect(c, f, row.w_cm, row.d_cm))).map(|c| (c, f))
+    (0..=4)
+        .map(|k| along(back, f, row.d_cm / 2 + k * 200))
+        .find(|&c| {
+            let poly = rect(c, f, row.w_cm, row.d_cm);
+            open(roads, city, &poly) && !claim.is_some_and(|a| a.meets_poly(&poly, 0))
+        })
+        .map(|c| (c, f))
 }
 
 /// Open land outside the city: a ring of candidates every 22.5 degrees, from just
 /// past the city out toward the world's edge, each long side pointing out from the
 /// plaza, its front to the plaza, off the river; the least by `key(rise, radius,
-/// direction, centre)`.
+/// direction, centre)`. Off the airport's `claim`; the airport's own claim (placed
+/// before the roads, City Gen v4) clear of every block and site.
 #[allow(clippy::too_many_arguments)] // what it must keep clear of, and how to choose
-fn edge(p: &Profile, t: &Terrain, roads: &Roads, city: &City, river: Option<&River>, row: &Civic, key: impl Fn(i64, i64, usize, P) -> (i64, i64, i64)) -> Option<(P, P)> {
+fn edge(
+    p: &Profile,
+    t: &Terrain,
+    roads: &Roads,
+    city: &City,
+    river: Option<&River>,
+    row: &Civic,
+    claim: Option<&Airport>,
+    water: &[Vec<P>],
+    key: impl Fn(i64, i64, usize, P) -> (i64, i64, i64),
+) -> Option<(P, P)> {
     let lim = p.size_cm / 2 - row.d_cm / 2 - 2_000;
     let mut best: Option<((i64, i64, i64), usize, P)> = None;
     for (k, &f) in DIR16.iter().enumerate() {
@@ -761,13 +803,48 @@ fn edge(p: &Profile, t: &Terrain, roads: &Roads, city: &City, river: Option<&Riv
             let score = key(geom::rise(t, &poly), r, k, c);
             let in_world = poly.iter().all(|q| q.0.abs() < p.size_cm / 2 && q.1.abs() < p.size_cm / 2);
             let dry = !poly.iter().any(|&q| wet(p, t, q)) && !river.is_some_and(|r| r.bank_meets(&poly));
-            if best.is_none_or(|b| score < b.0) && in_world && dry && open(roads, city, &poly) {
+            let claimed = claim.is_some_and(|a| a.meets_poly(&poly, 0));
+            if best.is_none_or(|b| score < b.0) && in_world && dry && !claimed && open(roads, city, &poly) && (!roads.edges.is_empty() || own_claim_clear(t, city, river, water, row, c, f)) {
                 best = Some((score, k, c));
             }
             r += 4_000;
         }
     }
     best.map(|(_, k, c)| (c, (-DIR16[k].0, -DIR16[k].1)))
+}
+
+/// Will the client's runway fit behind a terminal at `c` facing `front`: its platform
+/// (the highest ground under the airside and 30 cm, at least 1.5 m over the sea at -4 m)
+/// no more than 50 cm above the terminal's ground (hqairfield.js `fits`) at one of the
+/// runway positions it tries, on the base terrain, sampled every 4 m?
+fn runway_fits(t: &Terrain, c: P, front: P) -> bool {
+    let floor = t.height_at(c.0, c.1) + 50;
+    // the client rounds the platform up to 10 cm: 40 cm keeps clear of that
+    floor >= -250
+        && Airport::runway_offsets().any(|ru| Airport::airside(c, front, ru).iter().all(|q| {
+            let (u, v) = (geom::sub(q[1], q[0]), geom::sub(q[3], q[0]));
+            let (nu, nv) = ((len(u) / 400).max(1), (len(v) / 400).max(1));
+            (0..=nu).all(|i| (0..=nv).all(|j| {
+                let p = (q[0].0 + u.0 * i / nu + v.0 * j / nv, q[0].1 + u.1 * i / nu + v.1 * j / nv);
+                t.height_at(p.0, p.1) + 40 <= floor
+            }))
+        }))
+}
+
+/// Before the roads (`airport_first`): is the claim of an airport at `c` (its long
+/// side out from the plaza, `-f` the way it faces) clear of every block and site, and of
+/// the river, its bank and the water riding on it, and 60 m (piers, berths, a harbour
+/// office) off the `water` bodies (all laid before, City Gen v4's stage 1)?
+fn own_claim_clear(t: &Terrain, city: &City, river: Option<&River>, water: &[Vec<P>], row: &Civic, c: P, f: P) -> bool {
+    let a = Airport::new("airport", c, (-f.0, -f.1), row.w_cm, row.d_cm);
+    // the forecourt, car park and tower keep roads off, but the client draws them where
+    // they fall (the Commons' car park stands in its lake): only the rest must be dry
+    let dry = &a.polys[a.landside..];
+    runway_fits(t, c, (-f.0, -f.1))
+        && !river.is_some_and(|r| dry.iter().any(|p| r.bank_meets(p)))
+        && !water.iter().any(|w| dry.iter().any(|p| Airport::polys_meet(p, w, 0)))
+        && city.blocks.iter().all(|b| b.poly.as_ref().is_none_or(|bp| !a.meets_poly(&pts(bp), 0) && !Airport::polys_meet(&pts(bp), &a.corridor, 0)))
+        && city.sites.iter().all(|s| s.poly.as_ref().is_none_or(|sp| !a.meets_poly(&pts(sp), 0) && !Airport::polys_meet(&pts(sp), &a.corridor, 0)))
 }
 
 #[cfg(test)]

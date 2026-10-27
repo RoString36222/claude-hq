@@ -403,6 +403,8 @@ function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges
 // ms, heading) -> may someone walking along heading cross now (with the parallel traffic's green, never in its
 // last WALK_CLEAR s, so never while the road they cross has green).
 var SIDE_GAP = 60, SIG = {cycle: 60, amber: 3, allRed: 2, walkClear: 6, wave: 11, split: [30, 20], even: [25, 25], side: [38, 12]}, LINK = 46;
+// [3.25] the least room (m) a car needs to wait at a red between the stop line and the box behind it
+var QUEUE_ROOM = 8;
 var FOOT_RE = /^(path|footpath|foot|footway|pedestrian|walk|walkway|trail|cycleway|cycle|steps|track)$/;
 var NOSIG = {expressway: 1, ring: 1, ramp: 1, flyover: 1, underpass: 1};
 function carRoad(cls){ return !FOOT_RE.test(normCls(cls)); }
@@ -459,6 +461,12 @@ function signals(W){
             rank: mainRoad(e.cls) ? 2 : road(e.cls).kind === "shop" ? 1 : 0};
   }
   function junction(id){ return (inc[id] || []).filter(through).length >= 3; }
+  // the box traffic.js turns through at a node with no light: as far as it reaches along the roads there (m)
+  function boxAt(id){
+    var es = inc[id] || [], c = 0, minLen = 1e9;
+    es.forEach(function(e){ c = Math.max(c, Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2)); minLen = Math.min(minLen, lenOf(edgePts(e))); });
+    return Math.min(es.length >= 3 ? c + 2 : es.length === 2 ? 2.5 : 1, 0.4*minLen);
+  }
   var link = {}, prio = {};
   var ids = Object.keys(inc).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); });
   ids.forEach(function(id){
@@ -501,7 +509,10 @@ function signals(W){
       var heading = Math.atan2(-a.ux, -a.uz), ax = axisDist(heading, h1) < axisDist(heading, h0) ? 1 : 0;
       // a short link to the next junction: one box with this one (traffic.js), no head of its own
       var far = String(a.e.a) === String(id) ? a.e.b : a.e.a;
-      if(kind === "main" && a.len < LINK && junction(far)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
+      // ([3.25] or a link with no room for a car to wait at the red, a box behind it: City Gen v4's wider boulevards
+      // and avenues make bigger boxes)
+      var tight = a.len - a.stop - boxAt(far) < QUEUE_ROOM && (inc[far] || []).filter(function(e){ return carRoad(e.cls); }).length >= 3;
+      if(kind === "main" && ((a.len < LINK && junction(far)) || tight)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
       // the middle of the stop line: across the lane coming in (the right of the way in is (uz, -ux); [3.22.3] the
       // lane is on its kerb side, SIDE x that: the left)
       var sd = driveSide();
@@ -535,9 +546,7 @@ function signals(W){
   function farTrim(w, all){
     var f = S[w.far] && (all || !S[w.far].side) ? S[w.far] : null;
     if(f){ for(var i = 0; i < f.arms.length; i++) if(f.arms[i].edge === w.edge) return f.arms[i].stop; }
-    var es = inc[w.far] || [], c = 0, minLen = 1e9;
-    es.forEach(function(e){ c = Math.max(c, Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2)); minLen = Math.min(minLen, lenOf(edgePts(e))); });
-    return Math.min(es.length >= 3 ? c + 2 : es.length === 2 ? 2.5 : 1, 0.4*minLen);
+    return boxAt(w.far);
   }
   function roomy(all){
     Object.keys(S).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){

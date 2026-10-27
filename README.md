@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.24.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.25.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,21 @@ and feature guide.
 
 ## Changelog
 
+- **3.25.0 — City Gen v4, phase 2: real road classes.** Every street in the City now belongs to one of the v4 plan's road
+  classes and is paved at that class's real width (IRC and UK *Manual for Streets* figures):
+  - **Avenues** (22 m) on the main roads: two 3.5 m lanes each way and a raised 2 m median, with white lines.
+  - **Collectors** (12 m) gather the local streets.
+  - **Local streets** (10.5 m) and **lanes** (9 m) for dead ends and short streets.
+  - **Shared streets** (9.5 m) in the old town and round the plaza, paved in pavers, with no lines or zebra crossings.
+
+  A street changes class only one step at a time. Local streets are slimmer than 3.20.1's game-style ones, so lots have
+  more ground, and every HQ stays on its lot. Cars, buses and residents' cars drive in the class's own lanes, keep out of
+  the median, and lorries are back on the main roads. Where a short approach to a light leaves no room for a car to
+  wait, the light and the junction behind it work as one. Still to come:
+  - **Boulevards** (36.5 m, planted median): no main road has 50 m blocks all along yet, which a boulevard's junctions
+    need. They come with a later layout phase.
+  - **Streets a tram runs down** keep no median until phase 8 gives trams their own bed.
+  - **The ring and highways** become expressways together with their interchanges in phase 6.
 - **3.24.0 — City Gen v4, phase 1: the airport gets its own land.** The Commons' airport now claims its land before
   any road is laid. The claim covers:
   - the terminal with its forecourt, car park and control tower

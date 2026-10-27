@@ -258,6 +258,8 @@ Heap.prototype.pop = function(){   // -> the value; its key in this.top
 // [3.20.1] a driver's offset from the centre line on a carriageway `c` m centre to kerb: the kerb-side lane of a road
 // with two or three each way (worldgeom.js lanesEach), else mid-carriageway as before
 function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3))); return Math.max(0.5, c*(2*n - 1)/(2*n)); }
+// [3.25] a City Gen v4 road: its own lanes each way, between its median (half width m) and the kerb, as traffic.js
+function npcLaneV4(c, lanes, med){ var n = Math.max(1, lanes|0); med = Math.max(0, +med || 0); return Math.max(0.5, c - (c - med)/(2*n)); }
 
 /* ---------- the sim ---------- */
 function create(doc, opts){
@@ -308,7 +310,7 @@ function create(doc, opts){
     E.push({id: e.id, a: a, b: b, m: m, x: x, y: y, z: z, cum: cum, len: cum[m - 1], nx: nx, nz: nz, cls: cls, half: half, walkW: walk,
             walkable: cls !== "highway" && cls !== "ring" || walk > 0,
             off: walk > 0 ? half - walk/2 : Math.max(0.5, half - SIDE_IN),
-            lane: npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
+            lane: e.v4 ? npcLaneV4((width - 2*walk)/2, e.lanes, (e.median | 0)/200) : npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
   });
 
   // [play-street] the widest road meeting each node (half width) and its degree: a crossing keeps this far out of the junction
@@ -889,7 +891,8 @@ function create(doc, opts){
   var PARADE_ROWS = 8, PARADE_ACROSS = 4, PARADE_V = 0.9, PARADE_GAP = 2.2;   // (the Kenney figures are broad: room between them)
   function paradeRoute(ev){
     if(XS.parade && XS.parade.key === ev.edges.join(",")) return XS.parade;
-    var F = CL.facts(LW), X = [], Y = [], Z = [], node = null;
+    // [3.25] and per point its edge's carriageway: from the median (if any) out to the kerb (m)
+    var F = CL.facts(LW), X = [], Y = [], Z = [], LO = [], HI = [], node = null;
     ev.edges.forEach(function(eid, n){
       var e = F.edge(eid); if(!e || !e.pts) return;
       var fwd = true;
@@ -900,11 +903,12 @@ function create(doc, opts){
         var q = fwd ? j : m - 1 - j;
         if(X.length && j === 0) continue;   // the shared junction point
         X.push(e.pts[3*q]/100); Y.push(e.pts[3*q + 1]/100); Z.push(e.pts[3*q + 2]/100);
+        LO.push((e.median || 0)/200); HI.push(Math.max(1.5, ((e.width | 0) - 2*(e.walk | 0))/200));
       }
       node = fwd ? e.b : e.a;
     });
     var C = [0]; for(var i = 1; i < X.length; i++) C.push(C[i - 1] + Math.hypot(X[i] - X[i - 1], Z[i] - Z[i - 1]));
-    XS.parade = {key: ev.edges.join(","), x: X, y: Y, z: Z, c: C, len: C[C.length - 1] || 0};
+    XS.parade = {key: ev.edges.join(","), x: X, y: Y, z: Z, c: C, lo: LO, hi: HI, len: C[C.length - 1] || 0};
     return XS.parade;
   }
   function paradeAt(R, ev, j, t, o){
@@ -912,7 +916,11 @@ function create(doc, opts){
     if(walked < 0 || !(R.len > 1)) return false;
     var pp = pingpong(walked, R.len), i = 0; while(i < R.c.length - 2 && R.c[i + 1] < pp.p) i++;
     var l = R.c[i + 1] - R.c[i], f = l > 0 ? (pp.p - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
-    var off = (0.8 + col*1.5)*pp.dir;      // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half
+    // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half; [3.25] four abreast
+    // 1.5 m apart from 0.8 m out, closer where that half of the carriageway (median to kerb) is narrower
+    // (a stretch's narrower end: where one road becomes the next, the shared point is the first one's)
+    var lo = (R.lo ? Math.max(R.lo[i], R.lo[i + 1]) : 0) + 0.8, hi = R.hi ? Math.min(R.hi[i], R.hi[i + 1]) - 0.5 : 5.3, step = Math.max(0, Math.min(1.5, (hi - lo)/(PARADE_ACROSS - 1)));
+    var off = (lo + col*step)*pp.dir;
     o.x = R.x[i] + (R.x[i + 1] - R.x[i])*f + uz*off; o.z = R.z[i] + (R.z[i + 1] - R.z[i])*f - ux*off;
     o.y = R.y[i] + (R.y[i + 1] - R.y[i])*f + ROAD_UP; o.yaw = Math.atan2(ux*pp.dir, uz*pp.dir);
     o.anim = "walk"; o.speed = PARADE_V; o.size = 1; o.dog = 0;

@@ -46,7 +46,10 @@
 //! it (the ring alone may pass behind the terminal, in its corridor, until phase 6 takes it
 //! under; it stops either side where only the long way round would pass it); the dock,
 //! port, stadium, lines and the Island Link keep off it; its grounds grow no trees; and the
-//! validator (validate.rs) fails a world where anything else stands in it.
+//! validator (validate.rs) fails a world where anything else stands in it. Phase 2 (HQ
+//! 3.25): the town's streets paved by the plan's road classes (classes.rs, organic/widen.rs),
+//! each edge's `v4`, `lanes` and `median`; the ring and highways keep their widths until
+//! phase 6 gives them their interchanges.
 //!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
@@ -259,6 +262,9 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         let inner = (p.name == "island").then(|| island::RADII_CM[1] - 2_000);
         let mut transit = transit::generate(&roads, &city.sites, &city.lots, inner);
         let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
+        // City Gen v4 (phase 2): a tram runs down the middle of its street until phase 8
+        // gives it its own bed, so a street a tram line runs on has no median yet
+        roads.trams_in_the_middle(&transit);
         (Some(zones::layer(seed, &city.blocks)), Some(transit), island)
     };
 

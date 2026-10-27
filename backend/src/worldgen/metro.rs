@@ -834,7 +834,8 @@ fn entrances(land: &mut Land, c: &Ctx, q: P, want: usize, rng: &mut Rng) -> Vec<
     }
     let mut ok = Vec::new();
     for (_, dq, _, poly, front, _) in cands {
-        if let Some(lot) = land.stand(&pts(&poly), 0, true, 1_000) {
+        // (half a metre off every road: never just touching a wider v4 road's edge)
+        if let Some(lot) = land.stand(&pts(&poly), 50, true, 1_000) {
             ok.push((lot.is_some(), dq / 500, rng.next_u64(), poly, front, lot));
         }
     }

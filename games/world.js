@@ -107,6 +107,9 @@ function pack(doc){
             name: e.name != null ? String(e.name) : "", pts: pts};
     if(e.min_tier != null) o.min_tier = e.min_tier|0;      // v2 islands: the tier the road opens in
     if(e.bridge) o.bridge = true;                           // it crosses the river on a deck at its points' y
+    // City Gen v4 (@3, HQ 3.25): the road's class (lanes then counts each way) and its median (cm), raised paving
+    if(e.v4 != null) o.v4 = String(e.v4);
+    if(e.median > 0) o.median = e.median|0;
     return o;
   });
   var W = {
@@ -146,6 +149,8 @@ function docOf(W){
     if(e.ref != null) o.ref = e.ref;
     if(e.min_tier != null) o.min_tier = e.min_tier;
     if(e.bridge) o.bridge = true;
+    if(e.v4 != null) o.v4 = e.v4;
+    if(e.median) o.median = e.median;
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},
@@ -245,7 +250,9 @@ function roadUnder(W, x, z){
   for(i = 0; i < L.length; i += 2){
     var e = W.edges[L[i]];
     proj(e, L[i+1], x, z);
-    gap = Math.min(gap, S.d - (e.width - 2*e.walk)/200);   // every carriageway counts (a highway beside a sidewalk too)
+    // every carriageway counts (a highway beside a sidewalk too); a median (v4) is raised paving, no carriageway
+    var med = e.median ? e.median/200 : 0;
+    gap = Math.min(gap, S.d < med ? med - S.d : S.d - (e.width - 2*e.walk)/200);
     if(S.d > e.width/200) continue;
     for(k = 0; k < n && CE[k] !== L[i]; k++);
     if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; }

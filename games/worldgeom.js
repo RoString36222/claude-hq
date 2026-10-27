@@ -77,7 +77,9 @@ var COL = {
   pave: [0.60, 0.59, 0.56], lawn: [0.38, 0.55, 0.30], plaza: [0.70, 0.66, 0.58], concrete: [0.56, 0.56, 0.55],
   sand: [0.86, 0.80, 0.62], wetSand: [0.62, 0.57, 0.45],
   bank: [0.56, 0.52, 0.40], wetBank: [0.40, 0.37, 0.29], water: [0.14, 0.40, 0.50],
-  deck: [0.64, 0.63, 0.60], deckUnder: [0.42, 0.42, 0.41], rail: [0.34, 0.37, 0.41]
+  deck: [0.64, 0.63, 0.60], deckUnder: [0.42, 0.42, 0.41], rail: [0.34, 0.37, 0.41],
+  // City Gen v4 (HQ 3.25): a shared street's paving, an avenue's concrete median, a boulevard's planted one
+  pavers: [0.50, 0.45, 0.41], median: [0.60, 0.59, 0.57], planted: [0.34, 0.47, 0.27]
 };
 // terrain tint per district (legend name); unknown names fall back to "wild". The second row is @2's district list.
 var TINT = {
@@ -200,6 +202,8 @@ function prep(W){
     var o = {id: e.id, i: ei, cls: cls, a: e.a, b: e.b, name: e.name || "", ref: e.ref != null ? e.ref : null,
              half: e.width/200, cw: (e.width - 2*(e.walk || 0))/200, walk: walk, P: P, S: S, K: K, len: S[S.length - 1], tA: 0, tB: 0};
     if(e.bridge) o.bridge = true;
+    // City Gen v4: its class, lanes each way, the median's half width (m)
+    if(e.v4){ o.v4 = e.v4; o.lanes = Math.max(1, e.lanes|0); o.med = (e.median || 0)/200; }
     E.push(o); byId[o.id] = o;
     (inc[e.a] = inc[e.a] || []).push({E: o, end: 0});
     (inc[e.b] = inc[e.b] || []).push({E: o, end: 1});
@@ -532,10 +536,23 @@ function laneLines(cw){ var n = lanesEach(cw), out = [];
   return out; }
 function markLines(E){
   var cw = E.cw;
+  if(E.v4) return v4Lines(E);
   if(streetish(E.cls)) return [{o: 0, w: 0.12, dash: true, c: COL.white}].concat(laneLines(cw));
   if(aveish(E.cls)) return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}].concat(laneLines(cw));
   if(E.cls === "ring") return [{o: 0, w: 0.12, dash: true, c: COL.white}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
   return [{o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow}, {o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
+}
+// City Gen v4 (HQ 3.25): a road's lines by its class. A shared street and a lane have none (no kerb-to-kerb lanes to
+// keep to); a local street or a collector a dashed centre line; a road with a median white edge lines along it and
+// dashed lines between its lanes each way; with no median, a double yellow centre line and the lanes between.
+function v4Lines(E){
+  var cw = E.cw, n = E.lanes || 1, m = E.med || 0, out = [];
+  if(E.v4 === "shared" || E.v4 === "lane") return out;
+  if(m > 0) out.push({o: -(m + 0.25), w: 0.12, c: COL.white}, {o: m + 0.25, w: 0.12, c: COL.white});
+  else if(n > 1) out.push({o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow});
+  else out.push({o: 0, w: 0.12, dash: true, c: COL.white});
+  for(var k = 1; k < n; k++){ var o = m + (cw - m)*k/n; out.push({o: -o, w: 0.12, dash: true, c: COL.white}, {o: o, w: 0.12, dash: true, c: COL.white}); }
+  return out;
 }
 // A street a tram runs on (tramEdges) has no centre line: the tram's two lanes take the middle (traffic.js tramOff,
 // 1.475 m each side of the centre, a 2.65 m body), so it gets their two edge lines TRAM_EDGE m outside each lane, in
@@ -611,7 +628,8 @@ function tramEdges(W){
   return (C.tram = set);
 }
 function graded(E){ return E.cls === "highway" || E.cls === "ring"; }
-function crossed(C, E, end){ return (streetish(E.cls) || aveish(E.cls)) && deg(C, end ? E.b : E.a) >= 3; }
+// ([3.25] none across a v4 shared street or lane: people cross those anywhere)
+function crossed(C, E, end){ return (streetish(E.cls) || aveish(E.cls)) && E.v4 !== "shared" && E.v4 !== "lane" && deg(C, end ? E.b : E.a) >= 3; }
 
 // a flat strip between offsets o0..o1 over the stations; only the pieces whose centre is in the tile
 function strip(g, W, E, st, o0, o1, lift, c, tx, tz, walkY){
@@ -770,7 +788,22 @@ function roadTile(W, tx, tz, flat, gap){
       strip(asph, W, E, st, -(cw - 1), cw - 1, LIFT, COL.asphalt, tx, tz);
       strip(asph, W, E, st, -cw, -(cw - 1), LIFT, COL.shoulder, tx, tz);
       strip(asph, W, E, st, cw - 1, cw, LIFT, COL.shoulder, tx, tz);
-    } else strip(asph, W, E, st, -cw, cw, LIFT, COL.asphalt, tx, tz);
+    } else if(E.med > 0){
+      // City Gen v4: the carriageways either side of a raised median, kerbed (planted on a boulevard)
+      [-1, 1].forEach(function(sg){ strip(asph, W, E, st, sg > 0 ? E.med : -cw, sg > 0 ? cw : -E.med, LIFT, COL.asphalt, tx, tz); });
+      strip(walk, W, E, st, -E.med, E.med, LIFT, E.v4 === "boulevard" ? COL.planted : COL.median, tx, tz, true);
+      if(!flat){
+        [-1, 1].forEach(function(sg){ wallStrip(kerb, W, E, st, sg*E.med, "kerb", COL.kerb, tx, tz, sg); });
+        // its nose where it stops short of a junction
+        [[endA ? E.tA : 0, s0, -1], [endB ? E.tB : 0, s1, 1]].forEach(function(cp){
+          if(!(cp[0] > 0)) return;
+          var S = pointAt(E, cp[1]);
+          if(!inTile(S.x, S.z, tx, tz)) return;
+          var yr = yRoad(W, E, S, 0) + LIFT - 0.02, yw = yWalk(W, E, S, 0) + LIFT;
+          face(kerb, [at(S, -E.med, yr), at(S, E.med, yr), at(S, E.med, yw), at(S, -E.med, yw)], COL.kerb, [S.dx*cp[2], 0, S.dz*cp[2]]);
+        });
+      }
+    } else strip(asph, W, E, st, -cw, cw, LIFT, E.v4 === "shared" ? COL.pavers : COL.asphalt, tx, tz);
     if(E.walk > 0){
       var wc = aveish(E.cls) ? COL.walkAve : COL.walk;
       [-1, 1].forEach(function(sg){
@@ -856,7 +889,7 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
   // zebra crossings on street/avenue arms of real junctions, 2 m back from the patch
   if(arms.length >= 3) arms.forEach(function(a){
     var E = a.E;
-    if(!streetish(E.cls) && !aveish(E.cls)) return;
+    if(!crossed(C, E, a.end)) return;
     var c0 = a.t + 2, c1 = a.t + 5;
     if(c1 > E.len - 1) return;
     var st = a.end ? stations(E, E.len - c1, E.len - c0) : stations(E, c0, c1);

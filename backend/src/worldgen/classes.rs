@@ -1,7 +1,7 @@
 //! Road classes (City Gen v4): the eleven classes of the plan, each with a tram version,
 //! their lanes, widths, design speeds, capacities and curves, and the rules for changing
-//! from one to the next. Phase 1 lands them as data: the validator reports what each of
-//! today's roads would be (`legacy`); phase 2 lays the roads by them.
+//! from one to the next. Phase 2 paves the town's streets by them (organic/widen.rs, each
+//! edge's `v4`, `lanes` and `median`); `legacy` names what a road without one would be.
 //!
 //! Widths are IRC:86, FHWA and Manual for Streets figures (the plan's table), in cm:
 //!
@@ -97,6 +97,11 @@ pub fn class(name: &str) -> Option<&'static Class> {
 }
 
 impl Class {
+    /// Its carriageway (cm): the lanes both ways, no median, no footpaths.
+    pub fn carriageway_cm(&self) -> i64 {
+        self.total_cm - self.median_cm - 2 * self.side_cm
+    }
+
     /// Lanes counted for capacity, both ways.
     pub fn lanes_total(&self) -> i64 {
         self.lanes as i64 * if self.two_way { 2 } else { 1 }
@@ -176,6 +181,24 @@ pub fn one_step(a: &str, b: &str) -> bool {
     }
     let pair = |x: &str, y: &str| (a == x && b == y) || (a == y && b == x);
     pair("shared", "lane") || pair("shared", "local") || pair("service", "local") || pair("service", "collector")
+}
+
+/// How high a class stands, narrowest first: the ladder, a shared street beside a lane and
+/// a service road beside a local street.
+pub fn rank(name: &str) -> usize {
+    ["lane", "shared", "local", "service", "collector", "avenue", "boulevard", "expressway", "highway"].iter().position(|&x| x == name).unwrap_or(0)
+}
+
+/// The class one step up the ladder from `name` (a shared street's is a local street, a
+/// service road's a collector); the top, a highway, stays.
+pub fn step_up(name: &str) -> &'static str {
+    let name = match name {
+        "shared" => "lane",
+        "service" => "local",
+        n => n,
+    };
+    let i = LADDER.iter().position(|&x| x == name).unwrap_or(0);
+    LADDER[(i + 1).min(LADDER.len() - 1)]
 }
 
 /// How two roads meet (the plan's table, by road pair).
@@ -308,6 +331,16 @@ mod tests {
         assert!(one_step("local", "collector") && one_step("boulevard", "expressway") && one_step("avenue", "avenue"));
         assert!(!one_step("local", "avenue") && !one_step("collector", "highway"));
         assert!(one_step("shared", "local") && one_step("service", "collector") && !one_step("service", "highway"));
+    }
+
+    #[test]
+    fn a_class_steps_up_one_at_a_time() {
+        assert_eq!(step_up("avenue"), "boulevard");
+        assert_eq!(step_up("boulevard"), "expressway");
+        assert_eq!(step_up("shared"), "local");
+        assert!(one_step("shared", step_up("shared")) && one_step("service", step_up("service")));
+        assert_eq!(step_up("highway"), "highway");
+        assert!(LADDER.iter().all(|&c| one_step(c, step_up(c))));
     }
 
     #[test]

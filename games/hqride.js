@@ -37,6 +37,8 @@ var PER_END = 5;               // nearest stops per service tried at each end
 var MAX_OPTS = 3;
 var BOARD_S = 1.2, ALIGHT_S = 1.2;
 var AT_STOP = 12, LEFT_STOP = 40;   // m: at the stop / walked away from it
+// [3.25] a bus or tram stop's waiting area: its berths, and (City Gen v4's wider roads) a light's box it is moved out of
+var AT_STOP_ROAD = 25;
 var ANN_AFTER = 5000;          // ms after leaving a stop the next one is announced
 var EYE_SIT = 1.15, EYE_STAND = 1.62, YAW_MAX = 150*DEG, PITCH_MAX = 50*DEG, FOV = 70;
 var BOARD_EVERY = 5000, BOARD_SHARE = 150;
@@ -371,7 +373,7 @@ function session(o){
     if(S.phase === "walk" || S.phase === "wait"){
       if(ms > num(trip.depart, 0)){ say("You missed the " + modeWord.toLowerCase() + " " + label + "."); end("missed"); return S.phase; }
       if(S.phase === "walk"){
-        if(!me || d2(me, at) <= AT_STOP){
+        if(!me || d2(me, at) <= (trip.mode === "bus" || trip.mode === "tram" ? AT_STOP_ROAD : AT_STOP)){
           S.phase = "wait";
           var mins = Math.max(0, Math.round((num(trip.arrive, ms) - ms)/MIN));
           say(modeWord + " " + label + " to " + (trip.toName || trip.to) + (mins > 0 ? " comes in " + mins + " min." : " is due."));

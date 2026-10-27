@@ -110,6 +110,8 @@ pub struct Profile {
     /// Generator @3 (water.rs): lakes, canals and a marina laid before the streets, and
     /// the water transport round them. Only the @3 profiles set it.
     pub water: bool,
+    /// City Gen v4 (phase 2, @3): roads paved and drawn by the plan's classes (classes.rs).
+    pub v4: bool,
     /// Generator @3: the tiers a local road and an arterial are paved at, widest first
     /// (organic/widen.rs). Empty: every one at `paved_road_cm` / `paved_avenue_cm`.
     pub local_tiers: &'static [Tier],
@@ -205,6 +207,7 @@ pub fn city() -> Profile {
         sea_cm: None,
         river_cm: None,
         water: false,
+        v4: false,
     }
 }
 
@@ -283,7 +286,9 @@ pub const ARTERIAL_TIERS: [Tier; 2] = [
 /// A world at generator version 3: the version 2 profile (`commons` or `island`) with
 /// its water laid (water.rs) and its streets paved by tier.
 pub fn with_water(p: Profile) -> Profile {
-    Profile { water: true, local_tiers: &LOCAL_TIERS, arterial_tiers: &ARTERIAL_TIERS, ..p }
+    // (City Gen v4 phase 2 classes the town's roads; the ring and highways become
+    // expressways with their interchanges, phase 6: at-grade, a 29 m road jams its junctions)
+    Profile { water: true, v4: true, local_tiers: &LOCAL_TIERS, arterial_tiers: &ARTERIAL_TIERS, ..p }
 }
 
 /// A personal city (`user:<uuid>@2`): a 1.8 km island, the sea round a coast at

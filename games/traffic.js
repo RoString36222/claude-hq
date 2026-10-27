@@ -358,7 +358,9 @@ function create(doc, o){
       : (e.pts ? ptsOfPacked(e.pts) : [[A.x, A.y, A.z], [B.x, B.y, B.z]]);
     var width = num(e.width, 1200), walk = num(e.walk, 200), cls = String(e["class"] || e.cls || "street");
     var E = {i: edges.length, id: e.id, a: e.a, b: e.b, cls: cls, art: !!ARTERIAL[cls], pts: pts, len: len2(pts),
-             c: Math.max(1.5, (width - 2*walk)/200), bus: [false, false], tram: false};
+             c: Math.max(1.5, (width - 2*walk)/200), bus: [false, false], tram: false,
+             // City Gen v4 (HQ 3.25): its lanes each way and its raised median's half width (m)
+             lanesV4: e.v4 ? Math.max(1, e.lanes|0) : 0, med: e.median > 0 ? e.median/200 : 0};
     if(E.len < 1) return;
     edges.push(E); A.inc.push(E.i); B.inc.push(E.i);
   });
@@ -421,9 +423,10 @@ function create(doc, o){
   edges.forEach(function(E){
     var inner = 0.15, c = E.c, tw = SPEC.tram.wid, cw = SPEC.car.wid, bw = SPEC.bus.wid;
     E.tramOff = E.tram ? inner + tw/2 : null;
-    // [3.20.1] in the kerb-side lane of a road with two or three each way (worldgeom.js lanesEach), else mid-carriageway
-    var n = Math.max(1, Math.min(3, Math.floor(c/3.3)));
-    var in2 = E.tram ? inner + tw + 0.3 : inner, carOff = Math.max(in2 + cw/2 + 0.1, E.tram ? 0 : c*(2*n - 1)/(2*n)), anyBus = E.bus[0] || E.bus[1];
+    // [3.20.1] in the kerb-side lane of a road with two or three each way (worldgeom.js lanesEach), else mid-carriageway;
+    // [3.25] a v4 road's own lanes, between its median and the kerb
+    var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = E.tram ? 0 : E.med;
+    var in2 = E.tram ? inner + tw + 0.3 : med + inner, carOff = Math.max(in2 + cw/2 + 0.1, E.tram ? 0 : c - (c - med)/(2*n)), anyBus = E.bus[0] || E.bus[1];
     if(anyBus) carOff = in2 + cw/2 + 0.1;
     var carEdge = carOff + cw/2;
     E.cars = E.art && carEdge <= c + 0.05 && (!anyBus || carEdge + 0.25 + bw <= c);
@@ -434,7 +437,7 @@ function create(doc, o){
     // else down the middle when that clears both car lanes (else it does not use the road)
     E.evOff = E.tram ? E.tramOff : anyBus ? E.busOff : 0;
     E.evKind = E.tram ? "tram" : anyBus ? "bus" : null;
-    E.ev = !!(E.tram || anyBus || !E.cars || carOff - cw/2 >= EV_HW + 0.1);
+    E.ev = !!(E.tram || anyBus || !E.cars || (!med && carOff - cw/2 >= EV_HW + 0.1));
   });
 
   // junction radii: the boxes vehicles turn through. A node where a side street (no traffic of its
@@ -653,12 +656,16 @@ function create(doc, o){
         var b = lanes[(i + 1) % lanes.length];
         if(b.e === a.e || lanes.length < 2) return;
         var P = lanePts(a.e, a.dir, a.off), Q = lanePts(b.e, b.dir, b.off), p0 = P[P.length - 1], q0 = Q[0];
-        if(Math.abs(turnAngle(dirAt(P, true), dirAt(Q, false))) <= 2 || Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_GAP) return;
+        // [3.25] or the inside of a sharp bend, where the lane out starts behind the lane in's end (the two cross before
+        // the node: City Gen v4's medians put the kerb lane further out): cut back until they no longer cross
+        var d0 = dirAt(P, true), crossed = function(){ return (q0[0] - p0[0])*d0[0] + (q0[2] - p0[2])*d0[1] < 0; };
+        var bend = Math.abs(turnAngle(d0, dirAt(Q, false))) > 0.5 && crossed();
+        if(!bend && (Math.abs(turnAngle(d0, dirAt(Q, false))) <= 2 || Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_GAP)) return;
         for(var x = 1; x <= 30; x++){
           if(len2(P) - x < 8 || len2(Q) - x < 8) break;
           P = lanePts(a.e, a.dir, a.off, a.x0, (a.x1 || 0) + x); Q = lanePts(b.e, b.dir, b.off, (b.x0 || 0) + x, b.x1);
           p0 = P[P.length - 1]; q0 = Q[0];
-          if(Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_W){ a.x1 = (a.x1 || 0) + x; b.x0 = (b.x0 || 0) + x; break; }
+          if(bend ? !crossed() : Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_W){ a.x1 = (a.x1 || 0) + x; b.x0 = (b.x0 || 0) + x; break; }
         }
       });
       var r = route(lanes, SPEC.car); r.id = rings.length; r.kind = "car";

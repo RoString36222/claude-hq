@@ -16,7 +16,7 @@ merges on its own and leaves the City playable:
 | # | Phase | Status |
 |---|---|---|
 | 1 | Airport claims its land; highways and the ring go round it; validator; road classes as data | **3.24.0** |
-| 2 | Real road classes: widths, lanes, markings, one-step changes over tapers | |
+| 2 | Real road classes: widths, lanes, markings, one-step changes | **3.25.0** |
 | 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | |
 | 4 | Curved roads: arcs, minimum radii by design speed | |
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | |
@@ -122,3 +122,71 @@ fixture and the new one:
 - **`test_citylife_traffic`:**
   - The mix picks lorries, and only a platoon's first car drives one.
   - The view draws a lorry body.
+
+## Phase 2 (3.25.0)
+
+The user's calls (27 Oct): real widths; boulevards only where they fit, with no lot or HQ
+moving.
+
+### Generator
+
+- **Each street's starting class** (`organic::v4_roles`):
+  - main road: boulevard where every block along it is at least 50 m, else avenue
+  - old-town or plaza street: shared street
+  - dead end, or under 60 m: lane
+  - 150 m or more and joining main roads at two places: collector
+  - anything else: local street
+- **Paving** (`widen.rs`): a street steps down its class ladder, as the 3.20.1 tiers did,
+  where a lot can't give way, or where its carved ground would reach water.
+  - A main road may step down below its layout width only to keep a bend one class at a
+    time. Its lanes are then the class's, and the footpaths take the rest.
+  - Where a road runs on through a bend, its two sides are at most one class apart.
+- **New road fields** (only on `@3`; `@1` and `@2` stay byte-identical):
+  - `v4`: the class
+  - `lanes`: lanes each way
+  - `median`: the median width (cm). Not set on a street a tram runs down until phase 8.
+
+  `class` keeps today's kind, so older dashboards still work.
+- **Validator, hard rules:**
+  - `class-width`: carriageway, lanes and median are the class's, and footpaths at least
+    the class's.
+  - `class-step`: a town road at a bend is at most one class from its other side.
+  - A step involving a highway or the ring is listed for phases 3 and 6.
+
+### Browser
+
+- **`world.js`:** carries `v4` and `median`. A median is raised paving, not carriageway.
+- **`worldgeom.js`:**
+  - kerbed medians: concrete, or planted on a boulevard
+  - pavers on shared streets
+  - lines by class: none on a shared street or lane; a dashed centre on a local street or
+    collector; edge lines along a median and dashed lane lines
+  - no zebras across a shared street or lane
+- **`traffic.js`, `npcsim.js`:**
+  - cars drive in the class's kerb-side lane between median and kerb
+  - an emergency run never takes the middle of a road with a median
+  - where the lanes in and out of a sharp bend cross, they are cut back, as at a hairpin
+- **`citylife.js`:** a light's approach that leaves under 8 m to wait in, with a junction of
+  three roads behind it, makes the two one box (as a short link already did).
+
+### Results
+
+The worlds are the Commons and 49 seeds, against phase 1:
+
+| | phase 1 | 3.25.0 |
+|---|---|---|
+| Hard rules broken | 0 | 0 |
+| Airports, runway fit, HQ lots unchanged | — | 50 / 50 each |
+| Commons NPC cars, Monday 09:00 | 185 | 196 |
+| Commons lorries (industrial test) | 0 | 4 |
+
+The Commons' edges by class: 121 avenue (89 with a median), 102 collector, 253 local, 127
+lane, 49 shared.
+
+No boulevard fits yet. In today's organic layouts no main road has 50 m blocks all along,
+and a 36.5 m road's junctions need them. In a first try that paved boulevards wherever the
+lots allowed, their junctions overlapped and traffic jammed at the lights.
+
+The ring and highways stay at today's widths. As 29 m expressways at at-grade junctions,
+they cut the Commons' traffic from about 200 cars to 133. They become expressways with
+their interchanges in phase 6.

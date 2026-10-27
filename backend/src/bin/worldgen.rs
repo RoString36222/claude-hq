@@ -41,9 +41,10 @@ fn main() {
         print!("world {}  validator\n{}", w.id, worldgen::validate::report(&v));
         let mut by: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
         for e in &w.layers.roads.edges {
-            *by.entry(worldgen::classes::legacy(e.class, e.width)).or_default() += 1;
+            *by.entry(e.v4.unwrap_or_else(|| worldgen::classes::legacy(e.class, e.width))).or_default() += 1;
         }
-        println!("  roads as v4 classes: {by:?}");
+        let tag = if w.layers.roads.edges.iter().any(|e| e.v4.is_some()) { "roads by v4 class" } else { "roads as v4 classes (by width)" };
+        println!("  {tag}: {by:?}");
         std::process::exit(if v.iter().any(|x| x.hard) { 1 } else { 0 });
     }
     if args.iter().any(|a| a == "--json") {

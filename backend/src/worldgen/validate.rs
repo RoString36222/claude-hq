@@ -13,6 +13,13 @@
 //!   road-site      a road's carriageway runs through a site (stops and entrances, which
 //!                  stand on the pavement by design, excepted)
 //!   road-water     a road that is no bridge runs over a lake, canal or the marina
+//!   class-width    (hard, phase 2) a v4 road whose carriageway, lanes or median are not
+//!                  its class's, or whose footpaths are narrower (a lane at its layout
+//!                  width excepted; a street a tram runs down has no median until phase 8)
+//!   class-step     (hard, phase 2) where a town road runs on through a bend (a node of
+//!                  two roads), its two sides more than one class apart; where a highway
+//!                  or the ring is one of them, listed (`class-step-graded`) for the
+//!                  junction and interchange phases
 //!
 //! `cargo run --release --bin worldgen -- <id> --validate` prints the report.
 
@@ -41,7 +48,47 @@ pub fn check(l: &Layers) -> Vec<Violation> {
         airport(l, &a, &mut out);
     }
     overlaps(l, &mut out);
+    classes(l, &mut out);
     out
+}
+
+fn classes(l: &Layers, out: &mut Vec<Violation>) {
+    use super::classes::{class, one_step};
+    let mut at: BTreeMap<u32, Vec<&super::roads::Edge>> = BTreeMap::new();
+    let mut tram = std::collections::BTreeSet::new();
+    for line in l.transit.iter().flat_map(|t| &t.lines).filter(|x| x.kind == "tram") {
+        for w in line.path.windows(2) {
+            tram.insert((w[0].min(w[1]), w[0].max(w[1])));
+        }
+    }
+    for e in &l.roads.edges {
+        let Some(name) = e.v4 else { continue };
+        let median = if tram.contains(&(e.a.min(e.b), e.a.max(e.b))) { e.median.or(class(name).map(|c| c.median_cm).filter(|&m| m > 0)) } else { e.median };
+        let p = e.points.first().map_or([0, 0], |q| [q[0], q[2]]);
+        let ok = class(name).is_some_and(|c| {
+            let carriageway = e.width - 2 * e.walk - median.unwrap_or(0);
+            // (a class with no footpaths has shoulders: its whole width, no walk)
+            let width = if c.walk { (carriageway == c.carriageway_cm() && e.walk >= c.side_cm) || (name == "lane" && e.width < c.total_cm) } else { e.width == c.total_cm && e.walk == 0 };
+            width && e.lanes == c.lanes && median.unwrap_or(0) == c.median_cm
+        });
+        if !ok {
+            out.push(Violation { rule: "class-width", hard: true, what: format!("road {} {} ({name}, {} cm)", e.id, e.name, e.width), at: p });
+        }
+        at.entry(e.a).or_default().push(e);
+        at.entry(e.b).or_default().push(e);
+    }
+    let deg: BTreeMap<u32, usize> = l.roads.edges.iter().flat_map(|e| [e.a, e.b]).fold(BTreeMap::new(), |mut m, n| {
+        *m.entry(n).or_default() += 1;
+        m
+    });
+    for (n, es) in &at {
+        if deg.get(n) == Some(&2) && es.len() == 2 && !one_step(es[0].v4.unwrap(), es[1].v4.unwrap()) {
+            let q = &l.roads.nodes[*n as usize];
+            let graded = es.iter().any(|e| super::roads::is_graded(e.class));
+            let rule = if graded { "class-step-graded" } else { "class-step" };
+            out.push(Violation { rule, hard: !graded, what: format!("{} ({}) runs on as {} ({})", es[0].name, es[0].v4.unwrap(), es[1].name, es[1].v4.unwrap()), at: [q.x, q.z] });
+        }
+    }
 }
 
 /// The hard rules a world breaks.

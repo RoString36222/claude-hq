@@ -117,6 +117,7 @@ function pack(doc){
     // City Gen v4 (@3, HQ 3.25): the road's class (lanes then counts each way) and its median (cm), raised paving
     if(e.v4 != null) o.v4 = String(e.v4);
     if(e.median > 0) o.median = e.median|0;
+    if(e.oneway === true) o.oneway = true;                  // [3.29] an interchange's ramp: traffic a -> b only
     return o;
   });
   var W = {
@@ -160,6 +161,7 @@ function docOf(W){
     if(e.bridge) o.bridge = true;
     if(e.v4 != null) o.v4 = e.v4;
     if(e.median) o.median = e.median;
+    if(e.oneway) o.oneway = true;
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},

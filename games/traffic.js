@@ -132,6 +132,8 @@ var DENS = [0.3, 0.45, 0.6, 0.72, 0.85];  // share of a ring's slots with a car,
 // (the tier's DENS); 1 every slot the timetable has; 0 none. A ring never holds more than LOS_D cars a km of its lane at
 // the level (the plan's comfortable level of service D, 22 at 100%) nor one per CAR_M of it (the hard cap: classes.rs)
 var LEVEL0 = 0.85, LOS_D = 22, CAR_M = 7.5;
+// [3.29] an expressway's lane width (classes.rs: 3.5 m), its lanes laid from the median out
+var LANE_W = 3.5;
 var HEADWAY = {bus: 240, tram: 300};      // target seconds between vehicles on a line
 var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEAR = 120, EV_FAR = 1200, EV_HW = 1.25, EV_TRY = 90, EV_HOLD = 90;
 var EV_KINDS = ["fire", "ambulance", "police"];
@@ -140,7 +142,7 @@ var EV_KINDS = ["fire", "ambulance", "police"];
 var MODEL_N = 6, MODEL_TYPES = ["hatch", "sedan", "suv", "coupe"], MODEL_NEAR = 40, MODEL_CAP = 40;   // (about 5k triangles a model: 40 of them ~210k)
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
-var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
+var CAP = {car: 320, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
 // [3.22] traffic lights: a wait shorter than SIG_EPS s is rolled through; QSOFT m the softness of a queue's hold, QSTEP s
 // its check's step; the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green comes on, the window
 // periods (each divides the next, and the cycle), the most cars in a platoon (on a ring through lights; elsewhere),
@@ -156,6 +158,14 @@ var SIDE = -1;
 // lanes are cut back until their ends are PIN_W m apart
 var PIN_GAP = 2*SPEC.car.len + GAP, PIN_W = 7;
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
+
+// [3.29] City Gen v4 phase 6: the car lanes the sim drives a way on a road (backend interchange.rs `sim_lanes`, the
+// generator's lane balance): an expressway's lanes less the one by the median (kept free for overtaking), an
+// interchange's ramp's or flyover's own, one on every other road (as before)
+function simLanes(e){
+  var v4 = e && e.v4, n = Math.max(1, (e && e.lanes) | 0);
+  return v4 === "expressway" ? Math.max(1, n - 1) : v4 === "ramp" || v4 === "flyover" ? n : 1;
+}
 
 /* ---------- small maths ---------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -403,7 +413,9 @@ function create(doc, o){
     var E = {i: edges.length, id: e.id, a: e.a, b: e.b, cls: cls, art: !!ARTERIAL[cls], pts: pts, len: len2(pts),
              c: Math.max(1.5, (width - 2*walk)/200), bus: [false, false], tram: false,
              // City Gen v4 (HQ 3.25): its lanes each way and its raised median's half width (m)
-             lanesV4: e.v4 ? Math.max(1, e.lanes|0) : 0, med: e.median > 0 ? e.median/200 : 0};
+             lanesV4: e.v4 ? Math.max(1, e.lanes|0) : 0, med: e.median > 0 ? e.median/200 : 0,
+             // [3.29] an interchange's ramp runs one way (a to b); the car lanes the sim drives a way (simLanes)
+             one: e.oneway === true, k: simLanes(e)};
     if(E.len < 1) return;
     edges.push(E); A.inc.push(E.i); B.inc.push(E.i);
   });
@@ -474,13 +486,21 @@ function create(doc, o){
     var carEdge = carOff + cw/2;
     E.cars = E.art && carEdge <= c + 0.05 && (!anyBus || carEdge + 0.25 + bw <= c);
     E.carOff = E.cars ? carOff : null;
+    // [3.29] every lane the sim drives a way, from the kerb in (kerb first, then each lane's width further in); a one-way
+    // road's across its whole carriageway, centred
+    // (a road with shoulders and no footpaths, an expressway, has its lanes LANE_W wide out from the median, the
+    // shoulder beyond the kerb lane)
+    var shoulder = E.k > 1 && !E.one && !E.tram && !anyBus, lw = shoulder ? Math.min(LANE_W, (c - med)/n) : (c - med)/n, kerb = shoulder ? med + n*lw - lw/2 : carOff;
+    E.carOffs = !E.cars ? [] : E.one ? Array.apply(null, Array(E.k)).map(function(_, j){ return ((E.k - 1)/2 - j)*Math.min(LANE_W, 2*c/E.k); })
+      : Array.apply(null, Array(E.k)).map(function(_, j){ return kerb - j*lw; });
+    if(shoulder && E.cars){ E.carOff = kerb; E.room = Math.max(0, c - kerb - cw/2 - 0.15); }
     E.busOff = Math.max(c - bw/2 - 0.1, (E.cars ? carEdge + 0.25 : in2) + bw/2);
     E.room = E.cars ? Math.max(0, c - (anyBus ? bw + 0.35 : 0) - carEdge - 0.15) : 0;   // how far a car can pull over
     // an emergency vehicle never shares a car lane: it runs on the tram track, else in the bus lane,
     // else down the middle when that clears both car lanes (else it does not use the road)
     E.evOff = E.tram ? E.tramOff : anyBus ? E.busOff : 0;
     E.evKind = E.tram ? "tram" : anyBus ? "bus" : null;
-    E.ev = !!(E.tram || anyBus || !E.cars || (!med && carOff - cw/2 >= EV_HW + 0.1));
+    E.ev = !E.one && !!(E.tram || anyBus || !E.cars || (!med && carOff - cw/2 >= EV_HW + 0.1));
   });
 
   // junction radii: the boxes vehicles turn through. A node where a side street (no traffic of its
@@ -517,6 +537,10 @@ function create(doc, o){
   if(sigOn){ try { lo = mod(num(localOf(0), 0)/1000, SIG_C); } catch(e){ lo = 0; } }
   function trimOf(node, E){
     var r = radius[node] || 0, st = sigStop[node];
+    // [3.29] a road the sim drives several lanes a way, or one way (an expressway, a ramp), keeps its lanes out of a box
+    // that short roads beside it make smaller than its own half width (a highway's end in town by a bridge's short
+    // approaches): their ends never reach past the box's side into the roads crossing it
+    if((E.k > 1 || E.one) && r < E.c) r = Math.min(E.c, 0.45*E.len);
     if(st && st[E.id] != null) r = Math.max(r, Math.min(st[E.id], 0.4*E.len));
     return r;
   }
@@ -648,24 +672,37 @@ function create(doc, o){
   // ---- car rings: pair lanes in and out at every node ----
   var carEdges = edges.filter(function(E){ return E.cars; }), nextLane = {};
   var byNode = {};
+  // [3.29] a lane is (edge, way, j): j its lane from the kerb in, on a road the sim drives more than one lane a way
+  // (an expressway, an interchange's ramps); a one-way road has its lanes one way only
+  function laneKey(E, dir, j){ return (E.i*2 + dir)*8 + (j || 0); }
+  function dirsOf(E){ return E.one ? [0] : [0, 1]; }
   carEdges.forEach(function(E){
-    [0, 1].forEach(function(dir){
+    dirsOf(E).forEach(function(dir){
       var to = laneNode(E, dir, true), from = laneNode(E, dir, false);
-      (byNode[to] = byNode[to] || {inn: [], out: []}).inn.push({e: E, dir: dir});
-      (byNode[from] = byNode[from] || {inn: [], out: []}).out.push({e: E, dir: dir});
+      for(var j = 0; j < E.k; j++){
+        (byNode[to] = byNode[to] || {inn: [], out: []}).inn.push({e: E, dir: dir, j: j});
+        (byNode[from] = byNode[from] || {inn: [], out: []}).out.push({e: E, dir: dir, j: j});
+      }
     });
   });
   Object.keys(byNode).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
     var J = byNode[id], n = J.inn.length, cost = [];
+    // [3.29] where a road has more than one lane a way or runs one way (merges and diverges), each lane goes on to the
+    // lane nearest where it ends: the turn plus how far apart the two lanes' ends are (no two lanes cross); elsewhere the
+    // cheapest turns, a seeded tiebreak (as before)
+    var multi = J.inn.concat(J.out).some(function(l){ return l.e.k > 1 || l.e.one; });
+    if(J.out.length !== n){ errors.push("node " + id + ": " + n + " lanes in, " + J.out.length + " out"); return; }
     J.inn.forEach(function(a, i){
-      var d0 = dirAt(a.dir ? a.e.pts.slice().reverse() : a.e.pts, true);
+      var d0 = dirAt(a.dir ? a.e.pts.slice().reverse() : a.e.pts, true), P = multi ? lanePts(a.e, a.dir, a.e.carOffs[a.j]) : null;
       cost.push(J.out.map(function(b, j){
         var d1 = dirAt(b.dir ? b.e.pts.slice().reverse() : b.e.pts, false);
-        var u = b.e === a.e && n > 1 ? 10 : 0;
-        return Math.abs(turnAngle(d0, d1)) + u + 0.4*h01(seed, a.e.i*2 + a.dir, b.e.i*2 + b.dir);
+        var u = b.e === a.e && b.dir !== a.dir && n > 1 ? 10 : 0;
+        if(!multi) return Math.abs(turnAngle(d0, d1)) + u + 0.4*h01(seed, a.e.i*2 + a.dir, b.e.i*2 + b.dir);
+        var p = P[P.length - 1], q = lanePts(b.e, b.dir, b.e.carOffs[b.j])[0];
+        return Math.abs(turnAngle(d0, d1)) + u + 0.2*Math.hypot(q[0] - p[0], q[2] - p[2]);
       }));
     });
-    assign(cost).forEach(function(j, i){ var a = J.inn[i], b = J.out[j]; nextLane[a.e.i*2 + a.dir] = b; });
+    assign(cost).forEach(function(j, i){ var a = J.inn[i], b = J.out[j]; nextLane[laneKey(a.e, a.dir, a.j)] = b; });
   });
   // the cheapest pairing: every permutation up to 7 lanes, greedy beyond
   function assign(cost){
@@ -686,14 +723,15 @@ function create(doc, o){
   }
   var rings = [], seen = {};
   carEdges.forEach(function(E){
-    [0, 1].forEach(function(dir){
-      var k = E.i*2 + dir;
+    dirsOf(E).forEach(function(dir){ for(var j0 = 0; j0 < E.k; j0++) (function(j0){
+      var k = laneKey(E, dir, j0);
       if(seen[k]) return;
-      var lanes = [], cur = {e: E, dir: dir};
-      while(cur && !seen[cur.e.i*2 + cur.dir]){
-        seen[cur.e.i*2 + cur.dir] = 1;
-        lanes.push({e: cur.e, dir: cur.dir, off: cur.e.carOff, room: cur.e.room});
-        cur = nextLane[cur.e.i*2 + cur.dir];
+      var lanes = [], cur = {e: E, dir: dir, j: j0};
+      while(cur && !seen[laneKey(cur.e, cur.dir, cur.j)]){
+        seen[laneKey(cur.e, cur.dir, cur.j)] = 1;
+        // (only the kerb lane has room to pull over into)
+        lanes.push({e: cur.e, dir: cur.dir, j: cur.j || 0, off: cur.e.carOffs[cur.j || 0], room: cur.j ? 0 : cur.e.room});
+        cur = nextLane[laneKey(cur.e, cur.dir, cur.j)];
       }
       // [3.22.3] a hairpin (round the inside of an acute fork: with traffic on the left, where the lanes in and out all
       // but meet, and run side by side a car's width apart back from there) would fold a platoon back onto itself: the
@@ -717,7 +755,7 @@ function create(doc, o){
       });
       var r = route(lanes, SPEC.car); r.id = rings.length; r.kind = "car";
       rings.push(r);
-    });
+    })(j0); });
   });
 
   // ---- transit routes and stops ----
@@ -2928,7 +2966,7 @@ function street(THREE, scene, W, o){
   return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose, arms: arms};
 }
 
-HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, LEVEL0: LEVEL0, LOS_D: LOS_D, CAR_M: CAR_M, INC_W: INC_W,
+HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, LEVEL0: LEVEL0, LOS_D: LOS_D, CAR_M: CAR_M, simLanes: simLanes, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
                lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
                streetCars: streetCars, carLook: carLook, modelled: modelled, MODEL_N: MODEL_N, MODEL_NEAR: MODEL_NEAR,

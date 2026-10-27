@@ -167,7 +167,9 @@ impl Roads {
                 out.insert(n, "ramps");
                 continue;
             }
-            if es.iter().any(|&k| self.edges[k].v4.is_none()) {
+            // (and no lights or roundabouts on an expressway: where one still meets a road at grade, a ring junction no
+            // trumpet fits or a highway's end in town, it is as before, no control)
+            if es.iter().any(|&k| self.edges[k].v4.is_none() || self.edges[k].v4 == Some("expressway")) {
                 continue;
             }
             // the roads that meet: a street running on through the junction is one road (its arms share a name),

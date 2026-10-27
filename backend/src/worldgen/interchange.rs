@@ -138,6 +138,19 @@ impl Frame {
         (p.0 + o.0 * y / ONE, p.1 + o.1 * y / ONE)
     }
 
+    /// Local (x, y) to world for the trumpet's ramps: the point x along the ring, then y out
+    /// along the ring's normal at J (fixed). The stretches beside the ring follow its curve,
+    /// and nothing further out is squeezed or stretched however the ring curves (the normals
+    /// do not fan): a shape is only sheared along the normal by the ring's own bend.
+    /// (The ring's line here is eased over 24 m.)
+    fn place(&self, q: P) -> P {
+        // (the ring's line eased over 24 m: a ramp beside it does not copy the kink where its pieces met at the junction)
+        let k: Vec<P> = (-4..=4).map(|i| self.on(q.0 + i * 300).0).collect();
+        let p = (k.iter().map(|v| v.0).sum::<i64>() / 9, k.iter().map(|v| v.1).sum::<i64>() / 9);
+        let o0 = left(self.on(0).1);
+        (p.0 + o0.0 * q.1 / ONE, p.1 + o0.1 * q.1 / ONE)
+    }
+
     /// World to local: (x along the ring from J, y out from it), by the frame's own
     /// (smoothed) normals: the x whose normal passes through q, nearest the ring's nearest point.
     fn local(&self, q: P) -> P {
@@ -194,6 +207,8 @@ fn sample(local: &[P]) -> Vec<P> {
     out.dedup();
     out
 }
+
+
 
 /// A local arc round `c` of radius `r` from angle `a0` to `a1` (degrees, multiples of 5,
 /// counter-clockwise from +x when a1 > a0), every 5 degrees.
@@ -372,7 +387,7 @@ fn plan(roads: &Roads, t: &Terrain, keep: &Keep, j: u32, at: &[Vec<usize>]) -> R
     let conn = hway.len() - 1;
     hway.extend(curve.into_iter().skip(1));
 
-    let m = |v: Vec<P>| -> Vec<P> { sample(&v).into_iter().map(|q| f.map(q)).collect() };
+    let m = |v: Vec<P>| -> Vec<P> { sample(&v).into_iter().map(|q| f.place(q)).collect() };
     // the loop and the westbound ramp come down off the deck (the land under the flyover's
     // span and RING_FILL for the ring's grading, plus LIFT_CM) to the ring at DESIGN_PM
     let deck = (-(ring_half + DECK_BEFORE)..=y_l + HALF).step_by(400).map(|y| ground(f.map((0, y)))).max().unwrap_or(0) + RING_FILL + LIFT_CM;
@@ -417,6 +432,31 @@ fn plan(roads: &Roads, t: &Terrain, keep: &Keep, j: u32, at: &[Vec<usize>]) -> R
         return Err("no room for the ramps to climb");
     }
     fits(roads, keep, &p, ring_half)?;
+    apart(&p)?;
+    // the ramps beside the ring, never on it (where it curves out toward them), but where they join it: a ramp's lane
+    // (4 m) clear of the ring's (12 m out), its shoulder over the ring's at most
+    let ring: Vec<P> = p.west.iter().chain(&p.middle).chain(&p.east).copied().collect();
+    for v in [&p.loop_, &p.m3, &p.m1, &p.m2] {
+        for q in v.iter().filter(|&&q| dist2(q, p.p1) > 2_500i64.pow(2) && dist2(q, p.p2) > 2_500i64.pow(2)) {
+            if ring.windows(2).any(|w| seg_dist2(w[0], w[1], *q, *q) < ring_half.pow(2)) {
+                return Err("its ramps would meet the ring");
+            }
+        }
+    }
+    // and no ramp kinks anywhere its frame bent it (tighter than 15 m: the loop is 30 m round; its ends turn in the
+    // junction boxes)
+    for v in [&p.loop_, &p.m3, &p.m1, &p.m2] {
+        let (mut a, mut b) = (0, v.len());
+        while a < v.len() && dist2(v[a], v[0]) < 2_500i64.pow(2) {
+            a += 1;
+        }
+        while b > a && dist2(v[b - 1], v[v.len() - 1]) < 2_500i64.pow(2) {
+            b -= 1;
+        }
+            if b > a + 2 && !gentle(&v[a..b], 1_500) {
+            return Err("its ramps would kink");
+        }
+    }
     Ok(p)
 }
 
@@ -456,6 +496,40 @@ fn fits(roads: &Roads, keep: &Keep, p: &Plan, ring_half: i64) -> Result<(), &'st
             }
             if others.iter().any(|&(c, d, h)| seg_dist2(a, b, c, d) < (hw + h + CLEAR).pow(2)) {
                 return Err("another road in the way");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Do the trumpet's own ramps keep apart (the ring's curve can squeeze its frame)? Each
+/// pair at least their half widths and a metre apart, but within 25 m of a node they share
+/// (where they meet) and where the loop passes under the flyover (by design).
+fn apart(p: &Plan) -> Result<(), &'static str> {
+    let ends = |v: &[P]| (v[0], v[v.len() - 1]);
+    let pieces: [(&[P], i64); 5] = [(&p.stem, 373), (&p.loop_, HALF), (&p.m3, HALF), (&p.m1, HALF), (&p.m2, HALF)];
+    for i in 0..pieces.len() {
+        for j in i + 1..pieces.len() {
+            if (i, j) == (0, 1) {
+                continue;
+            }
+            let ((a, ha), (b, hb)) = (pieces[i], pieces[j]);
+            let (a0, a1) = ends(a);
+            let (b0, b1) = ends(b);
+            let shared: Vec<P> = [a0, a1].into_iter().filter(|q| *q == b0 || *q == b1).collect();
+            let near = |q: P| shared.iter().any(|&s| dist2(q, s) < 2_500i64.pow(2));
+            for u in a.windows(2) {
+                if near(u[0]) || near(u[1]) {
+                    continue;
+                }
+                for v in b.windows(2) {
+                    if near(v[0]) || near(v[1]) {
+                        continue;
+                    }
+                    if seg_dist2(u[0], u[1], v[0], v[1]) < (ha + hb + 100).pow(2) {
+                        return Err("its ramps would meet");
+                    }
+                }
             }
         }
     }

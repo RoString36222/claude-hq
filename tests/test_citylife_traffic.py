@@ -159,7 +159,9 @@ class CityLifeTraffic(unittest.TestCase):
     def test_fewer_cars_at_night_than_in_the_rush(self):
         c = self.o["count"]
         self.assertTrue(self.o["info"]["life"])
-        self.assertGreaterEqual(c["h815"], 0.9 * c["all"], "08:15 is the rush: about today's density")
+        # ([3.29] the expressways' lanes join up into laps of an hour or more, and a car is out or not for its whole lap
+        # by the hour it began: at 08:15 some began before the rush)
+        self.assertGreaterEqual(c["h815"], 0.8 * c["all"], "08:15 is the rush: about today's density")
         self.assertLess(c["h3"], c["h815"] * 0.4)
         self.assertLess(c["h3"], c["h13"])
         self.assertLess(c["h13"], c["h815"])

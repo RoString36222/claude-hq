@@ -39,6 +39,15 @@
 //!     marina carved) -> organic city -> civic, transit, island as @2 -> edits, roads
 //!     seated and carved -> water (finish) -> metro, railway, gondola -> seat
 //!
+//! City Gen v4 (HQ 3.24 on, docs/plans/city-gen-v4.md) upgrades @3 in place, a phase at
+//! a time, rather than adding a version: the live worlds move with it (the user's call),
+//! while every lot, and so every HQ, stays where it was. Phase 1: the Commons' airport
+//! claims its land (claims.rs) before the highways and the ring are routed, which keep off
+//! it (the ring alone may pass behind the terminal, in its corridor, until phase 6 takes it
+//! under; it stops either side where only the long way round would pass it); the dock,
+//! port, stadium, lines and the Island Link keep off it; its grounds grow no trees; and the
+//! validator (validate.rs) fails a world where anything else stands in it.
+//!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
 //! WorldDoc of plain data layers; features read the layers they need. Every
@@ -48,6 +57,8 @@
 //! world id and edits give a byte-identical document on every platform.
 
 pub mod city;
+pub mod claims;
+pub mod classes;
 pub mod civic;
 pub mod districts;
 pub mod gondola;
@@ -63,6 +74,7 @@ pub mod rng;
 pub mod roads;
 pub mod terrain;
 pub mod transit;
+pub mod validate;
 pub mod water;
 pub mod zones;
 
@@ -72,6 +84,8 @@ mod lines_tests;
 mod tests;
 #[cfg(test)]
 mod v3_tests;
+#[cfg(test)]
+mod v4_tests;
 
 use serde::Serialize;
 
@@ -230,7 +244,8 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         let districts = districts::generate(seed, &p, &base, &city.blocks);
         (city, roads, districts)
     } else {
-        organic::generate(seed, &p, &base, river.as_ref())?
+        let water = plan.as_ref().map_or(Vec::new(), |w| w.outlines());
+        organic::generate(seed, &p, &base, river.as_ref(), &water)?
     };
     let (zones, transit, island) = if version == 1 {
         (None, None, None)

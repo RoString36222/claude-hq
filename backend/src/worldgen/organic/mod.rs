@@ -43,7 +43,8 @@ use streets::{Ctx, Street};
 use zoning::{character, Zoning};
 
 /// Generate the city, its roads and the district map, round the river if it has one.
-pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -> Result<(City, Roads, Districts), String> {
+/// `water`: the @3 water bodies laid before the streets (water.rs), kept off the airport's claim.
+pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, water: &[Vec<P>]) -> Result<(City, Roads, Districts), String> {
     let zoning = Zoning::new(seed, p);
     let field = tensor::Field { terrain: base, grids: zoning.grids(), radial_r: p.city_r_cm * 6 / 10, coast_r: p.coast_r_cm };
     let ctx = Ctx { p, t: base, field, zoning: &zoning, river };
@@ -231,6 +232,11 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
     }
     // the layout is final: pave the roads wider into the strip of block and lot along them
     let paving = widen::widen(p, seed, base, &g, &mut blocks, &mut lots, &mut sites);
+    // City Gen v4 (@3 Commons): the airport claims its land before the graded roads are
+    // routed, so the highways and the ring go round it (claims.rs)
+    let mut city = City { blocks, lots, sites };
+    let claim = if p.water && p.gates > 0 { super::civic::airport_first(p, base, &mut city, river, water) } else { None };
+    let City { blocks, lots, sites } = city;
 
     // the road graph as the world's roads (live nodes only), then the graded roads
     let mut renum = vec![u32::MAX; g.nodes.len()];
@@ -257,10 +263,10 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>) -
             }
         })
         .collect();
-    roads::graded(&mut rng, p, base, &blocks, &mut nodes, &mut edges, &mut ways.iter().copied(), river)?;
+    roads::graded(&mut rng, p, base, &blocks, &mut nodes, &mut edges, &mut ways.iter().copied(), river, claim.as_ref())?;
     let roads = Roads { nodes, edges };
 
-    let districts = district_map(seed, p, base, &ctx, &g, &blocks);
+    let districts = district_map(seed, p, base, &ctx, &g, &blocks, claim.as_ref());
     Ok((City { blocks, lots, sites }, roads, districts))
 }
 
@@ -443,8 +449,9 @@ fn hq_pool(p: &Profile, t: &Terrain, lots: &mut [Lot]) -> Result<(), String> {
 }
 
 /// What kind of place every 8 m of the world is: a block's district, a street, the
-/// sea round an island, and outside the city, as version 1's countryside.
-fn district_map(seed: u64, p: &Profile, base: &Terrain, ctx: &Ctx, g: &Graph, blocks: &[Block]) -> Districts {
+/// sea round an island, and outside the city, as version 1's countryside; the airport's
+/// `claim` (City Gen v4) wild, its grounds cleared of trees.
+fn district_map(seed: u64, p: &Profile, base: &Terrain, ctx: &Ctx, g: &Graph, blocks: &[Block], claim: Option<&super::claims::Airport>) -> Districts {
     let n = (p.size_cm / CELL_CM) as usize;
     let origin = -p.size_cm / 2;
     let ns = sub(seed, "districts-wild", 0, 0);
@@ -457,6 +464,9 @@ fn district_map(seed: u64, p: &Profile, base: &Terrain, ctx: &Ctx, g: &Graph, bl
             let wild = value(ns, x, z, 25_600);
             kinds.push(if ctx.wet((x, z)) || ctx.river.is_some_and(|r| r.in_pool((x, z))) {
                 district::WATER
+            } else if claim.is_some_and(|a| a.contains((x, z))) {
+                // City Gen v4: the airport's grounds are cleared (no trees on its claim)
+                district::WILD
             } else if ctx.zoning.district((x, z)) == Some(district::PARK) {
                 district::PARK
             } else if wild > 16_000 {

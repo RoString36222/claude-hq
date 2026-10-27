@@ -173,6 +173,13 @@ pub struct Plan {
     marina: Option<Marina>,
 }
 
+impl Plan {
+    /// The bodies' outlines as laid (cm): what City Gen v4 keeps the airport's claim off.
+    pub fn outlines(&self) -> Vec<Vec<P>> {
+        self.bodies.iter().map(|b| b.poly.iter().map(|q| (q[0], q[1])).collect()).collect()
+    }
+}
+
 fn pts(v: &[P]) -> Vec<[i64; 2]> {
     v.iter().map(|q| [q.0, q.1]).collect()
 }

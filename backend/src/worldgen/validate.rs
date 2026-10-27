@@ -16,6 +16,9 @@
 //!   class-width    (hard, phase 2) a v4 road whose carriageway, lanes or median are not
 //!                  its class's, or whose footpaths are narrower (a lane at its layout
 //!                  width excepted; a street a tram runs down has no median until phase 8)
+//!   junction       (hard, phase 3) a junction of town roads without the control its roads
+//!                  call for (roads.rs `junction_kinds`: give way, a mini or full roundabout,
+//!                  signals), or a full roundabout without room on every arm
 //!   class-step     (hard, phase 2) where a town road runs on through a bend (a node of
 //!                  two roads), its two sides more than one class apart; where a highway
 //!                  or the ring is one of them, listed (`class-step-graded`) for the
@@ -49,7 +52,29 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     }
     overlaps(l, &mut out);
     classes(l, &mut out);
+    junctions(l, &mut out);
     out
+}
+
+fn junctions(l: &Layers, out: &mut Vec<Violation>) {
+    let Some(t) = &l.transit else { return };
+    // (against every lot and site: a lot a line takes later becomes a site in its place, and the lines keep off the
+    // circles, so what blocked a roundabout still does)
+    let clear: Vec<Vec<P>> = l.lots.iter().filter_map(|x| x.poly.as_ref()).chain(l.sites.iter().filter_map(|s| s.poly.as_ref())).map(|p| pts(p)).collect();
+    let want = l.roads.junction_kinds(t, &clear);
+    // (only where the world carries junction controls: phase 3 on)
+    if !l.roads.nodes.iter().any(|n| n.junction.is_some()) {
+        return;
+    }
+    for n in &l.roads.nodes {
+        let w = want.get(&n.id).copied();
+        let bad = n.junction != w
+            || (n.junction == Some("roundabout")
+                && l.roads.edges.iter().filter(|e| e.a == n.id || e.b == n.id).any(|e| super::roads::path_len(&e.points) < super::roads::ROUNDABOUT_ARM_CM));
+        if bad {
+            out.push(Violation { rule: "junction", hard: true, what: format!("node {} is {:?}, its roads call for {:?}", n.id, n.junction, w), at: [n.x, n.z] });
+        }
+    }
 }
 
 fn classes(l: &Layers, out: &mut Vec<Violation>) {

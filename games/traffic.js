@@ -233,6 +233,24 @@ function turnPts(p0, d0, p1, d1, n){
   }
   return out;
 }
+// [3.26] a turn round a roundabout's island: from the lane in onto the circle RB_LANE/2 m out from the island (a mini
+// one's: 2 m round its painted dome), round it with the island on the side away from the kerb ([3.22.3] to the right,
+// with traffic on the left: anticlockwise in x-z, the way the angle grows) and off onto the lane out; Bezier joins
+var RB_LANE = 6;
+function roundPts(n, rb, p0, d0, p1, d1){
+  var rc = rb.r + (rb.full ? RB_LANE/2 : 2), dir = SIDE === -1 ? 1 : -1, out = [];
+  var a0 = Math.atan2(p0[2] - n.z, p0[0] - n.x), a1 = Math.atan2(p1[2] - n.z, p1[0] - n.x), lead = Math.min(0.6, 4/rc);
+  var s = a0 + dir*lead, sweep = ((dir*(a1 - lead*dir - s)) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI);
+  if(sweep < 0.2) sweep += 2*Math.PI;
+  var steps = Math.max(4, Math.ceil(sweep*rc/1.5)), y = (p0[1] + p1[1])/2;
+  function on(t){ var th = s + dir*sweep*t; return [n.x + rc*Math.cos(th), y, n.z + rc*Math.sin(th)]; }
+  function tan(t){ var th = s + dir*sweep*t; return [-Math.sin(th)*dir, Math.cos(th)*dir]; }
+  var e0 = turnPts(p0, d0, on(0), tan(0), 6);
+  e0.forEach(function(q){ out.push(q); });
+  for(var k = 1; k < steps; k++) out.push(on(k/steps));
+  turnPts(on(1), tan(1), p1, d1, 6).forEach(function(q){ out.push(q); });
+  return out;
+}
 // a D-shaped loop from p0 heading d0 back to p0 heading -d0, R m deep and away from the kerb (the way a
 // U-turn goes: [3.22.3] to the right, with traffic on the left); both ends meet the lane straight
 function loopPts(p0, d0, R){
@@ -348,7 +366,12 @@ function create(doc, o){
 
   // nodes and active edges, in metres
   var nodes = {}, nodeIds = [];
-  (R.nodes || []).forEach(function(n){ nodes[n.id] = {id: n.id, x: num(n.x, 0)/100, y: num(n.y, 0)/100, z: num(n.z, 0)/100, inc: []}; nodeIds.push(n.id); });
+  (R.nodes || []).forEach(function(n){
+    nodes[n.id] = {id: n.id, x: num(n.x, 0)/100, y: num(n.y, 0)/100, z: num(n.z, 0)/100, inc: []};
+    // [3.26] City Gen v4: a roundabout (mini or full) and its island's radius (m): turns go round it
+    if((n.junction === "mini" || n.junction === "roundabout") && n.island > 0) nodes[n.id].rb = {full: n.junction === "roundabout", r: n.island/100};
+    nodeIds.push(n.id);
+  });
   var edges = [];
   (R.edges || []).forEach(function(e){
     if(e.min_tier != null && (e.min_tier | 0) > tier) return;
@@ -450,6 +473,9 @@ function create(doc, o){
     var list = used[id], deg = nodes[id].inc.filter(function(i){ return edges[i].ev || list.indexOf(edges[i]) >= 0; }).length, maxC = 0, minLen = 1e9;
     list.forEach(function(E){ maxC = Math.max(maxC, E.c); minLen = Math.min(minLen, E.len); });
     radius[id] = Math.min(deg >= 3 ? maxC + 2 : deg === 2 ? 2.5 : 1, 0.4*minLen);
+    // [3.26] a full roundabout's box is its whole circle (as worldgeom.js trims the roads to its rim)
+    var rb = nodes[id].rb;
+    if(rb && rb.full) radius[id] = Math.min(Math.max(radius[id], rb.r + RB_LANE + 0.5), 0.45*minLen);
   });
 
   // [3.22] traffic lights (HQV.cityLife.signals, on the packed world): at a signalised node every lane in stops at
@@ -573,7 +599,8 @@ function create(doc, o){
       // an emergency run turning round down the middle of the road comes back to where it went in:
       // it loops round inside the box rather than spinning on the spot
       var node = laneNode(lanes[i].e, lanes[i].dir, true), loop = open && Math.abs(ang) > 2.5 && Math.hypot(Q[0][0] - p0[0], Q[0][2] - p0[2]) < 1;
-      var curve = loop ? loopPts(p0, d0, Math.max(radius[node] || 0, spec.len)) : turnPts(p0, d0, Q[0], d1, 10);
+      var rbn = nodes[node] && nodes[node].rb;
+      var curve = loop ? loopPts(p0, d0, Math.max(radius[node] || 0, spec.len)) : rbn ? roundPts(nodes[node], rbn, p0, d0, Q[0], d1) : turnPts(p0, d0, Q[0], d1, 10);
       var sIn = Math.max(s0 + 0.1, acc - front);
       // the turn's last point is the next lane's first; the closing turn ends the line (s = len is s = 0)
       for(var k = 1; k < curve.length - (last ? 0 : 1); k++) add(curve[k]);

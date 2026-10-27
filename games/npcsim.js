@@ -257,6 +257,29 @@ Heap.prototype.pop = function(){   // -> the value; its key in this.top
 
 // [3.20.1] a driver's offset from the centre line on a carriageway `c` m centre to kerb: the kerb-side lane of a road
 // with two or three each way (worldgeom.js lanesEach), else mid-carriageway as before
+// [3.26] a full roundabout's carriageway round its island (m), as traffic.js and worldgeom.js
+var RB_LANE = 6;
+// a car route (flat [x, y, z, ...]) with every stretch inside a full roundabout's rim (the island and the RB_LANE m round
+// it; rbs: [{x, z, r}] m) taken round the island instead: an arc RB_LANE/2 m out from it, from where the route comes in
+// to where it leaves, the island on the side away from the kerb (traffic keeps left: the way the angle grows, as
+// traffic.js)
+function roundRoute(pts, rbs){
+  (rbs || []).forEach(function(rb){
+    var R = rb.r + RB_LANE, rc = rb.r + RB_LANE/2, m = pts.length/3, i = 0, out = [];
+    function inside(k){ var dx = pts[3*k] - rb.x, dz = pts[3*k + 2] - rb.z; return dx*dx + dz*dz < R*R; }
+    while(i < m){
+      if(!inside(i) || i === 0){ out.push(pts[3*i], pts[3*i + 1], pts[3*i + 2]); i++; continue; }
+      var j = i; while(j < m && inside(j)) j++;
+      if(j >= m){ for(; i < m; i++) out.push(pts[3*i], pts[3*i + 1], pts[3*i + 2]); break; }
+      var a0 = Math.atan2(pts[3*(i - 1) + 2] - rb.z, pts[3*(i - 1)] - rb.x), a1 = Math.atan2(pts[3*j + 2] - rb.z, pts[3*j] - rb.x);
+      var sweep = ((a1 - a0) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI), y = pts[3*i + 1], n = Math.max(3, Math.ceil(sweep*rc/1.5));
+      for(var k = 0; k <= n; k++){ var th = a0 + sweep*k/n; out.push(rb.x + rc*Math.cos(th), y, rb.z + rc*Math.sin(th)); }
+      i = j;
+    }
+    pts = out;
+  });
+  return pts;
+}
 function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3))); return Math.max(0.5, c*(2*n - 1)/(2*n)); }
 // [3.25] a City Gen v4 road: its own lanes each way, between its median (half width m) and the kerb, as traffic.js
 function npcLaneV4(c, lanes, med){ var n = Math.max(1, lanes|0); med = Math.max(0, +med || 0); return Math.max(0.5, c - (c - med)/(2*n)); }
@@ -284,6 +307,9 @@ function create(doc, opts){
   var nodeIx = {}, NX = [], NZ = [];
   (R.nodes || []).forEach(function(n, i){ nodeIx[n.id] = i; NX.push((n.x | 0)/100); NZ.push((n.z | 0)/100); });
   var NN = NX.length, E = [], NID = (R.nodes || []).map(function(n){ return n.id; });
+  // [3.26] City Gen v4's full roundabouts: a car goes round the island, never over it (rbOf below)
+  var RBS = (R.nodes || []).filter(function(n){ return n.junction === "roundabout" && n.island > 0; })
+    .map(function(n){ return {x: (n.x | 0)/100, z: (n.z | 0)/100, r: (n.island | 0)/100}; });
   (R.edges || []).forEach(function(e){
     if(!shown(e, "min_tier")) return;
     var a = nodeIx[e.a], b = nodeIx[e.b], P = e.points || [];
@@ -668,6 +694,7 @@ function create(doc, opts){
         }
       }
     }
+    if(!walk && RBS.length) pts = roundRoute(pts, RBS);
     var res = null;
     if(pts.length >= 6){
       var m = pts.length/3, P = new Float32Array(pts), C = new Float32Array(m);
@@ -1310,7 +1337,7 @@ var FLAVOUR = {
   barista: ["Oat milk's run out again."], "shop assistant": ["We've a sale on this week."]
 };
 
-HQV.npcSim = {create: create, population: population, localMs: localMs, sunHours: sunHours, isNight: isNight, cityClock: cityClock, CITY_TZ_MIN: CITY_TZ_MIN, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
+HQV.npcSim = {create: create, population: population, roundRoute: roundRoute, localMs: localMs, sunHours: sunHours, isNight: isNight, cityClock: cityClock, CITY_TZ_MIN: CITY_TZ_MIN, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
               ridersOn: ridersOn, use: use, metroStations: metroStations, TRANSIT: TRANSIT, EVERY: EVERY,
               JOBS: JOBS, POP: POP, CHARS: CHARS, DAY: DAY, HOUR: HOUR, passHour: passHour, PASS_PER100: PASS_PER100, PASS_EPOCH: PASS_EPOCH};
 })();

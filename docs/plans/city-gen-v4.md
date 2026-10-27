@@ -17,7 +17,7 @@ merges on its own and leaves the City playable:
 |---|---|---|
 | 1 | Airport claims its land; highways and the ring go round it; validator; road classes as data | **3.24.0** |
 | 2 | Real road classes: widths, lanes, markings, one-step changes | **3.25.0** |
-| 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | |
+| 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | **3.26.0** |
 | 4 | Curved roads: arcs, minimum radii by design speed | |
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | |
 | 6 | Flyovers, underpasses and interchanges; road tunnels | |
@@ -190,3 +190,62 @@ lots allowed, their junctions overlapped and traffic jammed at the lights.
 The ring and highways stay at today's widths. As 29 m expressways at at-grade junctions,
 they cut the Commons' traffic from about 200 cars to 133. They become expressways with
 their interchanges in phase 6.
+
+## Phase 3 (3.26.0)
+
+### Generator (`Roads::junctions`, `junction_kinds`)
+
+Each junction of town roads gets `junction` (`priority`, `mini`, `roundabout` or
+`signals`) and, for a roundabout, `island` (its radius, cm). The decision is by the two
+highest *roads* that meet, not arms: a street running straight on through a junction is
+one road, so a T stays a T.
+
+- **Give-way** (`priority`): local streets, lanes and shared streets with each other or a
+  collector, and a side street joining a main road at a T. The plan's table has no row for
+  a side street onto a main road; a T gives way.
+- **Mini roundabout:** a five-arm give-way junction, and collectors meeting each other or
+  an avenue where a full roundabout has no room.
+- **Full roundabout** (32 m, a 10 m planted island): collectors meeting each other or an
+  avenue, only where every arm is at least 40 m long and the circle (plus 1 m) is clear of
+  every lot and site. The line planners keep off its circle.
+- **Signals:**
+  - avenues and boulevards crossing
+  - a main road crossing a side street (a four-way, as in 3.22.1): "main" means an arterial
+    by function, even one paved narrow, and the light stays at least 60 m from any other
+- **A tram line through a junction** never gets a roundabout: lights where a main road
+  meets, else give-way.
+- **Junctions with a highway or the ring** have no control yet. They are phase 6's
+  interchanges.
+
+Validator, hard rule `junction`: every junction carries the control its roads call for,
+and a full roundabout has room on every arm.
+
+### Browser
+
+- **`citylife.signals`:** where the world carries junction data, lights stand exactly at
+  its signals. The arms, stops, timings and links logic is unchanged. A world without the
+  data is lit as before.
+- **`worldgeom.js`:**
+  - a mini roundabout's white dome
+  - a full roundabout's paved circle, with a kerbed, planted island and no corner footpaths
+    cutting into it
+  - give-way lines across the way in on every arm of a roundabout, and on the lesser roads
+    of a give-way junction
+- **`world.js`:** a full roundabout's island reads as raised ground.
+- **`traffic.js`:** turns at a roundabout go round its island (2 m out from a mini one's
+  dome, 3 m into a full one's 6 m carriageway), circling with the island away from the kerb.
+  A full roundabout's box is its circle.
+- **`npcsim.js`:** residents' car routes take the same arc round a full roundabout
+  (`roundRoute`).
+
+### Results
+
+- **The Commons:** 26 signals (24 lit, two pairs a short link apart are one junction), 11
+  mini roundabouts and 225 give-ways.
+- **50 worlds:** 411 mini roundabouts, 1,185 signals, 9,328 give-ways and no full roundabout. A
+  32 m circle with three separate roads meeting rarely has room in today's organic
+  layouts, so `test_junctions_v4.py` makes one at a busy Commons junction to test it.
+- **Traffic:** cars on screen by day 16.7 against phase 2's 15.9; 173 cars in all against
+  196, with fewer side streets lit than 3.22.1's 43.
+- **No layout change:** airports, runway fit, HQ lots and the metro are the same as phase 2
+  on all 50 worlds.

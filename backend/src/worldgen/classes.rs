@@ -238,7 +238,8 @@ pub fn junction(a: &str, b: &str) -> Junction {
         (0 | 1, 4) => Junction::Never,
         (_, 4) => Junction::Diamond,
         (3, 3) => Junction::SignalsOrBigRoundabout,
-        (0, 0 | 1) => Junction::Priority,
+        // (a side street onto a main road gives way: the plan pairs it with nothing grander)
+        (0, _) => Junction::Priority,
         (1, 1 | 2) => Junction::RoundaboutOrSignals,
         // avenues and boulevards, and anything smaller onto a boulevard
         _ => Junction::Signals,
@@ -346,6 +347,7 @@ mod tests {
     #[test]
     fn the_junction_comes_from_the_road_pair() {
         assert_eq!(junction("local", "lane"), Junction::Priority);
+        assert_eq!(junction("local", "avenue"), Junction::Priority);
         assert_eq!(junction("collector", "avenue"), Junction::RoundaboutOrSignals);
         assert_eq!(junction("avenue", "boulevard"), Junction::Signals);
         assert_eq!(junction("collector", "collector"), Junction::RoundaboutOrSignals);

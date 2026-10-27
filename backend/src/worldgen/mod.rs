@@ -49,7 +49,9 @@
 //! validator (validate.rs) fails a world where anything else stands in it. Phase 2 (HQ
 //! 3.25): the town's streets paved by the plan's road classes (classes.rs, organic/widen.rs),
 //! each edge's `v4`, `lanes` and `median`; the ring and highways keep their widths until
-//! phase 6 gives them their interchanges.
+//! phase 6 gives them their interchanges. Phase 3 (HQ 3.26): each junction's control
+//! (roads.rs `Roads::junctions`, the node's `junction` and a roundabout's `island`), by the
+//! roads that meet there.
 //!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
@@ -265,6 +267,11 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         // City Gen v4 (phase 2): a tram runs down the middle of its street until phase 8
         // gives it its own bed, so a street a tram line runs on has no median yet
         roads.trams_in_the_middle(&transit);
+        // phase 3: each junction's control, by the roads that meet there
+        if p.v4 {
+            let clear: Vec<Vec<(i64, i64)>> = city.lots.iter().filter_map(|l| l.poly.as_ref()).chain(city.sites.iter().filter_map(|s| s.poly.as_ref())).map(|p| p.iter().map(|q| (q[0], q[1])).collect()).collect();
+            roads.junctions(&transit, &clear);
+        }
         (Some(zones::layer(seed, &city.blocks)), Some(transit), island)
     };
 

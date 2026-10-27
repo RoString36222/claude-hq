@@ -461,6 +461,7 @@ function signals(W){
             rank: mainRoad(e.cls) ? 2 : road(e.cls).kind === "shop" ? 1 : 0};
   }
   function junction(id){ return (inc[id] || []).filter(through).length >= 3; }
+  var GEN = W.nodes.some(function(n){ return n.junction != null; });
   // the box traffic.js turns through at a node with no light: as far as it reaches along the roads there (m)
   function boxAt(id){
     var es = inc[id] || [], c = 0, minLen = 1e9;
@@ -477,7 +478,10 @@ function signals(W){
     if(es.some(function(e){ return NOSIG[normCls(e.cls)]; })) return;
     if(es.filter(function(e){ return normCls(e.cls) === "highway"; }).length >= 2) return;      // a highway going on through
     var x = cm(n.x), z = cm(n.z), kind = null, side = false;
-    if(es.filter(through).length >= 3 && es.some(function(e){ return mainRoad(e.cls); })) kind = "main";
+    // [3.26] City Gen v4 says which junctions have lights (the roads that meet there: generator data); a world without
+    // it is lit as before
+    if(GEN) kind = n.junction === "signals" ? "main" : null;
+    else if(es.filter(through).length >= 3 && es.some(function(e){ return mainRoad(e.cls); })) kind = "main";
     // [3.22.1] a main road crossing a side street (a four-way, not a T: that stays a give-way turning)
     else if(es.length >= 4 && es.some(function(e){ return mainRoad(e.cls); })){ kind = "main"; side = true; }
     else if(es.length === 4 && es.every(function(e){ var k = road(e.cls).kind; return k === "res" || k === "shop"; })){

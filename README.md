@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.25.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.26.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,19 @@ and feature guide.
 
 ## Changelog
 
+- **3.26.0 — City Gen v4, phase 3: junctions that fit their roads.** Every junction in the City now gets its control
+  from the roads that meet there, by the v4 plan's road-pair table:
+  - **Side streets give way:** where local streets meet, or a side street joins a main road at a T, the lesser road
+    gets give-way lines.
+  - **Mini roundabouts** where collectors meet each other or a main road, and at five-arm junctions: a painted white
+    dome that cars and buses drive round.
+  - **Traffic lights** where main roads cross, and (as 3.22.1 had it) where a main road crosses a side street, at
+    least 60 m from the next light. The lights now come from the world itself, so every player's City has them in
+    the same places.
+
+  A full roundabout, with a raised, planted island that the traffic and residents' cars go round, goes only where its
+  32 m circle has room. Today's streets rarely give it that, so the Commons has none yet. A tram line never meets a
+  roundabout. On screen the Commons is as busy as before.
 - **3.25.0 — City Gen v4, phase 2: real road classes.** Every street in the City now belongs to one of the v4 plan's road
   classes and is paved at that class's real width (IRC and UK *Manual for Streets* figures):
   - **Avenues** (22 m) on the main roads: two 3.5 m lanes each way and a raised 2 m median, with white lines.

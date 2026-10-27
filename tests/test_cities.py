@@ -639,7 +639,7 @@ class CitiesTest(unittest.TestCase):
 
     def test_the_ferry_and_its_dock_menu(self):
         n = self.out["nav"]
-        self.assertEqual(n["ferryDone"], [True, [False, "Press E for the ferry"]])
+        self.assertEqual(n["ferryDone"], [True, [False, "Press F for the ferry"]])
         self.assertTrue(n["ferryE"], "E on the dock's land side opens its menu")
         m = n["dockMenu"]
         self.assertTrue(m["open"]); self.assertGreater(m["items"], 0)

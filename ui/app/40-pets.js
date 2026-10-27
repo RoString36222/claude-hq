@@ -191,10 +191,10 @@ function petsAfter(p, got){
   else if(ta.length > tb && typeof toast === "function") toast(p.name + " learned " + ta[ta.length - 1].label + " (O)", "level");
   petsRender();
 }
-// E in your lobby (games/hqpets.js): take a stay-home pet out, or leave one of yours there
+// F in your lobby (games/hqpets.js): take a stay-home pet out, or leave one of yours there
 function petsToggleOut(id, out){
   var p = PETS.list.filter(function(q){ return q.id === id; })[0]; if(!p) return;
-  if(out && PETS.list.filter(function(q){ return q.active; }).length >= petsLib().MAX_ACTIVE){ if(typeof toast === "function") toast("Two pets are out already: leave one here first (stand facing it and press E)", "level"); return; }
+  if(out && PETS.list.filter(function(q){ return q.active; }).length >= petsLib().MAX_ACTIVE){ if(typeof toast === "function") toast("Two pets are out already: leave one here first (stand facing it and press F)", "level"); return; }
   petsEdit(id, out ? {active: true} : {active: false, home: true}, out ? p.name + " comes along!" : p.name + " stays in the lobby.").then(function(ok){
     if(ok && typeof toast === "function") toast(out ? p.name + " comes along!" : p.name + " stays in the lobby", "level");
   });

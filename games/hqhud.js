@@ -2,7 +2,7 @@
  *
  * Draws only what the host hands it each frame, nothing leaves the machine:
  *   mode chip      "Chase camera" for 1.4 s after a camera change (announced once)
- *   crosshair      first person only, with the "E  Enter Maya's HQ" prompt under it
+ *   crosshair      first person only, with the "F  Enter Maya's HQ" prompt under it
  *   speedometer    km/h, only while riding something
  *   compass        a 180 degree ribbon, N at bearing +z (3D modes)
  *   map labels     on one canvas in map mode: street names along their roads, highway and ring

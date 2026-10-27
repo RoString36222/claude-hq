@@ -3105,7 +3105,7 @@ HQV.hqWorlds.city3d = function(c, w){
   // waypoint comes from the panel (N, the Go to button), a minimap click or a click on the ground on the map (M);
   // the route starts from you: "drive" on a car, motorbike or bicycle, a straight line on a boat, else "walk".
   // Rerouted when you stray (needsReroute), cleared on arrival (the card) or by the banner's X. A travel place
-  // (the ferry) routes to its dock's land side, and there the banner says "Press E for the ferry".
+  // (the ferry) routes to its dock's land side, and there the banner says "Press F for the ferry".
   var NAV_SNAP = 40;           // m: a picked point snaps to a road this near, else stays where it was picked
   var NAV_BOAT_V = 6;          // m/s: a boat's ETA, straight across the water
   var NAV_BOAT_ARRIVE = 15;    // m: a boat arrives this near its waypoint
@@ -3269,7 +3269,7 @@ HQV.hqWorlds.city3d = function(c, w){
         }
       }
     }
-    if(route && route.done) info = {step: {kind: "arrive", road: route.label}, toNext: 0, left: 0, eta_s: 0, hint: "Press E for the ferry"};
+    if(route && route.done) info = {step: {kind: "arrive", road: route.label}, toNext: 0, left: 0, eta_s: 0, hint: "Press F for the ferry"};
     if(info) info.dest = route.label;
     if(nui) nui.banner(info);
     if(fx) fx.update(dt, me0, cam);

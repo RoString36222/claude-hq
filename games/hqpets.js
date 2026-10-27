@@ -2039,12 +2039,12 @@ function create(c, opts){
       if(fd >= 0 && fd < nearD){ nearD = fd; near = {kind: "lobby", p: l.p}; }
     });
     greet = false;
-    // in your own lobby, E takes a stay-home pet out, or leaves one of yours here
+    // in your own lobby, F takes a stay-home pet out, or leaves one of yours here
     var shop = !o.ride && info.world && info.world.petShop && info.world.petShop.near(o.x, o.z);
-    if(shop) showPrompt("E  Paws & Claws: adopt a pet");
+    if(shop) showPrompt("F  Paws & Claws: adopt a pet");
     else if(home && !lobbyList && !o.ride){
       if(!busy) mine.forEach(function(m){ if(!m.st || m.st.hidden) return; var d = facing(o, m.st.x, m.st.z, LEAVE_D); if(d >= 0 && d < nearD){ nearD = d; near = {kind: "mine", p: m.p}; } });
-      showPrompt(near ? (near.kind === "lobby" ? "E  Take " + near.p.name + " out" : "E  Leave " + near.p.name + " here") : null);
+      showPrompt(near ? (near.kind === "lobby" ? "F  Take " + near.p.name + " out" : "F  Leave " + near.p.name + " here") : null);
     } else showPrompt(null);
     K.near = near;
     // [3.14 riding] a grown dragon, the sea serpent or a big dinosaur out with you, beside you: "E  Ride <name>"
@@ -2063,10 +2063,11 @@ function create(c, opts){
     statsN.pets = drawn; statsN.meshes = meshes;
   };
   function nearestMine(o, maxD){ var best = null, bd = maxD; mine.forEach(function(m){ if(!m.st || m.st.hidden) return; var d = Math.hypot(m.st.x - o.x, m.st.z - o.z); if(d < bd){ bd = d; best = m; } }); return best; }
-  // keys: B throws a ball, U pets the nearest, O asks for the next trick it knows, E in your lobby takes a pet out / leaves it
+  // keys: B throws a ball, U pets the nearest, O asks for the next trick it knows, F ([3.22.2]; E rides) in your lobby
+  // takes a pet out / leaves it
   K.key = function(code, o, blocked){
     o = o || {x: 0, z: 0, yaw: 0};
-    if(code === "KeyE" && K.near && opts.onToggle){ var p = K.near.p; opts.onToggle(p.id, K.near.kind === "lobby"); return true; }
+    if(code === "KeyF" && K.near && opts.onToggle){ var p = K.near.p; opts.onToggle(p.id, K.near.kind === "lobby"); return true; }
     if(!mine.length) return false;
     if(code === "KeyB"){
       if(o.ride) return false;

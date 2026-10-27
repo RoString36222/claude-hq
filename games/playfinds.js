@@ -3,7 +3,7 @@
  * About fifty finds per world, a pure function of (W, its seed); nothing a player sees twice is random:
  *   roof     tokens over low roofs (1-3 floors): fly a helicopter through them, or reach them off a stunt (touch)
  *   tag      graffiti on the side and back walls of buildings, mostly in the industrial streets: stand by one and press
- *            E to tag it with your colour
+ *            F to tag it with your colour
  *   stall    rare street stalls, each with its own name, by the footpaths in the parks: visit one
  *   hidden   tokens tucked under bridges, by the water and in the parks (touch)
  * Tokens glow (unlit gold, static); within SPARKLE_M a sparkle turns over the nearest (Calm: it holds still).

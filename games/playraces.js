@@ -447,7 +447,7 @@ function create(ctx){
       if(sp < 1.5){ st.hold += dt; if(st.hold >= HOLD_S){ st.hold = 0; nearShown = null; countdown(r); return; } }
       else st.hold = 0;
       hud("Stop under the flag to start: " + r.name + tail); nearShown = r.id;
-    } else { hud(r.name + ": press E to start" + tail); nearShown = r.id; }
+    } else { hud(r.name + ": press F to start" + tail); nearShown = r.id; }
   }
 
   return {
@@ -516,7 +516,7 @@ function renderApp(el){
   var root = mk("div", "hp-app", el), F = feature();
   if(!F){ mk("p", "hp-muted", root, "Races appear when the City is loaded."); return {dispose: function(){}}; }
   var list = F.routes();
-  mk("p", "hp-muted", root, list.length + " routes in this city. Stop under a chequered flag to start; on foot, press E. Best times stay on this computer.");
+  mk("p", "hp-muted", root, list.length + " routes in this city. Stop under a chequered flag to start; on foot, press F. Best times stay on this computer.");
   var ul = mk("ul", "hp-list", root); ul.setAttribute("aria-label", "Races");
   list.forEach(function(r){
     var li = mk("li", "hp-card", ul);

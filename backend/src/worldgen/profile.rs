@@ -288,7 +288,8 @@ pub const ARTERIAL_TIERS: [Tier; 2] = [
 pub fn with_water(p: Profile) -> Profile {
     // (City Gen v4 phase 2 classes the town's roads; the ring and highways become
     // expressways with their interchanges, phase 6: at-grade, a 29 m road jams its junctions)
-    Profile { water: true, v4: true, local_tiers: &LOCAL_TIERS, arterial_tiers: &ARTERIAL_TIERS, ..p }
+    let wide = if p.gates > 0 { super::classes::class("expressway").map_or(p.ring_cm, |c| c.total_cm) } else { p.ring_cm };
+    Profile { water: true, v4: true, local_tiers: &LOCAL_TIERS, arterial_tiers: &ARTERIAL_TIERS, ring_cm: wide, highway_cm: wide.max(p.highway_cm), ..p }
 }
 
 /// A personal city (`user:<uuid>@2`): a 1.8 km island, the sea round a coast at

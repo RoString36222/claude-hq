@@ -67,6 +67,7 @@ pub mod classes;
 pub mod civic;
 pub mod districts;
 pub mod gondola;
+pub mod interchange;
 pub mod island;
 pub mod lines;
 pub mod metro;
@@ -259,6 +260,16 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         if coast.is_some() {
             island::trim(&mut roads);
         }
+        // City Gen v4 (phase 6): a trumpet where each highway meets the ring, where one fits
+        if p.v4 {
+            let claim = claims::Airport::of(&city.sites);
+            let keep = interchange::Keep { blocks: &city.blocks, claim: claim.as_ref(), river: river.as_ref(), coast: coast.as_ref().map(|c| c.poly.as_slice()) };
+            let (made, kept) = interchange::build(&mut roads, &base, &keep);
+            // (HQ_IX=1 worldgen <id>: what each junction became, for tuning)
+            if std::env::var("HQ_IX").is_ok() {
+                eprintln!("interchanges: {made} made, kept at grade: {kept:?}");
+            }
+        }
         civic::outside(&p, &base, &roads, &mut city, river.as_ref());
         // a personal island's first bus loop keeps to its tier-2 town (20 m in from the ring)
         let inner = (p.name == "island").then(|| island::RADII_CM[1] - 2_000);
@@ -278,7 +289,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let mut terrain = base;
     terrain.apply(edits)?;
     roads.seat(&terrain, &p)?;
-    roads.carve(&mut terrain);
+    roads.carve(&mut terrain, |q| river.as_ref().is_some_and(|r| r.wet(q)));
     // @3: the rest of the water, then the lines, their claims made sites before every
     // lot and site is seated on the final ground
     let water = match (plan, river.as_ref(), island::Coast::new(seed, &p)) {

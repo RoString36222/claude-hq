@@ -27,6 +27,13 @@
 //!                  two roads), its two sides more than one class apart; where a highway
 //!                  or the ring is one of them, listed (`class-step-graded`) for the
 //!                  junction and interchange phases
+//!   ramps          (hard, phase 6) an interchange's ramp that is not one way, or a node
+//!                  where its ramps meet without as many of the traffic sim's lanes in as
+//!                  out (interchange.rs `sim_lanes`)
+//!   deck-grade     (hard, phase 6) a flyover or ramp steeper than 6 % over any 8 m
+//!   clearance      (hard, phase 6) a flyover or ramp crossing a road it does not meet
+//!                  less than 7 m over it (5.5 m clear and its deck), or a road crossing
+//!                  another at grade with no junction (listed: `road-overlap`)
 //!
 //! `cargo run --release --bin worldgen -- <id> --validate` prints the report.
 
@@ -58,7 +65,90 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     classes(l, &mut out);
     junctions(l, &mut out);
     curves(l, &mut out);
+    decks(l, &mut out);
     out
+}
+
+/// Phase 6: the interchanges' ramps, their grades and the clearance under every deck.
+fn decks(l: &Layers, out: &mut Vec<Violation>) {
+    use super::interchange::{sim_lanes, LIFT_CM, MAX_PM};
+    use super::roads::deck_road;
+    let r = &l.roads;
+    let at = |n: u32| r.nodes.get(n as usize).map_or([0, 0], |q| [q.x, q.z]);
+    // lanes in and out at every node a ramp or flyover meets
+    let mut flow: BTreeMap<u32, (i64, i64, bool)> = BTreeMap::new();
+    for e in &r.edges {
+        let k = sim_lanes(e);
+        let one = e.oneway == Some(true);
+        if e.v4 == Some("ramp") && !one {
+            out.push(Violation { rule: "ramps", hard: true, what: format!("road {} {} runs both ways", e.id, e.name), at: at(e.a) });
+        }
+        let d = deck_road(e);
+        let fa = flow.entry(e.a).or_insert((0, 0, false));
+        *fa = (fa.0 + if one { 0 } else { k }, fa.1 + k, fa.2 || d);
+        let fb = flow.entry(e.b).or_insert((0, 0, false));
+        *fb = (fb.0 + k, fb.1 + if one { 0 } else { k }, fb.2 || d);
+    }
+    for (n, (i, o, d)) in flow {
+        if d && i != o {
+            out.push(Violation { rule: "ramps", hard: true, what: format!("node {n}: {i} lanes in, {o} out"), at: at(n) });
+        }
+    }
+    // grades over 8 m or more of road (along it)
+    for e in r.edges.iter().filter(|e| deck_road(e)) {
+        let p = &e.points;
+        let (mut j, mut run) = (0, 0);
+        for i in 1..p.len() {
+            run += super::noise::isqrt((p[i][0] - p[i - 1][0]).pow(2) + (p[i][2] - p[i - 1][2]).pow(2));
+            if run < 800 {
+                continue;
+            }
+            if (p[i][1] - p[j][1]).abs() * 1000 > (MAX_PM + 2) * run {
+                out.push(Violation { rule: "deck-grade", hard: true, what: format!("road {} {}: {} per mille", e.id, e.name, (p[i][1] - p[j][1]).abs() * 1000 / run), at: [p[i][0], p[i][2]] });
+                break;
+            }
+            (j, run) = (i, 0);
+        }
+    }
+    // crossings: two roads that meet at no node whose carriageways overlap
+    let segs: Vec<(usize, [i64; 3], [i64; 3], i64)> = r.edges.iter().enumerate().flat_map(|(k, e)| e.points.windows(2).map(move |w| (k, w[0], w[1], (e.width / 2 - e.walk).max(100)))).collect();
+    let mut grid: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    const CELL: i64 = 4_000;
+    for (s, (_, a, b, _)) in segs.iter().enumerate() {
+        for gx in a[0].min(b[0]).div_euclid(CELL) - 1..=a[0].max(b[0]).div_euclid(CELL) + 1 {
+            for gz in a[2].min(b[2]).div_euclid(CELL) - 1..=a[2].max(b[2]).div_euclid(CELL) + 1 {
+                grid.entry((gx, gz)).or_default().push(s);
+            }
+        }
+    }
+    let meet = |x: &super::roads::Edge, y: &super::roads::Edge| x.a == y.a || x.a == y.b || x.b == y.a || x.b == y.b;
+    let mut seen = std::collections::BTreeSet::new();
+    for cell in grid.values() {
+        for (i, &s) in cell.iter().enumerate() {
+            for &t in &cell[i + 1..] {
+                let ((ka, a0, a1, ha), (kb, b0, b1, hb)) = (segs[s], segs[t]);
+                if ka == kb || seen.contains(&(ka.min(kb), ka.max(kb))) {
+                    continue;
+                }
+                let (ea, eb) = (&r.edges[ka], &r.edges[kb]);
+                if meet(ea, eb) || ea.bridge.is_some() || eb.bridge.is_some() {
+                    continue;
+                }
+                let (p0, p1, q0, q1) = ((a0[0], a0[2]), (a1[0], a1[2]), (b0[0], b0[2]), (b1[0], b1[2]));
+                if seg_dist2(p0, p1, q0, q1) >= (ha + hb).pow(2) {
+                    continue;
+                }
+                seen.insert((ka.min(kb), ka.max(kb)));
+                let gap = (a0[1] + a1[1] - b0[1] - b1[1]).abs() / 2;
+                let decked = super::roads::deck_road(ea) || super::roads::deck_road(eb);
+                if decked && gap < LIFT_CM - 50 {
+                    out.push(Violation { rule: "clearance", hard: true, what: format!("{} over {}: {} cm", ea.name, eb.name, gap), at: [p0.0, p0.1] });
+                } else if !decked && gap < LIFT_CM - 50 {
+                    out.push(Violation { rule: "road-overlap", hard: false, what: format!("{} and {}", ea.name, eb.name), at: [p0.0, p0.1] });
+                }
+            }
+        }
+    }
 }
 
 /// The radius (cm) of the circle through a, b, c (i64::MAX when they are in line).
@@ -145,7 +235,11 @@ fn classes(l: &Layers, out: &mut Vec<Violation>) {
             let carriageway = e.width - 2 * e.walk - median.unwrap_or(0);
             // (a class with no footpaths has shoulders: its whole width, no walk)
             let width = if c.walk { (carriageway == c.carriageway_cm() && e.walk >= c.side_cm) || (name == "lane" && e.width < c.total_cm) } else { e.width == c.total_cm && e.walk == 0 };
-            width && e.lanes == c.lanes && median.unwrap_or(0) == c.median_cm
+            // (phase 6: an expressway between an interchange's two ramp junctions has a lane fewer each way, the
+            // lane its exit took and its entrance gives back)
+            let ramps = |n: u32| l.roads.nodes.get(n as usize).is_some_and(|q| q.junction == Some("ramps"));
+            let lanes = e.lanes == c.lanes || (name == "expressway" && e.lanes + 1 == c.lanes && ramps(e.a) && ramps(e.b));
+            width && lanes && median.unwrap_or(0) == c.median_cm
         });
         if !ok {
             out.push(Violation { rule: "class-width", hard: true, what: format!("road {} {} ({name}, {} cm)", e.id, e.name, e.width), at: p });

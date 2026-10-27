@@ -4,7 +4,9 @@
  * clock): two clients with the same inputs see the same vehicles with no server traffic. Pure core:
  * no THREE, no DOM, so tests/test_traffic.py runs it under node; view(c) builds the instanced meshes.
  * Frames and units are the 3D city's: metres, +y up, yaw 0 faces +z, model-local +x is LEFT, so the
- * right of travel is (-cos yaw, sin yaw). Everyone drives on the right.
+ * right of travel is (-cos yaw, sin yaw). [3.22.3] Everyone drives on the LEFT (SIDE = -1, as in India or the UK):
+ * a lateral offset below (E.carOff, busOff, tramOff, evOff, a lay-by, a car pulling over) is m toward the kerb of
+ * the way of travel, the kerb being SIDE x the right of travel; SIDE = 1 is right-hand traffic.
  *
  * Cars live on rings. The arterials (min_tier <= tier) give every edge a lane each way; at every node
  * the incoming lanes are paired with outgoing ones (the cheapest turns, no U-turn unless it is a dead
@@ -126,8 +128,17 @@ var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 1
 // [3.22] traffic lights: a wait shorter than SIG_EPS s is rolled through; QSOFT m the softness of a queue's hold, QSTEP s
 // its check's step; the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green comes on, the window
 // periods (each divides the next, and the cycle), the most cars in a platoon (on a ring through lights; elsewhere),
-// the share of a platoon's places j that hold a car
-var SIG_BACK = 1.5, SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.95, 0.9, 0.85, 0.75, 0.65];
+// the share of a platoon's places j that hold a car ([3.22.3] a little fuller: left-hand traffic's shorter laps hold fewer
+// slots, and the City keeps the density it had)
+var SIG_BACK = 1.5, SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.98, 0.96, 0.93, 0.88, 0.83];
+// [3.22.3] the side of the road traffic keeps to: -1 the left (left-hand traffic), 1 the right. The kerb of the way
+// of travel is SIDE x its right; the vehicles' models (the bus's doors, seats and driver, games/hqcoach.js) are drawn
+// for the right and mirrored by it. The one switch: citylife.js, hqtramway.js, hqcoach.js, hqcabs.js and the rest
+// read it as HQV.traffic.SIDE
+var SIDE = -1;
+// [3.22.3] a hairpin whose lane ends are closer than PIN_GAP m is one a platoon would fold back onto itself round: its
+// lanes are cut back until their ends are PIN_W m apart
+var PIN_GAP = 2*SPEC.car.len + GAP, PIN_W = 7;
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
 
 /* ---------- small maths ---------- */
@@ -222,10 +233,10 @@ function turnPts(p0, d0, p1, d1, n){
   }
   return out;
 }
-// a D-shaped loop from p0 heading d0 back to p0 heading -d0, R m deep and to the left (the way a
-// right-hand-traffic U-turn goes); both ends meet the lane straight
+// a D-shaped loop from p0 heading d0 back to p0 heading -d0, R m deep and away from the kerb (the way a
+// U-turn goes: [3.22.3] to the right, with traffic on the left); both ends meet the lane straight
 function loopPts(p0, d0, R){
-  var out = [], lx = d0[1], lz = -d0[0];
+  var out = [], lx = d0[1]*SIDE, lz = -d0[0]*SIDE;
   for(var k = 0; k <= 24; k++){
     var th = k/24*2*Math.PI, u = R*Math.sin(th/2), v = 0.35*R*(1 - Math.cos(th));
     out.push([p0[0] + d0[0]*u + lx*v, p0[1], p0[2] + d0[1]*u + lz*v]);
@@ -379,17 +390,34 @@ function create(doc, o){
     if(path.length < 2){ errors.push("line " + l.id + ": short path"); return; }
     if(path[0] === path[path.length - 1]) path.pop();
     else if(!edgeBetween(path[path.length - 1], path[0])){ path = path.concat(path.slice(1, -1).reverse()); outBack = true; }   // out and back
-    var lanes = [];
-    for(var i = 0; i < path.length; i++){
-      var eb = edgeBetween(path[i], path[(i + 1) % path.length]);
-      if(!eb){ errors.push("line " + l.id + ": no road " + path[i] + "-" + path[(i + 1) % path.length]); return; }
-      lanes.push({e: eb.e, dir: eb.dir});
+    function lanesOf(path){
+      var out = [];
+      for(var i = 0; i < path.length; i++){
+        var eb = edgeBetween(path[i], path[(i + 1) % path.length]);
+        if(!eb){ errors.push("line " + l.id + ": no road " + path[i] + "-" + path[(i + 1) % path.length]); return null; }
+        out.push({e: eb.e, dir: eb.dir});
+      }
+      return out;
+    }
+    var lanes = lanesOf(path);
+    if(!lanes) return;
+    // [3.22.3] a loop runs round the way its turns are mostly kerb-side ones (with traffic on the left, left turns: the
+    // tight ones, never across the oncoming lanes): one whose turns come to a net turn the other way round is run
+    // backwards (its stops are the same sites, now on its kerb side)
+    if(!outBack && lanes.length > 2){
+      var turned = 0;
+      lanes.forEach(function(ln, i){
+        var nx = lanes[(i + 1) % lanes.length], P = ln.dir ? ln.e.pts.slice().reverse() : ln.e.pts, Q = nx.dir ? nx.e.pts.slice().reverse() : nx.e.pts;
+        turned += turnAngle(dirAt(P, true), dirAt(Q, false));
+      });
+      // (turnAngle > 0 turns right: a kerb-side turn is SIDE x that > 0)
+      if(SIDE*turned < -Math.PI){ path.reverse(); lanes = lanesOf(path); if(!lanes) return; }
     }
     lanes.forEach(function(ln){ if(kind === "tram") ln.e.tram = true; else ln.e.bus[ln.dir] = true; });
     lineDefs.push({id: String(l.id), kind: kind, tier: l.tier | 0, lanes: lanes, stops: (l.stops || []).map(String), outBack: outBack});
   });
 
-  // lateral plan per edge: m to the right of the centre line, per direction
+  // lateral plan per edge: m from the centre line toward the kerb ([3.22.3] SIDE: the left), per direction
   edges.forEach(function(E){
     var inner = 0.15, c = E.c, tw = SPEC.tram.wid, cw = SPEC.car.wid, bw = SPEC.bus.wid;
     E.tramOff = E.tram ? inner + tw/2 : null;
@@ -495,10 +523,12 @@ function create(doc, o){
     return out;
   }
 
-  // a lane: the edge's points in travel order, offset to the right, trimmed back from both nodes
-  function lanePts(E, dir, off){
+  // a lane: the edge's points in travel order, offset off m toward the kerb ([3.22.3] SIDE x the right), trimmed
+  // back from both nodes
+  // (x0, x1: m more cut off its start and end: a car ring's lanes either side of a hairpin, below)
+  function lanePts(E, dir, off, x0, x1){
     var pts = dir ? E.pts.slice().reverse() : E.pts, from = dir ? E.b : E.a, to = dir ? E.a : E.b;
-    return trimPts(offsetPts(pts, off), trimOf(from, E), trimOf(to, E));
+    return trimPts(offsetPts(pts, SIDE*off), trimOf(from, E) + (x0 || 0), trimOf(to, E) + (x1 || 0));
   }
   function laneNode(E, dir, end){ return end ? (dir ? E.a : E.b) : (dir ? E.b : E.a); }
 
@@ -511,7 +541,7 @@ function create(doc, o){
   // stops with its nose short of the box and the driver changes ends: the line doubles back on itself
   // at a cusp (the body's centre), and poses past a cusp fold back across it (bodyAt).
   function route(lanes, spec, open){
-    var pts = [], passes = [], cusps = [], ranges = [], acc = 0, n = lanes.length, LP = lanes.map(function(ln){ return lanePts(ln.e, ln.dir, ln.off); });
+    var pts = [], passes = [], cusps = [], ranges = [], acc = 0, n = lanes.length, LP = lanes.map(function(ln){ return lanePts(ln.e, ln.dir, ln.off, ln.x0, ln.x1); });
     function add(p){
       var q = pts[pts.length - 1];
       if(q){ var d = Math.hypot(p[0] - q[0], p[2] - q[2]); if(d < 1e-6) return; acc += d; }
@@ -615,6 +645,22 @@ function create(doc, o){
         lanes.push({e: cur.e, dir: cur.dir, off: cur.e.carOff, room: cur.e.room});
         cur = nextLane[cur.e.i*2 + cur.dir];
       }
+      // [3.22.3] a hairpin (round the inside of an acute fork: with traffic on the left, where the lanes in and out all
+      // but meet, and run side by side a car's width apart back from there) would fold a platoon back onto itself: the
+      // lanes either side of it are cut back until their ends are PIN_W m apart, so it turns round in the open box
+      // (not a U-turn at a dead end: back down its own road)
+      lanes.forEach(function(a, i){
+        var b = lanes[(i + 1) % lanes.length];
+        if(b.e === a.e || lanes.length < 2) return;
+        var P = lanePts(a.e, a.dir, a.off), Q = lanePts(b.e, b.dir, b.off), p0 = P[P.length - 1], q0 = Q[0];
+        if(Math.abs(turnAngle(dirAt(P, true), dirAt(Q, false))) <= 2 || Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_GAP) return;
+        for(var x = 1; x <= 30; x++){
+          if(len2(P) - x < 8 || len2(Q) - x < 8) break;
+          P = lanePts(a.e, a.dir, a.off, a.x0, (a.x1 || 0) + x); Q = lanePts(b.e, b.dir, b.off, (b.x0 || 0) + x, b.x1);
+          p0 = P[P.length - 1]; q0 = Q[0];
+          if(Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_W){ a.x1 = (a.x1 || 0) + x; b.x0 = (b.x0 || 0) + x; break; }
+        }
+      });
       var r = route(lanes, SPEC.car); r.id = rings.length; r.kind = "car";
       rings.push(r);
     });
@@ -659,7 +705,13 @@ function create(doc, o){
   lines.forEach(function(r){
     var spec = SPEC[r.kind], h = spec.len/2 + (r.kind === "bus" ? RAMP : 0) + 1, B = spec.len + GAP + (r.kind === "bus" ? RAMP : 0);
     r.stops.forEach(function(st){
-      r.passes.forEach(function(p){ if(st.s > p.sIn - 1 && st.s < p.sOut + 1) st.s = Math.max(0, p.sIn - 1); });
+      // ([3.22.3] the nearer of the box's line and just past it, tail clear: a line run round the other way for left-hand
+      // traffic meets the junction by its stop from the other side)
+      r.passes.forEach(function(p){
+        if(!(st.s > p.sIn - 1 && st.s < p.sOut + 1)) return;
+        var near = Math.max(0, p.sIn - 1), far = p.sOut + spec.len/2 + 1;
+        st.s = far - st.s < st.s - near && far < r.pl.len ? far : near;
+      });
       var b = berths[st.id] = berths[st.id] || [], k = b.indexOf(r.id) < 0 ? b.push(r.id) - 1 : b.indexOf(r.id);
       var rg = null;
       r.ranges.forEach(function(x){ if(!rg && x[0] - 1 <= st.s && st.s <= x[1] + 1) rg = x; });
@@ -671,7 +723,7 @@ function create(doc, o){
     });
     r.stops.sort(function(a, b){ return a.s - b.s; });
   });
-  // a bus stops in a lay-by: it pulls BAY m to the right over RAMP m into its berth and out again, so
+  // a bus stops in a lay-by: it pulls BAY m toward the kerb ([3.22.3] the left) over RAMP m into its berth and out again, so
   // a bus at a stop leaves the lane free (only where the whole move stays on one lane)
   lines.forEach(function(r){
     r.bays = [];
@@ -720,7 +772,7 @@ function create(doc, o){
           var nx = r.lanes[(i + 1) % n], Q = lanePts(nx.e, nx.dir, nx.e.tramOff).slice().reverse(), keep = SPEC.tram.len, X = crossoverPart(P, Q, keep);
           // a lane too short for the crossover (the sim's tram then changes track within it): lay it back
           // along the inbound track, onto the parallel outbound one
-          if(len2(X) < XOVER/2){ var PL = backTrack(i, keep + XOVER + 4); X = crossoverPart(PL, offsetPts(PL, -2*E.tramOff), Math.min(keep, len2(PL)*0.3)); }
+          if(len2(X) < XOVER/2){ var PL = backTrack(i, keep + XOVER + 4); X = crossoverPart(PL, offsetPts(PL, -2*SIDE*E.tramOff), Math.min(keep, len2(PL)*0.3)); }
           addPiece("X:" + E.i + ":" + ln.dir, r.id, "xover", {edge: E.id, ei: E.i, dir: ln.dir, node: laneNode(E, ln.dir, true)}, X);
           return;
         }
@@ -753,7 +805,7 @@ function create(doc, o){
   }
   if(o.layoutOnly) return {layout: layout, tier: tier};
 
-  // how far right of its lane a route's vehicle is at s (in the lap)
+  // how far toward the kerb of its lane a route's vehicle is at s (in the lap)
   function bayLat(r, s){
     for(var i = 0; r.bays && i < r.bays.length; i++){ var d = Math.abs(s - r.bays[i]); if(d < RAMP) return BAY*smooth(1 - d/RAMP); }
     return 0;
@@ -884,7 +936,14 @@ function create(doc, o){
   slotIds.forEach(function(id){
     var N = nodeSlots[id];
     if(!N) return;
-    if(N.sig){ sigPlace(id, N); return; }
+    // ([3.22.3] the buses' and trams' windows first in their green; where that leaves a car colour no room, again with
+    // theirs last in it)
+    if(N.sig){
+      var of0 = overfull, ov0 = over[id];
+      sigPlace(id, N, false);
+      if(over[id] && !ov0){ overfull = of0; delete over[id]; sigPlace(id, N, true); }
+      return;
+    }
     if(!N.carSlots) return;
     var Hn = sigOn ? periodFor(N.sum + (N.trSlots ? Math.max.apply(null, N.twidths) : 0)) : H;
     var k = N.sum > Hn ? Hn/N.sum : 1, base = h01(seed, hash32(id), 7)*Hn, off = 0;
@@ -903,7 +962,7 @@ function create(doc, o){
     var s = ax ? sg.green[0] + LIGHT.amber + LIGHT.allRed : 0;
     return {start: mod(num(sg.off, 0) - lo + s, SIG_C), len: sg.green[ax]};
   }
-  function sigPlace(id, N){
+  function sigPlace(id, N, late){
     N.starts = []; N.flo = []; N.trRange = []; N.twinPre = [];
     var cols = N.widths.map(function(w, c){ return {c: c, w: w, ent: 0, g: null, P: []}; }), placed = [];
     N.car.forEach(function(p){
@@ -931,7 +990,7 @@ function create(doc, o){
       if(p.sn == null){ N.trRange[p.colour] = null; return; }
       var g = greenOf(sigAt[p.sn], p.axis), P = N.tr.filter(function(x){ return x.colour === p.colour; });
       N.trRange[p.colour] = [g.start + SIG_LEAD, g.start + g.len - 1];
-      var o = put({w: N.twidths[p.colour] || 0}, P, g.start + SIG_LEAD, g.start + g.len - 1);
+      var o = put({w: N.twidths[p.colour] || 0}, P, g.start + SIG_LEAD, g.start + g.len - 1, late);
       N.twinPre[p.colour] = [o.s, o.w];
     });
     cols.filter(function(o){ return o.g; }).sort(function(a, b){ return a.g.start - b.g.start || a.c - b.c; }).forEach(function(o){
@@ -1102,8 +1161,9 @@ function create(doc, o){
   // ring may space its platoons so (queueOk) only when the held-back platoons never stand in a box: every platoon
   // k slots apart (k*Hr s), as at() places them, each lap's sample QSTEP s apart.
   function smin(a, b){ var m = Math.min(a, b), d = Math.abs(a - b); return m - QSOFT*Math.log(1 + Math.exp(-d/QSOFT)); }
-  function queueOk(r, k, Pn){
-    var P = r.prof, Lr = r.pl.len, fr = SPEC.car.len/2, ext = LP(Pn), n = Math.floor(Math.round(P.T/r.Hr)/k), o = {}, x = [], y = [];
+  // ([3.22.3] nn: that many slots k apart, the rest of the lap left empty)
+  function queueOk(r, k, Pn, nn){
+    var P = r.prof, Lr = r.pl.len, fr = SPEC.car.len/2, ext = LP(Pn), n = nn || Math.floor(Math.round(P.T/r.Hr)/k), o = {}, x = [], y = [];
     if(n < 2) return true;
     if(n*(ext + GAP) > Lr) return false;                 // (the ring holds them all, queued)
     var B = r.passes.filter(function(p){ return standOff(p.node); }).map(function(p){ return [p.sIn + fr, p.sOut]; });
@@ -1167,10 +1227,26 @@ function create(doc, o){
     N.tr.forEach(function(tp){
       N.car.forEach(function(p){ if(clash(p, tp)) hits[tp.colour].push([p.route.id, mod(p.route.prof.base + p.tIn, HB), p.occ]); });
     });
+    // [3.22.3] a bus or tram that comes out of this box with no room to stand before a light's line just past it (its
+    // tail still in the box when its nose is at that line) never waits there on red: its window here is one that has it
+    // at that line in the light's green, no later than its window there (tied: the range of windows here, the first such
+    // pass of a colour). A loop run round the other way for left-hand traffic can meet a light on such a short link
+    var tied = [];
+    N.tr.forEach(function(tp){
+      if(tied[tp.colour] != null) return;
+      var r = tp.route, P = r.passes, i = P.indexOf(tp), q = i >= 0 && P.length > 1 ? P[(i + 1) % P.length] : null, M = q ? nodeSlots[q.node] : null;
+      if(!q || q.sn == null || !M || !M.twinPre || !M.twinPre[q.colour] || q.node === tp.node) return;
+      var qs = q.sIn < tp.sIn ? q.sIn + r.pl.len : q.sIn;
+      if(qs - SIG_BACK >= tp.sOut) return;
+      var spec = SPEC[r.kind], drive = (tp.sOut - tp.sIn)/tp.v + fastest(Math.max(0, qs - tp.sOut), tp.v, q.v, spec.vmax, spec.acc).T;
+      var qw = M.twinPre[q.colour][0], g0 = M.trRange && M.trRange[q.colour] ? M.trRange[q.colour][0] - SIG_LEAD : qw;
+      tied[tp.colour] = [mod(qw - drive - mod(qw - g0, HB), HB), mod(qw - drive, HB)];
+    });
     var order = N.twidths.map(function(w, c){ return c; }).sort(function(a, b){ return N.twidths[b] - N.twidths[a] || a - b; });
     order.forEach(function(c){
       // [3.22] at a light, only where it goes in on its own axis's green
       var w = N.twidths[c]*scale, best = null, bestC = Infinity, bestAdd = null, rg = N.trRange && N.trRange[c], pre = N.twinPre && N.twinPre[c];
+      if(!rg && tied[c]) rg = tied[c];
       if(pre){
         bestAdd = {};
         hits[c].forEach(function(h){ resHits(h, pre[0], w, bestAdd); });
@@ -1180,7 +1256,7 @@ function create(doc, o){
       }
       for(var j = 0, J = Math.ceil(HB*2); j < J; j++){
         var s0 = mod(rot + j/2, HB), cost = 0, add = {};
-        if(rg && mod(s0 - rg[0], HB) > rg[1] - rg[0]) continue;
+        if(rg && mod(s0 - rg[0], HB) > mod(rg[1] - rg[0], HB) + 1e-9) continue;
         if(scale >= 1 && placed.some(function(q){ return ov(s0, w, q[0], q[1]); })) continue;
         hits[c].forEach(function(h){ resHits(h, s0, w, add); });
         Object.keys(add).forEach(function(rid){
@@ -1223,11 +1299,17 @@ function create(doc, o){
   var cars = [], totalSlots = 0;
   rings.forEach(function(r){
     var Hr = r.Hr, Pn = r.P || 1, m = Math.round(r.prof.T/Hr), G = sigOn ? LP(Pn) + GAP : SPEC.car.len + GAP, k = 1, cand = [], last = -Infinity;
-    while(k < m && minGap(r.prof, k*Hr) < G && !(sigOn && queueOk(r, k, Pn))) k++;
+    // ([3.22.3] or every slot but one k apart, where a near-whole-cycle wait would have the last of them close up on the
+    // first a lap on: one slot left empty takes that up, where spacing them all 2k apart would halve them)
+    var nMax = Infinity;
+    while(k < m && minGap(r.prof, k*Hr) < G && !(sigOn && queueOk(r, k, Pn))){
+      if(sigOn && Math.floor(m/k) > 2 && queueOk(r, k, Pn, Math.floor(m/k) - 1)){ nMax = Math.floor(m/k) - 1; break; }
+      k++;
+    }
     r.k = k; r.m = m; r.cars = []; r.leads = [];
     if(r.pl.len < 2*G) return;
     for(var i = 0; i < m; i++){
-      if((r.blocked >> (i % r.R)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k)) continue;
+      if((r.blocked >> (i % r.R)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k) || cand.length >= nMax) continue;
       cand.push(i); last = i;
     }
     cand.forEach(function(i){
@@ -1268,13 +1350,13 @@ function create(doc, o){
     return closedMemo[key];
   }
   if(life){
-    // the district a car is in: the lots' beside the road (right of travel, then left; the road's own district is
-    // "street"), 6 m past the carriageway
+    // the district a car is in: the lots' beside the road (the kerb side of travel, then the other; the road's own
+    // district is "street"), 6 m past the carriageway
     var FA = LW && CL.facts ? CL.facts(LW) : null, SKIP = {street: 1, water: 1};
     var groupAt = typeof o.groupAt === "function" ? o.groupAt : function(x, z, yaw, half){
       if(!FA || !WQ || !WQ.districtAt) return "home";
       var d = null, off = half + 6;
-      for(var sg = 1; sg >= -1; sg -= 2){
+      for(var k = 0, sg = SIDE; k < 2; k++, sg = -sg){
         var q = WQ.districtAt(LW, x - Math.cos(yaw)*off*sg, z + Math.sin(yaw)*off*sg);
         if(q && q.k != null && !SKIP[q.name]){ d = q; break; }
       }
@@ -1700,7 +1782,7 @@ function create(doc, o){
     var lat = r.bays && r.bays.length && !noBay ? bayLat(r, mod(x, Lr)) : 0;
     if(lat > 0){
       var pl = r.pl, i = o.i, j = Math.min(i + 1, pl.n - 1), dx = pl.x[j] - pl.x[i], dz = pl.z[j] - pl.z[i], l = Math.hypot(dx, dz) || 1;
-      o.x += -dz/l*lat; o.z += dx/l*lat;
+      o.x += -dz/l*lat*SIDE; o.z += dx/l*lat*SIDE;
     }
     return o;
   }
@@ -1784,11 +1866,11 @@ function create(doc, o){
           var ty = x.cs.type, pi = x.veh.paint;
           v.type = ty;
           v.paint = ty === "taxi" ? TAXI : ty === "van" ? VAN_PAINT[pi % VAN_PAINT.length] : ty === "lorry" ? LORRY_PAINT[pi % LORRY_PAINT.length] : ty === "bike" ? BIKE_PAINT[pi % BIKE_PAINT.length] : PAINT[pi];
-          // a scooter or bike rides the kerb side of the lane (its right edge where a car's is), back in line in a box
+          // a scooter or bike rides the kerb side of the lane (its kerb edge where a car's is), back in line in a box
           var room = roomAt(r, x.s), pull = 0, kerb = TWO[ty] ? (SPEC.car.wid - x.vs.wid)/2*taperAt(r, x.s) : 0;
           if(room > 0) evs.forEach(function(e){ if(e.speed > 0.5) pull = Math.max(pull, room*smooth((EV_YIELD - Math.hypot(e.x - p.x, e.z - p.z))/15)); });
           var lat = Math.max(pull, kerb);
-          if(lat > 0){ v.x += -Math.cos(p.yaw)*lat; v.z += Math.sin(p.yaw)*lat; }
+          if(lat > 0){ v.x += -Math.cos(p.yaw)*lat*SIDE; v.z += Math.sin(p.yaw)*lat*SIDE; }
           if(pull > 0) v.pull = pull;
         } else {
           v.line = r.id;
@@ -1958,7 +2040,8 @@ function create(doc, o){
 /* ---------- the street layout and the ride Service (HQ 3.15, plan 5.3) ---------- */
 // Seats in vehicle-local metres (+x LEFT, +z forward, y above the floor, yaw 0 faces forward), shared by the
 // pure trip (Trip.seat) and the 3D models (games/hqcoach.js). Bus: 12 m low floor, 2+2, a wheelchair bay
-// opposite the middle door, a rear row of 5 (31). Tram: two 13 m sections centred +-7 m, 2+1 in facing
+// opposite the middle door, a rear row of 5 (31), laid out for doors on the right and mirrored by SIDE ([3.22.3]: the
+// doors on the kerb side, the left; the driver on the right). Tram: two 13 m sections centred +-7 m, 2+1 in facing
 // bays (48); the rear section is the front one turned round (seat i + 24 is seat i rotated 180 degrees), so
 // a tram changing ends at a terminus maps every seat onto a seat. STANDS: standing spots by the poles.
 var FLOOR = {bus: 0.36, tram: 0.36}, SEAT_Y = 0.45;
@@ -1972,6 +2055,7 @@ var SEATS = {bus: [], tram: []}, STANDS = {bus: [], tram: []};
   [[-0.05, 3.9], [-0.05, 3.1], [-0.05, 2.3], [-0.05, 1.5], [0.7, 0.9], [0.7, 0.1], [0.7, -0.7], [-0.05, -1.0], [-0.05, -1.8], [-0.05, -3.4], [-0.05, -4.2]].forEach(function(p){
     STANDS.bus.push({x: p[0], y: 0, z: p[1], yaw: 0, window: false, priority: false});
   });
+  SEATS.bus.concat(STANDS.bus).forEach(function(p){ p.x = p.x ? p.x*SIDE : 0; });
   var front = [], bays = [0.95, 4.35, 6.18, 8.01];
   bays.forEach(function(a, k){
     [[a + 0.3, 0], [a + 1.45, Math.PI]].forEach(function(row){
@@ -1996,7 +2080,8 @@ function layoutOf(W, tier, sim){
   if(layoutCache.length > 4) layoutCache.shift();
   return L;
 }
-// per active edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}: m right of the centre line
+// per active edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}: m from the centre line
+// toward the kerb (SIDE x the right of travel)
 function lanes(W, tier, sim){ return layoutOf(W, tier, sim).lanes; }
 // the track centre lines the trams drive: [{line, lines, kind: "lane"|"turn"|"xover", key, pts: [x, y, z, ...]}]
 function tramPaths(W, tier, sim){ return layoutOf(W, tier, sim).tramPaths; }
@@ -2205,7 +2290,7 @@ function service(sim, kind, opts){
                var t = tOf(ms2), q = r.prof.S(t - offOf(r, veh), {}), dz = DOORS[kind][1], d = 0, flip = flips(r, sDep, q.s) % 2 === 1;
                if(flip) dz = -dz;
                if(kind === "tram"){ d = dz >= 0 ? spec.sec/2 + 0.5 : -spec.sec/2 - 0.5; dz -= d; }
-               var p = I.partPose(r, q.s, d, spec.wb, {}), c = Math.cos(p.yaw), sn = Math.sin(p.yaw), x = -spec.wid/2 - 0.3;
+               var p = I.partPose(r, q.s, d, spec.wb, {}), c = Math.cos(p.yaw), sn = Math.sin(p.yaw), x = -SIDE*(spec.wid/2 + 0.3);
                return {x: p.x + x*c + dz*sn, z: p.z - x*sn + dz*c};
              }};
     return out;
@@ -2478,7 +2563,8 @@ function street(THREE, scene, W, o){
   Object.keys(SIGS).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
     var sg = SIGS[id];
     (sg.arms || []).forEach(function(a){
-      var h = a.heading, ax = Math.sin(h), az = Math.cos(h), rx = -Math.cos(h), rz = Math.sin(h), c = num(a.half, 3);
+      // ([3.22.3] the kerb of the way in: SIDE x its right, the left)
+      var h = a.heading, ax = Math.sin(h), az = Math.cos(h), rx = -Math.cos(h)*SIDE, rz = Math.sin(h)*SIDE, c = num(a.half, 3);
       // (on the pavement: a little further out where the kerb bends away)
       for(var out = 0.75, px, pz; out < 4; out += 0.75){
         px = a.stopX + rx*(c/2 + out) - ax*0.9; pz = a.stopZ + rz*(c/2 + out) - az*0.9;
@@ -2511,10 +2597,11 @@ function street(THREE, scene, W, o){
   }
   function bx(w, h, d){ return new THREE.BoxGeometry(w, h, d); }
   function cy(r, h){ return new THREE.CylinderGeometry(r, r, h, 8); }
-  // the pole, local: +z faces the traffic coming in, +x is the pavement side; the walk head faces across (-x)
+  // the pole, local: +z faces the traffic coming in, SIDE x +x is the pavement side ([3.22.3] -x: on the left); the walk
+  // head faces across, toward the road
   var poleG = merge([[cy(0.07, 3.3), 0x3a3f46, 0, 1.65, 0], [bx(0.36, 1.0, 0.26), 0x22262c, 0, 2.78, 0.05], [bx(0.5, 1.14, 0.03), 0x111316, 0, 2.78, -0.09],
                      [bx(0.24, 0.05, 0.12), 0x22262c, 0, 3.15, 0.2], [bx(0.24, 0.05, 0.12), 0x22262c, 0, 2.83, 0.2], [bx(0.24, 0.05, 0.12), 0x22262c, 0, 2.51, 0.2],
-                     [bx(0.24, 0.58, 0.3), 0x22262c, -0.13, 1.95, 0], [bx(0.36, 0.08, 0.36), 0x3a3f46, 0, 0.04, 0]]);
+                     [bx(0.24, 0.58, 0.3), 0x22262c, -0.13*SIDE, 1.95, 0], [bx(0.36, 0.08, 0.36), 0x3a3f46, 0, 0.04, 0]]);
   var lensG = new THREE.BoxGeometry(0.2, 0.2, 0.04);
   var lineG = new THREE.BoxGeometry(1, 0.025, 0.4);
   var mat = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.6, metalness: 0.2});
@@ -2531,13 +2618,13 @@ function street(THREE, scene, W, o){
   var poles = inst("poles", poleG, arms.length, mat), lenses = inst("lenses", lensG, arms.length*5, lensM), lines = inst("stoplines", lineG, arms.length, lineM);
   poles.castShadow = true;
   // a lens j of an arm (0 red, 1 amber, 2 green; 3 the red man, 4 the green man): its place in the pole's frame
-  var LENS = [[0, 3.15, 0.2], [0, 2.83, 0.2], [0, 2.51, 0.2], [-0.26, 2.08, 0], [-0.26, 1.8, 0]];
+  var LENS = [[0, 3.15, 0.2], [0, 2.83, 0.2], [0, 2.51, 0.2], [-0.26*SIDE, 2.08, 0], [-0.26*SIDE, 1.8, 0]];
   arms.forEach(function(A, k){
     put(poles, k, A.x, A.y, A.z, A.yaw);
     var s = Math.sin(A.yaw), c = Math.cos(A.yaw);
     LENS.forEach(function(L, j){
       var lx = L[0], lz = L[2];
-      put(lenses, k*5 + j, A.x + lx*c + lz*s, A.y + L[1], A.z - lx*s + lz*c, j < 3 ? A.yaw : A.yaw - Math.PI/2);
+      put(lenses, k*5 + j, A.x + lx*c + lz*s, A.y + L[1], A.z - lx*s + lz*c, j < 3 ? A.yaw : A.yaw - SIDE*Math.PI/2);
       col.setHex(LENS_OFF[j]); lenses.setColorAt(k*5 + j, col);
     });
     put(lines, k, A.sx, A.sy + 0.03, A.sz, A.a.heading, A.c, 1, 1);
@@ -2641,7 +2728,7 @@ function street(THREE, scene, W, o){
   return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose, arms: arms};
 }
 
-HQV.traffic = {create: create, view: view, street: street, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
+HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
                lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
                _: {plOf: plOf, plAt: plAt, offsetPts: offsetPts, trimPts: trimPts, Profile: Profile, fastest: fastest, ease: ease}};

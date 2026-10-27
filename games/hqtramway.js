@@ -113,6 +113,8 @@ function layout(W, tier, opts){
   opts = opts || {};
   var T = HQV.traffic;
   if(!T || !W) return empty();
+  // [3.22.3] the side traffic keeps to (traffic.js SIDE: -1 the left): the kerb of the way of travel is SD x its right
+  var SD = T.SIDE === 1 ? 1 : -1;
   var sim = opts.sim || null, lanes = T.lanes(W, tier, sim), paths = T.tramPaths(W, tier, sim), stops = T.tramStops(W, tier, sim);
   var laneByI = {};
   lanes.forEach(function(E){ laneByI[E.i] = E; });
@@ -193,14 +195,14 @@ function layout(W, tier, opts){
     }
     var sameDir = islands.filter(function(I){ return I.stop === st.id && I.ei === st.ei && I.dir === st.dir && Math.hypot(I.x - st.x, I.z - st.z) < ISLAND_L; })[0];
     if(sameDir){ if(sameDir.lines.indexOf(st.line) < 0) sameDir.lines.push(st.line); return; }
-    var off = inner + w/2, y = gy(st.x, st.y, st.z), side = 1;
-    // on the right of the stopped tram, unless that is on another track (a terminus stop after the crossover,
-    // where the tram stands on the departure track): then on its left, the kerb side of that track
+    var off = inner + w/2, y = gy(st.x, st.y, st.z), side = SD;
+    // on the kerb side of the stopped tram ([3.22.3] its left), unless that is on another track (a terminus stop after
+    // the crossover, where the tram stands on the departure track): then on its other side, the kerb side of that track
     function clashes(sd){
       var x = st.x + rx*off*sd, z = st.z + rz*off*sd;
       return tracks.some(function(t){ return t.kind === "lane" && nearPoly(x, z, t.P) < T.SPEC.tram.wid/2 + w/2; });
     }
-    if(clashes(1) && !clashes(-1)) side = -1;
+    if(clashes(SD) && !clashes(-SD)) side = -SD;
     var I = {id: "island:" + st.id + ":" + (st.ei != null ? st.ei : "x") + ":" + st.dir, stop: st.id, line: st.line, lines: [st.line], ei: st.ei, dir: st.dir,
              x: st.x + rx*off*side, y: y, z: st.z + rz*off*side, yaw: yaw, side: side, len: ISLAND_L, w: w, h: ISLAND_H, inner: inner, kerb: kerb,
              track: {x: st.x, z: st.z}, onTrack: !!tr};
@@ -289,8 +291,8 @@ function layout(W, tier, opts){
   }
   function centrePole(ch, p, r){
     var E = ch.E, to = E && E.tramOff != null ? E.tramOff : 1.475;
-    // the centre line is tramOff to the left of either track (left of travel = (tz, -tx))
-    return addPole(ch.keys[0], "centre", p.x + p.tz*to, p.y, p.z - p.tx*to, Math.atan2(p.tx, p.tz), to + STAGGER + 0.35, true, r);
+    // the centre line is tramOff away from the kerb of either track (left of travel = (tz, -tx); [3.22.3] SD x that)
+    return addPole(ch.keys[0], "centre", p.x + SD*p.tz*to, p.y, p.z - SD*p.tx*to, Math.atan2(p.tx, p.tz), to + STAGGER + 0.35, true, r);
   }
   // pass 1: every chain but the dir-1 track of a two-way arterial
   chains.forEach(function(ch){
@@ -302,14 +304,18 @@ function layout(W, tier, opts){
       var p = at(ch.P, ch.C, r.s, {}), rx = -p.tz, rz = p.tx, yaw = Math.atan2(p.tx, p.tz);
       if(ch.kind === "turn"){
         if(k === 0 || k === regs.length - 1) return;      // the joining stretches' end poles hold those
-        var lt = 4.2*turnSide;
-        addPole(ch.keys[0], "curve", p.x + rx*lt, p.y, p.z + rz*lt, yaw + (turnSide > 0 ? Math.PI/2 : -Math.PI/2), Math.abs(lt) + 0.3, false, r);
+        // ([3.22.3] on the outside of the curve, further out or else inside it where another track runs there)
+        var lt = [4.2, 6.5, -4.2].map(function(m){ return m*turnSide; }).filter(function(m){
+          return !tracks.some(function(t){ return t.kind === "lane" && nearPoly(p.x + rx*m, p.z + rz*m, t.P) < T.SPEC.tram.wid/2 + 0.3; });
+        })[0];
+        if(lt == null) return;
+        addPole(ch.keys[0], "curve", p.x + rx*lt, p.y, p.z + rz*lt, yaw + (lt > 0 ? Math.PI/2 : -Math.PI/2), Math.abs(lt) + 0.3, false, r);
       } else if(ch.cls === "two0") centrePole(ch, p, r);
       else {
         var E = ch.E, half = E ? E.half : 4, to = E && E.tramOff != null ? E.tramOff : 1.475, edge = half;
         if(E && E.bus[ch.dir] && E.busOff != null) edge = Math.max(half, E.busOff + 1.3);
         var lat = edge + 0.45 - to;
-        addPole(ch.keys[0], "kerb", p.x + rx*lat, p.y, p.z + rz*lat, yaw + Math.PI/2, lat + STAGGER + 0.3, false, r);
+        addPole(ch.keys[0], "kerb", p.x + SD*rx*lat, p.y, p.z + SD*rz*lat, yaw + SD*Math.PI/2, lat + STAGGER + 0.3, false, r);   // ([3.22.3] the kerb: SD)
       }
     });
   });
@@ -327,15 +333,18 @@ function layout(W, tier, opts){
     if(idx.indexOf(0) < 0) idx.push(0);
     if(idx.indexOf(S.length - 1) < 0) idx.push(S.length - 1);
     idx.sort(function(a, b){ return a - b; });
-    var regs = [reg(S[idx[0]], STAGGER)];
-    for(var k = 1; k < idx.length; k++){
-      var i0 = Math.round(regs[regs.length - 1].s/STEP), i1 = idx[k], guard = 0, r1 = reg(S[i1], -regs[regs.length - 1].st);
-      while(i1 - i0 > 1 && (devOf(S, i0, i1, regs[regs.length - 1], r1) > CHORD || S[i1].s - S[i0].s > POLE_MAX) && guard++ < 12){
-        var mid = Math.round((i0 + i1)/2), rm = reg(S[mid], -regs[regs.length - 1].st), pm = at(ch.P, ch.C, rm.s, {});
-        regs.push(rm); centrePole(ch, pm, rm); i0 = mid; r1 = reg(S[i1], -rm.st);
+    var regs = [reg(S[idx[0]], STAGGER)], guard = 0;
+    // the wire on from the last registration point to sample i1, halved (a pole of its own at each middle, own) until
+    // every chord keeps within CHORD and 30 m ([3.22.3] both halves: the first was taken on trust before)
+    function hang(i1, own){
+      var last = regs[regs.length - 1], i0 = Math.round(last.s/STEP), r1 = reg(S[i1], -last.st);
+      if(i1 - i0 > 1 && (devOf(S, i0, i1, last, r1) > CHORD || S[i1].s - S[i0].s > POLE_MAX) && guard++ < 24){
+        hang(Math.round((i0 + i1)/2), true); hang(i1, own); return;
       }
       regs.push(r1);
+      if(own) centrePole(ch, at(ch.P, ch.C, r1.s, {}), r1);
     }
+    for(var k = 1; k < idx.length; k++){ guard = 0; hang(idx[k], false); }
     spans.push({key: ch.keys[0], keys: ch.keys, P: ch.P, S: S, regs: regs, poles: true, shared: true});
   });
   // the crossovers' wire: registration points only (held by the parallel tracks' poles)

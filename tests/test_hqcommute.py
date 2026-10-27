@@ -1,6 +1,6 @@
 """Commuters (games/hqcommute.js, HQ 3.15 transport revamp plan 3.5 / 5.6).
 
-node loads hqcommute.js against a stub `window` (TZ=UTC, so the city clock is UTC) and prints the numbers:
+node loads hqcommute.js against a stub `window` (TZ=UTC; [3.23] the city clock is Koramangala's, IST, whatever TZ is) and prints the numbers:
 the day curve (peaks, midday, night, smooth), loads and occupancy (deterministic, sized by the load, standing
 only over capacity), crowds at stops, the npcsim riders hook, colours and the passenger geometry (and, with
 the vendored three.js, the figures' BufferGeometry). Skipped when node is not installed. Stdlib only."""
@@ -18,7 +18,8 @@ import fs from "fs";
 const root = %(root)s;
 globalThis.window = {HQV: {}};
 new Function(fs.readFileSync(root + "/games/hqcommute.js", "utf8"))();
-const C = window.HQV.hqCommute, out = {}, H = 3600000, D0 = Date.UTC(2026, 9, 21);
+// ([3.23] the City's clock is Koramangala's, IST: D0 is midnight there)
+const C = window.HQV.hqCommute, out = {}, H = 3600000, D0 = Date.UTC(2026, 9, 21) - 5.5*H;
 out.curve = {};
 for(let h = 0; h <= 24; h += 0.25) out.curve[h.toFixed(2)] = C.curve(h);
 out.wrap = [C.curve(-1), C.curve(23), C.curve(25), C.curve(1), C.curve(NaN)];
@@ -36,7 +37,8 @@ out.load.range = [lo, hi];
 out.occ = {
   peak: C.occupied("tram", "t1:4", "k", 48, 20, D0 + 8.5*H, "w"), peak2: C.occupied("tram", "t1:4", "k", 48, 20, D0 + 8.5*H, "w"),
   noon: C.occupied("tram", "t1:4", "k", 48, 20, D0 + 12.5*H, "w"), night: C.occupied("tram", "t1:4", "k", 48, 20, D0 + 3*H, "w"),
-  other: C.occupied("tram", "t1:4", "k2", 48, 20, D0 + 8.5*H, "w"), zero: C.occupied("tram", "t1:4", "k", 0, 0, D0 + 8.5*H, "w"),
+  // ([3.23] other at noon: at the peak both can be full)
+  other: C.occupied("tram", "t1:4", "k2", 48, 20, D0 + 12.5*H, "w"), zero: C.occupied("tram", "t1:4", "k", 0, 0, D0 + 8.5*H, "w"),
   loadPeak: C.load("tram", null, "t1:4", D0 + 8.5*H, "w"), loadNoon: C.load("tram", null, "t1:4", D0 + 12.5*H, "w")
 };
 out.crowd = {peak: C.crowd("s1", "tram", D0 + 8.5*H, "w"), night: C.crowd("s1", "tram", D0 + 3*H, "w"), same: C.crowd("s1", "bus", D0 + 9*H, "w") === C.crowd("s1", "bus", D0 + 9*H, "w")};
@@ -108,7 +110,7 @@ class HqCommuteTest(unittest.TestCase):
     def test_occupied_sizes_and_determinism(self):
         o = self.r["occ"]
         self.assertEqual(o["peak"], o["peak2"])
-        self.assertNotEqual(o["peak"], o["other"])
+        self.assertNotEqual(o["noon"], o["other"])
         for k in ("peak", "noon", "night", "other"):
             s, t = o[k]["seats"], o[k]["standing"]
             self.assertEqual(s, sorted(set(s)))

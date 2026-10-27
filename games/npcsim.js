@@ -173,8 +173,27 @@ function population(tier, grow){
   var a = POP[t - 1], b = POP[Math.min(t, 4)];
   return Math.round(a + (b - a)*g);
 }
-// The local wall clock (ms) of a Date: what at() and where() take.
-function localMs(d){ d = d || new Date(); return d.getTime() - d.getTimezoneOffset()*MIN; }
+// The City's wall clock (ms) of a Date: what at() and where() take. [3.23] Koramangala's, not the viewer's: IST
+// (UTC+5:30, no daylight saving), so every player's City keeps Bengaluru's hours.
+var CITY_TZ_MIN = 330, CITY_LAT = 12.9352, CITY_LON = 77.6245;
+function localMs(d){ d = d || new Date(); return (d instanceof Date ? d.getTime() : +d) + CITY_TZ_MIN*MIN; }
+// [3.23] Bengaluru's sunrise and sunset (City hours, fractional) on the day of a Date: the sun's declination and the
+// equation of time for that day of the year, the sun's centre 0.833 degrees below the horizon (refraction, its disc)
+function sunHours(d){
+  var l = localMs(d), y0 = Date.UTC(new Date(l).getUTCFullYear(), 0, 1), n = Math.floor((l - y0)/(24*60*MIN)) + 1;
+  var rad = Math.PI/180, decl = 23.44*rad*Math.sin(2*Math.PI*(284 + n)/365), B = 2*Math.PI*(n - 81)/364;
+  var eot = 9.87*Math.sin(2*B) - 7.53*Math.cos(B) - 1.5*Math.sin(B);                   // minutes
+  var cw = (Math.sin(-0.833*rad) - Math.sin(CITY_LAT*rad)*Math.sin(decl))/(Math.cos(CITY_LAT*rad)*Math.cos(decl));
+  var half = Math.acos(clamp(cw, -1, 1))/rad/15, noon = 12 + (CITY_TZ_MIN/60*15 - CITY_LON)/15 - eot/60;
+  return {rise: noon - half, set: noon + half, noon: noon};
+}
+// [3.23] dark from a third of an hour after sunset to a third of an hour before sunrise (civil twilight, roughly)
+function isNight(d){
+  var l = localMs(d), h = (((l % (24*60*MIN)) + 24*60*MIN) % (24*60*MIN))/(60*MIN), s = sunHours(d);
+  return h < s.rise - 0.33 || h >= s.set + 0.33;
+}
+// [3.23] {h, m} on the City's clock
+function cityClock(d){ var l = new Date(localMs(d)); return {h: l.getUTCHours(), m: l.getUTCMinutes()}; }
 // "9:00", "21:30" from fractional hours
 function hhmm(h){ h = ((h % 24) + 24) % 24; var m = Math.round(h*60); return Math.floor(m/60) % 24 + ":" + (m % 60 < 10 ? "0" : "") + (m % 60); }
 
@@ -1283,7 +1302,7 @@ var FLAVOUR = {
   barista: ["Oat milk's run out again."], "shop assistant": ["We've a sale on this week."]
 };
 
-HQV.npcSim = {create: create, population: population, localMs: localMs, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
+HQV.npcSim = {create: create, population: population, localMs: localMs, sunHours: sunHours, isNight: isNight, cityClock: cityClock, CITY_TZ_MIN: CITY_TZ_MIN, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
               ridersOn: ridersOn, use: use, metroStations: metroStations, TRANSIT: TRANSIT, EVERY: EVERY,
               JOBS: JOBS, POP: POP, CHARS: CHARS, DAY: DAY, HOUR: HOUR, passHour: passHour, PASS_PER100: PASS_PER100, PASS_EPOCH: PASS_EPOCH};
 })();

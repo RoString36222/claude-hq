@@ -63,8 +63,8 @@ function curve(h){
   }
   return KEYS[0][1];
 }
-// local wall-clock ms of a UTC ms (the City's day), and its hour
-function localMs(ms){ ms = +ms || 0; var off = 0; try { off = new Date(ms).getTimezoneOffset(); } catch(e){ off = 0; } return ms - (off || 0)*MIN; }
+// the City's wall-clock ms of a UTC ms (the City's day: [3.23] Koramangala's, IST), and its hour
+function localMs(ms){ return (+ms || 0) + 330*MIN; }
 function localHour(ms){ var l = localMs(ms); return (((l % DAY) + DAY) % DAY)/HOUR; }
 
 function lineWeight(lineId, seed){ return 0.85 + 0.25*u01(String(seed) + ":lw:" + lineId); }

@@ -85,8 +85,12 @@ out.parade = {edges: Object.keys(parade).length, before: onParade(SUN + 13*HR, S
 const s2 = T.create(WD.docOf(pack()), {tier: 5, seed: W.id, W: pack(), local: 0});
 out.det = [MON + 8.25*HR, MON + 23*HR, SUN + 15.5*HR].every(function(t){ return JSON.stringify(cars(s2, t)) === JSON.stringify(cars(sim(), t)); });
 // a local offset is a clock shift: 08:15 local at UTC+2 is 06:15 UTC
-const tz = T.create(WD.docOf(W), {tier: 5, seed: W.id, W: W, local: 2*HR});
-out.tz = JSON.stringify(tz.cars(MON + 6.25*HR).map(function(c){ return [c.show, c.type]; })) === JSON.stringify(sim().cars(MON + 8.25*HR).map(function(c){ return [c.show, c.type]; }));
+// (laps run on the shared clock: a ring whose lap does not divide the 2 h starts its laps at other local times, so its
+// cars' hours differ by up to a lap; the rings whose laps divide it see exactly the same)
+const tz = T.create(WD.docOf(W), {tier: 5, seed: W.id, W: W, local: 2*HR}), s3 = sim();
+function even(c){ var T0 = s3._.rings[c.ring].prof.T; return Math.abs(7200/T0 - Math.round(7200/T0)) < 1e-6; }
+const tzA = tz.cars(MON + 6.25*HR), tzB = s3.cars(MON + 8.25*HR);
+out.tz = tzA.filter(even).length > tzA.length/2 && JSON.stringify(tzA.filter(even).map(function(c){ return [c.show, c.type]; })) === JSON.stringify(tzB.filter(even).map(function(c){ return [c.show, c.type]; }));
 
 // ---- the view: the types drawn, a few draw calls ----
 const V = T.view({THREE: THREE}), list = cars(ind, MON + 8.25*HR).concat(cars(s, MON + 23*HR).filter(function(v){ return v.type === "taxi"; }),

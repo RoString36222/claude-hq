@@ -408,7 +408,7 @@ class CabsNode(unittest.TestCase):
         self.assertFalse(R["farBoard"], "E only works beside the cab")
         self.assertTrue(R["board"])
         c = R["carry"]
-        self.assertEqual(c["anim"], "sit"); self.assertEqual(c["seat"], "rear-right")
+        self.assertEqual(c["anim"], "sit"); self.assertEqual(c["seat"], "rear-left")   # [3.22.3] the kerb side, with traffic on the left
         self.assertTrue(R["cam"])
         self.assertTrue(R["canSkip"], "3 km: Skip ahead is offered")
         self.assertTrue(R["skip"]); self.assertTrue(R["skipping"])

@@ -37,6 +37,7 @@ pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/boss", boss_state),
     ("/api/arena/boss/badges", boss_badges),
     ("/api/arena/skate", skate_board),
+    ("/api/arena/weather", weather),
     ("/api/notch/status", crate::notch::get_status),
 ];
 
@@ -480,6 +481,13 @@ fn post_loot_open(app: &App, body: &Value) -> Resp {
 // ---------------------------------------------------------------------------
 // prestige
 // ---------------------------------------------------------------------------
+
+/// HQ 3.23 GET /api/arena/weather: the Arena's latest Weather Union reading (Koramangala) for the City's sky. Sends
+/// nothing but the device token; {ok: false} when not paired or the Arena has none.
+fn weather(app: &App, _arg: &dyn Fn(&str) -> String) -> Resp {
+    let Some((t, b)) = app.authed() else { return (200, json!({"ok": false})) };
+    app.arena_request("GET", &format!("{}/v1/weather", b), Some(&t), None)
+}
 
 fn get_prestige(app: &App, arg: &dyn Fn(&str) -> String) -> Resp {
     let u = Some(arg("u")).filter(|s| !s.is_empty()).unwrap_or_else(|| "me".into());
@@ -1198,6 +1206,7 @@ mod tests {
         assert_eq!((s[1].0.as_str(), s[1].1.as_str()), ("POST", "https://arena.example/v1/skate"));
         assert_eq!(s[1].3, Some(json!({"total": 800, "tricks": 2})));
         assert!(GET.iter().any(|(p, _)| *p == "/api/arena/skate"));
+        assert!(GET.iter().any(|(p, _)| *p == "/api/arena/weather"), "HQ 3.23 live weather");
         assert!(POST.iter().any(|(p, _)| *p == "/api/arena/skate/combo"));
     }
 }

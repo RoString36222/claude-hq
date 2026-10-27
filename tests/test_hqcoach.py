@@ -28,14 +28,16 @@ const H = window.HQV, T = H.traffic, K = H.hqCoach, city = require(root + "/test
 // ---- the seat table ----
 function rectsOverlap(a, b){ return Math.abs(a.x - b.x) < 0.44 - 1e-6 && Math.abs(a.z - b.z) < 0.44 - 1e-6; }
 (function(){
-  var B = T.SEATS.bus, R = T.SEATS.tram, D = T.DOORS, e = {bus: [], tram: []};
+  // [3.22.3] the bus's doors are on the kerb side: model-local +x is the left, the kerb is SIDE x the right, so the
+  // doors are where x*DS > 0 (DS = -SIDE: the left with traffic on the left), the bay and the cab on the other side
+  var B = T.SEATS.bus, R = T.SEATS.tram, D = T.DOORS, e = {bus: [], tram: []}, DS = -T.SIDE;
   B.forEach(function(s, i){
     if(Math.abs(s.x) + 0.22 > 1.2) e.bus.push(["wall", i]);
     if(Math.abs(s.z) + 0.25 > 5.95) e.bus.push(["end", i]);
-    if(s.x < 0) D.bus.forEach(function(z){ if(Math.abs(s.z - z) < 0.6 + 0.22) e.bus.push(["door", i]); });
-    if(s.x > 0 && s.z > -0.9 && s.z < 1.4) e.bus.push(["bay", i]);
+    if(s.x*DS > 0) D.bus.forEach(function(z){ if(Math.abs(s.z - z) < 0.6 + 0.22) e.bus.push(["door", i]); });
+    if(s.x*DS < 0 && s.z > -0.9 && s.z < 1.4) e.bus.push(["bay", i]);
     B.forEach(function(t, j){ if(j > i && rectsOverlap(s, t)) e.bus.push(["overlap", i, j]); });
-    if(s.z > 4.6 && s.x > 0) e.bus.push(["cab", i]);
+    if(s.z > 4.6 && s.x*DS < 0) e.bus.push(["cab", i]);
   });
   R.forEach(function(s, i){
     var az = Math.abs(s.z);

@@ -377,7 +377,7 @@ class AppModels(unittest.TestCase):
         out = run(FAKE + r"""
 load("games/hqphoneapps.js");
 const A = window.HQV.hqPhoneApps, o = {};
-const ms = Date.UTC(2026, 9, 24, 14, 0);
+const ms = Date.UTC(2026, 9, 24, 14, 0) - 330*60000;   // [3.23] 14:00 on the City's clock (Koramangala, IST)
 const look = function(mode, id){ var s = null; [TRAM, METRO].forEach(function(v){ if(v.mode === mode) v.stops().forEach(function(t){ if(t.id === id) s = t; }); }); return s; };
 const opts = RIDE.plan({x: 0, z: 0}, {x: 1, z: 1}, ms);
 const pm = A.planModel(opts, ms, true, look);

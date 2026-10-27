@@ -36,6 +36,14 @@ services:
       # Prometheus metrics on their own port, for the monitoring profile below.
       # Caddy only proxies app:8080, so /metrics is never public.
       ARENA_METRICS_BIND: 0.0.0.0:9091
+      # HQ 3.23 live weather: Zomato's Weather Union key, from backend/.env on the host (never committed). Unset,
+      # the City keeps its made-up forecast. ARENA_WEATHER_LAT / _LON / _PLACE default to Koramangala, Bengaluru.
+      WEATHERUNION_API_KEY: ${WEATHERUNION_API_KEY:-}
+      ARENA_WEATHER_LAT: ${ARENA_WEATHER_LAT:-}
+      ARENA_WEATHER_LON: ${ARENA_WEATHER_LON:-}
+      ARENA_WEATHER_PLACE: ${ARENA_WEATHER_PLACE:-}
+      ARENA_WEATHER_FILL_LAT: ${ARENA_WEATHER_FILL_LAT:-}
+      ARENA_WEATHER_FILL_LON: ${ARENA_WEATHER_FILL_LON:-}
     volumes:
       - arena-data:/data
       - ./sounds:/srv/sounds:ro

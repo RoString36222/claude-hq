@@ -12,12 +12,13 @@
  * carpark, back to its place by your HQ's garage).
  *
  * Pure (node-tested, tests/test_hqcall.py): metres, yaw 0 faces +z, increasing yaw turns LEFT, the right of travel
- * is (-cos yaw, sin yaw) = (-dz, dx) for a direction (dx, dz) (as games/traffic.js; everyone drives on the right).
+ * is (-cos yaw, sin yaw) = (-dz, dx) for a direction (dx, dz) (as games/traffic.js; [3.22.3] everyone drives on the
+ * left: the kerb is SIDE x the right, traffic.js SIDE = -1).
  *   kerb(road, dir)              road = {x, z, ux, uz, half} (a point on a road's centre line, its direction, half its
  *                                carriageway); dir = [dx, dz] the way the vehicle arrives (null: along u)
- *                                -> {x, z, yaw}: the kerb on the right of travel
+ *                                -> {x, z, yaw}: the kerb of the way of travel ([3.22.3] its left)
  *   arrival(pts)                 -> [dx, dz]: the direction of a route's last 3+ m
- *   pathFor(pts, spot, lane)     -> Float64Array [x0, z0, ...]: the route kept LANE m right of the centre line (eased in
+ *   pathFor(pts, spot, lane)     -> Float64Array [x0, z0, ...]: the route kept LANE m kerbward of the centre line (eased in
  *                                over the first metres), ending at the kerb spot
  *   poly(pl)                     a carpark polyline ([{x, y?, z}], [[x, z]], [[x, y, z]], flat [x, z, ...], {pts, ys})
  *                                -> {xz, y} (y null, or NaN where it is the ground)
@@ -59,7 +60,7 @@ var HQV = (typeof window !== "undefined" ? window : globalThis).HQV = (typeof wi
 var CRUISE = 12;        // m/s (43 km/h): a city street
 var TURN_V = 4.5;       // m/s through a right-angle turn
 var ACC = 2.6, DEC = 4.2;   // m/s2
-var LANE = 1.8;         // m right of the centre line
+var LANE = 1.8;         // m kerbward of the centre line ([3.22.3] to its left)
 var KERB_IN = 1.3;      // m in from the carriageway's edge (to the vehicle's middle)
 var STOP_GAP = 6;       // m kept to an obstacle ahead
 var LOOK = 30;          // m of road looked ahead for turns
@@ -74,9 +75,12 @@ function hyp(a, b){ return Math.sqrt(a*a + b*b); }
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a < -Math.PI) a += 2*Math.PI; return a; }
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 
+// [3.22.3] the side traffic keeps to (games/traffic.js SIDE, the one switch): -1 the left, 1 the right; the kerb of the
+// way of travel is SIDE x its right. Left-hand traffic when traffic.js is not loaded
+function driveSide(){ var T = HQV.traffic; return T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1; }
 function kerb(road, dir){
   var dx = dir ? dir[0] : road.ux, dz = dir ? dir[1] : road.uz, n = hyp(dx, dz) || 1; dx /= n; dz /= n;
-  var off = clamp((+road.half || 3.5) - KERB_IN, 1.6, 7);
+  var off = clamp((+road.half || 3.5) - KERB_IN, 1.6, 7)*driveSide();
   return {x: road.x - dz*off, z: road.z + dx*off, yaw: Math.atan2(dx, dz)};
 }
 function arrival(pts){
@@ -88,7 +92,7 @@ function arrival(pts){
   var fx = lx - pts[0], fz = lz - pts[1], fd = hyp(fx, fz);
   return fd > 1e-6 ? [fx/fd, fz/fd] : [0, 1];
 }
-// the route held LANE m to the right of the centre line (each corner offset along its bisector), the offset easing
+// the route held LANE m kerbward of the centre line (SIDE x its right; each corner offset along its bisector), the offset easing
 // in over the first EASE_IN m from where the vehicle stands; its last metres replaced by the run to the kerb spot
 function pathFor(pts, spot, lane){
   lane = lane == null ? LANE : lane;
@@ -109,7 +113,7 @@ function pathFor(pts, spot, lane){
     // the bisector's offset grows at a corner so both legs stay LANE m off (capped for hairpins)
     var k = 1;
     if(i > 0 && i < n - 1){ var d3 = hyp(q[2*i] - q[2*i - 2], q[2*i + 1] - q[2*i - 1]) || 1, cs = ((q[2*i] - q[2*i - 2])/d3)*ax + ((q[2*i + 1] - q[2*i - 1])/d3)*az; k = 1/Math.max(0.5, cs); }
-    var o = lane*k*clamp(along/EASE_IN, 0, 1);
+    var o = lane*k*clamp(along/EASE_IN, 0, 1)*driveSide();
     out.push(q[2*i] - az*o, q[2*i + 1] + ax*o);
   }
   // the end: drop the points in the last 7 m, then a lead-in point 6 m before the spot along its heading, and the spot

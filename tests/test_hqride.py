@@ -37,7 +37,7 @@ function makeSvc(mode, defs, lineDefs){
     var i = L.stops.indexOf(from), j = L.stops.indexOf(to); if(i < 0 || j <= i) return null;
     var dwell = 20*S, k = Math.max(0, Math.ceil((ms - T0 - L.offset*S - i*L.hop*S - dwell)/(L.headway*S)));
     var dep0 = T0 + L.offset*S + k*L.headway*S, arrive = dep0 + i*L.hop*S, depart = arrive + dwell, reach = dep0 + j*L.hop*S;
-    var A = byId[from], B = byId[to], yaw = Math.atan2(B.x - A.x, B.z - A.z), fx = Math.sin(yaw), fz = Math.cos(yaw), rx = -Math.cos(yaw), rz = Math.sin(yaw);
+    var A = byId[from], B = byId[to], yaw = Math.atan2(B.x - A.x, B.z - A.z), fx = Math.sin(yaw), fz = Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);   // (rx, rz): the kerb side, [3.22.3] the left
     var st = []; for(var q = i; q <= j; q++) st.push({id: L.stops[q], name: byId[L.stops[q]].name, at: dep0 + q*L.hop*S});
     function pose(ms){
       var u = ms <= depart ? 0 : ms >= reach ? 1 : (ms - depart)/(reach - depart);
@@ -169,9 +169,9 @@ var byId = {}; N1.forEach(function(r){ byId[r.id] = r.name; });
 out.names = {n1: N1, same: JSON.stringify(N1) === JSON.stringify(N2), reverseSame: N3.every(function(r){ return byId[r.id] === r.name; }), again: again, bare: bare};
 
 // ---- board text ----
-var D = new Date(T0 + 45*60*S);
+var D = new Date(T0 + 45*60*S + 330*60000);   // [3.23] the City's clock: Koramangala (IST)
 out.due = {boarding: R.dueText(T0 + 10*S, T0, true), due: R.dueText(T0 + 30*S, T0, false), min: R.dueText(T0 + 5.5*60*S, T0, false),
-           clock: R.dueText(T0 + 45*60*S, T0, false), hhmm: (D.getHours() < 10 ? "0" : "") + D.getHours() + ":" + (D.getMinutes() < 10 ? "0" : "") + D.getMinutes(),
+           clock: R.dueText(T0 + 45*60*S, T0, false), hhmm: (D.getUTCHours() < 10 ? "0" : "") + D.getUTCHours() + ":" + (D.getUTCMinutes() < 10 ? "0" : "") + D.getUTCMinutes(),
            rows: R.boardRows([{short: "T1", to: "Harbour", at: T0 + 120*S, boarding: false, delay: 0, plat: "1"}, {short: "M2", to: "Central", at: T0, boarding: true},
                               {short: "T2", to: "Park", at: T0 + 300*S, delay: 180}, {short: "B", to: "X", at: T0}, {short: "C", to: "Y", at: T0}], T0),
            noCanvas: R.boardTexture({}, [], {})};
@@ -362,7 +362,7 @@ class HqRideTest(unittest.TestCase):
 
     def test_seat_choice(self):
         s = self.r["seats"]
-        self.assertEqual((s["free"]["phase"], s["free"]["seat"]), ("seated", 0))     # window seat, pavement (right) side
+        self.assertEqual((s["free"]["phase"], s["free"]["seat"]), ("seated", 0))     # window seat, pavement (left) side
         self.assertEqual(s["win0"]["seat"], 4)                                       # the next pavement window seat
         self.assertEqual(s["wins"]["seat"], 1)                                       # no window: any free seat
         self.assertEqual(s["free"]["anim"], "sit")

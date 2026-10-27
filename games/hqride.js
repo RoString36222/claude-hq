@@ -267,10 +267,10 @@ function seatCam(seatPose, vehiclePose, look, mode, calm, extra){
 
 /* ---------- the ride session ---------- */
 var CAM_MODES = ["seat", "window", "chase"];
-function seatSide(trip, i, ms){   // the seat's lateral offset (m, + = the right of travel: the pavement side)
-  var p = call(trip, "pose", ms), s = call(trip, "seat", i, ms);
+function seatSide(trip, i, ms){   // the seat's lateral offset (m, + = the pavement side: [3.22.3] SIDE x the right of travel)
+  var p = call(trip, "pose", ms), s = call(trip, "seat", i, ms), T = HQV.traffic, sd = T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1;
   if(!p || !s) return 0;
-  return (num(s.x, 0) - num(p.x, 0))*(-Math.cos(num(p.yaw, 0))) + (num(s.z, 0) - num(p.z, 0))*Math.sin(num(p.yaw, 0));
+  return sd*((num(s.x, 0) - num(p.x, 0))*(-Math.cos(num(p.yaw, 0))) + (num(s.z, 0) - num(p.z, 0))*Math.sin(num(p.yaw, 0)));
 }
 // first free window seat on the pavement side, else any free seat, else a standing spot (hands on the rail)
 function chooseSeat(trip, occ, ms){
@@ -501,10 +501,8 @@ function lineShort(svc, id){
   var l = (call(svc, "lines") || []).filter(function(x){ return x && x.id === id; })[0];
   return l ? String(l.short || l.id) : String(id);
 }
-function hourOf(ms){
-  var off = 0; try { off = new Date(ms).getTimezoneOffset(); } catch(e){}
-  var l = ms - off*MIN; return (((l % DAY) + DAY) % DAY)/HOUR;
-}
+// [3.23] on the City's clock (Koramangala, IST)
+function hourOf(ms){ var l = ms + 330*MIN; return (((l % DAY) + DAY) % DAY)/HOUR; }
 
 /* ---------- station names (pure, unique per world, independent of the order they are asked in) ---------- */
 // A stop on a named road (within 90 m) is named from its place along that road: the road's length is cut into
@@ -584,7 +582,7 @@ function stationName(W, x, z, kind){
 function pad2(n){ return (n < 10 ? "0" : "") + n; }
 function clockText(ms, o){
   o = o || {};
-  var d = new Date(num(ms, 0)), h = d.getHours(), m = d.getMinutes();
+  var d = new Date(num(ms, 0) + 330*60000), h = d.getUTCHours(), m = d.getUTCMinutes();   // [3.23] the City's clock (IST)
   if(o.h12){ var ap = h < 12 ? "am" : "pm"; h = h % 12 || 12; return h + ":" + pad2(m) + ap; }
   return pad2(h) + ":" + pad2(m);
 }

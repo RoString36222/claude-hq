@@ -1229,7 +1229,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var doc = WD.docOf(W);
     if(HQV.traffic){
       try {
-        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms - new Date(ms).getTimezoneOffset()*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock
+        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms + 330*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
@@ -1378,7 +1378,8 @@ HQV.hqWorlds.city3d = function(c, w){
       if(av && Math.hypot(av.x - bus.at.x, av.z - bus.at.z) > STOP_R*2){ bus = null; say("You left the stop."); return; }
       if(now >= bus.trip.arrive){ bus.phase = "ride"; say("All aboard."); }
     } else if(bus.phase === "ride" && now >= bus.trip.reach){
-      var p = bus.trip.pose(now), right = 3.5;       // step off onto the kerb, on the right of travel
+      // step off onto the kerb ([3.22.3] SIDE x the right of travel: the left)
+      var p = bus.trip.pose(now), sd = HQV.traffic && HQV.traffic.SIDE === 1 ? 1 : -1, right = 3.5*sd;
       var x = p.x - Math.cos(p.yaw)*right, z = p.z + Math.sin(p.yaw)*right;
       bus = null; if(c.teleport) c.teleport(x, z, p.yaw); say("You're at your stop.");
     }
@@ -1914,7 +1915,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function apBoards(now){
     if(!apL || (!apB && !apCivic)) return;
     var lines = AF.timetable(worldId, apDests || [], now, now + 3600000).filter(function(m){ return m.type === "dep"; }).slice(0, 5).map(function(m){
-      var d = new Date(m.tRunway), hh = ("0" + d.getHours()).slice(-2), mm2 = ("0" + d.getMinutes()).slice(-2), to;
+      var d = new Date(m.tRunway + 330*60000), hh = ("0" + d.getUTCHours()).slice(-2), mm2 = ("0" + d.getUTCMinutes()).slice(-2), to;   // [3.23] IST
       if(m.cls === "jet"){ var k = 0, A = AF.AIRWAYS || []; for(var i = 1; i < A.length; i++) if(Math.abs(A[i] - m.far) < Math.abs(A[k] - m.far)) k = i; to = AP_AIRWAYS[k % AP_AIRWAYS.length]; }
       else to = apIsles[m.far] ? apIsles[m.far].name : "An island";
       return hh + ":" + mm2 + "  " + String(to).slice(0, 16) + "  " + m.airline + "  Stand " + m.stand;
@@ -2884,8 +2885,11 @@ HQV.hqWorlds.city3d = function(c, w){
     row("Treasury", K.treasury == null ? "–" : fmt(K.treasury) + " coins");
     if(K.specialty) row("Specialty", K.specialty.charAt(0).toUpperCase() + K.specialty.slice(1));
     // the forecast (games/hqweather.js): now, and what the next spell brings and when
-    if(wx){ var fc = wx.forecast(1), mins = Math.max(1, Math.round((fc[1].at - Date.now())/60000));
-      row("Weather", fc[0].icon + " " + fc[0].name, fc[1].kind === fc[0].kind ? "Staying " + fc[0].name.toLowerCase() + " for now" : fc[1].name + " in " + mins + " min"); }
+    if(wx){ var fc = wx.forecast(1);
+      // [3.23] live (the Arena's Weather Union reading): what it is doing in Koramangala now, read again every hour
+      if(fc[0].live || !fc[1]) row("Weather", fc[0].icon + " " + fc[0].name, "Live, updated at the start of every hour");
+      else { var mins = Math.max(1, Math.round((fc[1].at - Date.now())/60000));
+        row("Weather", fc[0].icon + " " + fc[0].name, fc[1].kind === fc[0].kind ? "Staying " + fc[0].name.toLowerCase() + " for now" : fc[1].name + " in " + mins + " min"); } }
   }
   /* ========== carpark (HQ 3.2 vehicles): the multi-storey garage every owned vehicle lives in (games/hqcarpark.js) ========== */
   var cp = null;            // {site, B, y: your height in it (null outside), rows, drv}
@@ -3655,7 +3659,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!snd && !(snd = citySound())) return;
     var now = Date.now(), last = sndMs || now, SH = HQV.hqShips;
     sndMs = now;
-    var src = {under: !!(transit && transit.under && transit.under()), localMs: now - new Date(now).getTimezoneOffset()*60000,
+    var src = {under: !!(transit && transit.under && transit.under()), localMs: now + 330*60000,   // [3.23] the City's clock (Koramangala, IST)
                traffic: (callTraffic || []).slice(), sirens: tsim && tsim.sirens ? tsim.sirens(now, L, 650) : callTraffic || [],
                ships: [], horns: [], planes: [], fountains: fount && fount.at ? [fount.at] : [], bells: [],
                bridges: bridges && bridges.sounds ? bridges.sounds(L.x, L.z) : []};

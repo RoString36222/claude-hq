@@ -47,6 +47,13 @@
  *                       no verge walls under them, terrain never raised to them (the ground there is HQV.world.groundAt's,
  *                       never the deck), no prop on or under one; ramps marked one way, the flyover with a centre line,
  *                       expressways with traffic.js's 3.5 m lanes and a crash barrier on the median; they are no route
+ * HQ 3.30 (City Gen v4 phase 7) road tunnels: a tunnel's or cutting's road (`under`) is never a terrain clamp piece (the
+ *                       land runs on over a tunnel: the airport; a cutting is a hole, HQV.world.holesOf); its ribbon, marks
+ *                       and barrier are drawn at its own y as usual (no verge walls) in the road tile's `tunnel` geo, with
+ *                       tunnelTile's cutting retaining walls (coping, railing) and tunnel walls, ceiling, walkways and portals
+ *                       (headwall, sign band), the tunnel's ceiling lights (lit 1) (only in a doc with tunnels). A
+ *                       cutting's hole is cut from the terrain, ground and road tiles (its own road rides in `tunnel`); no
+ *                       prop stands in one, no gantry over a tunnel or cutting (HQV.world.underOver)
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -216,6 +223,8 @@ function prep(W){
     // City Gen v4 phase 6: an interchange's flyover or ramp (decks where it is elevated), a one-way ramp
     if(e.v4 === "flyover" || e.v4 === "ramp") o.deck = true;
     if(e.oneway) o.oneway = true;
+    // City Gen v4 phase 7: a tunnel or a cutting (below the land)
+    if(e.under) o.under = e.under;
     E.push(o); byId[o.id] = o;
     (inc[e.a] = inc[e.a] || []).push({E: o, end: 0});
     (inc[e.b] = inc[e.b] || []).push({E: o, end: 1});
@@ -241,7 +250,7 @@ function prep(W){
     arms.sort(function(p, q){ return p.yaw - q.yaw || p.E.id - q.E.id; });
   });
   var cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, props: null, routes: null, segs: null,
-               deck: E.some(function(o){ return o.deck; })};
+               deck: E.some(function(o){ return o.deck; }), under: E.some(function(o){ return !!o.under; })};
   CACHES.push({W: W, C: cache});
   return cache;
 }
@@ -311,12 +320,12 @@ function ySurf(W, x, z, walk, yNow){
 // carriageway y at the station point offset o (m, + = left). Where roadY disagrees with this edge's own
 // surface (an inner-bend seam of a graded road, another road's overlap) the edge's own y keeps the ribbon whole.
 function yRoad(W, E, st, o){
-  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, false, E.deck ? st.y : undefined);
+  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, false, E.deck || E.under ? st.y : undefined);
   return y != null && Math.abs(y - st.y) <= SEAM ? y : st.y;
 }
 // sidewalk y at offset o
 function yWalk(W, E, st, o){
-  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, true, E.deck ? st.y : undefined);
+  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, true, E.deck || E.under ? st.y : undefined);
   return y != null && Math.abs(y - st.y - KERB) <= SEAM ? y : st.y + KERB;
 }
 function at(st, o, y){ return [st.x + st.lx*o, y, st.z + st.lz*o]; }
@@ -347,6 +356,7 @@ function clampPieces(W){
       for(var i = Math.floor(x0/CELL); i <= Math.floor(x1/CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(o);
   }
   C.E.forEach(function(E){
+    if(E.under) return;   // phase 7: the land runs on over a tunnel; a cutting is a hole
     for(var j = 0; j + 1 < E.P.length; j++){
       var a = E.P[j], b = E.P[j + 1], d = hypot(b.x - a.x, b.z - a.z), h = E.half;
       if(d < 1e-6) continue;
@@ -735,14 +745,15 @@ function dryRuns(W, E, a, b){
 }
 // a box-section bar along stations A -> B between offsets o0, o1 (m, + = left), bottom y0a/y0b, top y1a/y1b; its four
 // long faces, and its end faces where caps[0] / caps[1]
-function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps){
+// (lit: the geo's lit attribute on its faces, phase 7's tunnel lights)
+function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps, lit){
   var sg = o1 > o0 ? 1 : -1, lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
-  face(g, [at(A, o0, y1a), at(B, o0, y1b), at(B, o1, y1b), at(A, o1, y1a)], c, UP);
-  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o1, y0b), at(A, o1, y0a)], c, [0, -1, 0]);
-  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o0, y1b), at(A, o0, y1a)], c, [-lx*sg, 0, -lz*sg]);
-  face(g, [at(A, o1, y0a), at(B, o1, y0b), at(B, o1, y1b), at(A, o1, y1a)], c, [lx*sg, 0, lz*sg]);
-  if(caps && caps[0]) face(g, [at(A, o0, y0a), at(A, o1, y0a), at(A, o1, y1a), at(A, o0, y1a)], c, [-A.dx, 0, -A.dz]);
-  if(caps && caps[1]) face(g, [at(B, o0, y0b), at(B, o1, y0b), at(B, o1, y1b), at(B, o0, y1b)], c, [B.dx, 0, B.dz]);
+  face(g, [at(A, o0, y1a), at(B, o0, y1b), at(B, o1, y1b), at(A, o1, y1a)], c, UP, 0, lit);
+  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o1, y0b), at(A, o1, y0a)], c, [0, -1, 0], 0, lit);
+  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o0, y1b), at(A, o0, y1a)], c, [-lx*sg, 0, -lz*sg], 0, lit);
+  face(g, [at(A, o1, y0a), at(B, o1, y0b), at(B, o1, y1b), at(A, o1, y1a)], c, [lx*sg, 0, lz*sg], 0, lit);
+  if(caps && caps[0]) face(g, [at(A, o0, y0a), at(A, o1, y0a), at(A, o1, y1a), at(A, o0, y1a)], c, [-A.dx, 0, -A.dz], 0, lit);
+  if(caps && caps[1]) face(g, [at(B, o0, y0b), at(B, o1, y0b), at(B, o1, y1b), at(B, o0, y1b)], c, [B.dx, 0, B.dz], 0, lit);
 }
 // A bridge edge's structure in tile (tx, tz): over its whole length a parapet PARA_W wide just outside the walk (the
 // carriageway with no walk) with a rail on posts; over the water (wetRuns) a deck slab DECK_T deep under the ribbons,
@@ -954,13 +965,114 @@ function barrier(g, W, E, st, tx, tz){
   }
 }
 
+/* ---------- road tunnels (City Gen v4 phase 7, @3: the ring road under the airport) ---------- */
+// A cutting (HQV.world.tunnelsOf, kind "cutting": its footprint is a terrain hole) gets concrete retaining walls TUN.WALL m
+// thick outside its half on both sides, from under its road up to the land (TUN_UP over the road at least), a coping on
+// top and a railing on posts along it. A tunnel is a box under the land: its walls' inner faces from the road up to its
+// ceiling (TUN.CLEAR over the road, the roof's underside; the roof's top is never drawn: it is under the land), emergency
+// walkways TUN_WALK m wide and TUN_WALK_H high along both walls, two lines of lights along the ceiling (lit = 1: emissive,
+// always on) and at each end that meets a cutting a portal: a concrete headwall over the mouth, from the ceiling
+// up to the land, a coloured sign band on its face and a railing on its top. All of it rides in the tile's `tunnel` geo
+// with the tunnel's and cuttings' ribbons, marks and barrier (games/worldbuild.js draws it before the sea and marks the
+// stencil, as games/hqmetro.js's street works: the sea plane, 4 m under the Commons, is not drawn down a cutting or
+// in the tunnel); pieces belong to the tile of their midpoint.
+var TUN_UP = 0.4, TUN_SINK = 0.5, COPE_H = 0.25, COPE_OUT = 0.15, TUN_WALK = 1, TUN_WALK_H = 0.25, LIGHT_W = 0.4, LIGHT_D = 0.12;
+var HEAD_D = 1.2, HEAD_UP = 0.3, SIGN_LO = 0.35, SIGN_HI = 1.25, SIGN_IN = 1.5, SIGN_OUT = 0.06;
+COL.tunnel = [0.70, 0.70, 0.68]; COL.ceiling = [0.46, 0.46, 0.47]; COL.light = [1.0, 0.94, 0.80]; COL.sign = [0.10, 0.42, 0.26];
+function tunConst(){
+  var T = WQ().TUN || {};
+  return {clear: T.CLEAR || 5.5, wall: T.WALL || 1};
+}
+// HQV.world.tunnelsOf's record for edge E (null when there is none)
+function tunRec(W, E){
+  var Q = WQ(), L = Q.tunnelsOf ? Q.tunnelsOf(W) : [];
+  for(var i = 0; i < L.length; i++) if(L[i].edge === E.id) return L[i];
+  return null;
+}
+function tunnelTile(g, W, E, tx, tz){
+  var Q = WQ(), K = tunConst(), h = E.half, wl = K.wall, st = stations(E, 0, E.len), k;
+  function mine(A, B){ return inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz); }
+  // the land at side sg of station S: the higher of the terrain at the wall's two faces
+  function land(S, sg){ return Math.max(Q.heightAt(W, S.x + S.lx*sg*h, S.z + S.lz*sg*h), Q.heightAt(W, S.x + S.lx*sg*(h + wl), S.z + S.lz*sg*(h + wl))); }
+  if(E.under === "cutting"){
+    var top = function(S, sg){ return Math.max(land(S, sg), S.y + TUN_UP); };
+    for(k = 0; k + 1 < st.length; k++){
+      var A = st[k], B = st[k + 1];
+      if(!mine(A, B)) continue;
+      var caps = [k === 0, k + 2 === st.length];
+      [-1, 1].forEach(function(sg){
+        var ta = top(A, sg), tb = top(B, sg), mid = sg*(h + wl/2);
+        bar(g, A, B, sg*h, sg*(h + wl), A.y - TUN_SINK, B.y - TUN_SINK, ta, tb, COL.tunnel, caps);
+        bar(g, A, B, sg*(h - COPE_OUT), sg*(h + wl + COPE_OUT), ta, tb, ta + COPE_H, tb + COPE_H, COL.concrete, caps);
+        bar(g, A, B, mid - RAIL_T/2, mid + RAIL_T/2, ta + COPE_H + RAIL_H - RAIL_T, tb + COPE_H + RAIL_H - RAIL_T, ta + COPE_H + RAIL_H, tb + COPE_H + RAIL_H, COL.rail, caps);
+      });
+    }
+    var np = Math.max(1, Math.round(E.len/POST_STEP));
+    for(var j = 0; j <= np; j++){
+      var s = clamp(E.len*j/np, POST_W, E.len - POST_W), P0 = pointAt(E, s - POST_W/2), P1 = pointAt(E, s + POST_W/2);
+      if(!inTile((P0.x + P1.x)/2, (P0.z + P1.z)/2, tx, tz)) continue;
+      [-1, 1].forEach(function(sg){
+        var y0 = top(P0, sg) + COPE_H, y1 = top(P1, sg) + COPE_H, mid = sg*(h + wl/2);
+        bar(g, P0, P1, mid - POST_W/2, mid + POST_W/2, y0, y1, y0 + RAIL_H - RAIL_T, y1 + RAIL_H - RAIL_T, COL.rail, [true, true]);
+      });
+    }
+    return;
+  }
+  if(E.under !== "tunnel") return;
+  var clear = K.clear, lights = [-(E.med + 5.25), E.med + 5.25];
+  for(k = 0; k + 1 < st.length; k++){
+    var A2 = st[k], B2 = st[k + 1];
+    if(!mine(A2, B2)) continue;
+    var ca = A2.y + clear, cb = B2.y + clear, lx = (A2.lx + B2.lx)/2, lz = (A2.lz + B2.lz)/2;
+    [-1, 1].forEach(function(sg){
+      // the wall's face (toward the road) and the walkway along its foot
+      face(g, [at(A2, sg*h, A2.y - TUN_SINK), at(B2, sg*h, B2.y - TUN_SINK), at(B2, sg*h, cb), at(A2, sg*h, ca)], COL.tunnel, [-lx*sg, 0, -lz*sg]);
+      bar(g, A2, B2, sg*(h - TUN_WALK), sg*h, A2.y, B2.y, A2.y + LIFT + TUN_WALK_H, B2.y + LIFT + TUN_WALK_H, COL.concrete, [false, false]);
+    });
+    face(g, [at(A2, -h, ca), at(B2, -h, cb), at(B2, h, cb), at(A2, h, ca)], COL.ceiling, [0, -1, 0]);
+    lights.forEach(function(o){
+      if(Math.abs(o) + LIGHT_W > h - TUN_WALK) return;
+      bar(g, A2, B2, o - LIGHT_W/2, o + LIGHT_W/2, ca - LIGHT_D, cb - LIGHT_D, ca - 0.01, cb - 0.01, COL.light, [false, false], 1);
+    });
+  }
+  // the portals: where a cutting meets an end, a headwall over the mouth facing out along the cutting
+  var R = tunRec(W, E);
+  [[0, R ? R.portal[0] : true], [1, R ? R.portal[1] : true]].forEach(function(pe){
+    if(!pe[1]) return;
+    var s0 = pe[0] ? Math.max(0, E.len - HEAD_D) : 0, s1 = pe[0] ? E.len : Math.min(E.len, HEAD_D);
+    var A = pointAt(E, s0), B = pointAt(E, s1), F = pe[0] ? B : A, out = pe[0] ? 1 : -1;
+    if(!inTile(F.x, F.z, tx, tz)) return;
+    var c0 = A.y + clear, c1 = B.y + clear, w = h + wl + COPE_OUT, hi = -Infinity;
+    for(var q = -1; q <= 1; q += 0.25) hi = Math.max(hi, Q.heightAt(W, F.x + F.lx*w*q, F.z + F.lz*w*q));
+    var yt = Math.max(hi + HEAD_UP, F.y + clear + SIGN_HI + 0.3);
+    bar(g, A, B, -w, w, c0, c1, yt, yt, COL.tunnel, [true, true]);
+    bar(g, A, B, -w - COPE_OUT, w + COPE_OUT, yt, yt, yt + COPE_H, yt + COPE_H, COL.concrete, [true, true]);
+    // the sign band, just proud of the face
+    var fy = F.y + clear, sx = F.dx*out*SIGN_OUT, sz = F.dz*out*SIGN_OUT, sw = h - SIGN_IN;
+    face(g, [[F.x - F.lx*sw + sx, fy + SIGN_LO, F.z - F.lz*sw + sz], [F.x + F.lx*sw + sx, fy + SIGN_LO, F.z + F.lz*sw + sz],
+             [F.x + F.lx*sw + sx, fy + SIGN_HI, F.z + F.lz*sw + sz], [F.x - F.lx*sw + sx, fy + SIGN_HI, F.z - F.lz*sw + sz]], COL.sign, [F.dx*out, 0, F.dz*out]);
+    // a railing along its top
+    var ry = yt + COPE_H, Ca = {x: F.x - F.lx*w, z: F.z - F.lz*w, lx: F.dx, lz: F.dz, dx: F.lx, dz: F.lz}, Cb = {x: F.x + F.lx*w, z: F.z + F.lz*w, lx: F.dx, lz: F.dz, dx: F.lx, dz: F.lz};
+    bar(g, Ca, Cb, -RAIL_T/2 - out*HEAD_D/2, RAIL_T/2 - out*HEAD_D/2, ry + RAIL_H - RAIL_T, ry + RAIL_H - RAIL_T, ry + RAIL_H, ry + RAIL_H, COL.rail, [true, true]);
+    for(var pq = -1; pq <= 1.001; pq += 0.125){
+      var px = F.x + F.lx*w*pq*0.98 - F.dx*out*HEAD_D/2, pz = F.z + F.lz*w*pq*0.98 - F.dz*out*HEAD_D/2;
+      var Pa = {x: px - F.lx*POST_W/2, z: pz - F.lz*POST_W/2, lx: F.dx, lz: F.dz, dx: F.lx, dz: F.lz}, Pb = {x: px + F.lx*POST_W/2, z: pz + F.lz*POST_W/2, lx: F.dx, lz: F.dz, dx: F.lx, dz: F.lz};
+      bar(g, Pa, Pb, -POST_W/2, POST_W/2, ry, ry, ry + RAIL_H - RAIL_T, ry + RAIL_H - RAIL_T, COL.rail, [true, true]);
+    }
+  });
+}
+
 // flat: only the upward asphalt / sidewalk pieces (what the terrain clamp needs; no walls, no marks, no bridges)
 // gap: leave out every bridge edge's pieces over the water (bridgeGaps: games/hqbridges.js draws its moving spans
 // there); the terrain clamp (flat) never gaps, so the terrain is the same either way
 function roadTile(W, tx, tz, flat, gap){
   var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.deck || C.E.some(function(E){ return E.bridge; }) ? geo() : null;
+  // phase 7: a tunnel's and cutting's ribbon, marks, barrier and structure (`tunnel`), its ceiling lights (`glow`)
+  var tg = C.under && !flat ? geo(false, true) : null;
   C.E.forEach(function(E){
     var e0 = E.tA, e1 = E.len - E.tB;
+    if(flat && E.under) return;   // (phase 7: no terrain clamp piece)
+    if(E.under && tg) tunnelTile(tg, W, E, tx, tz);   // (its whole length)
     if(e1 - e0 < 0.05) return;
     if(gap && E.bridge && !flat) dryRuns(W, E, e0, e1).forEach(function(r){ ribbon(E, r[0], r[1]); });
     else ribbon(E, e0, e1);
@@ -968,6 +1080,12 @@ function roadTile(W, tx, tz, flat, gap){
   // one edge's pieces over [s0, s1] (the whole edge, or a dry run of a gapped bridge: its cut ends get no caps)
   function ribbon(E, s0, s1){
     var endA = s0 === E.tA, endB = s1 === E.len - E.tB;
+    // (phase 7: below the land, all of it in `tunnel`)
+    var asph0 = asph, marks0 = marks, kerb0 = kerb;
+    if(E.under && tg){ asph = tg; marks = tg; kerb = tg; }
+    try { ribbonIn(E, s0, s1, endA, endB); } finally { asph = asph0; marks = marks0; kerb = kerb0; }
+  }
+  function ribbonIn(E, s0, s1, endA, endB){
     var st = stations(E, s0, s1), cw = E.cw;
     // quick reject: no station pair in this tile
     var any = false;
@@ -1011,7 +1129,7 @@ function roadTile(W, tx, tz, flat, gap){
           face(kerb, [at(S, sg*cw, yr), at(S, sg*E.half, yr), at(S, sg*E.half, yw), at(S, sg*cw, yw)], COL.kerb, [S.dx*cp[2], 0, S.dz*cp[2]]);
         });
       });
-    } else if(!flat){
+    } else if(!flat && !E.under){
       [-1, 1].forEach(function(sg){ wallStrip(walk, W, E, st, sg*cw, "verge", COL.verge, tx, tz, sg); });
     }
     if(flat) return;
@@ -1033,18 +1151,23 @@ function roadTile(W, tx, tz, flat, gap){
   C.nodeIds.forEach(function(id){
     var arms = C.inc[id] || [], n = C.nodes[id];
     if(arms.length < 2 || !n || !inTile(n.x, n.z, tx, tz)) return;
-    junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk, flat ? null : br);
+    if(flat && arms.some(function(a){ return a.E.under; })) return;   // (phase 7: no clamp piece over a portal)
+    // (phase 7: a portal's patch, between a tunnel and its cutting, in `tunnel`)
+    if(tg && arms.every(function(a){ return a.E.under; })) junction(W, C, n, arms, tg, tg, tg, walk, null);
+    else junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk, flat ? null : br);
   });
   // phase 6: the decks' piers standing in this tile
   if(!flat && br && C.deck) WQ().piersOf(W).forEach(function(p){
     var E = C.byId[p.edge];
     if(E && inTile(p.x, p.z, tx, tz)) pierGeo(br, p, E.cw);
   });
-  // @3: a hole on a pavement or a carriageway (a metro entrance) is cut out of the road too
+  // @3: a hole on a pavement or a carriageway (a metro entrance) is cut out of the road too (a cutting's road is in
+  // `tunnel`, never cut)
   var H = holeSet(W);
   if(H) [asph, marks, kerb, walk].forEach(function(gg){ cutHoles(gg, H); });
   var out = {asphalt: fin(asph), marks: fin(marks), kerb: fin(kerb), walk: fin(walk)};
   if(br && !flat) out.bridge = fin(br);   // only in a doc with bridges: every other doc builds as before
+  if(tg) out.tunnel = fin(tg);   // phase 7: only in a doc with tunnels
   return out;
 }
 
@@ -1584,7 +1707,8 @@ var HOLE_EPS = 1e-6;
 function holeSet(W){
   var C = prep(W);
   if(C.holes !== undefined) return C.holes;
-  var Q = WQ(), B = W.tierBase || W, rings = Q.holesOf && (B.metro || B.rail) ? Q.holesOf(B) : [], out = [];
+  // (phase 7: a cutting's footprint is a hole too)
+  var Q = WQ(), B = W.tierBase || W, rings = Q.holesOf && (B.metro || B.rail || C.under) ? Q.holesOf(B) : [], out = [];
   rings.forEach(function(R){
     var P = [];
     (R || []).forEach(function(q){ var L = P[P.length - 1]; if(q && isFinite(q[0]) && isFinite(q[1]) && !(L && L[0] === q[0] && L[1] === q[1])) P.push([q[0], q[1]]); });
@@ -1690,7 +1814,14 @@ function cutHoles(g, H){
     // a fan, without the slivers repeated or collinear clip points leave (no area in plan)
     for(var k = 1; k + 1 < S.length; k++){
       var A = S[0], B2 = S[k], C2 = S[k + 1];
-      if(Math.abs((B2[0] - A[0])*(C2[2] - A[2]) - (B2[2] - A[2])*(C2[0] - A[0])) > 2e-6) g.i.push(base, base + k, base + k + 1);
+      var cr = Math.abs((B2[0] - A[0])*(C2[2] - A[2]) - (B2[2] - A[2])*(C2[0] - A[0]));
+      if(!(cr > 2e-6)) continue;
+      // (nor a needle a clip leaves along a hole's edge, thinner than float32 can place: a long hole's (a cutting's) many
+      // pieces leave some, and stored as float32 its centre may fall in the hole)
+      var l1 = (B2[0] - A[0])*(B2[0] - A[0]) + (B2[2] - A[2])*(B2[2] - A[2]), l2 = (C2[0] - A[0])*(C2[0] - A[0]) + (C2[2] - A[2])*(C2[2] - A[2]),
+          l3 = (C2[0] - B2[0])*(C2[0] - B2[0]) + (C2[2] - B2[2])*(C2[2] - B2[2]);
+      if(cr < 1e-4*Math.max(l1, l2, l3) || Math.min(l1, l2, l3) < 1e-6) continue;
+      g.i.push(base, base + k, base + k + 1);
     }
   });
   return g;
@@ -2394,10 +2525,11 @@ function allProps(W){
   var C = prep(W);
   if(C.props) return C.props;
   var Q = WQ(), B = {}, hash = W.hash;
-  var HS = holeSet(W), PI = C.deck ? Q.piersOf(W) : null;
+  var HS = holeSet(W), PI = C.deck ? Q.piersOf(W) : null, TU = C.under && Q.underOver;
   function put(kind, o){
     if(HS && inHoles(HS, o.x, o.z)) return;   // @3: nothing stands in a terrain hole
     if(PI && underDeck(W, PI, kind, o)) return;   // phase 6: nor on or under a deck, nor in a pier
+    if(TU && kind === "gantries" && overTunnel(W, o)) return;   // phase 7: no gantry over a tunnel or cutting
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);
     var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: [], furniture: []});
     b[kind].push(o);
@@ -2474,6 +2606,12 @@ function underDeck(W, PI, kind, o){
   if(kind !== "gantries") return Q.deckOver(W, o.x, o.z, 2) != null;
   var ux = Math.cos(o.yaw || 0), uz = -Math.sin(o.yaw || 0);
   for(i = -2; i <= 2; i++) if(Q.deckOver(W, o.x + ux*GANTRY_POST*i/2, o.z + uz*GANTRY_POST*i/2, 3) != null) return true;
+  return false;
+}
+// a gantry's frame (its span, 3 m round it) over a tunnel's or cutting's footprint
+function overTunnel(W, o){
+  var Q = WQ(), ux = Math.cos(o.yaw || 0), uz = -Math.sin(o.yaw || 0);
+  for(var i = -2; i <= 2; i++) if(Q.underOver(W, o.x + ux*GANTRY_POST*i/2, o.z + uz*GANTRY_POST*i/2, 3)) return true;
   return false;
 }
 function props(W, tx, tz){

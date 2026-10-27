@@ -970,6 +970,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function blocked(x, z){
     if(!W) return true;
+    var tu = inTunnel(x, z); if(tu) return WD.blockedAt(W, x, z, tu.y0) || trafficAt(x, z);   // [3.30] in the tunnel under the airport: its walls, the traffic
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z, deckLevel(x, z))) return true;                 // [3.29] a flyover's piers below it, its parapets on it
@@ -1010,6 +1011,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function groundY(x, z){
     if(!W) return 0;
+    var tu = inTunnel(x, z); if(tu) return WD.groundAt(W, x, z, false, tu.y0);    // [3.30] the tunnel's road, not the airport over it
     if(skate && SP.inPark(x - skate.cx, z - skate.cz)) return skate.y;      // the park's flat pad; the skater adds its ramps
     if(cp){ var cpy = carparkGround(x, z); if(cpy != null) return cpy; }   // carpark: its floors and the helix
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
@@ -1026,6 +1028,18 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!W || !W.edges) return undefined;
     var a = c.avatar && c.avatar();
     return a && a.hy != null && isFinite(a.hy) && Math.abs(x - a.x) < DECK_NEAR && Math.abs(z - a.z) < DECK_NEAR ? a.hy : undefined;
+  }
+  // [3.30] City Gen v4's road tunnel: near you, when you are down in it or in a cutting to it (world.js tunnelAt at your
+  // height), what stands on the land (the airport's platform and buildings over the tunnel, ...) is not down here:
+  // {y0: your height} | null
+  function inTunnel(x, z){
+    var y0 = WD.tunnelAt ? deckLevel(x, z) : undefined;
+    return y0 != null && WD.tunnelAt(W, x, z, y0) ? {y0: y0} : null;
+  }
+  // the avatar's height when it is in a tunnel or cutting (the camera's floor and its ray then stay down there), else undefined
+  function tunnelLevel(){
+    var a = W && WD.tunnelAt && c.avatar && c.avatar();
+    return a && a.hy != null && isFinite(a.hy) && WD.tunnelAt(W, a.x, a.z, a.hy) ? a.hy : undefined;
   }
   // [stunts] a ramp is driven up from its low end: from off it, a part of it higher than your knees is a wall
   function stuntWall(x, z){
@@ -2679,6 +2693,8 @@ HQV.hqWorlds.city3d = function(c, w){
   // the camera's floor (hq3d rigFrame): the ground, and over open water the water's surface plus 0.5 m, so a chase
   // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
   w.camGround = function(x, z){
+    var ty = tunnelLevel();
+    if(ty != null && WD.tunnelAt(W, x, z, ty)) return WD.groundAt(W, x, z, false, ty);   // [3.30] in the tunnel: its road, never the land over it
     var g = groundY(x, z);
     if(sea && sea.surface && (!W || Math.abs(x) > W.half || Math.abs(z) > W.half || !sea.boat.land(x, z))) g = Math.max(g, sea.surface(x, z) + 0.5);
     return g;
@@ -3577,7 +3593,7 @@ HQV.hqWorlds.city3d = function(c, w){
   w.onLook = function(){ forceYou = true; build(); };      // your own look: your building again
   w.camHit = function(from, to){
     if(!W) return 1;
-    var t = WD.rayGround(W, from, to);
+    var t = WD.rayGround(W, from, to, undefined, tunnelLevel());   // [3.30] in a tunnel: its walls and ceiling
     var x0 = Math.min(from.x, to.x), x1 = Math.max(from.x, to.x), z0 = Math.min(from.z, to.z), z1 = Math.max(from.z, to.z);
     if(Math.hypot(to.x - from.x, to.z - from.z) > 60){ var u = 60/Math.hypot(to.x - from.x, to.z - from.z);   // only what is within 60 m
       x0 = Math.min(from.x, from.x + (to.x - from.x)*u); x1 = Math.max(from.x, from.x + (to.x - from.x)*u);

@@ -18,7 +18,7 @@ merges on its own and leaves the City playable:
 | 1 | Airport claims its land; highways and the ring go round it; validator; road classes as data | **3.24.0** |
 | 2 | Real road classes: widths, lanes, markings, one-step changes | **3.25.0** |
 | 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | **3.26.0** |
-| 4 | Curved roads: arcs, minimum radii by design speed | |
+| 4 | Curved roads: arcs, minimum radii by design speed | **3.27.0** |
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | |
 | 6 | Flyovers, underpasses and interchanges; road tunnels | |
 | 7 | Metro and rail corridors: piers only in boulevard medians | |
@@ -249,3 +249,38 @@ and a full roundabout has room on every arm.
   196, with fewer side streets lit than 3.22.1's 43.
 - **No layout change:** airports, runway fit, HQ lots and the metro are the same as phase 2
   on all 50 worlds.
+
+## Phase 4 (3.27.0): curved roads
+
+- **Town streets** (`roads::fillet_bends`): every bend where a street runs on (a node of
+  exactly two town edges, not a bridge) becomes a circular arc instead of a corner.
+  - It's the widest arc whose middle sits no more than 25 cm inside the corner. That's the
+    kerb's width, so the paved road still keeps off every lot and no lot or HQ moves.
+  - Its tangents reach no further than 0.4 of either edge, and it's sampled every 2.5 m
+    with at least one step per 15° of turn.
+  - The node moves onto the arc's middle.
+  - The maths is integer only: Q16 unit vectors, half angles from the cosine, and points
+    round the centre by normalised interpolation.
+- **Ring and highways** (`roads::smooth_path`): the A* path's 45° steps are eased by a
+  three-pass moving average (4 points each side, ends fixed), then sampled every 4 m.
+  Where a smoothed step meets a block, claimed land, the river or the coast's reach and
+  the path's own step there didn't, the path's points come back over 5 steps either side.
+- **Validator, listed for later phases** (organic layouts can't meet the plan's radii yet):
+  - `bend`: a town street still turning over 20° at a bend, a sharp corner the kerb's
+    25 cm can't round
+  - `curve`: a curve tighter than its class's design-speed minimum
+
+### Results
+
+The worlds are the Commons and 49 seeds.
+
+| | phase 3 | 3.27.0 |
+|---|---|---|
+| Commons town bends turning under 5° at the node | 78 of 199 | 133 of 199 |
+| Ring and highway kinks over 17°, the Commons | 139 | 18 |
+| Ring and highway kinks over 17°, all 50 worlds | 7,182 | 1,109 |
+| Airports, runway fit, HQ lots unchanged | — | 50 / 50 |
+| Commons cars on screen by day | 16.7 | 16.5 |
+
+The metro shifted slightly on 8 synthetic seeds, because it follows the roads. The
+Commons' metro is unchanged.

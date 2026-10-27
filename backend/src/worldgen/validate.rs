@@ -19,6 +19,10 @@
 //!   junction       (hard, phase 3) a junction of town roads without the control its roads
 //!                  call for (roads.rs `junction_kinds`: give way, a mini or full roundabout,
 //!                  signals), or a full roundabout without room on every arm
+//!   bend           (phase 4) a town street still turning over 20 degrees where it runs on
+//!                  through a bend (its arc kept within the kerb's 25 cm: a sharp corner)
+//!   curve          (phase 4) a curve on a v4 road tighter than its class's design speed
+//!                  allows (classes.rs `min_radius_cm`), measured over three points 2 m+ apart
 //!   class-step     (hard, phase 2) where a town road runs on through a bend (a node of
 //!                  two roads), its two sides more than one class apart; where a highway
 //!                  or the ring is one of them, listed (`class-step-graded`) for the
@@ -53,7 +57,54 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     overlaps(l, &mut out);
     classes(l, &mut out);
     junctions(l, &mut out);
+    curves(l, &mut out);
     out
+}
+
+/// The radius (cm) of the circle through a, b, c (i64::MAX when they are in line).
+fn radius3(a: P, b: P, c: P) -> i64 {
+    let (ab, bc, ca) = (seg_dist2(a, a, b, b), seg_dist2(b, b, c, c), seg_dist2(c, c, a, a));
+    let cross = ((b.0 - a.0) as i128 * (c.1 - a.1) as i128 - (b.1 - a.1) as i128 * (c.0 - a.0) as i128).abs();
+    if cross == 0 {
+        return i64::MAX;
+    }
+    let num = ((ab as f64) * (bc as f64) * (ca as f64)).sqrt();
+    (num / (2.0 * cross as f64)) as i64
+}
+
+fn curves(l: &Layers, out: &mut Vec<Violation>) {
+    let mut at: BTreeMap<u32, Vec<&super::roads::Edge>> = BTreeMap::new();
+    for e in &l.roads.edges {
+        at.entry(e.a).or_default().push(e);
+        at.entry(e.b).or_default().push(e);
+        let Some(c) = e.v4.and_then(super::classes::class) else { continue };
+        let min = c.min_radius_cm(false);
+        let pts: Vec<P> = e.points.iter().map(|q| (q[0], q[2])).collect();
+        if let Some(i) = (1..pts.len().saturating_sub(1)).find(|&i| {
+            let (a, b, d) = (pts[i - 1], pts[i], pts[i + 1]);
+            seg_dist2(a, a, b, b) >= 40_000 && seg_dist2(b, b, d, d) >= 40_000 && radius3(a, b, d) < min
+        }) {
+            out.push(Violation { rule: "curve", hard: false, what: format!("road {} {} ({})", e.id, e.name, c.name), at: [pts[i].0, pts[i].1] });
+        }
+    }
+    for (n, es) in &at {
+        if es.len() != 2 || es.iter().any(|e| super::roads::is_graded(e.class) || e.bridge.is_some()) {
+            continue;
+        }
+        let dir = |e: &super::roads::Edge| {
+            let p = &e.points;
+            let (q0, q1) = if e.a == *n { (p[0], p[1]) } else { (p[p.len() - 1], p[p.len() - 2]) };
+            (q1[0] - q0[0], q1[2] - q0[2])
+        };
+        let (u, v) = (dir(es[0]), dir(es[1]));
+        // turning over 20 degrees: the two ways out are less than 160 degrees apart (cos > cos 160)
+        let dot = u.0 as f64 * v.0 as f64 + u.1 as f64 * v.1 as f64;
+        let lens = ((u.0 as f64).hypot(u.1 as f64)) * ((v.0 as f64).hypot(v.1 as f64));
+        if lens > 0.0 && dot / lens > -0.9397 {
+            let q = &l.roads.nodes[*n as usize];
+            out.push(Violation { rule: "bend", hard: false, what: format!("{} turns at node {}", es[0].name, n), at: [q.x, q.z] });
+        }
+    }
 }
 
 fn junctions(l: &Layers, out: &mut Vec<Violation>) {

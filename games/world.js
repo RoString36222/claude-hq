@@ -51,6 +51,19 @@
  * streetAt(W, x, z) give the street level over it); rayGround passes through a hole the same way. blockedAt is true on a
  * water body (not on a bridge's deck, a pier or the breakwater); surfaceAt says "water" there; no tree stands in a body or
  * a hole.
+ * City Gen v4 phase 6 (@3, HQ 3.29) interchanges: an edge with `oneway` (a ramp) packs and docOf's it back. Stacked
+ * surfaces: a flyover's or ramp's point more than DECK.ELEV (0.5 m) over the terrain is ELEVATED (the land runs on under it).
+ *   groundAt(W, x, z, street, yNow), roadY(W, x, z, yNow), surfaceAt(W, x, z, yNow), nearestRoad(W, x, z, maxM, yNow),
+ *   normalAt / slopeAlong (yNow last): without yNow the ground level, never an elevated deck; with it (the height of
+ *   whatever stands there, m) the highest surface whose y <= yNow + STEP_UP (1 m), junction heights blended within one
+ *   level only (surfaces more than 2 m apart are separate levels); nearestRoad prefers a road at that level.
+ *   decksOf(W)   the elevated stretches [{edge, pts: [[x, y, z]] (m), half, i0, i1}] (memoised)
+ *   piersOf(W)   [{x, z, r, y0, y1, edge, s, span, yaw, node?}] (m, memoised): 2 m columns on a deck's centre line every
+ *                25-30 m where its underside (y - 1.5) is 2 m or more over the ground, never within 0.5 m of a road
+ *                running under it nor on water (a span is lengthened instead); y0 ground, y1 the underside
+ *   blockedAt(W, x, z, yNow)  piers block at ground level (yNow omitted or under the underside); at a deck's level a point
+ *                beyond its edge + 0.3 m (to 3 m) is its parapet: blocked
+ *   deckOver(W, x, z, margin) the y of the highest elevated deck over (x, z) within its half + margin, or null
  * Pure core: no THREE, no DOM at load time, so node, a worker (importScripts) and the page all load it.
  */
 (function(){
@@ -64,14 +77,23 @@ var LIVE_V = 3, COMMONS = "claude-hq@3", COMMONS_V2 = "claude-hq@2";
 var UID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
 var WORLD_RE = /^(claude-hq@[123]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@[23])$/;
-var PACK_V = 4;   // bump whenever pack()'s output changes; cached records with another v are refetched
-                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy)
+var PACK_V = 5;   // bump whenever pack()'s output changes; cached records with another v are refetched
+                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy; 5: edges keep `oneway`)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
 // @3 water: the calm surface over sea level (games/ocean.js RIVER_Y, games/worldgeom.js RIVER_LIFT), the breakwater's
 // walkable half width, how far down a hole with nothing under it goes
 var RIVER_LIFT = 0.3, BREAKWATER_HALF = 4, BREAKWATER_UP = 2.5, HOLE_DEPTH = 6;
+// City Gen v4 phase 6 (@3, HQ 3.29) interchanges: a flyover's or ramp's point is ELEVATED where it is more than ELEV m
+// over the terrain; surfaces more than LEVEL_GAP m apart are separate levels; with yNow a surface up to STEP_UP m over
+// it is still reachable; a deck is DECK_D m deep (its underside DECK_D under the road), its parapet stands from its
+// edge to PARAPET m past it (what blocks at deck level: PARA_REACH m beyond it). Piers: single PIER_R m columns on the
+// deck's centre line every PIER_MIN..PIER_MAX m, PIER_ROAD m clear of any other road's full width, only where the
+// underside is PIER_CLEAR m or more over the ground (lower, the deck sits on a solid body)
+var ELEV = 0.5, LEVEL_GAP = 2, STEP_UP = 1.0, DECK_D = 1.5, PARAPET = 0.3, PARA_REACH = 3;
+var PIER_R = 1, PIER_MIN = 25, PIER_MAX = 30, PIER_NOM = 27.5, PIER_ROAD = 0.5, PIER_CLEAR = 2, PIER_STEP = 0.5;
+function deckRoad(e){ return !!e && (e.v4 === "flyover" || e.v4 === "ramp"); }
 
 function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
 function smoothstep(t){ t = clamp(t, 0, 1); return t*t*(3 - 2*t); }
@@ -117,6 +139,8 @@ function pack(doc){
     // City Gen v4 (@3, HQ 3.25): the road's class (lanes then counts each way) and its median (cm), raised paving
     if(e.v4 != null) o.v4 = String(e.v4);
     if(e.median > 0) o.median = e.median|0;
+    // City Gen v4 phase 6 (@3, HQ 3.29): an interchange's ramp, driven one way only, from a to b
+    if(e.oneway === true) o.oneway = true;
     return o;
   });
   var W = {
@@ -160,6 +184,7 @@ function docOf(W){
     if(e.bridge) o.bridge = true;
     if(e.v4 != null) o.v4 = e.v4;
     if(e.median) o.median = e.median;
+    if(e.oneway) o.oneway = true;
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},
@@ -224,6 +249,8 @@ function index(W){
   });
   // segments as flat (edge, seg) pairs, bucketed by their box grown by half + CLEAR, so the
   // point's own bucket holds every segment whose road (or tree clearance) can cover it
+  // City Gen v4 phase 6: which edges are an interchange's flyover or ramps (null in a world without them)
+  I.deck = W.edges.some(deckRoad) ? W.edges.map(deckRoad) : null;
   W.edges.forEach(function(e, ei){
     var p = e.pts, m = p.length/3, g = e.width/200 + CLEAR;
     for(var s = 0; s + 1 < m; s++){
@@ -253,30 +280,88 @@ function proj(e, s, x, z){
 // each edge's outer line, so the surface no longer jumps where the nearest edge switches. Off every carriageway the
 // sidewalk sits SIDEWALK_UP higher with a real kerb step, matching the drawn walk ribbon (the camera pivot spring
 // smooths the step for the view).
-var ROAD = {y: 0}, CE = [], CS = [], CD = [], CT = [], CY = [];
-function roadUnder(W, x, z){
-  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)], n = 0, gap = Infinity, i, k;
+//
+// City Gen v4 phase 6 (@3): stacked surfaces. An interchange's flyover or ramp is ELEVATED where its surface is more than
+// ELEV over the terrain there (the land runs on beneath it). Without yNow (the height, m, of whatever stands there) an
+// elevated surface is never the answer: under a flyover you are on the road or the land beneath it. With yNow the
+// surfaces under (x, z) are clustered into levels (sorted by y, a gap over LEVEL_GAP starts a new one) and the highest
+// level whose lowest surface is <= yNow + STEP_UP is the one blended (so a car on a ramp stays on it, one under the
+// flyover stays under it); when none is, the answer is the one without yNow. An elevated surface reaches PARAPET past
+// its half width (to its parapet), at grade a deck edge is a road like any other. A world without elevated surfaces
+// near (x, z) takes the original path, untouched.
+var ROAD = {y: 0, edge: -1}, CE = [], CS = [], CD = [], CT = [], CY = [], CG = [], CL = [];
+function roadUnder(W, x, z, yNow){
+  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)], n = 0, gap = Infinity, i, k, dk = I.deck, ext = 0;
   for(i = 0; i < L.length; i += 2){
     var e = W.edges[L[i]];
     proj(e, L[i+1], x, z);
     // every carriageway counts (a highway beside a sidewalk too); a median (v4) is raised paving, no carriageway
-    var med = e.median ? e.median/200 : 0;
-    gap = Math.min(gap, S.d < med ? med - S.d : S.d - (e.width - 2*e.walk)/200);
-    if(S.d > e.width/200) continue;
+    var med = e.median ? e.median/200 : 0, g = S.d < med ? med - S.d : S.d - (e.width - 2*e.walk)/200;
+    gap = Math.min(gap, g);
+    if(S.d > e.width/200){
+      if(!(dk && dk[L[i]] && S.d <= e.width/200 + PARAPET)) continue;
+      ext++;   // a deck's parapet margin: counts only where that deck is elevated (below)
+    }
     for(k = 0; k < n && CE[k] !== L[i]; k++);
-    if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; }
+    if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; CG[k] = Infinity; }
+    CG[k] = Math.min(CG[k], g);
     if(S.d < CD[k]){ CD[k] = S.d; CS[k] = L[i+1]; CT[k] = S.t; CY[k] = S.y; }
   }
   if(!n) return 0;
+  if(dk){
+    var el = 0, h = null;
+    for(k = 0; k < n; k++){
+      CL[k] = 0;
+      if(!dk[CE[k]]) continue;
+      var ed = W.edges[CE[k]];
+      CY[k] = bendY(ed, CS[k], x, z, CT[k], CY[k]);
+      if(h == null) h = heightAt(W, x, z);
+      if(CY[k] - h > ELEV){ CL[k] = 1; el++; }
+      else if(CD[k] > ed.width/200) CL[k] = -1;   // past an at-grade deck road's half: not on it
+    }
+    if(el || ext) return levelUnder(W, x, z, yNow, n);
+  }
   var sw = 0, sy = 0, best = 0;
   for(k = 0; k < n; k++){
-    var ek = W.edges[CE[k]], hk = ek.width/200, y = bendY(ek, CS[k], x, z, CT[k], CY[k]);
+    var ek = W.edges[CE[k]], hk = ek.width/200, y = dk && dk[CE[k]] ? CY[k] : bendY(ek, CS[k], x, z, CT[k], CY[k]);
     var w = hk > 0 ? smoothstep(1 - CD[k]/hk) : 0;
     sw += w; sy += w*y; CY[k] = y;
     if(CD[k] < CD[best]) best = k;
   }
   ROAD.y = sw > 0 ? sy/sw : CY[best];
+  ROAD.edge = CE[best];
   for(i = 0; W.rbs && i < W.rbs.length; i++){ var rb = W.rbs[i]; if((x - rb.x)*(x - rb.x) + (z - rb.z)*(z - rb.z) < rb.r*rb.r){ gap = 1; break; } }
+  if(gap <= 0) return 1;
+  ROAD.y += SIDEWALK_UP;
+  return 2;
+}
+// roadUnder where elevated surfaces are among the n candidates (CL: 1 elevated, 0 at grade, -1 not on it at all)
+function levelUnder(W, x, z, yNow, n){
+  var ord = [], pick = null, k, j;
+  for(k = 0; k < n; k++){
+    if(CL[k] < 0) continue;
+    if(CL[k] === 0) CY[k] = bendY(W.edges[CE[k]], CS[k], x, z, CT[k], CY[k]);
+    ord.push(k);
+  }
+  ord.sort(function(a, b){ return CY[a] - CY[b] || CE[a] - CE[b]; });
+  if(yNow != null && isFinite(+yNow)){
+    var lv = [], cur = null;
+    ord.forEach(function(k){ if(cur && CY[k] - CY[cur[cur.length - 1]] <= LEVEL_GAP) cur.push(k); else lv.push(cur = [k]); });
+    for(j = lv.length - 1; j >= 0 && !pick; j--) if(CY[lv[j][0]] <= +yNow + STEP_UP) pick = lv[j];
+  }
+  if(!pick) pick = ord.filter(function(k){ return CL[k] === 0; });
+  if(!pick.length) return 0;
+  var sw = 0, sy = 0, best = pick[0], gap = Infinity;
+  pick.forEach(function(k){
+    var ek = W.edges[CE[k]], hk = ek.width/200, w = hk > 0 ? smoothstep(1 - CD[k]/hk) : 0;
+    sw += w; sy += w*CY[k];
+    // an elevated deck is carriageway out to its parapet
+    gap = Math.min(gap, CL[k] === 1 ? Math.min(CG[k], CD[k] - hk - PARAPET) : CG[k]);
+    if(CD[k] < CD[best]) best = k;
+  });
+  ROAD.y = sw > 0 ? sy/sw : CY[best];
+  ROAD.edge = CE[best];
+  for(var i = 0; W.rbs && i < W.rbs.length; i++){ var rb = W.rbs[i]; if((x - rb.x)*(x - rb.x) + (z - rb.z)*(z - rb.z) < rb.r*rb.r){ gap = 1; break; } }
   if(gap <= 0) return 1;
   ROAD.y += SIDEWALK_UP;
   return 2;
@@ -350,16 +435,21 @@ function siteAt(W, x, z){
   return null;
 }
 
-function nearestRoad(W, x, z, maxM){
+// yNow (optional, m): prefer the road at that level (one whose point there is over yNow + STEP_UP, or more than
+// STEP_UP + LEVEL_GAP under it, only when there is no other within maxM)
+var OFF_LEVEL = 1e4;
+function nearestRoad(W, x, z, maxM, yNow){
   maxM = maxM != null ? +maxM : 40;
-  var I = index(W), nb = I.nb, best = null, bd = Infinity;
+  var I = index(W), nb = I.nb, best = null, bd = Infinity, lv = yNow != null && isFinite(+yNow), yn = +yNow;
   eachBucket(W, nb, x - maxM, x + maxM, z - maxM, z + maxM, function(b){
     var L = I.segs[b];
     for(var i = 0; i < L.length; i += 2){
       var e = W.edges[L[i]], s = L[i+1];
       proj(e, s, x, z);
-      if(S.d < bd || (S.d === bd && best && e.id < best.edge)){
-        bd = S.d;
+      var key = S.d;
+      if(lv && (S.y > yn + STEP_UP || S.y < yn - STEP_UP - LEVEL_GAP)) key += OFF_LEVEL;
+      if(key < bd || (key === bd && best && e.id < best.edge)){
+        bd = key;
         var p = e.pts;
         best = {edge: e.id, seg: s, t: S.t, dist: S.d, x: S.x, y: S.y, z: S.z,
                 yaw: Math.atan2((p[3*s+3] - p[3*s])/100, (p[3*s+5] - p[3*s+2])/100),
@@ -370,11 +460,11 @@ function nearestRoad(W, x, z, maxM){
   return best && best.dist <= maxM ? best : null;
 }
 
-function roadY(W, x, z){ return roadUnder(W, x, z) ? ROAD.y : null; }
+function roadY(W, x, z, yNow){ return roadUnder(W, x, z, yNow) ? ROAD.y : null; }
 
-function surfaceAt(W, x, z){
+function surfaceAt(W, x, z, yNow){
   if(Math.abs(x) > W.half || Math.abs(z) > W.half) return "edge";
-  var r = roadUnder(W, x, z);
+  var r = roadUnder(W, x, z, yNow);
   if(r === 1) return "road";
   if(r === 2) return "sidewalk";
   if(W.water && waterAt(W, x, z)) return "water";
@@ -394,11 +484,13 @@ function padOf(W, x, z){
   return null;
 }
 
-// street: true gives the street level over a terrain hole too (@3); without it a hole's ground is its floor (holeFloor)
-function groundAt(W, x, z, street){
+// street: true gives the street level over a terrain hole too (@3); without it a hole's ground is its floor (holeFloor).
+// yNow (optional, m): the height of whatever stands there. Without it the ground level, never an elevated deck (under a
+// flyover: the road or the land beneath it); with it the highest surface whose y <= yNow + STEP_UP (roadUnder's levels)
+function groundAt(W, x, z, street, yNow){
   if(!street && (W.metro || W.rail)){ var f = holeFloor(W, x, z); if(f != null) return f; }
   if(W.water){ var dk = deckAt(W, x, z); if(dk != null) return dk; }   // @3: a pier's deck, the breakwater's crown
-  if(roadUnder(W, x, z)) return ROAD.y;
+  if(roadUnder(W, x, z, yNow)) return ROAD.y;
   var I = index(W), nb = I.nb, L = I.pads[bOf(W, z, nb)*nb + bOf(W, x, nb)], bd = Infinity, py = 0;
   for(var i = 0; i < L.length; i++){
     var p = I.padList[L[i]], R = p.rect;
@@ -414,19 +506,19 @@ function groundAt(W, x, z, street){
 
 function streetAt(W, x, z){ return groundAt(W, x, z, true); }
 
-function normalAt(W, x, z){
+function normalAt(W, x, z, yNow){
   var e = 0.5;
-  var gx = (groundAt(W, x + e, z) - groundAt(W, x - e, z))/(2*e);
-  var gz = (groundAt(W, x, z + e) - groundAt(W, x, z - e))/(2*e);
+  var gx = (groundAt(W, x + e, z, false, yNow) - groundAt(W, x - e, z, false, yNow))/(2*e);
+  var gz = (groundAt(W, x, z + e, false, yNow) - groundAt(W, x, z - e, false, yNow))/(2*e);
   var l = Math.sqrt(gx*gx + 1 + gz*gz);
   return {x: -gx/l, y: 1/l, z: -gz/l};
 }
 
-function slopeAlong(W, x, z, yaw, len){
+function slopeAlong(W, x, z, yaw, len, yNow){
   len = len != null ? +len : 1.5;
   if(!(len > 0)) return 0;
   var sx = Math.sin(yaw || 0)*len, sz = Math.cos(yaw || 0)*len;
-  return (groundAt(W, x + sx, z + sz) - groundAt(W, x - sx, z - sz))/(2*len);
+  return (groundAt(W, x + sx, z + sz, false, yNow) - groundAt(W, x - sx, z - sz, false, yNow))/(2*len);
 }
 
 function slopeFactor(grade, kind){
@@ -701,6 +793,207 @@ function holeFloor(W, x, z){
   return y != null && isFinite(y) && y < street - 0.5 ? y : street - HOLE_DEPTH;
 }
 
+/* ---------- City Gen v4 phase 6 (@3): decks and piers, memoised per world ([] in a world without them) ---------- */
+// The elevated stretches of the flyovers and ramps: [{edge, pts: [[x, y, z], ...] (m), half, i0, i1}], every run of
+// elevated points (ELEV over the terrain) with the point on the ground before and after it where there is one (so a
+// stretch runs from where the road leaves the ground), in the edge's order a -> b; i0/i1 its first/last point's index.
+function decksOf(W){
+  if(!W || !W.edges) return [];
+  var M = memoOf(W);
+  if(M.decks !== undefined) return M.decks;
+  var out = [];
+  W.edges.forEach(function(e){
+    if(!deckRoad(e)) return;
+    var p = e.pts, m = p.length/3, up = [], i, j;
+    for(i = 0; i < m; i++) up.push(p[3*i+1]/100 - heightAt(W, p[3*i]/100, p[3*i+2]/100) > ELEV);
+    for(i = 0; i < m; i = j + 1){
+      j = i;
+      if(!up[i]) continue;
+      while(j + 1 < m && up[j + 1]) j++;
+      var a = Math.max(0, i - 1), b = Math.min(m - 1, j + 1), pts = [];
+      for(var k = a; k <= b; k++) pts.push([p[3*k]/100, p[3*k+1]/100, p[3*k+2]/100]);
+      if(pts.length >= 2) out.push({edge: e.id, pts: pts, half: e.width/200, i0: a, i1: b});
+    }
+  });
+  M.decks = out;
+  return out;
+}
+// the decks' segments in a DECK_CELL m grid, each grown by half + PARA_REACH | null without decks
+var DECK_CELL = 32, DK = {d: 0, y: 0, x: 0, z: 0};
+function deckIndex(W){
+  var M = memoOf(W);
+  if(M.deckIx !== undefined) return M.deckIx;
+  var D = decksOf(W), grid = {};
+  D.forEach(function(d, di){
+    var g = d.half + PARA_REACH;
+    for(var s = 0; s + 1 < d.pts.length; s++){
+      var a = d.pts[s], b = d.pts[s+1];
+      for(var j = Math.floor((Math.min(a[2], b[2]) - g)/DECK_CELL); j <= Math.floor((Math.max(a[2], b[2]) + g)/DECK_CELL); j++)
+        for(var i = Math.floor((Math.min(a[0], b[0]) - g)/DECK_CELL); i <= Math.floor((Math.max(a[0], b[0]) + g)/DECK_CELL); i++)
+          (grid[i + "," + j] = grid[i + "," + j] || []).push(di, s);
+    }
+  });
+  return (M.deckIx = D.length ? grid : null);
+}
+// (x, z) on deck segment a -> b ([x, y, z] m): plan distance, and the deck's point there, in DK
+function deckProj(a, b, x, z){
+  var ux = b[0] - a[0], uz = b[2] - a[2], L2 = ux*ux + uz*uz, t = L2 > 0 ? clamp(((x - a[0])*ux + (z - a[2])*uz)/L2, 0, 1) : 0;
+  DK.x = a[0] + ux*t; DK.z = a[2] + uz*t; DK.y = a[1] + (b[1] - a[1])*t;
+  DK.d = Math.sqrt((x - DK.x)*(x - DK.x) + (z - DK.z)*(z - DK.z));
+}
+// the y (m) of the highest elevated deck whose footprint (its half + margin m) covers (x, z), or null: what a renderer
+// keeps its props and furniture off
+function deckOver(W, x, z, margin){
+  var G = W ? deckIndex(W) : null, L = G && G[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return null;
+  var D = decksOf(W), m = Math.min(+margin || 0, PARA_REACH), best = null;
+  for(var i = 0; i < L.length; i += 2){
+    var d = D[L[i]];
+    deckProj(d.pts[L[i+1]], d.pts[L[i+1] + 1], x, z);
+    if(DK.d > d.half + m || (best != null && DK.y <= best)) continue;
+    if(DK.y - heightAt(W, DK.x, DK.z) > ELEV) best = DK.y;
+  }
+  return best;
+}
+// The decks' piers: [{x, z, r, y0, y1, edge, s, span, yaw, node?}] (m). Single columns PIER_R m in radius on a deck's
+// centre line every PIER_MIN..PIER_MAX m (PIER_NOM preferred) along every stretch where the deck's underside (DECK_D
+// under its surface) is PIER_CLEAR m or more over the ground; a spot within PIER_ROAD m of another road's full width
+// (carriageway + pavement) that runs under the deck, on water or in a terrain hole is skipped and the span lengthened
+// (a flyover's span over the ring is one span). Where such a stretch ends at a node high enough (a trumpet's T) one
+// pier stands under the node (`node`: its id, shared by the decks meeting there). y0 the ground (the terrain), y1 the
+// deck's underside; s is m along the stretch from its first point, span the m back to the previous support (a pier,
+// the node, or the start of the high stretch, where the solid body under a low deck ends); yaw the deck's direction.
+function piersOf(W){
+  if(!W || !W.edges) return [];
+  var M = memoOf(W);
+  if(M.piers !== undefined) return M.piers;
+  var D = decksOf(W), out = [], nodes = {}, inc = {}, nodePier = {};
+  if(D.length){
+    (W.nodes || []).forEach(function(n){ nodes[n.id] = n; });
+    W.edges.forEach(function(e){ (inc[e.a] = inc[e.a] || []).push(e.id); (inc[e.b] = inc[e.b] || []).push(e.id); });
+  }
+  var edgeOf = {};
+  W.edges.forEach(function(e){ edgeOf[e.id] = e; });
+  D.forEach(function(d){
+    var P = d.pts, Sa = [0], e = edgeOf[d.edge], k;
+    for(k = 1; k < P.length; k++) Sa.push(Sa[k-1] + Math.sqrt((P[k][0] - P[k-1][0])*(P[k][0] - P[k-1][0]) + (P[k][2] - P[k-1][2])*(P[k][2] - P[k-1][2])));
+    var len = Sa[Sa.length - 1];
+    if(!(len > 0)) return;
+    function at(s){
+      var j = 0;
+      while(j < P.length - 2 && Sa[j + 1] < s) j++;
+      var L = Sa[j + 1] - Sa[j], t = L > 0 ? clamp((s - Sa[j])/L, 0, 1) : 0, a = P[j], b = P[j + 1];
+      return {x: a[0] + (b[0] - a[0])*t, y: a[1] + (b[1] - a[1])*t, z: a[2] + (b[2] - a[2])*t, yaw: Math.atan2(b[0] - a[0], b[2] - a[2])};
+    }
+    function tall(q){ return q.y - DECK_D - heightAt(W, q.x, q.z) >= PIER_CLEAR; }
+    var own = {}; own[d.edge] = 1;
+    // the runs (m along the stretch) where the deck is high enough for piers, sampled every PIER_STEP m
+    var runs = [], run = null, n = Math.max(1, Math.ceil(len/PIER_STEP));
+    for(k = 0; k <= n; k++){
+      var s = len*k/n;
+      if(tall(at(s))){ if(!run) run = [s, s]; run[1] = s; } else if(run){ runs.push(run); run = null; }
+    }
+    if(run) runs.push(run);
+    // the stretch's ends at its edge's nodes (when the stretch reaches them)
+    var endNode = [d.i0 === 0 ? e.a : null, d.i1 === e.pts.length/3 - 1 ? e.b : null];
+    runs.forEach(function(r){
+      var last = r[0];
+      [[0, r[0] <= PIER_STEP], [1, r[1] >= len - PIER_STEP]].forEach(function(c){
+        var id = endNode[c[0]], nd = id != null ? nodes[id] : null;
+        if(!c[1] || !nd || nodePier[id] !== undefined) return;
+        var ign = {};
+        (inc[id] || []).forEach(function(eid){ ign[eid] = 1; });
+        var q = {x: nd.x/100, y: nd.y/100, z: nd.z/100}, g = heightAt(W, q.x, q.z);
+        nodePier[id] = null;
+        if(q.y - DECK_D - g < PIER_CLEAR || !pierOk(W, q.x, q.z, q.y, ign)) return;
+        var o = {x: q.x, z: q.z, r: PIER_R, y0: g, y1: q.y - DECK_D, edge: d.edge, s: c[0] ? len : 0, span: 0, yaw: at(c[0] ? len : 0).yaw, node: id};
+        nodePier[id] = o;
+        out.push(o);
+      });
+      for(var guard = 0; r[1] - last > PIER_MAX && guard < 1000; guard++){
+        var got = null;
+        // PIER_NOM first, then outward to PIER_MIN..PIER_MAX, then further (a lengthened span) until the run's end
+        for(var dt = 0; !got; dt += PIER_STEP){
+          var ts = dt === 0 ? [PIER_NOM] : [PIER_NOM - dt, PIER_NOM + dt], any = false;
+          for(var u = 0; u < ts.length && !got; u++){
+            var t = ts[u];
+            if(t < PIER_MIN - 1e-9 || last + t > r[1] - PIER_STEP) continue;
+            any = true;
+            var q = at(last + t);
+            if(!tall(q) || !pierOk(W, q.x, q.z, q.y, own)) continue;
+            got = {x: q.x, z: q.z, r: PIER_R, y0: heightAt(W, q.x, q.z), y1: q.y - DECK_D, edge: d.edge, s: last + t, span: t, yaw: q.yaw};
+          }
+          if(!any && PIER_NOM + dt > r[1] - last) break;
+        }
+        if(!got) break;
+        out.push(got);
+        last = got.s;
+      }
+    });
+  });
+  // a grid for blockedAt
+  var grid = {};
+  out.forEach(function(p){
+    for(var j = Math.floor((p.z - p.r)/DECK_CELL); j <= Math.floor((p.z + p.r)/DECK_CELL); j++)
+      for(var i = Math.floor((p.x - p.r)/DECK_CELL); i <= Math.floor((p.x + p.r)/DECK_CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(p);
+  });
+  M.pierIx = grid;
+  M.piers = out;
+  return out;
+}
+// may a pier stand at (x, z) under a deck whose surface is at y? Not on water or in a hole, nor within PIER_ROAD m of the
+// full width of a road (but those in `own`) that runs under the deck there
+function pierOk(W, x, z, y, own){
+  var hm = W.half - 2, r = PIER_R, i;
+  if(!(Math.abs(x) <= hm && Math.abs(z) <= hm)) return false;
+  var ring = [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]];
+  for(i = 0; i < ring.length; i++){
+    var px = x + ring[i][0], pz = z + ring[i][1];
+    if(W.river && riverAt(W, px, pz)) return false;
+    if(W.water && (bodyAt(W, px, pz) || deckAt(W, px, pz) != null)) return false;
+    if((W.metro || W.rail) && holeRec(W, px, pz)) return false;
+  }
+  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)];
+  for(i = 0; i < L.length; i += 2){
+    var e = W.edges[L[i]];
+    if(own[e.id]) continue;
+    proj(e, L[i+1], x, z);
+    if(S.d <= e.width/200 + PIER_ROAD + r && S.y < y - DECK_D - ELEV) return false;
+  }
+  return true;
+}
+// a pier at (x, z), for something at yNow (m; omitted: at ground level) under its deck's underside
+function pierHit(W, x, z, yNow){
+  var M = memoOf(W);
+  if(M.piers === undefined) piersOf(W);
+  var L = M.pierIx[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return false;
+  for(var i = 0; i < L.length; i++){
+    var p = L[i], dx = x - p.x, dz = z - p.z;
+    if(dx*dx + dz*dz < p.r*p.r && (yNow == null || !isFinite(+yNow) || +yNow < p.y1)) return true;
+  }
+  return false;
+}
+// at a deck's level (yNow within STEP_UP under to LEVEL_GAP over its surface, where it is elevated), beyond its edge +
+// PARAPET (up to PARA_REACH past it) and on no deck: the parapet. Free where a road at your level runs there (the
+// at-grade road a deck rises beside)
+function parapetHit(W, x, z, yNow){
+  if(yNow == null || !isFinite(+yNow)) return false;
+  var G = deckIndex(W), L = G && G[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return false;
+  var D = decksOf(W), yn = +yNow, near = false;
+  for(var i = 0; i < L.length; i += 2){
+    var d = D[L[i]];
+    deckProj(d.pts[L[i+1]], d.pts[L[i+1] + 1], x, z);
+    if(DK.d > d.half + PARA_REACH || yn < DK.y - STEP_UP || yn > DK.y + LEVEL_GAP) continue;
+    if(DK.y - heightAt(W, DK.x, DK.z) <= ELEV) continue;
+    if(DK.d <= d.half + PARAPET) return false;
+    near = true;
+  }
+  if(!near) return false;
+  return !(roadUnder(W, x, z, yn) && Math.abs(ROAD.y - yn) <= STEP_UP);
+}
+
 function trees(W){
   var I = index(W);
   if(I.treeList) return I.treeList;
@@ -731,7 +1024,9 @@ function trees(W){
   return out;
 }
 
-function blockedAt(W, x, z){
+// yNow (optional, m): the height of whatever moves there. A deck's piers block at ground level (yNow omitted or under
+// the deck's underside); at a deck's level its parapets block (parapetHit). Without yNow, as before but the piers.
+function blockedAt(W, x, z, yNow){
   var hm = W.half - 2;
   if(!(x >= -hm && x <= hm && z >= -hm && z <= hm)) return true;
   var I = index(W), nb = I.nb, b = bOf(W, z, nb)*nb + bOf(W, x, nb), L = I.bld[b], R = I.bldRect, i, k;
@@ -751,6 +1046,8 @@ function blockedAt(W, x, z){
   }
   // @3: a lake, canal or the marina is water (a bridge's deck, a pier and the breakwater are not)
   if(W.water && waterAt(W, x, z) && !roadUnder(W, x, z)) return true;
+  // City Gen v4 phase 6: the decks' piers and parapets
+  if(I.deck && (pierHit(W, x, z, yNow) || parapetHit(W, x, z, yNow))) return true;
   return false;
 }
 
@@ -1008,7 +1305,9 @@ var api = HQV.world = {
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
-  blockedAt: blockedAt, trees: trees, riverAt: riverAt, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
+  blockedAt: blockedAt, trees: trees, decksOf: decksOf, piersOf: piersOf, deckOver: deckOver, STEP_UP: STEP_UP,
+  DECK: {ELEV: ELEV, LEVEL_GAP: LEVEL_GAP, DEPTH: DECK_D, PARAPET: PARAPET, PIER_R: PIER_R, PIER_MIN: PIER_MIN, PIER_MAX: PIER_MAX,
+         PIER_ROAD: PIER_ROAD, PIER_CLEAR: PIER_CLEAR}, riverAt: riverAt, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
   load: load, onChange: onChange, current: current, cacheMs: cacheMs
 };
 })();

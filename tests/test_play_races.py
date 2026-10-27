@@ -34,7 +34,9 @@ Object.keys(docs).forEach(function(name){
     var prev = r.start, gaps = [], off = 0, far = 0;
     r.cps.forEach(function(c){
       gaps.push(Math.hypot(c.x - prev.x, c.z - prev.z)); prev = c;
-      if(WD.surfaceAt(W, c.x, c.z) !== "road") off++;
+      // (on a road at its own level: a checkpoint on a flyover is on the deck, HQ 3.29's stacked surfaces)
+      var lv = WD.nearestRoad(W, c.x, c.z, 30);
+      if(WD.surfaceAt(W, c.x, c.z, lv ? lv.y : undefined) !== "road") off++;
       var n = WD.nearestRoad(W, c.x, c.z, 30); if(!n || n.dist > 1.5) far++;
     });
     return {id: r.id, kind: r.kind, len: r.len, laps: r.laps, cps: r.cps.length, minGap: Math.min.apply(null, gaps), maxGap: Math.max.apply(null, gaps), off: off, far: far,

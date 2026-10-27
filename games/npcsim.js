@@ -334,9 +334,10 @@ function create(doc, opts){
     var width = (e.width | 0)/100, walk = (e.walk | 0)/100, cls = String(e.class || "street");
     var half = width/2;
     E.push({id: e.id, a: a, b: b, m: m, x: x, y: y, z: z, cum: cum, len: cum[m - 1], nx: nx, nz: nz, cls: cls, half: half, walkW: walk,
+            one: e.oneway === true,                         // [3.29] an interchange's ramp: driven a to b only
             walkable: cls !== "highway" && cls !== "ring" || walk > 0,
             off: walk > 0 ? half - walk/2 : Math.max(0.5, half - SIDE_IN),
-            lane: e.v4 ? npcLaneV4((width - 2*walk)/2, e.lanes, (e.median | 0)/200) : npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
+            lane: e.oneway === true ? 0 : e.v4 ? npcLaneV4((width - 2*walk)/2, e.lanes, (e.median | 0)/200) : npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
   });
 
   // [play-street] the widest road meeting each node (half width) and its degree: a crossing keeps this far out of the junction
@@ -347,21 +348,23 @@ function create(doc, opts){
   function crossSt(e, atB, sig){ var c = Math.min(e.len/2 - 1, crossClear(e, atB ? e.b : e.a, sig)); return atB ? e.len - c : c; }
 
   /* graphs (CSR) for walking and driving */
-  function graph(keep){
+  // (directed: a one-way road joins its a to its b only)
+  function graph(keep, directed){
+    var back = function(e){ return !(directed && e.one); };
     var deg = new Int32Array(NN + 1), cnt = 0;
-    E.forEach(function(e){ if(keep(e)){ deg[e.a]++; deg[e.b]++; cnt += 2; } });
+    E.forEach(function(e){ if(keep(e)){ deg[e.a]++; cnt++; if(back(e)){ deg[e.b]++; cnt++; } } });
     var start = new Int32Array(NN + 1);
     for(var i = 0; i < NN; i++) start[i + 1] = start[i] + deg[i];
     var fill = start.slice(0, NN), to = new Int32Array(cnt), ed = new Int32Array(cnt);
     E.forEach(function(e, ei){
       if(!keep(e)) return;
       to[fill[e.a]] = e.b; ed[fill[e.a]++] = ei;
-      to[fill[e.b]] = e.a; ed[fill[e.b]++] = ei;
+      if(back(e)){ to[fill[e.b]] = e.a; ed[fill[e.b]++] = ei; }
     });
     return {start: start, to: to, ed: ed, keep: keep, g: new Float64Array(NN), from: new Int32Array(NN), par: new Int32Array(NN), stamp: new Int32Array(NN), gen: 0,
             heap: new Heap(64), goal: new Float64Array(NN), goalStamp: new Int32Array(NN), closed: new Int32Array(NN)};
   }
-  var GR = {walk: graph(function(e){ return e.walkable; }), car: graph(function(){ return true; })};
+  var GR = {walk: graph(function(e){ return e.walkable; }), car: graph(function(){ return true; }, true)};
   GR.walk.mode = "walk"; GR.car.mode = "car";
 
   /* segment grid: nearest edge to a point */

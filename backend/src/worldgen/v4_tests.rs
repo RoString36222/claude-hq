@@ -203,7 +203,7 @@ mod interchanges {
     use super::super::roads::{deck_road, path_len, Edge};
     use super::*;
 
-    fn at<'a>(r: &'a roads::Roads, n: u32) -> Vec<&'a Edge> {
+    fn at(r: &roads::Roads, n: u32) -> Vec<&Edge> {
         r.edges.iter().filter(|e| e.a == n || e.b == n).collect()
     }
 

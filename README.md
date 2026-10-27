@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.28.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.29.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,20 @@ and feature guide.
 
 ## Changelog
 
+- **3.29.0 — City Gen v4, phase 6: expressways and trumpet interchanges.** The Ring Road and the highways are now
+  29 m expressways: three lanes each way, hard shoulders and a concrete crash barrier down the middle.
+  - **Trumpets:** where a highway meets the Ring Road and there's room, a trumpet interchange replaces the flat
+    junction. The highway climbs a flyover over the ring, a loop ramp comes down to the far side, and a ramp curls up
+    round it. Slip roads join the near side. Everything is one-way and nothing crosses at street level. The Commons has
+    three, and the other three highway junctions stay at street level (a bridge, an awkward angle, or the coast is in
+    the way).
+  - **Decks you can use:** you can drive or walk up the ramps and over the flyover, and pass underneath. Decks have
+    parapets, columns every 25–30 m, and retaining walls where they are low.
+  - **Traffic:** NPC traffic uses the ramps and drives two lanes each way on the expressways, keeping the lane by the
+    barrier free. The Commons has about 290 cars at the usual setting, up from 167. Residents' cars and the satnav
+    respect the one-way ramps.
+  - **Validator:** new rules check lane balance at every ramp junction, ramp grades of 6% or less, and 7 m of
+    clearance under every deck.
 - **3.28.0 — City Gen v4, phase 5: road capacity and an NPC traffic slider.** Settings has a new **NPC traffic**
   slider for the 3D City, which changes the open City straight away:
   - **85%** is the usual traffic.

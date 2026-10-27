@@ -972,7 +972,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!W) return true;
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
-    if(WD.blockedAt(W, x, z)) return true;
+    if(WD.blockedAt(W, x, z, deckLevel(x, z))) return true;                 // [3.29] a flyover's piers below it, its parapets on it
     if(wb && wb.furnitureAt && wb.furnitureAt(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [city life] benches, stalls, cafe tables ([play-street] a table, bin or stall you drive into fast goes over)
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
@@ -1015,8 +1015,17 @@ HQV.hqWorlds.city3d = function(c, w){
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     var fy = apGroundY(x, z); if(fy != null) return fy;                    // AIR: the airfield's platform, the terminal, the gallery
-    var gy = dy != null ? dy : WD.groundAt(W, x, z), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
+    var gy = dy != null ? dy : WD.groundAt(W, x, z, false, deckLevel(x, z)), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
     return sy != null && sy > gy ? sy : gy;
+  }
+  // [3.29] City Gen v4's flyovers and ramps stand over the roads they cross: near you, the ground is the surface at your
+  // level (world.js groundAt's yNow: on the deck when you drove up the ramp, the road beneath when you are under it);
+  // anywhere else (props, peers, the map) the ground beneath
+  var DECK_NEAR = 12;
+  function deckLevel(x, z){
+    if(!W || !W.edges) return undefined;
+    var a = c.avatar && c.avatar();
+    return a && a.hy != null && isFinite(a.hy) && Math.abs(x - a.x) < DECK_NEAR && Math.abs(z - a.z) < DECK_NEAR ? a.hy : undefined;
   }
   // [stunts] a ramp is driven up from its low end: from off it, a part of it higher than your knees is a wall
   function stuntWall(x, z){

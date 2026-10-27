@@ -216,7 +216,8 @@ Object.keys(tilesHit).forEach(function(k){
   var g = G.terrainTile(W, +t[0], +t[1], L);
   verts(g, function(vx, vy, vz){
     var over = H.deckOver(W, vx, vz, 0);
-    if(over == null) return;
+    // (where a ramp comes down to within a metre of the land it is laid on it, the land under it as under any road)
+    if(over == null || over - H.heightAt(W, vx, vz) < 1) return;
     out.geo.terrain.n++;
     if(vy > H.heightAt(W, vx, vz) + 0.3) out.geo.terrain.bad.push([vx, vy, vz, over]);
   });

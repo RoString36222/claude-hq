@@ -178,7 +178,11 @@ function prep(W){
   var baseW = W.tierBase || W;
   CACHES = CACHES.filter(function(c){ return (c.W.tierBase || c.W) === baseW; }).slice(-3);
   var nodes = {}, inc = {}, E = [], byId = {};
-  (W.nodes || []).forEach(function(n){ nodes[n.id] = {id: n.id, x: n.x/100, y: n.y/100, z: n.z/100}; });
+  (W.nodes || []).forEach(function(n){
+    nodes[n.id] = {id: n.id, x: n.x/100, y: n.y/100, z: n.z/100};
+    // City Gen v4 (HQ 3.26): its control, and a roundabout's island radius (m)
+    if(n.junction){ nodes[n.id].junction = n.junction; nodes[n.id].island = (n.island || 0)/100; }
+  });
   (W.edges || []).forEach(function(e, ei){
     var p = e.pts, m = p.length/3, P = [], S = [];
     for(var j = 0; j < m; j++){
@@ -221,6 +225,9 @@ function prep(W){
       var t = 0;
       arms.forEach(function(b){ if(b !== a) t = Math.max(t, armClear(a.E.half, b.E.half, a.dx*b.dx + a.dz*b.dz) + 0.3); });
       a.t = Math.min(t, TRIM_MAX, a.E.len*0.45);
+      // [3.26] a full roundabout's circle is junction: every road meeting it stops at its rim
+      var nd = nodes[id];
+      if(nd && nd.junction === "roundabout") a.t = Math.min(Math.max(a.t, nd.island + RB_LANE + 0.5), a.E.len*0.45);
       if(a.end) a.E.tB = a.t; else a.E.tA = a.t;
     });
     arms.sort(function(p, q){ return p.yaw - q.yaw || p.E.id - q.E.id; });
@@ -877,7 +884,8 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
   // corner sidewalks between consecutive arms (a's left faces b, b's right faces a)
   for(k = 0; k < arms.length; k++){
     var a = arms[k], b = arms[(k + 1) % arms.length];
-    if(!(a.E.walk > 0 || b.E.walk > 0)) continue;
+    // ([3.26] none round a full roundabout: its circle is all carriageway out to the rim, a verge beyond)
+    if(!(a.E.walk > 0 || b.E.walk > 0) || n.junction === "roundabout") continue;
     var Sa = a.S, Sb = b.S;
     var ain = at(Sa, a.E.cw, 0), aout = at(Sa, a.E.half, 0), bout = at(Sb, -b.E.half, 0), bin = at(Sb, -b.E.cw, 0);
     var wy = function(P){ var r = Q.nearestRoad(W, P[0], P[2], 20); return (r ? r.y : n.y) + KERB + LIFT; };
@@ -886,6 +894,10 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
     face(kerb, [[ain[0], yi, ain[2]], [bin[0], yk, bin[2]], [bin[0], yAt(bin) + LIFT - 0.02, bin[2]], [ain[0], yAt(ain) + LIFT - 0.02, ain[2]]],
          COL.kerb, [n.x - (ain[0] + bin[0])/2, 0, n.z - (ain[2] + bin[2])/2]);
   }
+  // [3.26] City Gen v4's junction control: a roundabout's paved circle and its island (a mini one's painted, a full
+  // one's raised and planted), and give-way lines across the way in on every arm that gives way
+  if(n.junction === "roundabout" || n.junction === "mini") roundabout(W, n, asph, marks, kerb, walk, yAt);
+  if(n.junction && n.junction !== "signals") giveWays(W, C, n, arms, marks);
   // zebra crossings on street/avenue arms of real junctions, 2 m back from the patch
   if(arms.length >= 3) arms.forEach(function(a){
     var E = a.E;
@@ -898,6 +910,47 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
       var o = -span/2 + i;
       strip(marks, W, E, st, o - 0.25, o + 0.25, MARK_LIFT, COL.white, null, null);
     }
+  });
+}
+
+// [3.26] a roundabout: the circle it turns round (RB_LANE m of carriageway round the island) paved, and its island: a
+// mini roundabout's a white disc on the road, a full one's a kerbed, planted mound
+var RB_LANE = 6, RB_SEG = 32, RANK = {lane: 0, shared: 0, local: 0, service: 0, collector: 1, avenue: 2, boulevard: 3, expressway: 4, highway: 5};
+function roundabout(W, n, asph, marks, kerb, walk, yAt){
+  var ri = n.island, ro = ri + RB_LANE, cy = yAt([n.x, 0, n.z]) + LIFT;
+  function ringAt(r, k){ var th = 2*Math.PI*k/RB_SEG; return [n.x + r*Math.cos(th), 0, n.z + r*Math.sin(th)]; }
+  for(var k = 0; k < RB_SEG; k++){
+    var a = ringAt(ro, k), b = ringAt(ro, k + 1), c = ringAt(ri, k), d = ringAt(ri, k + 1);
+    if(n.junction === "roundabout"){
+      a[1] = yAt(a) + LIFT; b[1] = yAt(b) + LIFT;
+      face(asph, [[n.x, cy, n.z], b, a], COL.asphalt, UP);
+      var top = cy + KERB;
+      face(walk, [[n.x, top, n.z], [d[0], top, d[2]], [c[0], top, c[2]]], COL.planted, UP);
+      face(kerb, [[c[0], cy - 0.02, c[2]], [d[0], cy - 0.02, d[2]], [d[0], top, d[2]], [c[0], top, c[2]]], COL.kerb, [c[0] + d[0] - 2*n.x, 0, c[2] + d[2] - 2*n.z]);
+    } else {
+      var y = cy + MARK_LIFT - LIFT;
+      face(marks, [[n.x, y, n.z], [d[0], y, d[2]], [c[0], y, c[2]]], COL.white, UP);
+    }
+  }
+}
+// give-way lines: two dashed lines across the half of an arm traffic comes in on, at the junction's edge, on every arm
+// of a roundabout and on the lesser roads at a priority junction (all of them where the roads are alike)
+function giveWays(W, C, n, arms, marks){
+  var rk = function(a){ var r = RANK[a.E.v4]; return r == null ? 0 : r; }, top = 0;
+  arms.forEach(function(a){ top = Math.max(top, rk(a)); });
+  var all = n.junction !== "priority" || arms.every(function(a){ return rk(a) === top; });
+  var side = (HQV.traffic && HQV.traffic.SIDE === 1) ? 1 : -1;
+  arms.forEach(function(a){
+    var E = a.E;
+    if(!all && rk(a) >= top) return;
+    if(E.len < a.t + 2) return;
+    // (the way in: toward the node, on the kerb side; the edge's left is +l, so its end arm's way in is +l when traffic
+    // keeps left)
+    var sg = (a.end ? 1 : -1)*(side === -1 ? 1 : -1), lo = E.med || 0;
+    [0.4, 1.0].forEach(function(d){
+      var s0 = a.t + d, s1 = s0 + 0.25, st = a.end ? stations(E, E.len - s1, E.len - s0) : stations(E, s0, s1);
+      for(var o = lo + 0.2; o + 0.4 < E.cw; o += 0.9) strip(marks, W, E, st, sg > 0 ? o : -o - 0.5, sg > 0 ? o + 0.5 : -o, MARK_LIFT, COL.white, null, null);
+    });
   });
 }
 

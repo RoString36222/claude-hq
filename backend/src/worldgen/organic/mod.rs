@@ -247,7 +247,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     for (k, &(x, z)) in g.nodes.iter().enumerate() {
         if !g.adj[k].is_empty() {
             renum[k] = nodes.len() as u32;
-            nodes.push(Node { id: nodes.len() as u32, x, y: base.height_at(x, z), z });
+            nodes.push(Node { id: nodes.len() as u32, x, y: base.height_at(x, z), z, junction: None, island: None });
         }
     }
     let mut edges: Vec<Edge> = g

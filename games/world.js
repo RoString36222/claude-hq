@@ -94,7 +94,14 @@ function pack(doc){
   doc = doc || {};
   var L = doc.layers || {}, t = L.terrain || {}, d = L.districts || {}, r = L.roads || {};
   var sizeCm = doc.size_cm || 204800;
-  var nodes = (r.nodes || []).map(function(n){ return {id: n.id, x: n.x|0, y: n.y|0, z: n.z|0}; });
+  var nodes = (r.nodes || []).map(function(n){
+    var o = {id: n.id, x: n.x|0, y: n.y|0, z: n.z|0};
+    // City Gen v4 (HQ 3.26): the junction's control ("priority" | "mini" | "roundabout" | "signals") and a roundabout's
+    // island radius (cm)
+    if(n.junction != null) o.junction = String(n.junction);
+    if(n.island > 0) o.island = n.island|0;
+    return o;
+  });
   var edges = (r.edges || []).map(function(e){
     var cls = e.class === "country" ? "highway" : String(e.class || "street");
     var old = e.class === "country";
@@ -118,6 +125,8 @@ function pack(doc){
     districts: {cell: d.cell_cm || 800, origin: d.origin_cm != null ? d.origin_cm : -sizeCm/2, n: d.n|0,
                 k: Uint8Array.from(d.kinds || []), legend: (d.legend || []).slice()},
     nodes: nodes, edges: edges,
+    // [3.26] full roundabouts' islands (m): raised, planted ground in the road (roadUnder)
+    rbs: nodes.filter(function(n){ return n.junction === "roundabout" && n.island > 0; }).map(function(n){ return {x: n.x/100, z: n.z/100, r: n.island/100}; }),
     blocks: L.blocks || [], lots: L.lots || [], sites: L.sites || [],
     index: null
   };
@@ -267,6 +276,7 @@ function roadUnder(W, x, z){
     if(CD[k] < CD[best]) best = k;
   }
   ROAD.y = sw > 0 ? sy/sw : CY[best];
+  for(i = 0; W.rbs && i < W.rbs.length; i++){ var rb = W.rbs[i]; if((x - rb.x)*(x - rb.x) + (z - rb.z)*(z - rb.z) < rb.r*rb.r){ gap = 1; break; } }
   if(gap <= 0) return 1;
   ROAD.y += SIDEWALK_UP;
   return 2;

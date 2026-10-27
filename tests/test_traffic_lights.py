@@ -66,6 +66,9 @@ Object.keys(SRC).forEach(function(name){
   const inc = {};
   W.edges.forEach(function(e){ (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
   o.lights = ids.length;
+  // [3.26] City Gen v4's junction data: lights only where it says signals
+  o.genSignals = W.nodes.filter(function(n){ return n.junction === "signals"; }).length;
+  o.offGen = ids.filter(function(id){ const n = W.nodes.find(function(q){ return String(q.id) === String(id); }); return o.genSignals && (!n || n.junction !== "signals"); }).length;
   o.kinds = {}; ids.forEach(function(id){ o.kinds[S[id].kind] = (o.kinds[S[id].kind] || 0) + 1; });
   o.onFast = ids.filter(function(id){
     const es = inc[id] || [];
@@ -172,9 +175,14 @@ class TrafficLights(unittest.TestCase):
             self.assertEqual(o["onFast"], [], w + ": no light on a highway's mainline, an expressway or a ring road")
             self.assertEqual(o["armless"], 0, w)
             self.assertTrue(o["same"], w + ": the lights are a pure function of the world")
-        self.assertGreater(self.o["island"]["kinds"].get("local", 0), 0, "downtown crossroads get lights too")
-        # [3.22.1] and side streets: a main road crossing one, and crossroads out of town, spaced out (the commons had 17)
-        self.assertGreaterEqual(self.o["commons"]["lights"], 35, "side-street crossings get lights too")
+        # [3.26] where the world says which junctions have signals (City Gen v4), the lights are there and nowhere else
+        # (a downtown crossroads of local streets gives way, as the plan's road-pair table has it)
+        for w in self.worlds():
+            self.assertGreater(self.o[w]["genSignals"], 0, w)
+            self.assertEqual(self.o[w]["offGen"], 0, w + ": a light where the world has no signals")
+        # and nearly all of them lit (two a short link apart are one junction: the busier keeps its light)
+        for w in self.worlds():
+            self.assertGreaterEqual(self.o[w]["lights"] * 4, self.o[w]["genSignals"] * 3, w)
 
     def test_every_light_cycles_and_its_axes_take_turns(self):
         for w in self.worlds():
@@ -208,7 +216,9 @@ class TrafficLights(unittest.TestCase):
             self.assertGreater(o["day"], o["night"], w + ": calmer at night")
             self.assertGreater(o["dayFar"], o["day"], w + ": the wider view shows more")
         c = self.o["commons"]
-        self.assertGreater(c["day"], 1.8 * c["oldDay"], "about twice the cars on screen in the commons by day")
+        # (about twice: [3.26] City Gen v4's junctions light fewer side streets than 3.22.1 did, and its mini roundabouts
+        # fill the City without lights a little more)
+        self.assertGreater(c["day"], 1.7 * c["oldDay"], "about twice the cars on screen in the commons by day")
         self.assertGreater(self.o["island"]["dayFar"], 1.5 * self.o["island"]["oldDay"])
 
     def test_the_same_for_everyone(self):

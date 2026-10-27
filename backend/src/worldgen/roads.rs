@@ -32,6 +32,14 @@ pub struct Node {
     pub x: i64,
     pub y: i64,
     pub z: i64,
+    /// City Gen v4 (phase 3, @3): how the roads meeting here are controlled (`Roads::junctions`):
+    /// "priority" (the lesser roads give way), "mini" (a mini roundabout, painted), "roundabout"
+    /// (a raised island) or "signals"; none where a highway or the ring meets (phase 6).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub junction: Option<&'static str>,
+    /// A roundabout's island radius (cm): painted on a mini one, raised and planted on a full one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub island: Option<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -90,7 +98,131 @@ pub struct Roads {
 /// Longest step (cm) between consecutive points of a city edge: the terrain's spacing.
 pub const STEP_CM: i64 = 800;
 
+/// City Gen v4 (phase 3): a full roundabout's outer radius (cm, a 32 m one, IRC and FHWA's
+/// 30-40 m single lane), its island's (the 6 m circulating lane round it), and the least
+/// length (cm) of every road meeting it, so its box keeps clear of the next junction.
+pub const ROUNDABOUT_CM: i64 = 1_600;
+pub const ROUNDABOUT_ISLAND_CM: i64 = 1_000;
+pub const ROUNDABOUT_ARM_CM: i64 = 4_000;
+/// A mini roundabout's painted island (cm): 13-25 m across, the centre a 4 m dome.
+pub const MINI_ISLAND_CM: i64 = 200;
+/// How far (cm) a side street's lights keep from any other (HQ 3.22.1's City: 60 m).
+pub const SIDE_SIGNALS_GAP_CM: i64 = 6_000;
+
 impl Roads {
+    /// City Gen v4 (phase 3): the full roundabouts' circles, as 16-gons ([x, z] cm): land a
+    /// line planner keeps off.
+    pub fn roundabout_circles(&self) -> Vec<Vec<(i64, i64)>> {
+        self.nodes
+            .iter()
+            .filter(|n| n.junction == Some("roundabout"))
+            .map(|n| super::organic::geom::DIR16.iter().map(|d| super::organic::geom::along((n.x, n.z), *d, ROUNDABOUT_CM + 100)).collect())
+            .collect()
+    }
+}
+
+impl Roads {
+    /// City Gen v4 (phase 3): every junction of town roads gets its control by the pair of
+    /// roads that meet there (classes.rs `junction`, the two highest): where local streets,
+    /// lanes and collectors meet, or a side street meets a main road, the lesser give way (a
+    /// five-arm junction a mini roundabout); collectors with collectors or avenues a full
+    /// roundabout where every arm has room for one, else a mini one; avenues and boulevards
+    /// lights. A tram line across a junction never gets a roundabout (the tram cuts straight
+    /// over): lights where a main road meets, else priority. Junctions with a highway or the
+    /// ring are phase 6's.
+    /// `clear`: the lots' and sites' footprints a full roundabout's circle must keep off.
+    pub fn junctions(&mut self, transit: &super::transit::Transit, clear: &[Vec<(i64, i64)>]) {
+        for (n, kind) in self.junction_kinds(transit, clear) {
+            let node = &mut self.nodes[n as usize];
+            node.junction = Some(kind);
+            node.island = match kind {
+                "roundabout" => Some(ROUNDABOUT_ISLAND_CM),
+                "mini" => Some(MINI_ISLAND_CM),
+                _ => None,
+            };
+        }
+    }
+
+    /// The control each junction of town roads calls for (`junctions`), by node.
+    pub fn junction_kinds(&self, transit: &super::transit::Transit, clear: &[Vec<(i64, i64)>]) -> BTreeMap<u32, &'static str> {
+        use super::classes::{junction, rank, Junction};
+        let mut out = BTreeMap::new();
+        let mut at: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+        for (k, e) in self.edges.iter().enumerate() {
+            at.entry(e.a).or_default().push(k);
+            at.entry(e.b).or_default().push(k);
+        }
+        let tram: BTreeSet<u32> = transit.lines.iter().filter(|l| l.kind == "tram").flat_map(|l| l.path.iter().copied()).collect();
+        let mut side: Vec<u32> = Vec::new();
+        for (n, es) in at {
+            if es.len() < 3 {
+                continue;
+            }
+            if es.iter().any(|&k| self.edges[k].v4.is_none()) {
+                continue;
+            }
+            // the roads that meet: a street running on through the junction is one road (its arms share a name),
+            // at its highest class there
+            let mut roads: BTreeMap<&str, &str> = BTreeMap::new();
+            for &k in &es {
+                let (name, c) = (self.edges[k].name.as_str(), self.edges[k].v4.unwrap());
+                let best = roads.entry(name).or_insert(c);
+                if rank(c) > rank(best) {
+                    *best = c;
+                }
+            }
+            let mut cls: Vec<&str> = roads.values().copied().collect();
+            cls.sort_by_key(|c| std::cmp::Reverse(rank(c)));
+            if cls.len() < 2 {
+                cls.push(cls[0]);
+            }
+            // a main road crossing a side street (a four-way: the side street on both sides) has lights, as HQ 3.22.1's
+            // City: the plan's table gives a side street onto a main road no row of its own (a T gives way)
+            // (a main road by what it does: an arterial, even one paved narrow where its lots could not give way)
+            let minor = |k: usize| self.edges[k].class == "local";
+            let main_arms = es.iter().filter(|&&k| self.edges[k].class == "arterial").count();
+            let side_arms = es.iter().filter(|&&k| minor(k)).count();
+            let side_road_meets = roads.len() == 2 || es.iter().filter(|&&k| !minor(k)).all(|&k| self.edges[k].name == self.edges[es.iter().copied().find(|&j| !minor(j)).unwrap()].name);
+            if main_arms >= 2 && side_arms >= 2 && side_road_meets && !tram.contains(&n) {
+                side.push(n);
+                out.insert(n, "signals");
+                continue;
+            }
+            let shortest = es.iter().map(|&k| path_len(&self.edges[k].points)).min().unwrap_or(0);
+            let main = cls.iter().any(|c| matches!(*c, "avenue" | "boulevard"));
+            // a full roundabout where every arm is long enough and its circle (and a metre) is clear of every lot and site
+            let c = (self.nodes[n as usize].x, self.nodes[n as usize].z);
+            let off = |p: &Vec<(i64, i64)>| {
+                let r = ROUNDABOUT_CM + 100;
+                !super::organic::geom::inside(c, p) && (0..p.len()).all(|k| super::organic::geom::seg_dist2(c, c, p[k], p[(k + 1) % p.len()]) >= r * r)
+            };
+            let roomy = shortest >= ROUNDABOUT_ARM_CM && es.len() <= 5 && clear.iter().all(off);
+            let kind = match junction(cls[0], cls[1]) {
+                _ if tram.contains(&n) => if main { "signals" } else { "priority" },
+                Junction::Priority if es.len() >= 5 => "mini",
+                Junction::Priority => "priority",
+                Junction::RoundaboutOrSignals if roomy => "roundabout",
+                Junction::RoundaboutOrSignals => "mini",
+                _ => "signals",
+            };
+            out.insert(n, kind);
+        }
+        // a side street's lights SIDE_SIGNALS_GAP_CM clear of every other light (the main roads' first, then by node),
+        // so a main road crossing a side street every block is not a light every block: else it gives way
+        let side_all: BTreeSet<u32> = side.iter().copied().collect();
+        for n in side {
+            let p = (self.nodes[n as usize].x, self.nodes[n as usize].z);
+            let near = out.iter().any(|(&m, &k)| {
+                let q = (self.nodes[m as usize].x, self.nodes[m as usize].z);
+                m != n && k == "signals" && (q.0 - p.0).pow(2) + (q.1 - p.1).pow(2) < SIDE_SIGNALS_GAP_CM.pow(2) && (!side_all.contains(&m) || m < n)
+            });
+            if near {
+                out.insert(n, "priority");
+            }
+        }
+        out
+    }
+
     /// City Gen v4 (phase 2): no median on an edge a tram line runs along (its track is
     /// down the middle, where the median would be, until phase 8's tram beds).
     pub fn trams_in_the_middle(&mut self, transit: &super::transit::Transit) {
@@ -106,6 +238,11 @@ impl Roads {
             }
         }
     }
+}
+
+/// The length (cm) of a centre line.
+pub fn path_len(points: &[[i64; 3]]) -> i64 {
+    points.windows(2).map(|w| isqrt((w[1][0] - w[0][0]).pow(2) + (w[1][2] - w[0][2]).pow(2))).sum()
 }
 
 /// Highways and the ring are graded (cut and filled to `country_grade_pm`).
@@ -160,7 +297,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
     for (k, ((j, i), id)) in node_of.iter_mut().enumerate() {
         *id = k as u32;
         let (x, z) = (g.line_x(*i), g.line_z(*j));
-        nodes.push(Node { id: k as u32, x, y: base.height_at(x, z), z });
+        nodes.push(Node { id: k as u32, x, y: base.height_at(x, z), z, junction: None, island: None });
     }
     let mut sides: BTreeMap<(u32, u32), (&'static str, i64, String)> = BTreeMap::new();
     for b in blocks {
@@ -377,7 +514,7 @@ pub fn resample(a: (i64, i64), b: (i64, i64)) -> Vec<[i64; 3]> {
 
 fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
     let id = nodes.len() as u32;
-    nodes.push(Node { id, x, y: t.height_at(x, z), z });
+    nodes.push(Node { id, x, y: t.height_at(x, z), z, junction: None, island: None });
     id
 }
 

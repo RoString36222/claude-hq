@@ -98,3 +98,101 @@ fn fifty_seeds_break_no_hard_rule() {
         assert!(v.is_empty(), "{id}:\n{}", validate::report(&v));
     }
 }
+
+/// Phase 3: a junction's control comes from the roads that meet there.
+mod junctions {
+    use super::super::roads::{Edge, Node, Roads, MINI_ISLAND_CM, ROUNDABOUT_ISLAND_CM};
+    use super::super::transit::Transit;
+
+    fn node(id: u32, x: i64, z: i64) -> Node {
+        Node { id, x, y: 0, z, junction: None, island: None }
+    }
+
+    fn road(id: u32, a: u32, b: u32, class: &'static str, name: &str, pts: [(i64, i64); 2]) -> Edge {
+        Edge {
+            id, a, b, class: if matches!(class, "avenue" | "boulevard") { "arterial" } else { "local" }, width: 1_200, walk: 250, lanes: 1, route: None, name: name.to_string(),
+            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None,
+        }
+        .classed(Some(class))
+    }
+
+    /// A junction at the origin with three arms of `classes`, each `len` cm long; arms with the
+    /// same `names` are one road running on through it.
+    fn star(classes: [&'static str; 3], len: i64, names: [&str; 3]) -> Roads {
+        let ends = [(len, 0), (-len / 2, len), (-len / 2, -len)];
+        let mut nodes = vec![node(0, 0, 0)];
+        let mut edges = Vec::new();
+        for (k, (c, e)) in classes.iter().zip(ends).enumerate() {
+            nodes.push(node(k as u32 + 1, e.0, e.1));
+            edges.push(road(k as u32, 0, k as u32 + 1, c, names[k], [(0, 0), e]));
+        }
+        Roads { nodes, edges }
+    }
+
+    #[test]
+    fn collectors_meet_at_a_roundabout_where_it_fits_else_a_mini_one() {
+        let none = Transit { lines: Vec::new() };
+        // three roads: two collectors and a local street
+        const THREE: [&str; 3] = ["A Road", "B Road", "C Street"];
+        let mut r = star(["collector", "collector", "local"], 6_000, THREE);
+        r.junctions(&none, &[]);
+        assert_eq!((r.nodes[0].junction, r.nodes[0].island), (Some("roundabout"), Some(ROUNDABOUT_ISLAND_CM)));
+        // a lot 10 m from the middle: no room for the 32 m circle
+        let lot = vec![(1_000, 500), (1_500, 500), (1_500, 1_000), (1_000, 1_000)];
+        let mut r = star(["collector", "collector", "local"], 6_000, THREE);
+        r.junctions(&none, &[lot]);
+        assert_eq!((r.nodes[0].junction, r.nodes[0].island), (Some("mini"), Some(MINI_ISLAND_CM)));
+        // short arms: a mini one too
+        let mut r = star(["collector", "collector", "local"], 3_000, THREE);
+        r.junctions(&none, &[]);
+        assert_eq!(r.nodes[0].junction, Some("mini"));
+    }
+
+    #[test]
+    fn side_streets_give_way_and_avenues_get_lights() {
+        let none = Transit { lines: Vec::new() };
+        // a T: the first two arms one road running on through, the third a side road
+        let t = ["Main Road", "Main Road", "Side Street"];
+        for (classes, names, want) in [
+            (["local", "local", "lane"], t, "priority"),
+            (["avenue", "avenue", "local"], t, "priority"),
+            (["collector", "collector", "local"], t, "priority"),
+            (["avenue", "avenue", "avenue"], t, "signals"),
+            (["avenue", "avenue", "collector"], t, "roundabout"),
+        ] {
+            let mut r = star(classes, 6_000, names);
+            r.junctions(&none, &[]);
+            assert_eq!(r.nodes[0].junction, Some(want), "{classes:?}");
+        }
+    }
+
+    #[test]
+    fn a_main_road_crossing_a_side_street_has_lights_spaced_out() {
+        let none = Transit { lines: Vec::new() };
+        // a four-way: Main Road on through, Side Street across it
+        let ends = [(6_000, 0), (-6_000, 0), (0, 6_000), (0, -6_000)];
+        let (cls, names) = (["avenue", "avenue", "local", "local"], ["Main Road", "Main Road", "Side Street", "Side Street"]);
+        let mut nodes = vec![node(0, 0, 0)];
+        let mut edges = Vec::new();
+        for k in 0..4 {
+            nodes.push(node(k as u32 + 1, ends[k].0, ends[k].1));
+            edges.push(road(k as u32, 0, k as u32 + 1, cls[k], names[k], [(0, 0), ends[k]]));
+        }
+        let mut r = Roads { nodes, edges };
+        r.junctions(&none, &[]);
+        assert_eq!(r.nodes[0].junction, Some("signals"));
+    }
+
+    #[test]
+    fn a_tram_across_a_junction_never_meets_a_roundabout() {
+        use super::super::transit::Line;
+        let tram = Transit { lines: vec![Line { id: "T1".into(), kind: "tram", tier: 4, stops: Vec::new(), path: vec![1, 0, 2] }] };
+        let three = ["A Road", "B Road", "C Street"];
+        let mut r = star(["collector", "collector", "local"], 6_000, three);
+        r.junctions(&tram, &[]);
+        assert_eq!(r.nodes[0].junction, Some("priority"));
+        let mut r = star(["avenue", "collector", "local"], 6_000, three);
+        r.junctions(&tram, &[]);
+        assert_eq!(r.nodes[0].junction, Some("signals"));
+    }
+}

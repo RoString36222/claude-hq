@@ -100,7 +100,8 @@ out.det = [MON + 8.25*HR, MON + 23*HR, SUN + 15.5*HR].every(function(t){ return 
 const tz = T.create(WD.docOf(W), {tier: 5, seed: W.id, W: W, local: 2*HR}), s3 = sim();
 function even(c){ var T0 = s3._.rings[c.ring].prof.T; return Math.abs(7200/T0 - Math.round(7200/T0)) < 1e-6; }
 const tzA = tz.cars(MON + 6.25*HR), tzB = s3.cars(MON + 8.25*HR);
-out.tz = tzA.filter(even).length > tzA.length/2 && JSON.stringify(tzA.filter(even).map(function(c){ return [c.show, c.type]; })) === JSON.stringify(tzB.filter(even).map(function(c){ return [c.show, c.type]; }));
+// (enough of them to say so: how many laps divide the 2 h moves with the world's junctions)
+out.tz = tzA.filter(even).length >= 30 && JSON.stringify(tzA.filter(even).map(function(c){ return [c.show, c.type]; })) === JSON.stringify(tzB.filter(even).map(function(c){ return [c.show, c.type]; }));
 
 // ---- the view: the types drawn, a few draw calls ----
 const V = T.view({THREE: THREE}), list = cars(ind, MON + 8.25*HR).concat(cars(s, MON + 23*HR).filter(function(v){ return v.type === "taxi"; }),

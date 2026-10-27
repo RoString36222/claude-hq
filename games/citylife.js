@@ -63,7 +63,8 @@ var GROUP = {downtown: "centre", commercial: "centre", finance: "centre", oldtow
   civic: "civic", hq: "civic", street: "civic"};
 function groupOfName(n){ return GROUP[String(n || "").toLowerCase()] || "home"; }
 
-function hash01(s){ return (WQ().hash32(String(s)) >>> 0)/4294967296; }
+// (FNV-1a alone clusters on keys that differ only in a trailing id; a murmur finaliser spreads them)
+function hash01(s){ var h = WQ().hash32(String(s)); h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return (h >>> 0)/4294967296; }
 function cm(v){ return (+v || 0)/100; }
 
 var STOP_RE = /(stop|station|metro|transit|halt)/;

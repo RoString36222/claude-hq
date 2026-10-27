@@ -1226,12 +1226,19 @@ HQV.hqWorlds.city3d = function(c, w){
     if(arch) return Promise.resolve(arch);
     return getJson("/api/arena/archipelago").then(function(a){ arch = a && typeof a === "object" ? a : null; return arch; });
   }
+  // [3.28] the NPC traffic level (Settings' slider: localStorage hq_traffic, 0..1; unset: traffic.js's LEVEL0, today's)
+  function trafficLevel(){
+    var v = null; try { v = localStorage.getItem("hq_traffic"); } catch(e){}
+    v = v == null || v === "" ? NaN : parseFloat(v);
+    return isFinite(v) ? Math.max(0, Math.min(1, v)) : undefined;
+  }
   // traffic, buses and trams (games/traffic.js), and the residents (games/npcsim.js, npcdraw.js)
   function setupLife(){
     var doc = WD.docOf(W);
     if(HQV.traffic){
       try {
-        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms + 330*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock
+        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, traffic: trafficLevel(), local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms + 330*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock; [3.28] the NPC traffic level
+        HQV.cityTrafficLevel = function(v){ return tsim && tsim.setLevel ? tsim.setLevel(v) : null; };     // [3.28] Settings' slider, live
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
@@ -3096,6 +3103,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit){ try { transit.dispose(); } catch(e){} transit = null; }
     surfaceShow(true);
     if(tview){ try { tview.dispose(); } catch(e){} }
+    if(HQV.cityTrafficLevel){ HQV.cityTrafficLevel = null; }
     if(cev){ try { cev.dispose(); } catch(e){} cev = null; }                                         // [3.21]
     if(street){ try { street.dispose(); } catch(e){} street = null; }                                // [3.22]
     if(play){ try { play.dispose(); } catch(e){} play = null; }                                      // [3.22]

@@ -240,6 +240,163 @@ impl Roads {
     }
 }
 
+/// City Gen v4 (phase 4): how far (cm) a town street's centre line may move into a bend
+/// as it curves (the kerb's width: the paved road then still keeps off every lot), the
+/// most a curve's step turns (degrees, as a quarter of the plan's 60), and its sampling.
+pub const BEND_SHIFT_CM: i64 = 25;
+pub const ARC_STEP_CM: i64 = 250;
+
+/// City Gen v4 (phase 4): every bend in a town street (a node where exactly two town
+/// edges meet, neither a bridge) taken as a circular arc instead of a corner: the widest
+/// arc whose middle sits no more than `BEND_SHIFT_CM` inside the corner, its tangents no
+/// further than 0.4 of either edge along it, sampled every `ARC_STEP_CM` and at least a
+/// step per 15 degrees. The node moves onto the arc's middle (at most `BEND_SHIFT_CM`).
+/// Integers only: Q16 unit vectors, the half angles from the cosine, points on the arc
+/// by normalised interpolation round its centre.
+pub fn fillet_bends(nodes: &mut [Node], edges: &mut [Edge]) {
+    use super::organic::geom::{add, along, dot, len, sub, unit};
+    let mut at: BTreeMap<u32, Vec<(usize, bool)>> = BTreeMap::new();
+    for (k, e) in edges.iter().enumerate() {
+        if e.a == e.b {
+            continue;
+        }
+        at.entry(e.a).or_default().push((k, false));
+        at.entry(e.b).or_default().push((k, true));
+    }
+    // per edge end (a, b): the arc from the node's new place out to the tangent point
+    let mut ends: Vec<[Option<Vec<(i64, i64)>>; 2]> = vec![[None, None]; edges.len()];
+    let far = |e: &Edge, at_b: bool| {
+        let q = if at_b { e.points[0] } else { e.points[e.points.len() - 1] };
+        (q[0], q[2])
+    };
+    for (n, es) in &at {
+        if es.len() != 2 || es.iter().any(|&(k, _)| is_graded(edges[k].class) || edges[k].bridge.is_some()) {
+            continue;
+        }
+        let p = (nodes[*n as usize].x, nodes[*n as usize].z);
+        let (f1, f2) = (far(&edges[es[0].0], es[0].1), far(&edges[es[1].0], es[1].1));
+        let (l1, l2) = (len(sub(f1, p)), len(sub(f2, p)));
+        if l1 < 200 || l2 < 200 {
+            continue;
+        }
+        let (u1, u2) = (unit(sub(f1, p)), unit(sub(f2, p)));
+        let c = (dot(u1, u2) / ONE as i128) as i64; // cos of the angle between the arms (Q16)
+        if c < -65_496 {
+            continue; // within 2 degrees of straight on
+        }
+        let sin_h = isqrt((ONE - c) * ONE / 2); // sin of half that angle
+        let cos_h = isqrt((ONE + c) * ONE / 2);
+        if sin_h >= ONE - 1 || cos_h <= 0 {
+            continue;
+        }
+        let tan_d = cos_h * ONE / sin_h; // tan of half the deflection
+        let mut r = BEND_SHIFT_CM * sin_h / (ONE - sin_h);
+        let t_max = l1.min(l2) * 2 / 5;
+        if r * tan_d / ONE > t_max {
+            r = t_max * ONE / tan_d;
+        }
+        let t = r * tan_d / ONE;
+        if r <= 0 || t <= 10 {
+            continue;
+        }
+        let bis = unit(add(u1, u2));
+        let centre = along(p, bis, r * ONE / sin_h);
+        let shift = r * ONE / sin_h - r;
+        let mid = along(p, bis, shift);
+        // steps: every ARC_STEP_CM, and one per 15 degrees of the half turn at least
+        let defl = -c; // cos of the deflection
+        let by_angle = if defl >= 56_756 { 1 } else if defl >= 32_768 { 2 } else if defl >= 0 { 3 } else if defl >= -32_768 { 4 } else { 6 };
+        for (i, &(k, at_b)) in es.iter().enumerate() {
+            let tp = along(p, if i == 0 { u1 } else { u2 }, t);
+            let steps = ((len(sub(tp, mid)) + ARC_STEP_CM - 1) / ARC_STEP_CM).max(by_angle).max(1);
+            let (a, b) = (sub(mid, centre), sub(tp, centre));
+            let arc: Vec<(i64, i64)> = (0..=steps).map(|j| along(centre, unit(super::organic::geom::lerp(a, b, j as i128, steps as i128)), r)).collect();
+            let mut arc = arc;
+            arc[0] = mid;
+            *arc.last_mut().unwrap() = tp;
+            ends[k][at_b as usize] = Some(arc);
+        }
+        nodes[*n as usize].x = mid.0;
+        nodes[*n as usize].z = mid.1;
+    }
+    for (k, e) in edges.iter_mut().enumerate() {
+        if ends[k][0].is_none() && ends[k][1].is_none() {
+            continue;
+        }
+        let (pa, pb) = ((e.points[0][0], e.points[0][2]), (e.points[e.points.len() - 1][0], e.points[e.points.len() - 1][2]));
+        let a_arc = ends[k][0].clone().unwrap_or_else(|| vec![pa]);
+        let mut b_arc = ends[k][1].clone().unwrap_or_else(|| vec![pb]);
+        b_arc.reverse();
+        let mut pts: Vec<(i64, i64)> = a_arc.clone();
+        let straight = resample(*a_arc.last().unwrap(), b_arc[0]);
+        pts.extend(straight.iter().skip(1).map(|q| (q[0], q[2])));
+        pts.extend(b_arc.iter().skip(1));
+        pts.dedup();
+        e.points = pts.iter().map(|q| [q.0, 0, q.1]).collect();
+    }
+}
+
+/// City Gen v4 (phase 4): a graded road's centre line, smoothed: the A* path's 45 degree
+/// steps eased by a moving average (three passes over 4 points each side, the window
+/// shrinking toward the ends, which stay put), then sampled every 4 m. Where a smoothed
+/// step is `bad` (meets what the road must keep off) and the path's own step there was not,
+/// the path's points come back over 5 steps either side, until none is. None when there is
+/// nothing to smooth.
+pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> bool) -> Option<Vec<[i64; 3]>> {
+    let n = points.len();
+    if n < 5 {
+        return None;
+    }
+    let o: Vec<(i64, i64)> = points.iter().map(|q| (q[0], q[2])).collect();
+    let mut p = o.clone();
+    for _ in 0..3 {
+        let q = p.clone();
+        for i in 1..n - 1 {
+            let w = 4.min(i).min(n - 1 - i);
+            let (mut sx, mut sz) = (0, 0);
+            for j in i - w..=i + w {
+                sx += q[j].0;
+                sz += q[j].1;
+            }
+            let c = (2 * w + 1) as i64;
+            p[i] = (sx / c, sz / c);
+        }
+    }
+    let was: Vec<bool> = (0..n - 1).map(|i| bad(o[i], o[i + 1])).collect();
+    for _ in 0..16 {
+        let worse: Vec<usize> = (0..n - 1).filter(|&i| !was[i] && bad(p[i], p[i + 1])).collect();
+        if worse.is_empty() {
+            break;
+        }
+        for i in worse {
+            let (lo, hi) = (i.saturating_sub(5), (i + 6).min(n - 1));
+            p[lo..=hi].copy_from_slice(&o[lo..=hi]);
+        }
+    }
+    if p == o {
+        return None;
+    }
+    // every 4 m along it, the ends exact
+    let mut out = vec![p[0]];
+    let mut carry = 0;
+    for w in p.windows(2) {
+        let l = isqrt((w[1].0 - w[0].0).pow(2) + (w[1].1 - w[0].1).pow(2));
+        let mut s = 400 - carry;
+        while s < l {
+            out.push((w[0].0 + (w[1].0 - w[0].0) * s / l.max(1), w[0].1 + (w[1].1 - w[0].1) * s / l.max(1)));
+            s += 400;
+        }
+        carry = (carry + l) % 400;
+    }
+    if out.last() != Some(&p[n - 1]) {
+        if out.len() > 1 && isqrt((p[n - 1].0 - out[out.len() - 1].0).pow(2) + (p[n - 1].1 - out[out.len() - 1].1).pow(2)) < 150 {
+            out.pop();
+        }
+        out.push(p[n - 1]);
+    }
+    Some(out.iter().map(|q| [q.0, 0, q.1]).collect())
+}
+
 /// The length (cm) of a centre line.
 pub fn path_len(points: &[[i64; 3]]) -> i64 {
     points.windows(2).map(|w| isqrt((w[1][0] - w[0][0]).pow(2) + (w[1][2] - w[0][2]).pow(2))).sum()
@@ -460,7 +617,23 @@ pub fn graded<'a>(
         ring.add(&path, base);
         graded.push(Edge { route: Some("R1".to_string()), ..graded_edge(a, b, &path, &format!("Ring Road {}", k + 1), "ring", p.ring_cm) });
     }
-    let graded = split_contacts(nodes, base, graded)?;
+    let mut graded = split_contacts(nodes, base, graded)?;
+    // City Gen v4 (phase 4): each graded road eased off its 45 degree steps, wherever the smooth line keeps off the
+    // blocks, the claimed land, the river and the coast's reach as well as the path did (else the path stays there)
+    if p.v4 {
+        for e in graded.iter_mut() {
+            let ring = e.class == "ring";
+            let bad = |a: (i64, i64), b: (i64, i64)| {
+                keep.rects.iter().any(|(r, _)| !clear_of(a, b, *r, keep.clear))
+                    || keep.claimed(a, b, ring)
+                    || river.is_some_and(|r| r.zone(a) || r.zone(b))
+                    || (ring && [a, b].iter().any(|q| q.0 * q.0 + q.1 * q.1 > out_r.saturating_mul(out_r)))
+            };
+            if let Some(pts) = smooth_path(&e.points, bad) {
+                e.points = pts;
+            }
+        }
+    }
     edges.extend(match river {
         Some(r) => bridged(nodes, base, graded, r),
         None => graded,

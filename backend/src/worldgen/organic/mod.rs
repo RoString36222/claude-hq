@@ -267,6 +267,10 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
             .classed(paving.class(k as u32))
         })
         .collect();
+    // City Gen v4 (phase 4): the town's streets curve through their bends
+    if p.v4 {
+        roads::fillet_bends(&mut nodes, &mut edges);
+    }
     roads::graded(&mut rng, p, base, &blocks, &mut nodes, &mut edges, &mut ways.iter().copied(), river, claim.as_ref())?;
     let roads = Roads { nodes, edges };
 

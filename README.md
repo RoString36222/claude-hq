@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.26.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.27.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,18 @@ and feature guide.
 
 ## Changelog
 
+- **3.27.0 — City Gen v4, phase 4: curved roads, and a few street changes.**
+  - **Curved roads:**
+    - The Ring Road and the highways now sweep in smooth curves instead of grid staircases (the Commons' kinks go
+      from 139 to 18).
+    - Bends in town streets are arcs, kept within the kerb so no lot or HQ moves.
+  - **The police are fairer:** most offences add half a star or less, so one small slip is a warning that wears off by
+    itself. Once they lose sight of you, a star goes in 6 s + 3 s a star (it was twice that).
+  - **Real cars in traffic:** the ordinary cars nearest you are the dealership's own everyday cars (hatches, saloons,
+    SUVs and coupes), each with its own paint. They're the same cars on every player's screen.
+  - **E to take a car:** stand by a stopped traffic car and press E to take it and drive off. A police car that sees
+    you adds half a star. Get out and it stays parked; walk far away and it rejoins the traffic. It only happens on
+    your screen: everyone else's street carries on as before.
 - **3.26.0 — City Gen v4, phase 3: junctions that fit their roads.** Every junction in the City now gets its control
   from the roads that meet there, by the v4 plan's road-pair table:
   - **Side streets give way:** where local streets meet, or a side street joins a main road at a T, the lesser road

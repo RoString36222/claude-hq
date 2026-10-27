@@ -284,3 +284,23 @@ The worlds are the Commons and 49 seeds.
 
 The metro shifted slightly on 8 synthetic seeds, because it follows the roads. The
 Commons' metro is unchanged.
+
+### Also in 3.27.0 (the user's requests for the street)
+
+- **Wanted stars** (`playheat.js`):
+  - Each offence adds about half as much: ramming +0.5, a red light +0.5, props +0.1.
+  - Repeat cooldowns are longer.
+  - Only an offence worth a whole star forces one. A lone fraction wears off while no
+    police car is near.
+  - A star goes every 6 + 3×stars s unseen (was 12 + 6×stars).
+- **Garage cars in traffic** (`traffic.js` `streetCars` / `carLook`):
+  - Six everyday catalogue cars (hatch, sedan, SUV, coupe in turn).
+  - Model and paint from a hash of the vehicle id, the same on every client.
+  - Each is baked into one instanced mesh, scaled to the sim's car footprint, for the 40
+    cars nearest the camera. The box car is the fallback.
+- **Carjack** (new city play feature `playcarjack.js`):
+  - E by a traffic car going under 4 m/s and within 3.5 m.
+  - `hq3d` builds the same model where it stood and seats you. The traffic car is hidden on
+    this client while you hold it.
+  - Getting out parks it; 150 m away it goes back.
+  - +0.5 heat when a police car sees it.

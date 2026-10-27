@@ -369,9 +369,8 @@ pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> 
             break;
         }
         for i in worse {
-            for j in i.saturating_sub(5)..=(i + 6).min(n - 1) {
-                p[j] = o[j];
-            }
+            let (lo, hi) = (i.saturating_sub(5), (i + 6).min(n - 1));
+            p[lo..=hi].copy_from_slice(&o[lo..=hi]);
         }
     }
     if p == o {

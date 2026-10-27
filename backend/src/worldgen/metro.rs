@@ -657,14 +657,55 @@ fn pick(line: &[P], at: &[usize], nodes: &[u32], net: &Net, land: &Land, side: P
 fn levels(land: &Land, track: &[P], depth: i64) -> Vec<i64> {
     let h: Vec<i64> = track.iter().map(|&q| land.height(q)).collect();
     let n = h.len() as i64;
-    (0..n)
+    let mut ys: Vec<i64> = (0..n)
         .map(|i| {
             let (a, b) = ((i - 4).max(0), (i + 4).min(n - 1));
             let avg = (a..=b).map(|j| h[j as usize]).sum::<i64>() / (b - a + 1) - depth;
             avg.clamp(h[i as usize] - DEPTH_MAX_CM, h[i as usize] - DEPTH_MIN_CM)
         })
-        .collect()
+        .collect();
+    // City Gen v4 (phase 7): under a road tunnel or cutting, ROAD_TUNNEL_GAP below its road, easing down to it and
+    // back at UNDER_PM
+    let unders: Vec<&super::roads::Edge> = land.c.roads.edges.iter().filter(|e| e.under.is_some()).collect();
+    if !unders.is_empty() {
+        // (each point of the track takes the cap of the segments either side of it that pass near the road)
+        let near = |a: P, b: P| -> Option<i64> {
+            unders
+                .iter()
+                .filter_map(|e| {
+                    let r = e.width / 2 + 800;
+                    e.points.windows(2).filter(|w| super::organic::geom::seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), a, b) < r * r).map(|w| w[0][1].min(w[1][1]) - ROAD_TUNNEL_GAP).min()
+                })
+                .min()
+        };
+        let caps: Vec<Option<i64>> = (0..track.len())
+            .map(|i| {
+                let prev = if i > 0 { near(track[i - 1], track[i]) } else { None };
+                let next = if i + 1 < track.len() { near(track[i], track[i + 1]) } else { None };
+                match (prev, next) {
+                    (Some(p), Some(q)) => Some(p.min(q)),
+                    (p, q) => p.or(q),
+                }
+            })
+            .collect();
+        let mut at = vec![0i64; track.len()];
+        for i in 1..track.len() {
+            at[i] = at[i - 1] + dist(track[i - 1], track[i]);
+        }
+        for (i, c) in caps.iter().enumerate() {
+            let Some(c) = *c else { continue };
+            for j in 0..ys.len() {
+                ys[j] = ys[j].min(c + (at[i] - at[j]).abs() * UNDER_PM / 1000);
+            }
+        }
+    }
+    ys
 }
+
+/// City Gen v4 (phase 7): how far (cm) a metro track keeps under a road tunnel's road, and the
+/// grade (per mille) it dives at to pass under one.
+const ROAD_TUNNEL_GAP: i64 = 1_100;
+const UNDER_PM: i64 = 30;
 
 /// The ramp from the end of `path` (its last platform's end, rail level `y0`) to a depot
 /// on gentle open land (`fits`: the depot footprints open land holds): the shortest

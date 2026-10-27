@@ -364,6 +364,17 @@ fn island_link(c: &Ctx, land: &Land, centre: P, coast: &[[i64; 2]], rng: &mut Rn
         path.extend(resample(&[pend, v], STEP_CM).into_iter().skip(1));
         let s_of = |q: P| dist(pend, q);
         let ys: Vec<i64> = path.iter().enumerate().map(|(i, &q)| if i <= p_at { y_plat } else { y_plat + (ya - y_plat) * s_of(q) / run }).collect();
+        // City Gen v4 (phase 7): never within 8 m of the level of a road tunnel or cutting it passes (a candidate
+        // that would is passed over)
+        let meets_road = path.iter().zip(&ys).any(|(&q, &y)| {
+            land.c.roads.edges.iter().filter(|e| e.under.is_some()).any(|e| {
+                let r = e.width / 2 + 800;
+                e.points.windows(2).any(|w| super::organic::geom::seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), q, q) < r * r && ((w[0][1] + w[1][1]) / 2 - y).abs() < 800)
+            })
+        });
+        if meets_road {
+            continue;
+        }
         // classify by the cover over the track (ground minus rail level) at each segment's middle
         let mut kinds = Vec::new();
         let mut trench_pts: Vec<P> = Vec::new();

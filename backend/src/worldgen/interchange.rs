@@ -596,10 +596,10 @@ fn apply(roads: &mut Roads, t: &Terrain, p: Plan) {
     ];
     let ramp = |a: u32, b: u32, v: &[P], name: String| Edge {
         id: 0, a, b, class: "highway", width: 800, walk: 0, lanes: 1, route: None, name, points: pts(v), min_tier: h.min_tier, bridge: None,
-        v4: Some("ramp"), median: None, oneway: Some(true),
+        v4: Some("ramp"), median: None, oneway: Some(true), under: None,
     };
     let ramp_name = format!("{} Ramp", h.name);
-    add.push(Edge { id: 0, a: n, b: tn, class: "highway", width: 745, walk: 0, lanes: 1, route: h.route.clone(), name: format!("{} Flyover", h.name), points: pts(&p.stem), min_tier: h.min_tier, bridge: None, v4: Some("flyover"), median: None, oneway: None });
+    add.push(Edge { id: 0, a: n, b: tn, class: "highway", width: 745, walk: 0, lanes: 1, route: h.route.clone(), name: format!("{} Flyover", h.name), points: pts(&p.stem), min_tier: h.min_tier, bridge: None, v4: Some("flyover"), median: None, oneway: None, under: None });
     add.push(ramp(tn, p1, &p.loop_, ramp_name.clone()));
     add.push(ramp(p2, tn, &p.m3, ramp_name.clone()));
     add.push(ramp(p1, n, &p.m1, ramp_name.clone()));

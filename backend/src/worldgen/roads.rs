@@ -80,6 +80,10 @@ pub struct Edge {
     /// (an interchange's ramps). `lanes` then counts its lanes that way.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oneway: Option<bool>,
+    /// City Gen v4 (phase 7, @3): a piece of road below the land: "tunnel" (covered, the land
+    /// over it untouched) or "cutting" (open, down to a tunnel's portal). tunnels.rs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub under: Option<&'static str>,
 }
 
 impl Edge {
@@ -494,7 +498,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
@@ -717,7 +721,7 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
-        min_tier: None, bridge: None, v4: None, median: None, oneway: None,
+        min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None,
     }
 }
 
@@ -979,7 +983,7 @@ impl Roads {
         // pieces, which already can
         for _ in 0..8 {
             let mut moved = false;
-            for e in self.edges.iter().filter(|e| is_graded(e.class) && e.bridge.is_none() && !deck_road(e)) {
+            for e in self.edges.iter().filter(|e| is_graded(e.class) && e.bridge.is_none() && !deck_road(e) && e.under.is_none()) {
                 let most = path_len(&e.points) * p.country_grade_pm / 1000 * 9 / 10;
                 let (ya, yb) = (self.nodes[e.a as usize].y, self.nodes[e.b as usize].y);
                 if (yb - ya).abs() > most {
@@ -1004,8 +1008,9 @@ impl Roads {
             }
         }
         for e in &mut self.edges {
-            // (an interchange's flyover and ramps: interchange::seat, once the ring is seated)
-            if deck_road(e) {
+            // (an interchange's flyover and ramps: interchange::seat, once the ring is seated; a tunnel and its cuttings:
+            // tunnels::seat)
+            if deck_road(e) || e.under.is_some() {
                 continue;
             }
             let len = e.points.len();
@@ -1084,7 +1089,9 @@ impl Roads {
             e.points[0][1] = ya;
             e.points[len - 1][1] = yb;
         }
-        Ok(super::interchange::seat(self, t))
+        let raise = super::interchange::seat(self, t);
+        super::tunnels::seat(self, t);
+        Ok(raise)
     }
 
     /// Bridges: each deck a metre over the higher of its banks (the ground at its ends),
@@ -1152,7 +1159,8 @@ impl Roads {
     pub fn carve(&self, t: &mut Terrain, wet: impl Fn((i64, i64)) -> bool) {
         // (each vertex's wetness asked once: 0 not yet, 1 dry, 2 wet)
         let mut seen = vec![0u8; t.n * t.n];
-        for e in self.edges.iter().filter(|e| e.bridge.is_none()) {
+        // (nor over a tunnel or its cuttings: the land stays, the client cuts a cutting open)
+        for e in self.edges.iter().filter(|e| e.bridge.is_none() && e.under.is_none()) {
             let reach = e.width / 2 + SHOULDER_CM;
             for q in e.points.windows(2) {
                 let (a, b) = (q[0], q[1]);

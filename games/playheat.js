@@ -1,20 +1,23 @@
 /* Claude HQ: City play feature "heat" (HQ 3.22): the police, kept light-hearted. Registers with HQV.cityPlay
  * (games/cityplay.js); nothing here goes to a server and nobody gets hurt: being caught is a "Busted" fade.
  *
- * Heat is 0..5 stars (a fraction underneath: knocking props adds a little at a time), shown in ctx.hud's top
- * centre row "heat" and announced (ctx.api.announce) when the stars change. It is raised by
- *   your own blasts (a "blast" with mine: someone else's never counts) near people or traffic   +1 (+2 for a crowd or a police car)
- *   a tank shot ("shot")                                                                       +0.5 (at least one star; 3 s apart)
+ * Heat is 0..5 stars (a fraction underneath: most offences add half a star or less, so one slip is a warning and the
+ * second one is a star), shown in ctx.hud's top centre row "heat" and announced (ctx.api.announce) when the stars change.
+ * Only an offence worth a whole star or more (a big blast, the Arena's game) forces a first star. It is raised by
+ *   your own blasts (a "blast" with mine: someone else's never counts) near people or traffic   +0.5 (+1 for a crowd or a police car)
+ *   a tank shot ("shot")                                                                       +0.25 (3 s apart)
  *   ramming a person or a car (a "ram" over RAM_V m/s, a car told by the traffic near the point,
- *     or a "ram" {what: "person" | "car"} from the street feature)                             +1
- *   knocking a prop ("ram" {what: "prop"})                                                     +0.25
+ *     or a "ram" {what: "person" | "car"} from the street feature)                             +0.5 (3 s apart)
+ *   knocking a prop ("ram" {what: "prop"})                                                     +0.1 (1 s apart)
  *   running a red light (tsim.lightAt, when the traffic has lights; or a "red" event), only when
- *     a police car sees it (within WITNESS m) or the junction has a camera (1 in 4, seeded)    +1
- *   speeding hugely (over SPEED_V) in the centre with a police car close                       +1 (15 s apart)
+ *     a police car sees it (within WITNESS m) or the junction has a camera (1 in 4, seeded)    +0.5 (8 s apart)
+ *   speeding hugely (over SPEED_V) in the centre with a police car close                       +0.5 (30 s apart)
+ *   stealing a car (the carjack feature's "carjack" event), only when a police car sees it   +0.5
  * Decay: while no police car (or the helicopter) has a line of sight to you (ctx.blocked sampled along the line, within
- * VIEW + 12 m a star), the stars drop one every lose(stars) s; hidden (in the metro, or inside the carpark) three times
- * as fast. The search zone (zone(): the last place they saw you, a radius growing with the stars) is where the unseen
- * cars look. At 0 by decay: "You lost them", a small rep reward (ctx.store "rep", shared with the jobs feature).
+ * VIEW + 12 m a star), the stars drop one every lose(stars) = 6 + 3*stars s; hidden (in the metro, or inside the carpark)
+ * three times as fast. A fraction under the first star wears off while no police car is within WITNESS m, a whole
+ * star's worth every FRAC_S s (one half-star slip is forgotten in 9 s). The search zone (zone(): the last place they
+ * saw you, a radius growing with the stars) is where the unseen cars look. At 0 by decay: "You lost them", a small rep reward (ctx.store "rep", shared with the jobs feature).
  * Response: pursuit cars (one per star) come out of the police station(s) and off-screen road nodes (a seeded pick),
  * drive the road graph (games/hqnav.js) toward you, then, close and seeing you, steer straight for you, each to its own
  * flank (behind, either side, ahead: boxing you in); faster with more stars. At 4+ a roadblock (two cars across the
@@ -47,11 +50,12 @@ var BUST_REP = 5;
 var CAR_HW = 0.95, CAR_HL = 2.3; // half width, half length (m)
 var HELI_Y = 42;                 // m over the ground
 var FADE_IN = 0.5, FADE_HOLD = 1.3, FADE_OUT = 0.6;
+var FRAC_S = 18;                 // s: unseen, a fraction under the first star wears off a whole star's worth in this
 
 function num(v, d){ return typeof v === "number" && isFinite(v) ? v : d; }
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 function wrapA(a){ a = (a + Math.PI) % (2*Math.PI); if(a < 0) a += 2*Math.PI; return a - Math.PI; }
-function lose(stars){ return 12 + 6*Math.max(1, stars | 0); }          // s unseen for a star to go
+function lose(stars){ return 6 + 3*Math.max(1, stars | 0); }            // s unseen for a star to go
 function vmaxOf(stars){ return 12 + 2*clamp(stars | 0, 1, 5); }      // m/s
 function want(stars){ return clamp(stars | 0, 0, 5); }               // pursuit cars
 
@@ -248,7 +252,7 @@ function create(ctx){
     if(S.dead || S.busted || n <= 0) return S.stars;
     // the police know where it happened: the search starts there, now (before the first frame: where you are then)
     S.seenT = S.t; S.seenAt = at ? {x: at.x, z: at.z} : S.known ? {x: S.me.x, z: S.me.z} : null;
-    setHeat(Math.max(S.h + n, n >= 0.5 ? 1 : 0), why);
+    setHeat(Math.max(S.h + n, n >= 1 ? 1 : 0), why);       // a small offence is a fraction: only a big one forces a star
     return S.stars;
   }
 
@@ -265,7 +269,7 @@ function create(ctx){
   function ranRed(x, z, sig){
     if(S.t - S.redT < 3) return;      // one crossing, however many say so
     S.redT = S.t;
-    if(police(x, z, WITNESS) || camera(sig, x, z)) add(1, "ran a red light");
+    if((police(x, z, WITNESS) || camera(sig, x, z)) && cooled("red", 8)) add(0.5, "ran a red light");
   }
   function trafficNear(x, z, r){
     var out = [];
@@ -288,17 +292,20 @@ function create(ctx){
       if(!d.mine) return;                          // someone else's grenade is their business
       var nTr = trafficNear(x, z, 22), nP = peopleNear(x, z, 22), cop = carNear(x, z, 22) || nTr.some(function(v){ return v.kind === "police"; });
       var n = nTr.length + nP;
-      if(cop || n >= 3) add(2, "a blast in the street", at); else if(n >= 1) add(1, "a blast in the street", at);
+      if(cop || n >= 3) add(1, "a blast in the street", at); else if(n >= 1) add(0.5, "a blast in the street", at);
     } else if(kind === "shot"){
-      if(cooled("shot", 3)) add(0.5, "a tank shot", at);
+      if(cooled("shot", 3)) add(0.25, "a tank shot", at);
     } else if(kind === "ram"){
       var what = d.what;
-      if(what === "prop"){ if(cooled("prop", 0.5)) add(0.25, "knocking things over", at); return; }
-      if(what === "person"){ if(cooled("ramp", 2)) add(1, "running someone over", at); return; }
+      if(what === "prop"){ if(cooled("prop", 1)) add(0.1, "knocking things over", at); return; }
+      if(what === "person"){ if(cooled("ramp", 3)) add(0.5, "running someone over", at); return; }
       if(num(d.speed, what === "car" ? RAM_V + 1 : 0) <= RAM_V) return;
-      if(what === "car" || carNear(x, z, 6) || trafficNear(x, z, 6).length){ if(cooled("ramc", 2)) add(1, "ramming a car", at); }
+      if(what === "car" || carNear(x, z, 6) || trafficNear(x, z, 6).length){ if(cooled("ramc", 3)) add(0.5, "ramming a car", at); }
     } else if(kind === "red"){
       ranRed(x, z, d.sig);
+    } else if(kind === "carjack"){
+      // a stolen car (games/playcarjack.js): only a police car close enough to see it (or one told by the event) cares
+      if(d.seen || police(x, z, WITNESS)){ if(cooled("jack", 5)) add(0.5, "stealing a car", at); }
     }
   }
 
@@ -582,7 +589,7 @@ function create(ctx){
     if(S.busted){ bustStep(dt); sound(); draw(); return; }
     lights();
     // speeding hugely in the centre, a police car close by
-    if(S.ride && S.speed > SPEED_V && Math.hypot(S.me.x - centre.x, S.me.z - centre.z) < CENTRE_R && police(S.me.x, S.me.z, 60) && cooled("speed", 15)) add(1, "speeding in the centre");
+    if(S.ride && S.speed > SPEED_V && Math.hypot(S.me.x - centre.x, S.me.z - centre.z) < CENTRE_R && police(S.me.x, S.me.z, 60) && cooled("speed", 30)) add(0.5, "speeding in the centre");
     if(S.stars > 0){
       // more cars, then the roadblock and the helicopter
       var live = S.cars.filter(function(c){ return !c.leave && c.kind === "car"; }).length;
@@ -594,13 +601,18 @@ function create(ctx){
       }
       S.losT -= dt;
       if(S.losT <= 0){ S.losT = 0.25; look(); }
-      // unseen: a star goes every lose(stars) s (hidden: three times as fast)
+      // unseen: a star goes every lose(stars) s (hidden: three times as fast; 6 + 3 a star, so 9 s for one, 21 s for five)
       var need = lose(S.stars)*(S.hidden ? 0.35 : 1);
       if(!S.seen && !S.tag && S.t - S.seenT >= need){
         S.seenT = S.t;
         setHeat(S.stars - 1, "lost sight of you");
         if(S.stars === 0) escaped();
       }
+    } else if(S.h > 0 && !S.tag){
+      // a fraction under the first star (one small slip) wears off while no police car is near, a star's worth every FRAC_S s
+      S.fracT = num(S.fracT, 0) - dt;
+      if(S.fracT <= 0){ S.fracT = 0.25; S.hidden = hiddenNow(); S.seen = police(S.me.x, S.me.z, WITNESS); }
+      if(!S.seen) S.h = Math.max(0, S.h - dt/(FRAC_S*(S.hidden ? 0.35 : 1)));
     }
     heliStep(dt);
     S.spin += dt*(calm() ? 10 : 24);
@@ -669,5 +681,5 @@ function create(ctx){
 }
 
 if(HQV.cityPlay && HQV.cityPlay.register) HQV.cityPlay.register({id: "heat", order: 20, create: create});
-HQV.playHeat = {create: create, lose: lose, vmaxOf: vmaxOf, RAM_V: RAM_V, BUST_R: BUST_R, BUST_S: BUST_S, BUST_REP: BUST_REP};
+HQV.playHeat = {create: create, lose: lose, vmaxOf: vmaxOf, FRAC_S: FRAC_S, RAM_V: RAM_V, BUST_R: BUST_R, BUST_S: BUST_S, BUST_REP: BUST_REP};
 })();

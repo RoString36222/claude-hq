@@ -248,7 +248,7 @@ class TankWiring(unittest.TestCase):
         self.assertIn('var tk = hqNetCan("tank") && (msg.pb || a===14) && HQ3D.inst.tankNet ? HQ3D.inst.tankNet() : null;', self.ui)
         self.assertIn("JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join", self.ui)
         self.assertLess(self.ui.index("msg.pb=pl.pb"), self.ui.index("var tk = hqNetCan(\"tank\")"))   # the seat first
-        self.assertIn('"hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playarena","hqcity3d"]', self.ui)
+        self.assertIn('"hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playcarjack","playarena","hqcity3d"]', self.ui)
         self.assertIn("P.ta = TKm && (p.pb || (p.a | 0) === 14) ? TKm.taFrom(p.ta) : null;", self.hq)
         self.assertIn('"petride", "carpool", "grenade", "tank"]', self.proto)
         self.assertIn('14: "tank"', self.hq)

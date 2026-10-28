@@ -11,7 +11,7 @@ a bus at rush hour, the metro above and below the street, the City Line, the Isl
 the cabs, driver mode, the heli, and every phone app. Each shot saves NN-name.png and records the frame's draw
 calls and triangles, page errors, and UI overlapping or off screen; five shots are repeated with Calm on
 (NN-name-calm.png). Prints a table and writes tour.json beside the shots; exits non-zero on a page error, a shot
-over budget (700 frame calls on the surface, 120 below the street, 1.5M triangles) or a phone that spills off
+over budget (1,200 frame calls on the surface, 240 below the street, 1.5M triangles: ui_smoke's) or a phone that spills off
 screen. Stdlib only.
 """
 import json
@@ -39,9 +39,9 @@ while i < len(ARGS):
 sys.argv = [sys.argv[0]] + ([BIN] if BIN else [])
 import ui_smoke as U  # noqa: E402  (its server, fake Arena and Chrome driver)
 
-MAX_FRAME = 700
-MAX_UNDER = 120
-MAX_TRI = 1_500_000
+MAX_FRAME = U.MAX_FRAME_CALLS      # 1,200 (City Gen v4 phase 11, HQ 3.34; 700 before)
+MAX_UNDER = U.MAX_UNDER_CALLS      # 240 (120 before)
+MAX_TRI = U.MAX_TRIANGLES
 PEER = {"id": "tour-peer-1", "name": "Ada (tour)", "handle": "ada"}
 ISLAND = "user:%s@3" % U.ISLAND_UID
 
@@ -185,9 +185,9 @@ TOUR = [
     ("31a-achievements", "Achievements", [ph("achievements"), 1], {}),
     ("31b-patch-notes", "The 3.18.0 patch notes", [ph("notes"), 1], {}),
     ("32-settings", "Opt-ins: SMS sending, Nearby, Calls; transit voice; clock; cab class", [ph("settings"), 1], {}),
-    ("33a-budget-surface", "Draw calls within budget at the busiest surface camera (<= 700 a frame)",
+    ("33a-budget-surface", "Draw calls within budget at the busiest surface camera (<= 1,200 a frame)",
      ["RELOAD", S + "busiest()", 3], {}),
-    ("33b-budget-underground", "Draw calls within budget below the street (<= 120 a frame)", [sh("metro", "platform")], {"under": True}),
+    ("33b-budget-underground", "Draw calls within budget below the street (<= 240 a frame)", [sh("metro", "platform")], {"under": True}),
 ]
 
 
@@ -251,8 +251,8 @@ def main():
             problems = []
             if errs:
                 problems.append("page errors: " + "; ".join(str(e)[:120] for e in errs[:3]))
-            if isinstance(dc, (int, float)) and dc >= cap:
-                problems.append(f"{dc} draw calls (< {cap})")
+            if isinstance(dc, (int, float)) and dc > cap:
+                problems.append(f"{dc} draw calls (<= {cap})")
             if isinstance(tri, (int, float)) and tri >= MAX_TRI:
                 problems.append(f"{tri} triangles")
             if ui.get("off"):

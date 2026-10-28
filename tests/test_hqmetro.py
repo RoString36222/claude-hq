@@ -468,14 +468,14 @@ class MetroView(unittest.TestCase):
         for n in ("entrance", "portal", "depot", "hall", "platform", "tunnel-ride", "central-interchange", "train-interior"):
             self.assertIsNotNone(sh[n], n)
             if sh[n]["under"]:
-                self.assertLessEqual(sh[n]["draws"], 120, (n, sh[n]))
+                self.assertLessEqual(sh[n]["draws"], 240, (n, sh[n]))     # the underground's budget (120 before HQ 3.34)
                 self.assertLessEqual(sh[n]["tris"], 400000, (n, sh[n]))
             else:
                 self.assertLessEqual(sh[n]["draws"], 8, (n, sh[n]))
         for n in ("hall", "platform"):
             self.assertIsNotNone(sh[n]["walk"], n)
         c = self.o["central"]
-        self.assertLessEqual(c["draws"], 120, c); self.assertLessEqual(c["tris"], 400000, c)
+        self.assertLessEqual(c["draws"], 240, c); self.assertLessEqual(c["tris"], 400000, c)
         self.assertGreater(c["chunks"], 0); self.assertEqual(c["stations"], 2, "Central and the M2 station 350 m south")
 
     def test_gate_beeps_for_the_walker(self):

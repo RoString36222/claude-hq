@@ -18,12 +18,13 @@ headless Chrome (swiftshader WebGL, driven over the DevTools pipe) opens
 `/?hqsmoke=1&...` and polls `data-hq-smoke` in real time:
   - cam=map (the whole map, from the plaza): road, shield, HQ and peer labels
     all drawn;
-  - at the spawn, the plaza and the H1 hill (cam=classic): draw calls < 400,
+  - at the spawn, the plaza and the H1 hill (cam=classic): the world's tiles
+    < 400 draw calls, the whole frame <= 1,200 (City Gen v4 phase 11, HQ 3.34),
     triangles < 1.5M; reports whether the mesh worker ran;
   - C0: the second load with the same profile comes from the IndexedDB cache in
     < 100 ms, and the fake Arena answered a 304;
   - underground (HQ 3.15): below the street at a metro station (HQ3D_DEBUG.transit):
-    the frame's draw calls < 120;
+    the frame's draw calls <= 240 (phase 11; 120 before HQ 3.34);
   - fallback: an Arena answering 401 on /v1/world/* -> the legacy City with the
     "not available" announce and no JavaScript error.
 Stdlib only; needs Google Chrome (or Chromium) for the browser half. Never opens
@@ -74,9 +75,11 @@ EVAL_TIMEOUT = 120.0
 MAX_DRAW_CALLS = 400            # the world's tiles (HQ3D_DEBUG.stats().worldDrawCalls)
 MAX_TRIANGLES = 1_500_000
 # the whole frame (stats().drawCalls: the renderer's own count, the shadow pass included): the synthetic city's spawn
-# drew 536 when this was first measured, the Commons spawn ~550 before its airport
-MAX_FRAME_CALLS = 700
-MAX_UNDER_CALLS = 120           # below the street (HQ 3.15): the surface is hidden, the metro has its own budget
+# drew 536 when this was first measured, the Commons spawn ~550 before its airport. City Gen v4 phase 11 (HQ 3.34, the
+# graphics pass) raised it from 700 to the plan's 1,200, sized for an M3 Pro and up (docs/plans/city-gen-v4.md);
+# tools/graphics_tour.py holds every new piece to it, and hq3d's HQ3D_DEBUG.stats().budget states the same numbers
+MAX_FRAME_CALLS = 1200
+MAX_UNDER_CALLS = 240           # below the street (HQ 3.15): the surface is hidden, the metro has its own budget (120 before 3.34)
 
 
 def free_port():
@@ -605,8 +608,8 @@ def run_3d(chrome_exe, tmp, root, base, arena, world):
                 fail(f"{name}: no drawCalls/triangles in {s} (a 0 is a failed measurement)")
             if wdc >= MAX_DRAW_CALLS or wtri >= MAX_TRIANGLES:
                 fail(f"{name}: over budget: the world's {wdc} draw calls (< {MAX_DRAW_CALLS}), {wtri} triangles (< {MAX_TRIANGLES})")
-            if dc >= MAX_FRAME_CALLS or tri >= MAX_TRIANGLES:
-                fail(f"{name}: over budget: the frame's {dc} draw calls (< {MAX_FRAME_CALLS}), {tri} triangles (< {MAX_TRIANGLES})")
+            if dc > MAX_FRAME_CALLS or tri >= MAX_TRIANGLES:
+                fail(f"{name}: over budget: the frame's {dc} draw calls (<= {MAX_FRAME_CALLS}), {tri} triangles (< {MAX_TRIANGLES})")
             print(f"ok  cam=classic at {name} {at or ''}: frame {dc} draw calls / {tri} triangles, world {wdc} / {wtri}, worker {s.get('worker')}")
             if i == 0:
                 cache = s.get("cache")
@@ -631,8 +634,8 @@ def run_3d(chrome_exe, tmp, root, base, arena, world):
                 dc = v.get("drawCalls")
                 if not v.get("underground"):
                     fail(f"underground: not below the street at {st} ({v})")
-                if not isinstance(dc, (int, float)) or dc <= 0 or dc >= MAX_UNDER_CALLS:
-                    fail(f"underground: the frame's {dc} draw calls (< {MAX_UNDER_CALLS}) at {st}; transit {v.get('transit')}")
+                if not isinstance(dc, (int, float)) or dc <= 0 or dc > MAX_UNDER_CALLS:
+                    fail(f"underground: the frame's {dc} draw calls (<= {MAX_UNDER_CALLS}) at {st}; transit {v.get('transit')}")
                 print(f"ok  underground at {json.loads(st).get('name')}: frame {dc} draw calls / {v.get('triangles')} triangles, transit {v.get('transitDrawCalls')}")
             finally:
                 pg.close()

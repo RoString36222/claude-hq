@@ -71,3 +71,17 @@ jobs:
       - name: UI smoke test
         working-directory: .
         run: python3 tools/ui_smoke.py dashboard-rs/target/release/claudehq
+      # City Gen v4 phase 11: one page load, eleven spots on the @3 Commons (interchange, flyover, boulevard, tram bed
+      # and platform, tunnel, cutting, signals, plaza, metro, your HQ), each within 1,200 draw calls a frame (240
+      # below the street) and 1.5 M triangles, no page error. The shots are kept as an artifact.
+      - name: Graphics tour (frame budgets)
+        working-directory: .
+        timeout-minutes: 10
+        run: python3 tools/graphics_tour.py dashboard-rs/target/release/claudehq --out "$RUNNER_TEMP/graphics-tour"
+      - name: Keep the graphics tour's shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphics-tour
+          path: ${{ runner.temp }}/graphics-tour
+          if-no-files-found: ignore

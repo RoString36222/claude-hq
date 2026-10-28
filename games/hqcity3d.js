@@ -3719,7 +3719,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var E = hqs.filter(function(e){ return e.h && e.h.isYou; })[0];
     if(!E || !E.lot) return null;
     var lot = E.lot, P = {x: E.x, z: E.z, rot: E.rot}, gr = grandOf(lot, P);
-    return {x: E.x, y: (E.y || 0) + PAD_UP, z: E.z, rot: E.rot, rank: lot.rank | 0, garage: E.garage, def: E.garageDef || null,
+    return {x: E.x, y: (E.y || 0) + PAD_UP, z: E.z, rot: E.rot, rank: lot.rank | 0, oid: E.oid, garage: E.garage, def: E.garageDef || null,
             fits: function(sp){ return garageFits(lot, P, sp, gr); }};
   };
   var ghostG = null, ghostKey = null;

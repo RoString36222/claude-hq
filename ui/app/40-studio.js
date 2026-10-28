@@ -471,7 +471,9 @@ function hqGarageOpen(){
   HQ_GARAGE.back=document.activeElement;
   var bk=$("hqGarage"); if(!bk){ bk=hqGarageBuild(); document.body.appendChild(bk); }
   bk.classList.add("open");
-  I.garageView({cb:HQG_PLACE});
+  var m=bk.querySelector(".hqs"), cv=document.querySelector("canvas.hq3d-canvas"), sh=0;   // the share of the 3D view the panel covers
+  if(m && cv && m.getBoundingClientRect){ var a=m.getBoundingClientRect(), b=cv.getBoundingClientRect(); if(b.width && a.left<b.right) sh=Math.max(0, Math.min(0.6, (b.right-Math.max(a.left,b.left))/b.width)); }
+  I.garageView({cb:HQG_PLACE, shift:sh});
   hqGarageSync();
   hqGarageRender(true);
   var p=$("hqgPad"); if(p) p.focus();

@@ -5673,13 +5673,13 @@ function mount(el, api){
       if(!gar) return false;
       var b = gar.back; gar = null; canvas.classList.remove("hqs-placing");
       if(cur && cur.garageGhost) cur.garageGhost(null);
+      if(cur && cur.setFaded) cur.setFaded([]);
       if(b){ view.yaw = b.yaw; view.pitch = b.pitch; view.zoom = b.zoom; }
       return true;
     }
     if(!scene || !avatar || !cur || cur.name !== "city" || !cur.garageLot) return false;
     var L = cur.garageLot(); if(!L) return false;
-    var g0 = L.garage || {x: 0, z: 0};
-    gar = {cb: o.cb || null, L: L, tx: E.clamp(+g0.x*0.5 || 0, -20, 20), tz: E.clamp(+g0.z*0.5 || 0, -20, 20), h: 52,
+    gar = {cb: o.cb || null, L: L, tx: 0, tz: -1, h: 78, shift: E.clamp(+o.shift || 0, 0, 0.6),
            back: {yaw: view.yaw, pitch: view.pitch, zoom: view.zoom}};
     walkTo = null; walkDoor = null; keys = {};
     if(locked()) exitLock();
@@ -5687,11 +5687,14 @@ function mount(el, api){
     return true;
   };
   inst.garageState = function(){ return gar ? {on: garagePlacing(), tx: gar.tx, tz: gar.tz, h: gar.h, rank: gar.L.rank} : null; };
-  // each frame, after the rig: the camera over your lot (the perspective one, or Classic's)
+  // each frame, after the rig: the camera over your lot (the perspective one, or Classic's), your lot left of the docked
+  // panel (shift: the share of the view it covers), your tower faded so the lot shows through it
   function garageCam(){
     if(!garagePlacing()) return;
-    var L = gar.L, cr = Math.cos(L.rot), sr = Math.sin(L.rot);
-    var tx = L.x + gar.tx*cr + gar.tz*sr, tz = L.z - gar.tx*sr + gar.tz*cr, ty = L.y || 0, h = gar.h, back = h*0.36;
+    var L = gar.L, cr = Math.cos(L.rot), sr = Math.sin(L.rot), h = gar.h, back = h*0.22;
+    var half = h*Math.tan(25*PI/180)*((inst.w || 1)/(inst.h || 1)), lx = gar.tx + gar.shift*half;   // the view's half width on the ground (fov 50)
+    var tx = L.x + lx*cr + gar.tz*sr, tz = L.z - lx*sr + gar.tz*cr, ty = L.y || 0;
+    if(cur.setFaded && L.oid) cur.setFaded([L.oid]);
     if(curCam() === pcam && pcam){
       pcam.position.set(tx + sr*back, ty + h, tz + cr*back); pcam.up.set(0, 1, 0); pcam.lookAt(tx, ty, tz);
       pcam.fov = 50; pcam.near = 0.5; pcam.far = Math.max(pcam.far || 0, 2000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();

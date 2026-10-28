@@ -294,6 +294,11 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 - **Arena is off by default.** When enabled it publishes daily *counts* only — never conversation
   content, file paths or project names — and its device token lives in `arena-link.json`, outside
   `config.json`, so it is never served to the page. See [Arena](#-arena-multiplayer--optional).
+- **HQ Studio and movable garages (Arena, optional).** HQ Studio sends only your style document (enum
+  keys, colours, grid cells). Moving your HQ's garage bay sends four small integers about your own HQ
+  lot, `{lot, x, z, r}` (the lot's rank, where the bay sits inside it in decimetres, its quarter turns),
+  through `POST /api/arena/hq/garage` (`/reset` puts it back); others see it on your lot. Nothing from
+  your transcripts goes into either.
 
 ---
 
@@ -318,7 +323,8 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
 `GET /api/arena/cali/board?window={season,30d,7d,all,lastseason}` · `GET /api/arena/cali/orders` ·
 `POST /api/action` · `POST /api/config` · `POST /api/meta` · `POST /api/evo-choice` ·
-`POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order`
+`POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order` ·
+`GET /api/arena/hq/garage` · `POST /api/arena/hq/garage` · `POST /api/arena/hq/garage/reset`
 (all POSTs CSRF-guarded).
 
 ---

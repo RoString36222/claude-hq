@@ -602,6 +602,41 @@ fn city_and_market_posts_forward_only_the_allowlisted_body() {
     assert!(s.iter().all(|x| x.2 == "Bearer dev-token"));
 }
 
+/// Movable garages (HQ 3.33): POST + CSRF + same-site, an allowlisted body,
+/// and an Arena without the route answers 404 all the way to the page.
+#[test]
+fn hq_garage_is_gated_allowlisted_and_passes_a_missing_route_through() {
+    let srv = serve();
+    let (base, seen) = fake_city_arena();
+    let spot = br#"{"lot": 7, "x": 12, "z": -30, "r": 2}"#;
+    // the gates, before anything is read or sent
+    assert_eq!(post(&srv, "/api/arena/hq/garage", spot, "", false).0, 403);
+    assert_eq!(post(&srv, "/api/arena/hq/garage", spot, "Origin: https://evil.example\r\n", true).0, 403);
+    assert_eq!(post(&srv, "/api/arena/hq/garage/reset", b"{}", "", false).0, 403);
+    assert_eq!(post(&srv, "/api/arena/hq/garage/reset", b"{}", "Sec-Fetch-Site: cross-site\r\n", true).0, 403);
+    // unpaired: nothing leaves
+    assert_eq!(post(&srv, "/api/arena/hq/garage", spot, "", true), (400, json!({"error": "not paired"})));
+    assert_eq!(get_json(&srv, "/api/arena/hq/garage"), (400, json!({"error": "not paired"})));
+    srv.app.save_link(&json!({"token": "dev-token", "url": base})).unwrap();
+    // a body outside the allowlist is refused locally
+    for bad in [r#"{"lot": 7, "x": 12, "z": -30, "r": 4}"#, r#"{"lot": 7, "x": 12, "z": -30, "r": 0, "sessionId": "s1"}"#, r#"{"lot": 7, "x": 1.5, "z": 0, "r": 0}"#] {
+        assert_eq!(post(&srv, "/api/arena/hq/garage", bad.as_bytes(), "", true).0, 400, "{bad}");
+    }
+    assert!(seen.lock().unwrap().is_empty());
+    // this fake Arena has no garage route: its 404 reaches the page as a 404
+    assert_eq!(get_json(&srv, "/api/arena/hq/garage").0, 404);
+    assert_eq!(post(&srv, "/api/arena/hq/garage", spot, "", true).0, 404);
+    assert_eq!(post(&srv, "/api/arena/hq/garage/reset", b"{}", "", true).0, 404);
+    let s = seen.lock().unwrap();
+    let got: Vec<(&str, &str, &Value)> = s.iter().map(|(m, p, _, b)| (m.as_str(), p.as_str(), b)).collect();
+    assert_eq!(got, [
+        ("GET", "/v1/hq/me/garage", &Value::Null),
+        ("PUT", "/v1/hq/me/garage", &json!({"lot": 7, "x": 12, "z": -30, "r": 2})),
+        ("DELETE", "/v1/hq/me/garage", &Value::Null),
+    ]);
+    assert!(s.iter().all(|x| x.2 == "Bearer dev-token"));
+}
+
 #[test]
 fn rail_build_is_proxied_with_only_the_world_id() {
     let srv = serve();

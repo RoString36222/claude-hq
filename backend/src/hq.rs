@@ -96,6 +96,14 @@ pub fn routes() -> Router<crate::AppState> {
             get(crate::hqstyle::get_mine).put(crate::hqstyle::put_mine).fallback(method_not_allowed),
         )
         .route("/v1/hq/styles", get(crate::hqstyle::get_many).fallback(method_not_allowed))
+        // Movable garages (HQ 3.33), static like `/me/style`.
+        .route(
+            "/v1/hq/me/garage",
+            get(crate::hqgarage::get_mine)
+                .put(crate::hqgarage::put_mine)
+                .delete(crate::hqgarage::delete_mine)
+                .fallback(method_not_allowed),
+        )
         .route("/v1/hq/:user_id", get(get_one).fallback(method_not_allowed))
 }
 
@@ -123,6 +131,10 @@ struct HqOut {
     /// has none. Last, so every key before it keeps its place.
     #[serde(skip_serializing_if = "Option::is_none")]
     style: Option<Value>,
+    /// Movable garages (HQ 3.33): where the car-lift garage bay sits in the
+    /// lot, absent for the default spot. Last, after `style`, for the same reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    garage: Option<crate::hqgarage::GarageSpot>,
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -276,6 +288,7 @@ async fn get_me_inner(pool: &SqlitePool, c: &crate::Caller) -> Result<Response, 
     // contract, not an oversight.
     let mut out = project(&Public::from_caller(c), prof.as_ref(), level, &c.user_id, Cos::default());
     out.style = crate::hqstyle::load(pool, &c.user_id).await?;
+    out.garage = crate::hqgarage::load(pool, &c.user_id).await?;
     Ok(Json(out).into_response())
 }
 
@@ -306,6 +319,7 @@ async fn put_me_inner(
     let level = level_of(pool, &c.user_id).await?;
     let mut out = project(&Public::from_caller(c), prof.as_ref(), level, &c.user_id, Cos::default());
     out.style = crate::hqstyle::load(pool, &c.user_id).await?;
+    out.garage = crate::hqgarage::load(pool, &c.user_id).await?;
     Ok(Json(out).into_response())
 }
 
@@ -354,6 +368,7 @@ async fn list_open_inner(pool: &SqlitePool, viewer: &str) -> Result<Response, sq
     let levels = levels_for(pool, &ids).await?;
     let cos = equipped(pool, &ids).await?;
     let mut styles = crate::hqstyle::load_many(pool, &ids).await?;
+    let mut garages = crate::hqgarage::load_many(pool, &ids).await?;
 
     // The viewer's own open HQ is in this list, with isYou true: it is not an
     // "other people's HQs" list.
@@ -363,6 +378,7 @@ async fn list_open_inner(pool: &SqlitePool, viewer: &str) -> Result<Response, sq
             let level = levels.get(&u.id).copied().unwrap_or(1);
             let mut out = project(u, Some(p), level, viewer, cos.get(&u.id).cloned().unwrap_or_default());
             out.style = styles.remove(&u.id);
+            out.garage = garages.remove(&u.id);
             out
         })
         .collect();
@@ -416,6 +432,7 @@ async fn get_one_inner(
     let cos = cos.get(&who.id).cloned().unwrap_or_default();
     let mut out = project(&who, prof.as_ref(), level, viewer, cos);
     out.style = crate::hqstyle::load(pool, uid).await?;
+    out.garage = crate::hqgarage::load(pool, uid).await?;
     Ok(Json(out).into_response())
 }
 
@@ -452,6 +469,7 @@ fn project(
         is_you: u.id == viewer,
         cos,
         style: None,
+        garage: None,
     }
 }
 

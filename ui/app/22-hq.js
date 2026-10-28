@@ -24,13 +24,13 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","citylife","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
                   "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqvfx","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqgpvenue","hqcasinoui","hqcasino","hqcall","hqautopilot","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle",
                   "hqride","hqcommute","hqtramway","hqcoach","hqmetro","hqunderground","hqcityrail","hqgondola","hqferries","hqcabs","hqhelicall","hqphone","hqphoneapps","hqphonecabs","hqphonecomms","hqgallery","hqtransit",
-                  "hqstunts","hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playarena","hqcity3d"];
+                  "hqstunts","hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playcarjack","playarena","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
 var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqgrenade:1, hqtank:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, citylife:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
                      hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqvfx:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqgpvenue:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqautopilot:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1, hqstunts:1,
-                     hqride:1, hqcommute:1, hqtramway:1, hqcoach:1, hqmetro:1, hqunderground:1, hqcityrail:1, hqgondola:1, hqferries:1, hqcabs:1, hqhelicall:1, hqphone:1, hqphoneapps:1, hqphonecabs:1, hqphonecomms:1, hqgallery:1, hqtransit:1, cityevents3d:1, cityplay:1, playjobs:1, playheat:1, playraces:1, playfinds:1, playstreet:1, playarena:1};
+                     hqride:1, hqcommute:1, hqtramway:1, hqcoach:1, hqmetro:1, hqunderground:1, hqcityrail:1, hqgondola:1, hqferries:1, hqcabs:1, hqhelicall:1, hqphone:1, hqphoneapps:1, hqphonecabs:1, hqphonecomms:1, hqgallery:1, hqtransit:1, cityevents3d:1, cityplay:1, playjobs:1, playheat:1, playraces:1, playfinds:1, playstreet:1, playcarjack:1, playarena:1};
 // ?hqsmoke=1 (tools/ui_smoke.py, tools/hq_shots.py): HQ opens straight into the City with three synthetic HQs.
 var HQ_SMOKE = /[?&]hqsmoke=1(&|$)/.test(location.search);
 function hqLoadScripts(){
@@ -67,6 +67,8 @@ function hqApi(){
                                                           style: typeof hqStyleDoc==="function" ? hqStyleDoc() : null}); },   // HQ Studio (ui/app/40-studio.js)
     // HQ Studio: open the panel (the lobby's kiosk)
     studio: function(tab){ if(typeof hqStudioOpen==="function") hqStudioOpen(tab); },
+    // [3.33] the MOVE plate by your car lift: place your garage on your lot (ui/app/40-studio.js)
+    garageMove: function(){ if(typeof hqGarageOpen==="function") hqGarageOpen(); },
     // HQ 3.17 the Grand Prix Circuit (games/hqgpvenue.js): Go opens the Valley's Grand Prix on that circuit and car
     grandPrix: function(o){ setView("valley"); valleyLoad().then(function(){ if(window.HQV && window.HQV.gpLaunch) window.HQV.gpLaunch(o || {}); }, function(){}); },
     startWorld: HQ_SMOKE ? "base" : (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),

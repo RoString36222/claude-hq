@@ -841,6 +841,8 @@ function mount(el, api){
     night: function(){ return isNight(); },
     // the dealership (games/hqdealer.js via games/hqcity3d.js): its door or forecourt opens the dealer panel
     dealer: {open: function(){ return dealerOpen(); }},
+    // [3.27] carjack (games/playcarjack.js): seat you in that traffic car's look where it stood; the one you hold (its id)
+    carjack: function(o){ return jackTake(o); }, carjacked: function(){ return jack ? jack.vid : null; },
     tuning: {open: function(){ return tuneOpen(); }},   // [3.13] the Tuning shop (games/hqtuning.js via games/hqcity3d.js)
     gp: {open: function(){ return gpOpen(); }},         // [3.17] the Grand Prix Circuit (games/hqgpvenue.js via games/hqcity3d.js)
     held: function(code){ return !!keys[code]; },
@@ -4024,7 +4026,7 @@ function mount(el, api){
   function exitLock(){ try { if(locked() && document.exitPointerLock) document.exitPointerLock(); } catch(e){} }
   // [3.15] Mouse steering (the camera gear): in the chase cameras a click captures the mouse, which then turns you and
   // the camera together (moveAvatar); Esc, a panel, a typing field or another camera gives the cursor back.
-  function steerOn(){ return !!(camSet && camSet.mouseSteer) && rigOn() && !!CHASE[rig.mode] && !studioPlacing(); }
+  function steerOn(){ return !!(camSet && camSet.mouseSteer) && rigOn() && !!CHASE[rig.mode] && !studioPlacing() && !garagePlacing(); }
   function steering(){ return steerOn() && locked() && !tripHeld(); }
   function steerLock(){
     if(locked() || !canvas.requestPointerLock) return;
@@ -4185,6 +4187,8 @@ function mount(el, api){
   // once said "E  Ride the bike" by a rowboat). The worlds still write their prompts "E  ...": shown as F.
   function hudPrompt(){
     if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "F  Enter " + (d.label || d.tip || "the door"); }
+    // [3.27] a stopped traffic car you can take: E, as getting into any vehicle is (not by one of your own: E is that one's)
+    if(!ride && !POOL.u && nearIdx < 0 && cur && cur.jackPrompt && avatar){ var jp = null; try { jp = cur.jackPrompt({x: avatar.x, z: avatar.z}); } catch(e){ jp = null; } if(jp) return String(jp); }
     if(!ride && cur && cur.prompt && avatar){ var w = cur.prompt({x: avatar.x, z: avatar.z}); return w ? String(w).replace(/^E(\s)/, "F$1") : null; }   // the world's (a terminal's door)
     return null;
   }
@@ -4303,6 +4307,7 @@ function mount(el, api){
 
   function onDown(e){
     noteInput();
+    if(garagePlacing()){ drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, garage: true, button: e.button}; canvas.setPointerCapture(e.pointerId); return; }   // [3.33] Move garage
     if(studioPlacing()){ drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, studio: true, button: e.button}; canvas.setPointerCapture(e.pointerId); return; }
     // on a ride (or any trip that holds the camera: w.camPose): a drag looks around from your seat
     if(tripHeld()){ drag = {x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0, trip: true}; canvas.setPointerCapture(e.pointerId); return; }
@@ -4329,6 +4334,7 @@ function mount(el, api){
     if(drag){
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
       if(drag.studio){ if(drag.moved > 5){ studioPan(e.clientX - drag.lx, e.clientY - drag.ly); tip.hidden = true; } drag.lx = e.clientX; drag.ly = e.clientY; return; }
+      if(drag.garage){ if(drag.moved > 5){ garagePan(e.clientX - drag.lx, e.clientY - drag.ly); tip.hidden = true; } drag.lx = e.clientX; drag.ly = e.clientY; return; }
       if(drag.trip){
         tripLook.yaw = wrapA(tripLook.yaw - (e.clientX - drag.lx)*0.004);
         tripLook.pitch = E.clamp(tripLook.pitch - (e.clientY - drag.ly)*0.004, -1.3, 1.3);
@@ -4349,6 +4355,7 @@ function mount(el, api){
     }
     if(rigOn() && rig.mode === "map"){ tip.hidden = true; return; }
     if(studioPlacing()){ tip.hidden = true; studioHover(e); return; }
+    if(garagePlacing()){ tip.hidden = true; var gh = garageCell(e); if(gh && gar.cb && gar.cb.hover) gar.cb.hover(gh.x, gh.z); return; }
     var h = pick(e, hitList());
     var o = h && h.object.userData, txt = null;
     if(o && o.desk){ var s = o.desk.s; txt = titleOf(s) + " · " + STATE_TXT[crewState(s)] + " · " + projectOf(s); }
@@ -4362,19 +4369,21 @@ function mount(el, api){
   function onUp(e){
     var d = drag; drag = null; if(!d || d.trip || d.moved > 5) return;
     if(d.studio){ var sc = studioCell(e); if(sc && stu && stu.cb) (d.button === 2 ? stu.cb.remove : stu.cb.place)(sc.x, sc.z); return; }
+    if(d.garage){ var gc = garageCell(e); if(gc && gar && gar.cb){ if(d.button === 2){ if(gar.cb.key) gar.cb.key("rotate"); } else if(gar.cb.place) gar.cb.place(gc.x, gc.z); } return; }   // [3.33] right click turns it
     if(d.rig && rigOn() && rig.mode === "map"){ if(d.button === 0) mapClick(e); return; }
     if(d.rig && d.button !== 0) return;                                 // a right click only orbits
     var h = pick(e, hitList());
     var o = h && h.object.userData;
     if(o && o.desk){ api.openSession(o.desk.id); return; }
     if(o && o.project){ inst.setFilter(filter === o.project ? null : o.project); api.onFilter(filter); return; }
+    if(o && o.garageMove){ if(api.garageMove) api.garageMove(); return; }                 // [3.33] your bay's Move garage plate
     if(o && o.door){ walkTo = {x: o.door.front.x, z: o.door.front.z}; walkDoor = o.door; return; }
     if(d.steer){ steerLock(); return; }                                // [3.15] mouse steering: a click captures the mouse
     var f = pick(e, [].concat(cur.floor)), b = cur.bounds;
     if(f){ walkTo = {x: E.clamp(f.point.x, b[0] + 1, b[1] - 1), z: E.clamp(f.point.z, b[2] + 1, b[3] - 1)}; walkDoor = null; }
   }
   // the browser menu stays away only while right-drag orbits (chase family)
-  function onContext(e){ if(studioPlacing()){ e.preventDefault(); return; } if(rigOn() && CHASE[rig.mode]) e.preventDefault(); }   // [3.13.2] right click removes in the Studio's Layout
+  function onContext(e){ if(studioPlacing() || garagePlacing()){ e.preventDefault(); return; } if(rigOn() && CHASE[rig.mode]) e.preventDefault(); }   // [3.13.2] right click removes in the Studio's Layout
   function hitList(){ return cur === worlds.mission ? clickables.concat(doorHits, projHits) : (cur.hits || []); }
   // Through a door: another view of the page, or another floor of the building ("@lobby").
   function through(d){
@@ -5056,6 +5065,48 @@ function mount(el, api){
     placeProp(T.prop, x, z, yaw);
     if(B.s >= B.len && !B.told){ B.told = true; if(api.announce) api.announce("The " + T.name + " is back at the dealership."); }
   }
+  /* [3.27] Carjack (games/playcarjack.js through games/hqcity3d.js): E on foot by a stopped traffic car. The City's play
+     feature finds the car and its look (traffic.carLook: the catalogue model and paint the street draws it as); this
+     builds that catalogue vehicle where the traffic car stood, facing its way, and seats you in it: driven like any
+     catalogue car (VEHICLES[id]), sent in presence as any vehicle you ride (its id and paint index, nothing new). Getting
+     out parks it there (stay: this page only); once you are JACK_FAR m from it on foot, take another, or leave the world,
+     it goes (jackDrop), and the feature lets the traffic car back onto the street. One at a time. */
+  var jack = null, JACK_FAR = 150;
+  function jackTake(o){
+    o = o || {};
+    var V = VEHICLES[o.model], C = cur;
+    if(ride || POOL.u || !avatar || !V || !V.cat || !C || !C.bikes || !HQV.hqVehicleModels) return false;
+    var x = +o.x, z = +o.z, yaw = isFinite(+o.yaw) ? +o.yaw : 0;
+    if(!isFinite(x) || !isFinite(z)) return false;
+    jackDrop();
+    var ps = V.cat.paints || [], pi = Math.max(0, Math.min(Math.max(0, ps.length - 1), o.paint | 0));
+    var col = ps[pi] && /^#[0-9a-fA-F]{6}$/.test(ps[pi].hex) ? parseInt(ps[pi].hex.slice(1), 16) : isFinite(+o.hex) ? +o.hex : null;
+    var R = null;
+    try { R = HQV.hqVehicleModels.build(ctx, V.cat, col); } catch(e){ R = null; }
+    if(!R || !R.g) return false;
+    var g = new THREE.Group(); g.add(R.g);
+    g.position.set(x, groundAt(x, z), z); g.rotation.y = yaw; (C.scene || scene).add(g);
+    var prop = {g: g, x: x, z: z, yaw: yaw, color: col, paint: pi, kind: o.model, id: "carjack", stay: true, world: C, home: {x: x, z: z, yaw: yaw}};
+    C.bikes.push(prop);
+    jack = {prop: prop, world: C, vid: String(o.vid != null ? o.vid : "?")};
+    mountOn(prop, C.bikes.indexOf(prop));
+    if(!(ride && ride.id === "carjack")){ jackDrop(); return false; }
+    return true;
+  }
+  function jackDrop(){
+    var J = jack; if(!J) return; jack = null;
+    if(ride && ride.id === "carjack") dismount(true);
+    if(J.prop.g.parent) J.prop.g.parent.remove(J.prop.g);
+    var bs = J.world && J.world.bikes, i = bs ? bs.indexOf(J.prop) : -1; if(i >= 0) bs.splice(i, 1);
+    delete parked[J.prop.id];
+  }
+  function jackStep(){
+    var J = jack; if(!J) return;
+    if(cur !== J.world || !J.world.bikes){ jackDrop(); return; }
+    if(ride && ride.id === "carjack") return;
+    if(avatar && Math.hypot(avatar.x - J.prop.x, avatar.z - J.prop.z) > JACK_FAR) jackDrop();   // left far behind: gone
+  }
+  inst.carjack = function(){ var J = jack; return J ? {vid: J.vid, id: J.prop.kind, paint: J.prop.paint, x: J.prop.x, z: J.prop.z, riding: !!(ride && ride.id === "carjack")} : null; };
   inst.dealer = {open: function(){ return dealerOpen(); }, isOpen: function(){ return !!(dealUi && dealUi.isOpen()); },
                  test: function(id, hex){ return dealerTest(id, hex); }, get: dealerGet,
                  testDrive: function(){ var T = testDrive; return T ? {id: T.prop.kind, x: T.prop.x, z: T.prop.z, left: Math.max(0, T.until - Date.now()),
@@ -5264,6 +5315,7 @@ function mount(el, api){
   }
   function onWheel(e){
     e.preventDefault(); noteInput();
+    if(garagePlacing()){ gar.h = E.clamp(gar.h*Math.exp(e.deltaY*0.0012), 18, 140); return; }   // [3.33] closer to your lot, or further
     if(rigOn() && rig.mode !== "classic"){ HQV.camrig.input(rig, {zoom: e.deltaY}); return; }
     view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5);
   }
@@ -5303,6 +5355,7 @@ function mount(el, api){
     if(!ride && nearTank()){ mountTank(); return true; }                 // [3.16] your own tank (others' seat you through carpool)
     if(ride || nearBike() >= 0){ rideToggle(); return true; }
     if(!ride && POOL.near){ poolBoard(POOL.near); return true; }
+    if(!ride && cur && cur.jack && avatar){ var jk = false; try { jk = cur.jack({x: avatar.x, z: avatar.z, yaw: avatar.yaw}); } catch(e){ jk = false; } if(jk) return true; }   // [3.27] take that car
     if(rigOn() && rig.mode === "fp" && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d){ through(d); return true; } }
     // the world's own (games/hqcity3d.js): talk to a resident, a bus stop, a dock, a station
     if(cur && cur.use && avatar && cur.use({x: avatar.x, z: avatar.z, yaw: avatar.yaw})) return true;
@@ -5324,6 +5377,15 @@ function mount(el, api){
   }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
+    // [3.33] Move garage, over the 3D view: R turns the bay, the arrows move it 0.5 m, Enter saves, Esc puts it back; nothing
+    // else reaches you or the page (keys inside its panel are the panel's own: typing() covers .hqs)
+    if(garagePlacing() && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey){
+      var gk = GARAGE_KEYS[e.code] || GARAGE_KEYS[e.key];
+      if(gk || MOVE_KEYS[e.code]){ e.preventDefault(); e.stopPropagation(); }
+      keys = {};
+      if(gk && e.type === "keydown" && gar.cb && gar.cb.key) gar.cb.key(gk);
+      if(gk || MOVE_KEYS[e.code]) return;
+    }
     // [3.13.2] HQ Studio's Layout tab, over the 3D view: R turns the ghost, Delete / Backspace removes what is under it
     if(studioPlacing() && e.type === "keydown" && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey && stu.cb && stu.cb.key
        && (e.code === "KeyR" || e.key === "Delete" || e.key === "Backspace")){ e.preventDefault(); e.stopPropagation(); stu.cb.key(e.code === "KeyR" ? "rotate" : "remove"); return; }
@@ -5446,6 +5508,7 @@ function mount(el, api){
     motionStep(dt);
     propHomeStep();                                                    // [3.13.4] your roof's helicopter back on its pad
     testStep(dt);                                                      // a dealership test drive
+    jackStep();                                                        // [3.27] a car you took, left far behind
     gnFrame(dt);                                                       // [3.16] grenades in flight, blasts, your knock
     if(cur && cur.onBoat) cur.onBoat(ride && ride.boat ? {st: ride.boat, kind: ride.kind, beam: ride.V.beam || 1} : null);   // the City's wake, landings
     if(cur && cur.onHeli) cur.onHeli(ride && (ride.heli || (ride.plane && !ride.plane.ground)) ? {st: ride.heli || ride.plane, kind: ride.pet ? "heli" : ride.kind} : null);                          // flying on to another island (a dragon: as a helicopter)
@@ -5460,6 +5523,7 @@ function mount(el, api){
     keys = kb;
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     studioFrame();
+    garageCam();                                                       // [3.33] Move garage: your lot from above
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
     if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());   // [sound] the ears: this frame's camera (earAt), your reach
@@ -5594,6 +5658,67 @@ function mount(el, api){
     var rx = Math.cos(view.yaw), rz = -Math.sin(view.yaw), fx = -Math.sin(view.yaw), fz = -Math.cos(view.yaw);
     stu.tx = E.clamp(stu.tx - dx*upp*rx + dy*upp/sp*fx, -14, 14);
     stu.tz = E.clamp(stu.tz - dx*upp*rz + dy*upp/sp*fz, -14, 14);
+  }
+  /* [3.33] Move garage (ui/app/40-studio.js hqGarageOpen): your own lot in the City from above, the street at the bottom; a
+     ghost bay (the City's w.garageGhost) follows the pointer on the lot's 0.5 m grid: cb.hover(x, z), cb.place(x, z) (a click),
+     cb.key("rotate" | "save" | "cancel" | "left" | "right" | "up" | "down") (R or a right click, Enter, Esc, the arrows); a drag
+     pans, the wheel zooms. garageView(null) gives you your view back. x, z: the lot's own frame (m), as garageFits reads them. */
+  var gar = null, garPlane = null, garHit = null;
+  var GARAGE_KEYS = {KeyR: "rotate", Enter: "save", NumpadEnter: "save", Escape: "cancel", ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down"};
+  function garagePlacing(){ return !!(gar && cur && cur.name === "city" && cur.garageLot); }
+  inst.garageLot = function(){ return cur && cur.name === "city" && cur.garageLot ? cur.garageLot() : null; };
+  inst.garageGhost = function(g){ return cur && cur.garageGhost ? cur.garageGhost(g) : false; };
+  inst.garageView = function(o){
+    if(!o){
+      if(!gar) return false;
+      var b = gar.back; gar = null; canvas.classList.remove("hqs-placing");
+      if(cur && cur.garageGhost) cur.garageGhost(null);
+      if(cur && cur.setFaded) cur.setFaded([]);
+      if(b){ view.yaw = b.yaw; view.pitch = b.pitch; view.zoom = b.zoom; }
+      return true;
+    }
+    if(!scene || !avatar || !cur || cur.name !== "city" || !cur.garageLot) return false;
+    var L = cur.garageLot(); if(!L) return false;
+    gar = {cb: o.cb || null, L: L, tx: 0, tz: -1, h: 78, shift: E.clamp(+o.shift || 0, 0, 0.6),
+           back: {yaw: view.yaw, pitch: view.pitch, zoom: view.zoom}};
+    walkTo = null; walkDoor = null; keys = {};
+    if(locked()) exitLock();
+    canvas.classList.add("hqs-placing");
+    return true;
+  };
+  inst.garageState = function(){ return gar ? {on: garagePlacing(), tx: gar.tx, tz: gar.tz, h: gar.h, rank: gar.L.rank} : null; };
+  // each frame, after the rig: the camera over your lot (the perspective one, or Classic's), your lot left of the docked
+  // panel (shift: the share of the view it covers), your tower faded so the lot shows through it
+  function garageCam(){
+    if(!garagePlacing()) return;
+    var L = gar.L, cr = Math.cos(L.rot), sr = Math.sin(L.rot), h = gar.h, back = h*0.22;
+    var half = h*Math.tan(25*PI/180)*((inst.w || 1)/(inst.h || 1)), lx = gar.tx + gar.shift*half;   // the view's half width on the ground (fov 50)
+    var tx = L.x + lx*cr + gar.tz*sr, tz = L.z - lx*sr + gar.tz*cr, ty = L.y || 0;
+    if(cur.setFaded && L.oid) cur.setFaded([L.oid]);
+    if(curCam() === pcam && pcam){
+      pcam.position.set(tx + sr*back, ty + h, tz + cr*back); pcam.up.set(0, 1, 0); pcam.lookAt(tx, ty, tz);
+      pcam.fov = 50; pcam.near = 0.5; pcam.far = Math.max(pcam.far || 0, 2000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
+    } else {
+      view.goal.set(tx, ty, tz); view.yaw = L.rot; view.pitch = 1.2; view.zoom = (view.span || 12)/(h*0.5);
+    }
+  }
+  // the lot cell under the pointer (the lot's frame, on its 0.5 m grid), or null
+  function garageCell(e){
+    if(!gar || !ray) return null;
+    if(!garPlane){ garPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); garHit = new THREE.Vector3(); }
+    garPlane.constant = -(gar.L.y || 0);
+    var r = canvas.getBoundingClientRect(); if(!r.width || !r.height) return null;
+    ptr.set((e.clientX - r.left)/r.width*2 - 1, -(e.clientY - r.top)/r.height*2 + 1);
+    ray.setFromCamera(ptr, curCam());
+    if(!ray.ray.intersectPlane(garPlane, garHit)) return null;
+    var L = gar.L, dx = garHit.x - L.x, dz = garHit.z - L.z, cr = Math.cos(L.rot), sr = Math.sin(L.rot);
+    var sn = function(v){ v = Math.round(E.clamp(v, -40, 40)*2)/2; return v === 0 ? 0 : v; };
+    return {x: sn(dx*cr - dz*sr), z: sn(dx*sr + dz*cr)};
+  }
+  // a drag pans over the lot (the ground follows the pointer: right is the lot's +x, up its back, -z)
+  function garagePan(dx, dy){
+    var h = canvas.clientHeight || 1, c = curCam(), mpp = c && c.isPerspectiveCamera ? 2*gar.h*Math.tan((c.fov || 50)*PI/360)/h : 2*view.span/view.zoom/h;
+    gar.tx = E.clamp(gar.tx - dx*mpp, -30, 30); gar.tz = E.clamp(gar.tz - dy*mpp, -30, 30);
   }
   inst.studioThumbs = function(){ return HQV.hqDecor && HQV.hqDecor.thumbs && THREE ? HQV.hqDecor.thumbs(ctx) : null; };
   inst.studioPreview = function(cv, o){
@@ -5984,6 +6109,8 @@ function mount(el, api){
                          },
                          // hold (true) or let go of a key, as if pressed: tools drive with it
                          press: function(code, on){ keys[code] = !!on; },
+                         // [3.27] carjack, for tools: "take" (E by the traffic car you stand at), "out" (E again); -> the car you hold
+                         carjack: function(a){ if(a === "take" && !ride && cur && cur.jack && avatar) cur.jack({x: avatar.x, z: avatar.z, yaw: avatar.yaw}); else if(a === "out" && ride) dismount(); return inst.carjack(); },
                          // [stunts] the City's stunts, and where you are in one (tools drive them headless)
                          stunts: function(){ var S = stuntsNow(); return S ? S.list.map(function(s){ return {id: s.id, kind: s.kind, name: s.name, x: s.x, z: s.z, yaw: s.yaw, respawn: s.respawn,
                            pad: s.pads[0] ? {x: s.pads[0].x, z: s.pads[0].z, v: s.pads[0].v} : null, jump: s.jump ? {D: s.jump.D, v: s.jump.v, t: s.jump.t, apex: s.jump.apex, lip: s.jump.lip, target: s.jump.target} : null}; }) : null; },

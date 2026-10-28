@@ -21,17 +21,28 @@
 //! reaches a lot that cannot give way steps down a tier at a time, then to the @2
 //! paved width, and only then to its layout width.
 //!
+//! City Gen v4 (phase 2, `Profile::v4`): a street is paved at a road class of the plan
+//! (classes.rs) instead, its ladder the classes below its role's: a main road starts as
+//! a boulevard and steps down to an avenue, then a collector; a local street starts as a
+//! collector, shared street, local street or lane and steps down to a lane, then its
+//! layout width (still a lane). Where a road runs on through a bend (a node of two
+//! edges), its two sides are at most one class apart: the wider steps down (`one_step`),
+//! a main road even to a local street or a lane, paved no narrower than its layout width
+//! (the ground between kerb and lots a wider footpath).
+//!
 //! The sites the layout placed on lots (civic buildings, stops) keep their size: one
 //! the wider road would reach steps back from it, by at most the extra half-width
 //! (`shift_sites`), onto what was its own lot's ground.
 
 use super::super::city::{Block, Lot, Site};
+use super::super::classes::{class, Layout};
+use super::super::river::River;
 use super::super::noise::isqrt;
 use super::super::profile::{Profile, Tier};
 use super::super::rng::{sub as subseed, Rng};
 use super::super::terrain::Terrain;
 use super::blocks::{inset, KERB_CM};
-use super::geom::{along, area2, centroid, clip, dot, extent, inside, left, len, nearest_on, seg_dist2, simple, sub, unit, FPoly, P};
+use super::geom::{DIR16, FPoly, P, along, area2, centroid, clip, dot, extent, inside, left, len, nearest_on, seg_dist2, simple, sub, unit};
 use super::graph::{Graph, Kind};
 
 /// How far (cm) into the kerb a road may still reach a lot (rounding as a side moves):
@@ -47,11 +58,16 @@ pub struct Paving<'a> {
     g: &'a Graph,
     /// Per graph edge, the widths it may be paved at (`ladder`), worked out once.
     ladders: Vec<Vec<(i64, i64)>>,
+    /// City Gen v4: the class of each rung of each ladder (empty before v4).
+    names: Vec<Vec<&'static str>>,
     /// The farthest any road's paved half reaches (cm), for `near`.
     reach: i64,
     /// How many steps down its ladder graph edge e is paved (a lot it would reach cannot
     /// give way): 0 its street's own width, the last its layout width.
     pub narrow: Vec<u8>,
+    /// City Gen v4 (phase 9): per graph edge, per rung of its ladder, how a tram street's track
+    /// is laid at that width: its class's tram version, else in the traffic lanes.
+    trams: Vec<Vec<Option<Layout>>>,
 }
 
 /// The tier a street of `tiers` is paved at: weighted, from the seed and the street.
@@ -75,12 +91,35 @@ impl Paving<'_> {
     /// The widths (cm, with sidewalks) graph edge e may be paved at, widest first: its
     /// street's tier and the narrower ones, the profile's paved width, the layout width
     /// (its sidewalks in the paved width's proportion).
-    fn ladder(p: &Profile, g: &Graph, seed: u64, e: u32) -> Vec<(i64, i64)> {
+    fn ladder(p: &Profile, g: &Graph, seed: u64, e: u32, role: Option<&'static str>) -> (Vec<(i64, i64)>, Vec<&'static str>) {
         let ge = &g.edges[e as usize];
+        if let Some(start) = role.filter(|_| ge.kind != Kind::Water) {
+            let names: Vec<&'static str> = V4_LADDERS.iter().find(|l| l[0] == start).map_or(vec!["local", "lane"], |l| l.to_vec());
+            let mut out: Vec<(i64, i64)> = names.iter().map(|n| class(n).map_or((p.road_cm, 0), |c| (c.total_cm, c.side_cm))).collect();
+            let mut names = names;
+            // and at last its layout width, if narrower (a lane's sidewalks in proportion)
+            let layout = if ge.kind == Kind::Arterial { p.avenue_cm } else { p.road_cm };
+            // a main road may step down past its layout width only to keep a bend one class
+            // at a time (`one_step`): its lanes the class's, its footpaths the rest
+            if ge.kind == Kind::Arterial {
+                for n in ["local", "lane"] {
+                    if let Some(c) = class(n) {
+                        out.push((layout.max(c.total_cm), (layout.max(c.total_cm) - c.carriageway_cm()) / 2));
+                        names.push(n);
+                    }
+                }
+            }
+            if out.last().is_some_and(|l| l.0 > layout) {
+                let l = *out.last().unwrap();
+                out.push((layout, l.1 * layout / l.0.max(1)));
+                names.push(names[names.len() - 1]);
+            }
+            return (out, names);
+        }
         let (tiers, paved, walk, layout) = match ge.kind {
             Kind::Arterial => (p.arterial_tiers, p.paved_avenue_cm, p.avenue_walk_cm, p.avenue_cm),
             Kind::Local => (p.local_tiers, p.paved_road_cm, p.street_walk_cm, p.road_cm),
-            Kind::Water => return vec![(0, 0)],
+            Kind::Water => return (vec![(0, 0)], Vec::new()),
         };
         let mut out: Vec<(i64, i64)> = if tiers.is_empty() { vec![] } else { tiers[pick(seed, ge.road, tiers)..].iter().map(|t| (t.cm, t.walk_cm)).collect() };
         if out.last().is_none_or(|l| l.0 > paved) {
@@ -89,7 +128,20 @@ impl Paving<'_> {
         if out.last().is_some_and(|l| l.0 > layout) {
             out.push((layout, walk * layout / paved.max(1)));
         }
-        out
+        (out, Vec::new())
+    }
+
+    /// City Gen v4 (phase 9): graph edge e's tram layout, where it is paved as its class's tram version.
+    pub fn tram(&self, e: u32) -> Option<Layout> {
+        let t = &self.trams[e as usize];
+        let k = (self.narrow[e as usize] as usize).min(t.len().saturating_sub(1));
+        t.get(k).copied().flatten()
+    }
+
+    /// City Gen v4: the class graph edge e is paved at (None before v4).
+    pub fn class(&self, e: u32) -> Option<&'static str> {
+        let l = &self.names[e as usize];
+        (!l.is_empty()).then(|| l[(self.narrow[e as usize] as usize).min(l.len() - 1)])
     }
 
     /// The full width (cm) graph edge e is paved at and its sidewalks.
@@ -235,12 +287,59 @@ fn poly_of(q: &[P]) -> Option<Vec<[i64; 2]>> {
 /// Pave the roads at the profile's paved widths, once the layout is final (ids, ranks,
 /// sites and the HQ pool set): trim every lot and block, step the sites back. The
 /// paving says which roads kept their layout width.
-pub fn widen<'a>(p: &'a Profile, seed: u64, t: &Terrain, g: &'a Graph, blocks: &mut [Block], lots: &mut [Lot], sites: &mut [Site]) -> Paving<'a> {
-    let ladders: Vec<Vec<(i64, i64)>> = (0..g.edges.len() as u32).map(|e| Paving::ladder(p, g, seed, e)).collect();
-    let reach = p.local_tiers.iter().chain(p.arterial_tiers).map(|t| t.cm).fold(p.paved_avenue_cm.max(p.paved_road_cm), i64::max);
-    let mut pv = Paving { p, g, ladders, reach, narrow: vec![0; g.edges.len()] };
-    if p.paved_road_cm == p.road_cm && p.paved_avenue_cm == p.avenue_cm && p.local_tiers.is_empty() && p.arterial_tiers.is_empty() {
+/// `roles`: City Gen v4, the class each graph edge's street starts its ladder at (empty
+/// before v4, as every @1 and @2 world).
+/// `river`: with v4's classes a road is paved no wider than keeps it off the river and the
+/// water riding on it (lakes, canals, the marina), bar a bridge.
+#[allow(clippy::too_many_arguments)] // the world being paved, and the classes it is paved by
+pub fn widen<'a>(
+    p: &'a Profile,
+    seed: u64,
+    t: &Terrain,
+    g: &'a Graph,
+    blocks: &mut [Block],
+    lots: &mut [Lot],
+    sites: &mut [Site],
+    roles: &[Option<&'static str>],
+    river: Option<&River>,
+    tram_streets: &[bool],
+) -> Paving<'a> {
+    let (mut ladders, mut names): (Vec<Vec<(i64, i64)>>, Vec<Vec<&'static str>>) = (0..g.edges.len() as u32).map(|e| Paving::ladder(p, g, seed, e, roles.get(e as usize).copied().flatten())).unzip();
+    // City Gen v4 (phase 9): a tram street tries each class first as its tram version (the bed
+    // or the widened lanes added), then the class as it is with the tram in its traffic lanes,
+    // before it steps down a class: the tram keeps its street's class where the lots allow
+    let mut trams: Vec<Vec<Option<Layout>>> = ladders.iter().map(|l| vec![None; l.len()]).collect();
+    for e in 0..g.edges.len() {
+        if !tram_streets.get(e).copied().unwrap_or(false) || names[e].is_empty() {
+            continue;
+        }
+        let (mut l2, mut n2, mut t2) = (Vec::new(), Vec::new(), Vec::new());
+        for (k, &name) in names[e].iter().enumerate() {
+            let shared = if class(name).is_some_and(|c| c.lanes >= 2 || c.name == "local") { Layout::SharedDouble } else { Layout::SharedSingle };
+            if let Some(t) = class(name).and_then(|c| c.tram).filter(|_| k == 0 || names[e][k - 1] != name) {
+                l2.push((ladders[e][k].0 + t.added_cm, ladders[e][k].1));
+                n2.push(name);
+                t2.push(Some(t.layout));
+            }
+            l2.push(ladders[e][k]);
+            n2.push(name);
+            t2.push(Some(shared));
+        }
+        (ladders[e], names[e], trams[e]) = (l2, n2, t2);
+    }
+    let widest = ladders.iter().flatten().map(|w| w.0).max().unwrap_or(0);
+    let reach = p.local_tiers.iter().chain(p.arterial_tiers).map(|t| t.cm).fold(p.paved_avenue_cm.max(p.paved_road_cm).max(widest), i64::max);
+    let mut pv = Paving { p, g, ladders, names, reach, narrow: vec![0; g.edges.len()], trams };
+    if p.paved_road_cm == p.road_cm && p.paved_avenue_cm == p.avenue_cm && p.local_tiers.is_empty() && p.arterial_tiers.is_empty() && roles.is_empty() {
         return pv;
+    }
+    // City Gen v4: a class wider than the old tiers keeps off the water first
+    if !roles.is_empty() {
+        if let Some(r) = river {
+            for e in 0..g.edges.len() as u32 {
+                while !g.edges[e as usize].bridge && g.edges[e as usize].alive && wets(&pv, r, e) && pv.step_down(e) {}
+            }
+        }
     }
     // the roads kept narrow: whatever reaches a lot that cannot give way, or a site
     // that cannot step back (a narrow road reaches less, so this settles in a round or two)
@@ -279,6 +378,7 @@ pub fn widen<'a>(p: &'a Profile, seed: u64, t: &Terrain, g: &'a Graph, blocks: &
             break;
         }
     }
+    one_step(&mut pv);
     for (l, old) in lots.iter_mut().zip(&olds) {
         let (Some(old), Some(f)) = (old, l.front) else { continue };
         let poly = pv.trim(old, true).0;
@@ -320,6 +420,62 @@ pub fn widen<'a>(p: &'a Profile, seed: u64, t: &Terrain, g: &'a Graph, blocks: &
         b.poly = poly_of(&poly);
     }
     pv
+}
+
+/// Does the ground graph edge e is carved into (its half-width and the shoulder the
+/// carving blends over, roads.rs `carve`, round its ends too) reach water: sampled every
+/// 4 m along both its edges, and round each end every 22.5 degrees?
+fn wets(pv: &Paving, r: &River, e: u32) -> bool {
+    let g = pv.g;
+    let (a, b) = (g.nodes[g.edges[e as usize].a as usize], g.nodes[g.edges[e as usize].b as usize]);
+    let d = sub(b, a);
+    let l = len(d).max(1);
+    let n = (l / 400).max(1);
+    let side = left(unit(d));
+    let h = pv.half(e) + super::super::roads::SHOULDER_CM;
+    (0..=n).any(|k| {
+        let c = (a.0 + d.0 * k / n, a.1 + d.1 * k / n);
+        [-1, 1].iter().any(|&s| r.wet(along(c, side, s * h)))
+    }) || [a, b].iter().any(|&c| DIR16.iter().any(|&f| r.wet(along(c, f, h))))
+}
+
+/// City Gen v4: the class ladders a street steps down, by the class it starts at. A main
+/// road's ends at a collector (12 m: its layout width); a local street's at a lane.
+const V4_LADDERS: [&[&str]; 6] = [
+    &["boulevard", "avenue", "collector"],
+    &["avenue", "collector"],
+    &["collector", "local", "lane"],
+    &["shared", "lane"],
+    &["local", "lane"],
+    &["lane"],
+];
+
+/// Where a road runs on through a bend (a node of exactly two edges), its sides at most
+/// one class apart: the wider one steps down until they are (a narrower road reaches
+/// less, so no lot is cut further). Before v4, nothing.
+fn one_step(pv: &mut Paving) {
+    let g = pv.g;
+    // (a step down at one bend can break the next one along: a few rounds per class)
+    for _ in 0..64 {
+        let mut more = false;
+        for n in 0..g.nodes.len() {
+            let es: Vec<u32> = g.adj[n].iter().copied().filter(|&e| g.edges[e as usize].kind != Kind::Water).collect();
+            if es.len() != 2 {
+                continue;
+            }
+            let (Some(a), Some(b)) = (pv.class(es[0]), pv.class(es[1])) else { continue };
+            if super::super::classes::one_step(a, b) {
+                continue;
+            }
+            // the higher class steps down (a main road's lower rungs are all its layout width)
+            let rank = |c: &str| super::super::classes::rank(c);
+            let wider = if rank(a) >= rank(b) { es[0] } else { es[1] };
+            more |= pv.step_down(wider);
+        }
+        if !more {
+            break;
+        }
+    }
 }
 
 /// A site with a footprint stepped back from any road the paving now reaches,

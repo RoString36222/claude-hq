@@ -97,6 +97,11 @@ pub const CARPARK: &str = "carpark";
 const RESIDENTIAL: &[u8] = &[district::SUBURB, district::RESIDENTIAL, district::OLDTOWN];
 const INDUSTRIAL: &[u8] = &[district::INDUSTRIAL, district::LOGISTICS];
 
+/// City Gen v4 (phase 9): how far apart (cm) a tram street's stations stand: half the plan's
+/// 600 m (the Commons is a third the size of the cities it comes from, its tram streets a
+/// kilometre or so), so each side of a street the City Line's boulevard cuts keeps two.
+pub const TRAM_STATIONS_CM: i64 = 30_000;
+
 /// The civic sites, in the order they are placed (an earlier row has first pick of the lots).
 pub const CIVIC: &[Civic] = &[
     civic("townhall", 1, 1, 2_000, 1_800, 0, Place::Plaza),
@@ -161,6 +166,39 @@ pub struct At {
     pub a: i64,
     pub b: i64,
     pub off: i64,
+}
+
+/// A street's edges as one line from one of its ends (a node only one of them meets; any
+/// node on a loop): as far as it runs on without a fork, None if that is under one edge.
+fn chain(g: &Graph, es: &[u32]) -> Option<Vec<P>> {
+    let mut deg: BTreeMap<u32, usize> = BTreeMap::new();
+    for &e in es {
+        *deg.entry(g.edges[e as usize].a).or_insert(0) += 1;
+        *deg.entry(g.edges[e as usize].b).or_insert(0) += 1;
+    }
+    let start = deg.iter().find(|x| *x.1 == 1).map(|x| *x.0).or_else(|| deg.keys().next().copied())?;
+    let mut used = vec![false; es.len()];
+    let (mut at, mut out) = (start, vec![g.nodes[start as usize]]);
+    while let Some(k) = (0..es.len()).find(|&k| !used[k] && (g.edges[es[k] as usize].a == at || g.edges[es[k] as usize].b == at)) {
+        used[k] = true;
+        let e = &g.edges[es[k] as usize];
+        at = if e.a == at { e.b } else { e.a };
+        out.push(g.nodes[at as usize]);
+    }
+    (out.len() >= 2).then_some(out)
+}
+
+/// The point `s` cm along a line.
+fn point_along(line: &[P], s: i64) -> P {
+    let mut acc = 0;
+    for w in line.windows(2) {
+        let l = len(geom::sub(w[1], w[0]));
+        if acc + l >= s {
+            return geom::lerp(w[0], w[1], (s - acc) as i128, l.max(1) as i128);
+        }
+        acc += l;
+    }
+    *line.last().unwrap()
 }
 
 fn ends(g: &Graph, e: u32) -> (P, P) {
@@ -473,6 +511,9 @@ impl Civ<'_> {
     /// one in 25 m steps, wherever no stop of the kind is within `every`, the free lot
     /// on that street whose door is nearest (within 60 m).
     fn along(&mut self, c: &Civic, every: i64, tram: bool) {
+        if tram && self.p.v4 {
+            return self.stations(c);
+        }
         let g = self.g;
         let roads = if tram { Some(self.tram_roads()) } else { None };
         let ok = |e: u32| g.edges[e as usize].alive && g.edges[e as usize].kind == Kind::Arterial && roads.as_ref().is_none_or(|r| r.contains(&g.edges[e as usize].road));
@@ -497,6 +538,38 @@ impl Civ<'_> {
                     self.put(c.kind, c.tier, k, c.w_cm, c.d_cm);
                     let s = self.sites.last().unwrap();
                     stops.push((s.x, s.z));
+                }
+            }
+        }
+    }
+
+    /// City Gen v4 (phase 9): a tram street's stations, two or more, about `TRAM_STATIONS_CM`
+    /// apart, spread evenly along it (the first and last half a gap in from its ends): at each
+    /// place, the free lot on the street whose door is nearest (within 60 m).
+    fn stations(&mut self, c: &Civic) {
+        let g = self.g;
+        for road in self.tram_roads() {
+            let ok = |e: u32| g.edges[e as usize].alive && g.edges[e as usize].kind == Kind::Arterial && g.edges[e as usize].road == road;
+            // the street's edges end to end (a chain from an end), and how far along each starts
+            let es: Vec<u32> = (0..g.edges.len() as u32).filter(|&e| ok(e)).collect();
+            let Some(line) = chain(g, &es) else { continue };
+            let total: i64 = line.windows(2).map(|w| len(geom::sub(w[1], w[0]))).sum();
+            let k = (total / TRAM_STATIONS_CM + 1).max(2);
+            for i in 0..k {
+                let want = total * (2 * i + 1) / (2 * k);
+                // (no free lot to stand on there: the nearest place up to 150 m either way along it)
+                for off in [0, 5_000, -5_000, 10_000, -10_000, 15_000, -15_000] {
+                    let q = point_along(&line, (want + off).clamp(0, total));
+                    let mut near: Vec<(i64, usize)> = (0..self.lots.len())
+                        .filter(|&n| self.free(n) && self.art[n] && self.at[n].is_some_and(|a| ok(a.e)))
+                        .map(|n| (dist2(self.door(n), q), n))
+                        .filter(|o| o.0 <= 6_000 * 6_000)
+                        .collect();
+                    near.sort();
+                    if let Some(&(_, n)) = near.iter().find(|&&(_, n)| fit(self.t, self.p, &self.lots[n], c.w_cm, c.d_cm).is_some()) {
+                        self.put(c.kind, c.tier, n, c.w_cm, c.d_cm);
+                        break;
+                    }
                 }
             }
         }

@@ -32,6 +32,14 @@ pub struct Node {
     pub x: i64,
     pub y: i64,
     pub z: i64,
+    /// City Gen v4 (phase 3, @3): how the roads meeting here are controlled (`Roads::junctions`):
+    /// "priority" (the lesser roads give way), "mini" (a mini roundabout, painted), "roundabout"
+    /// (a raised island) or "signals"; none where a highway or the ring meets (phase 6).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub junction: Option<&'static str>,
+    /// A roundabout's island radius (cm): painted on a mini one, raised and planted on a full one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub island: Option<i64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -61,6 +69,55 @@ pub struct Edge {
     /// Some(true) on a bridge over a river: straight, and level across.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bridge: Option<bool>,
+    /// City Gen v4 (phase 2, @3): the road's class (classes.rs), e.g. "avenue"; `class`
+    /// keeps today's kind for older dashboards. `lanes` then counts its lanes each way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub v4: Option<&'static str>,
+    /// City Gen v4: the median between the two directions (cm), where it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub median: Option<i64>,
+    /// City Gen v4 (phase 6, @3): Some(true) on a road traffic drives one way, from a to b
+    /// (an interchange's ramps). `lanes` then counts its lanes that way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oneway: Option<bool>,
+    /// City Gen v4 (phase 7, @3): a piece of road below the land: "tunnel" (covered, the land
+    /// over it untouched) or "cutting" (open, down to a tunnel's portal). tunnels.rs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub under: Option<&'static str>,
+    /// City Gen v4 (phase 9, @3): on a tram street, how its tram version lays the track
+    /// (classes.rs `Layout::name`: "centre-bed", "shared-double", "shared-single", ...);
+    /// `width` then includes the tram's added width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tram: Option<&'static str>,
+    /// The raised, kerbed tram bed down its middle (cm), on a "centre-bed" road: the class's
+    /// median and the tram's added width together (`median` is then none, so an older
+    /// dashboard draws its trams down a flush middle, as before).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bed: Option<i64>,
+}
+
+impl Edge {
+    /// City Gen v4 (phase 9): make it its class's tram version, laid as `layout` (the width is
+    /// the paving's, the tram's added width in it).
+    pub fn trammed(mut self, layout: Option<super::classes::Layout>) -> Edge {
+        let Some(l) = layout else { return self };
+        self.tram = Some(l.name());
+        if l == super::classes::Layout::CentreBed {
+            let added = self.v4.and_then(super::classes::class).and_then(|c| c.tram).map_or(0, |t| t.added_cm);
+            self.bed = Some(self.median.unwrap_or(0) + added);
+            self.median = None;
+        }
+        self
+    }
+
+    /// City Gen v4: make it a road of class `name` (its lanes and median from classes.rs).
+    pub fn classed(mut self, name: Option<&'static str>) -> Edge {
+        let Some(c) = name.and_then(super::classes::class) else { return self };
+        self.v4 = Some(c.name);
+        self.lanes = c.lanes;
+        self.median = (c.median_cm > 0).then_some(c.median_cm);
+        self
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -71,6 +128,371 @@ pub struct Roads {
 
 /// Longest step (cm) between consecutive points of a city edge: the terrain's spacing.
 pub const STEP_CM: i64 = 800;
+
+/// City Gen v4 (phase 3): a full roundabout's outer radius (cm, a 32 m one, IRC and FHWA's
+/// 30-40 m single lane), its island's (the 6 m circulating lane round it), and the least
+/// length (cm) of every road meeting it, so its box keeps clear of the next junction.
+pub const ROUNDABOUT_CM: i64 = 1_600;
+pub const ROUNDABOUT_ISLAND_CM: i64 = 1_000;
+pub const ROUNDABOUT_ARM_CM: i64 = 4_000;
+/// A mini roundabout's painted island (cm): 13-25 m across, the centre a 4 m dome.
+pub const MINI_ISLAND_CM: i64 = 200;
+/// How far (cm) a side street's lights keep from any other (HQ 3.22.1's City: 60 m).
+pub const SIDE_SIGNALS_GAP_CM: i64 = 6_000;
+
+impl Roads {
+    /// City Gen v4 (phase 3): the full roundabouts' circles, as 16-gons ([x, z] cm): land a
+    /// line planner keeps off.
+    pub fn roundabout_circles(&self) -> Vec<Vec<(i64, i64)>> {
+        self.nodes
+            .iter()
+            .filter(|n| n.junction == Some("roundabout"))
+            .map(|n| super::organic::geom::DIR16.iter().map(|d| super::organic::geom::along((n.x, n.z), *d, ROUNDABOUT_CM + 100)).collect())
+            .collect()
+    }
+}
+
+impl Roads {
+    /// City Gen v4 (phase 3): every junction of town roads gets its control by the pair of
+    /// roads that meet there (classes.rs `junction`, the two highest): where local streets,
+    /// lanes and collectors meet, or a side street meets a main road, the lesser give way (a
+    /// five-arm junction a mini roundabout); collectors with collectors or avenues a full
+    /// roundabout where every arm has room for one, else a mini one; avenues and boulevards
+    /// lights. A tram line across a junction never gets a roundabout (the tram cuts straight
+    /// over): lights where a main road meets, else priority. Junctions with a highway or the
+    /// ring are phase 6's.
+    /// `clear`: the lots' and sites' footprints a full roundabout's circle must keep off.
+    pub fn junctions(&mut self, transit: &super::transit::Transit, clear: &[Vec<(i64, i64)>]) {
+        for (n, kind) in self.junction_kinds(transit, clear) {
+            let node = &mut self.nodes[n as usize];
+            node.junction = Some(kind);
+            node.island = match kind {
+                "roundabout" => Some(ROUNDABOUT_ISLAND_CM),
+                "mini" => Some(MINI_ISLAND_CM),
+                _ => None,
+            };
+        }
+    }
+
+    /// The control each junction of town roads calls for (`junctions`), by node.
+    pub fn junction_kinds(&self, transit: &super::transit::Transit, clear: &[Vec<(i64, i64)>]) -> BTreeMap<u32, &'static str> {
+        use super::classes::{junction, rank, Junction};
+        let mut out = BTreeMap::new();
+        let mut at: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+        for (k, e) in self.edges.iter().enumerate() {
+            at.entry(e.a).or_default().push(k);
+            at.entry(e.b).or_default().push(k);
+        }
+        let tram: BTreeSet<u32> = transit.lines.iter().filter(|l| l.kind == "tram").flat_map(|l| l.path.iter().copied()).collect();
+        let mut side: Vec<u32> = Vec::new();
+        for (n, es) in at {
+            if es.len() < 3 {
+                continue;
+            }
+            // (phase 6: where an interchange's ramps meet, they merge and diverge: no control)
+            if es.iter().any(|&k| deck_road(&self.edges[k])) {
+                out.insert(n, "ramps");
+                continue;
+            }
+            // (and no lights or roundabouts on an expressway: where one still meets a road at grade, a ring junction no
+            // trumpet fits or a highway's end in town, it is as before, no control)
+            if es.iter().any(|&k| self.edges[k].v4.is_none() || self.edges[k].v4 == Some("expressway")) {
+                continue;
+            }
+            // the roads that meet: a street running on through the junction is one road (its arms share a name),
+            // at its highest class there
+            let mut roads: BTreeMap<&str, &str> = BTreeMap::new();
+            for &k in &es {
+                let (name, c) = (self.edges[k].name.as_str(), self.edges[k].v4.unwrap());
+                let best = roads.entry(name).or_insert(c);
+                if rank(c) > rank(best) {
+                    *best = c;
+                }
+            }
+            let mut cls: Vec<&str> = roads.values().copied().collect();
+            cls.sort_by_key(|c| std::cmp::Reverse(rank(c)));
+            if cls.len() < 2 {
+                cls.push(cls[0]);
+            }
+            // a main road crossing a side street (a four-way: the side street on both sides) has lights, as HQ 3.22.1's
+            // City: the plan's table gives a side street onto a main road no row of its own (a T gives way)
+            // (a main road by what it does: an arterial, even one paved narrow where its lots could not give way)
+            let minor = |k: usize| self.edges[k].class == "local";
+            let main_arms = es.iter().filter(|&&k| self.edges[k].class == "arterial").count();
+            let side_arms = es.iter().filter(|&&k| minor(k)).count();
+            let side_road_meets = roads.len() == 2 || es.iter().filter(|&&k| !minor(k)).all(|&k| self.edges[k].name == self.edges[es.iter().copied().find(|&j| !minor(j)).unwrap()].name);
+            if main_arms >= 2 && side_arms >= 2 && side_road_meets && !tram.contains(&n) {
+                side.push(n);
+                out.insert(n, "signals");
+                continue;
+            }
+            let shortest = es.iter().map(|&k| path_len(&self.edges[k].points)).min().unwrap_or(0);
+            let main = cls.iter().any(|c| matches!(*c, "avenue" | "boulevard"));
+            // a full roundabout where every arm is long enough and its circle (and a metre) is clear of every lot and site
+            let c = (self.nodes[n as usize].x, self.nodes[n as usize].z);
+            let off = |p: &Vec<(i64, i64)>| {
+                let r = ROUNDABOUT_CM + 100;
+                !super::organic::geom::inside(c, p) && (0..p.len()).all(|k| super::organic::geom::seg_dist2(c, c, p[k], p[(k + 1) % p.len()]) >= r * r)
+            };
+            let roomy = shortest >= ROUNDABOUT_ARM_CM && es.len() <= 5 && clear.iter().all(off);
+            let kind = match junction(cls[0], cls[1]) {
+                _ if tram.contains(&n) => if main { "signals" } else { "priority" },
+                Junction::Priority if es.len() >= 5 => "mini",
+                Junction::Priority => "priority",
+                Junction::RoundaboutOrSignals if roomy => "roundabout",
+                Junction::RoundaboutOrSignals => "mini",
+                _ => "signals",
+            };
+            out.insert(n, kind);
+        }
+        // a side street's lights SIDE_SIGNALS_GAP_CM clear of every other light (the main roads' first, then by node),
+        // so a main road crossing a side street every block is not a light every block: else it gives way
+        let side_all: BTreeSet<u32> = side.iter().copied().collect();
+        for n in side {
+            let p = (self.nodes[n as usize].x, self.nodes[n as usize].z);
+            let near = out.iter().any(|(&m, &k)| {
+                let q = (self.nodes[m as usize].x, self.nodes[m as usize].z);
+                m != n && k == "signals" && (q.0 - p.0).pow(2) + (q.1 - p.1).pow(2) < SIDE_SIGNALS_GAP_CM.pow(2) && (!side_all.contains(&m) || m < n)
+            });
+            if near {
+                out.insert(n, "priority");
+            }
+        }
+        out
+    }
+
+    /// City Gen v4 (phase 2): no median on an edge a tram line runs along (its track is
+    /// down the middle, where the median would be, until phase 8's tram beds).
+    /// City Gen v4 (phase 9): a tram street's tram version where no tram line runs on it (a
+    /// stretch the City Line's boulevard cut off with one station or none) is its class as it is
+    /// again: its own width (the ground it took a verge), its median back.
+    pub fn untram_unused(&mut self, transit: &super::transit::Transit) {
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            if e.tram.is_some() && !on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                if let Some(c) = e.v4.and_then(super::classes::class) {
+                    // (paved as its class's own tram version: the tram's width comes off; with the
+                    // tram in its lanes it was the class's width already)
+                    if let Some(t) = c.tram.filter(|t| Some(t.layout.name()) == e.tram) {
+                        e.width -= t.added_cm;
+                    }
+                    e.median = (c.median_cm > 0).then_some(c.median_cm);
+                }
+                e.tram = None;
+                e.bed = None;
+            }
+        }
+    }
+
+    /// City Gen v4 (phase 9): a road a tram line runs on that is no tram version (where a line runs
+    /// on past its street's end to a junction) carries the tram in its lanes: its width as it is.
+    pub fn tram_on(&mut self, transit: &super::transit::Transit) {
+        if !self.edges.iter().any(|e| e.tram.is_some()) {
+            return;
+        }
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            if e.tram.is_none() && e.v4.is_some() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                let two = e.v4.and_then(super::classes::class).is_some_and(|c| c.lanes >= 2 || c.name == "local");
+                e.tram = Some(if two { super::classes::Layout::SharedDouble } else { super::classes::Layout::SharedSingle }.name());
+            }
+        }
+    }
+
+    pub fn trams_in_the_middle(&mut self, transit: &super::transit::Transit) {
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            // (phase 9: a tram street's own tram version keeps its median, or has its bed)
+            if e.median.is_some() && e.tram.is_none() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                e.median = None;
+            }
+        }
+    }
+}
+
+/// City Gen v4 (phase 4): how far (cm) a town street's centre line may move into a bend
+/// as it curves (the kerb's width: the paved road then still keeps off every lot), the
+/// most a curve's step turns (degrees, as a quarter of the plan's 60), and its sampling.
+pub const BEND_SHIFT_CM: i64 = 25;
+pub const ARC_STEP_CM: i64 = 250;
+
+/// City Gen v4 (phase 4): every bend in a town street (a node where exactly two town
+/// edges meet, neither a bridge) taken as a circular arc instead of a corner: the widest
+/// arc whose middle sits no more than `BEND_SHIFT_CM` inside the corner, its tangents no
+/// further than 0.4 of either edge along it, sampled every `ARC_STEP_CM` and at least a
+/// step per 15 degrees. The node moves onto the arc's middle (at most `BEND_SHIFT_CM`).
+/// Integers only: Q16 unit vectors, the half angles from the cosine, points on the arc
+/// by normalised interpolation round its centre.
+pub fn fillet_bends(nodes: &mut [Node], edges: &mut [Edge]) {
+    use super::organic::geom::{add, along, dot, len, sub, unit};
+    let mut at: BTreeMap<u32, Vec<(usize, bool)>> = BTreeMap::new();
+    for (k, e) in edges.iter().enumerate() {
+        if e.a == e.b {
+            continue;
+        }
+        at.entry(e.a).or_default().push((k, false));
+        at.entry(e.b).or_default().push((k, true));
+    }
+    // per edge end (a, b): the arc from the node's new place out to the tangent point
+    let mut ends: Vec<[Option<Vec<(i64, i64)>>; 2]> = vec![[None, None]; edges.len()];
+    let far = |e: &Edge, at_b: bool| {
+        let q = if at_b { e.points[0] } else { e.points[e.points.len() - 1] };
+        (q[0], q[2])
+    };
+    for (n, es) in &at {
+        if es.len() != 2 || es.iter().any(|&(k, _)| is_graded(edges[k].class) || edges[k].bridge.is_some()) {
+            continue;
+        }
+        let p = (nodes[*n as usize].x, nodes[*n as usize].z);
+        let (f1, f2) = (far(&edges[es[0].0], es[0].1), far(&edges[es[1].0], es[1].1));
+        let (l1, l2) = (len(sub(f1, p)), len(sub(f2, p)));
+        if l1 < 200 || l2 < 200 {
+            continue;
+        }
+        let (u1, u2) = (unit(sub(f1, p)), unit(sub(f2, p)));
+        let c = (dot(u1, u2) / ONE as i128) as i64; // cos of the angle between the arms (Q16)
+        if c < -65_496 {
+            continue; // within 2 degrees of straight on
+        }
+        let sin_h = isqrt((ONE - c) * ONE / 2); // sin of half that angle
+        let cos_h = isqrt((ONE + c) * ONE / 2);
+        if sin_h >= ONE - 1 || cos_h <= 0 {
+            continue;
+        }
+        let tan_d = cos_h * ONE / sin_h; // tan of half the deflection
+        let mut r = BEND_SHIFT_CM * sin_h / (ONE - sin_h);
+        let t_max = l1.min(l2) * 2 / 5;
+        if r * tan_d / ONE > t_max {
+            r = t_max * ONE / tan_d;
+        }
+        let t = r * tan_d / ONE;
+        if r <= 0 || t <= 10 {
+            continue;
+        }
+        let bis = unit(add(u1, u2));
+        let centre = along(p, bis, r * ONE / sin_h);
+        let shift = r * ONE / sin_h - r;
+        let mid = along(p, bis, shift);
+        // steps: every ARC_STEP_CM, and one per 15 degrees of the half turn at least
+        let defl = -c; // cos of the deflection
+        let by_angle = if defl >= 56_756 { 1 } else if defl >= 32_768 { 2 } else if defl >= 0 { 3 } else if defl >= -32_768 { 4 } else { 6 };
+        for (i, &(k, at_b)) in es.iter().enumerate() {
+            let tp = along(p, if i == 0 { u1 } else { u2 }, t);
+            let steps = ((len(sub(tp, mid)) + ARC_STEP_CM - 1) / ARC_STEP_CM).max(by_angle).max(1);
+            let (a, b) = (sub(mid, centre), sub(tp, centre));
+            let arc: Vec<(i64, i64)> = (0..=steps).map(|j| along(centre, unit(super::organic::geom::lerp(a, b, j as i128, steps as i128)), r)).collect();
+            let mut arc = arc;
+            arc[0] = mid;
+            *arc.last_mut().unwrap() = tp;
+            ends[k][at_b as usize] = Some(arc);
+        }
+        nodes[*n as usize].x = mid.0;
+        nodes[*n as usize].z = mid.1;
+    }
+    for (k, e) in edges.iter_mut().enumerate() {
+        if ends[k][0].is_none() && ends[k][1].is_none() {
+            continue;
+        }
+        let (pa, pb) = ((e.points[0][0], e.points[0][2]), (e.points[e.points.len() - 1][0], e.points[e.points.len() - 1][2]));
+        let a_arc = ends[k][0].clone().unwrap_or_else(|| vec![pa]);
+        let mut b_arc = ends[k][1].clone().unwrap_or_else(|| vec![pb]);
+        b_arc.reverse();
+        let mut pts: Vec<(i64, i64)> = a_arc.clone();
+        let straight = resample(*a_arc.last().unwrap(), b_arc[0]);
+        pts.extend(straight.iter().skip(1).map(|q| (q[0], q[2])));
+        pts.extend(b_arc.iter().skip(1));
+        pts.dedup();
+        e.points = pts.iter().map(|q| [q.0, 0, q.1]).collect();
+    }
+}
+
+/// City Gen v4 (phase 4): a graded road's centre line, smoothed: the A* path's 45 degree
+/// steps eased by a moving average (three passes over 4 points each side, the window
+/// shrinking toward the ends, which stay put), then sampled every 4 m. Where a smoothed
+/// step is `bad` (meets what the road must keep off: a bit per thing) and the path's own
+/// step there did not meet that thing,
+/// the path's points come back over 5 steps either side, until none is. None when there is
+/// nothing to smooth, or the reverts never settle (16 rounds).
+pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> u8) -> Option<Vec<[i64; 3]>> {
+    let n = points.len();
+    if n < 5 {
+        return None;
+    }
+    let o: Vec<(i64, i64)> = points.iter().map(|q| (q[0], q[2])).collect();
+    let mut p = o.clone();
+    for _ in 0..3 {
+        let q = p.clone();
+        for i in 1..n - 1 {
+            let w = 4.min(i).min(n - 1 - i);
+            let (mut sx, mut sz) = (0, 0);
+            for j in i - w..=i + w {
+                sx += q[j].0;
+                sz += q[j].1;
+            }
+            let c = (2 * w + 1) as i64;
+            p[i] = (sx / c, sz / c);
+        }
+    }
+    let was: Vec<u8> = (0..n - 1).map(|i| bad(o[i], o[i + 1])).collect();
+    for _ in 0..16 {
+        let worse: Vec<usize> = (0..n - 1).filter(|&i| bad(p[i], p[i + 1]) & !was[i] != 0).collect();
+        if worse.is_empty() {
+            break;
+        }
+        for i in worse {
+            let (lo, hi) = (i.saturating_sub(5), (i + 6).min(n - 1));
+            p[lo..=hi].copy_from_slice(&o[lo..=hi]);
+        }
+    }
+    // (a stretch the reverts could not settle keeps the path)
+    if p == o || (0..n - 1).any(|i| bad(p[i], p[i + 1]) & !was[i] != 0) {
+        return None;
+    }
+    // every 4 m along it, the ends exact
+    let mut out = vec![p[0]];
+    let mut carry = 0;
+    for w in p.windows(2) {
+        let l = isqrt((w[1].0 - w[0].0).pow(2) + (w[1].1 - w[0].1).pow(2));
+        let mut s = 400 - carry;
+        while s < l {
+            out.push((w[0].0 + (w[1].0 - w[0].0) * s / l.max(1), w[0].1 + (w[1].1 - w[0].1) * s / l.max(1)));
+            s += 400;
+        }
+        carry = (carry + l) % 400;
+    }
+    if out.last() != Some(&p[n - 1]) {
+        if out.len() > 1 && isqrt((p[n - 1].0 - out[out.len() - 1].0).pow(2) + (p[n - 1].1 - out[out.len() - 1].1).pow(2)) < 150 {
+            out.pop();
+        }
+        out.push(p[n - 1]);
+    }
+    Some(out.iter().map(|q| [q.0, 0, q.1]).collect())
+}
+
+/// The length (cm) of a centre line.
+pub fn path_len(points: &[[i64; 3]]) -> i64 {
+    points.windows(2).map(|w| isqrt((w[1][0] - w[0][0]).pow(2) + (w[1][2] - w[0][2]).pow(2))).sum()
+}
+
+/// City Gen v4 (phase 6): an interchange's flyover or ramp, seated by interchange::seat.
+pub fn deck_road(e: &Edge) -> bool {
+    matches!(e.v4, Some("ramp") | Some("flyover"))
+}
 
 /// Highways and the ring are graded (cut and filled to `country_grade_pm`).
 pub fn is_graded(class: &str) -> bool {
@@ -124,7 +546,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
     for (k, ((j, i), id)) in node_of.iter_mut().enumerate() {
         *id = k as u32;
         let (x, z) = (g.line_x(*i), g.line_z(*j));
-        nodes.push(Node { id: k as u32, x, y: base.height_at(x, z), z });
+        nodes.push(Node { id: k as u32, x, y: base.height_at(x, z), z, junction: None, island: None });
     }
     let mut sides: BTreeMap<(u32, u32), (&'static str, i64, String)> = BTreeMap::new();
     for b in blocks {
@@ -146,7 +568,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
@@ -287,7 +709,28 @@ pub fn graded<'a>(
         ring.add(&path, base);
         graded.push(Edge { route: Some("R1".to_string()), ..graded_edge(a, b, &path, &format!("Ring Road {}", k + 1), "ring", p.ring_cm) });
     }
-    let graded = split_contacts(nodes, base, graded)?;
+    let mut graded = split_contacts(nodes, base, graded)?;
+    // City Gen v4 (phase 4): each graded road eased off its 45 degree steps, wherever the smooth line keeps off the
+    // blocks, the claimed land, the river and the coast's reach as well as the path did (else the path stays there)
+    if p.v4 {
+        for e in graded.iter_mut() {
+            let ring = e.class == "ring";
+            // (one bit per thing kept off: a path's step near a block excuses no step into the claim)
+            let bad = |a: (i64, i64), b: (i64, i64)| {
+                keep.rects.iter().any(|(r, _)| !clear_of(a, b, *r, keep.clear)) as u8
+                    | (keep.claimed(a, b, ring) as u8) << 1
+                    | (river.is_some_and(|r| r.zone(a) || r.zone(b)) as u8) << 2
+                    | ((ring && [a, b].iter().any(|q| q.0 * q.0 + q.1 * q.1 > out_r.saturating_mul(out_r))) as u8) << 3
+            };
+            if let Some(pts) = smooth_path(&e.points, bad) {
+                    e.points = pts;
+            }
+        }
+    }
+    // City Gen v4 (phase 6): the ring and the highways are expressways (the profile's 29 m)
+    if p.v4 {
+        graded = graded.into_iter().map(|e| e.classed(Some("expressway"))).collect();
+    }
     edges.extend(match river {
         Some(r) => bridged(nodes, base, graded, r),
         None => graded,
@@ -341,14 +784,14 @@ pub fn resample(a: (i64, i64), b: (i64, i64)) -> Vec<[i64; 3]> {
 
 fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
     let id = nodes.len() as u32;
-    nodes.push(Node { id, x, y: t.height_at(x, z), z });
+    nodes.push(Node { id, x, y: t.height_at(x, z), z, junction: None, island: None });
     id
 }
 
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
-        min_tier: None, bridge: None,
+        min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
     }
 }
 
@@ -560,7 +1003,7 @@ fn cut(e: &Edge, cuts: &[(usize, u32)], drop: Option<usize>) -> Vec<Edge> {
 const JUNCTION_FLAT: i64 = 150;
 
 /// How far either side of a road's edge the land is blended into it (cm).
-const SHOULDER_CM: i64 = 400;
+pub const SHOULDER_CM: i64 = 400;
 
 /// A bridge's deck stands this far (cm) over the higher of its two banks, and a city
 /// street climbs to it no steeper than this (per mille).
@@ -586,10 +1029,44 @@ impl Roads {
     /// A bridge is level, its deck a metre over the higher bank; a city street meeting
     /// one ramps up to it (`lift`).
     pub fn seat(&mut self, t: &Terrain, p: &Profile) -> Result<(), String> {
+        // (an interchange's flyover that would climb too steeply from its foot, where the ring
+        // under it is graded higher than the land: its foot is raised and the roads seated again)
+        let raise = self.seat_with(t, p, &[])?;
+        if !raise.is_empty() {
+            self.seat_with(t, p, &raise)?;
+        }
+        Ok(())
+    }
+
+    fn seat_with(&mut self, t: &Terrain, p: &Profile, raise: &[(u32, i64)]) -> Result<Vec<(u32, i64)>, String> {
         for n in &mut self.nodes {
             n.y = t.height_at(n.x, n.z);
         }
         self.lift();
+        super::interchange::raise_feet(self, t);
+        for &(n, y) in raise {
+            self.nodes[n as usize].y = self.nodes[n as usize].y.max(y);
+        }
+        // two junctions of graded roads too close for the grade between them (a short piece
+        // across a slope) meet each other halfway: their heights move together until the
+        // piece can climb the rest (9/10 of its grade, end to end). Never on a valid world's
+        // pieces, which already can
+        for _ in 0..8 {
+            let mut moved = false;
+            for e in self.edges.iter().filter(|e| is_graded(e.class) && e.bridge.is_none() && !deck_road(e) && e.under.is_none()) {
+                let most = path_len(&e.points) * p.country_grade_pm / 1000 * 9 / 10;
+                let (ya, yb) = (self.nodes[e.a as usize].y, self.nodes[e.b as usize].y);
+                if (yb - ya).abs() > most {
+                    let half = ((yb - ya).abs() - most + 1) / 2 * (yb - ya).signum();
+                    self.nodes[e.a as usize].y += half;
+                    self.nodes[e.b as usize].y -= half;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
         let mut degree = vec![0usize; self.nodes.len()];
         let mut deck = vec![false; self.nodes.len()];
         for e in &self.edges {
@@ -601,6 +1078,11 @@ impl Roads {
             }
         }
         for e in &mut self.edges {
+            // (an interchange's flyover and ramps: interchange::seat, once the ring is seated; a tunnel and its cuttings:
+            // tunnels::seat)
+            if deck_road(e) || e.under.is_some() {
+                continue;
+            }
             let len = e.points.len();
             let (ya, yb) = (self.nodes[e.a as usize].y, self.nodes[e.b as usize].y);
             let raw: Vec<i64> = e.points.iter().map(|q| t.height_at(q[0], q[2])).collect();
@@ -643,9 +1125,9 @@ impl Roads {
                     climb
                 };
                 let mut climb = budget(fa, fb);
-                // a short piece between two junctions a river's bridges lifted apart climbs
-                // its whole length (no world without a bridge has one)
-                if (yb - ya).abs() > climb[len - 1] && deck.iter().any(|&d| d) {
+                // a short piece between two junctions a river's bridges (or a slope) lifted
+                // apart climbs its whole length
+                if (yb - ya).abs() > climb[len - 1] {
                     climb = budget(0, 0);
                 }
                 let (total, most) = (at[len - 1], climb[len - 1]);
@@ -677,7 +1159,9 @@ impl Roads {
             e.points[0][1] = ya;
             e.points[len - 1][1] = yb;
         }
-        Ok(())
+        let raise = super::interchange::seat(self, t);
+        super::tunnels::seat(self, t);
+        Ok(raise)
     }
 
     /// Bridges: each deck a metre over the higher of its banks (the ground at its ends),
@@ -740,12 +1224,20 @@ impl Roads {
     /// height at the terrain's vertices, blending over a shoulder either side, so the
     /// ground under a road follows the road. The road's surface is still its centre
     /// line: between vertices the bilinear ground can differ from it. Never under a
-    /// bridge: the river runs on beneath it.
-    pub fn carve(&self, t: &mut Terrain) {
-        for e in self.edges.iter().filter(|e| e.bridge.is_none()) {
+    /// bridge: the river runs on beneath it; never on the water (`wet`: a 29 m expressway's
+    /// shoulder can reach past a lake's bank).
+    pub fn carve(&self, t: &mut Terrain, wet: impl Fn((i64, i64)) -> bool) {
+        // (each vertex's wetness asked once: 0 not yet, 1 dry, 2 wet)
+        let mut seen = vec![0u8; t.n * t.n];
+        // (nor over a tunnel or its cuttings: the land stays, the client cuts a cutting open)
+        for e in self.edges.iter().filter(|e| e.bridge.is_none() && e.under.is_none()) {
             let reach = e.width / 2 + SHOULDER_CM;
             for q in e.points.windows(2) {
                 let (a, b) = (q[0], q[1]);
+                // (nor under a flyover or ramp's deck: the land runs on beneath it)
+                if super::interchange::elevated(e, &a, t) || super::interchange::elevated(e, &b, t) {
+                    continue;
+                }
                 let (lo, hi) = (t.vertex_of(a[0].min(b[0]) - reach, a[2].min(b[2]) - reach), t.vertex_of(a[0].max(b[0]) + reach, a[2].max(b[2]) + reach));
                 let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
                 let l2 = (dx * dx + dz * dz).max(1);
@@ -762,6 +1254,12 @@ impl Roads {
                         let road_y = a[1] + (b[1] - a[1]) * f / ONE;
                         let w = if d <= e.width / 2 { ONE } else { smoothstep(ONE - (d - e.width / 2) * ONE / SHOULDER_CM) };
                         let k = iz * t.n + ix;
+                        if seen[k] == 0 {
+                            seen[k] = if wet((vx, vz)) { 2 } else { 1 };
+                        }
+                        if seen[k] == 2 {
+                            continue;
+                        }
                         let h = t.heights[k] as i64;
                         t.heights[k] = (h + (road_y - h) * w / ONE) as i32;
                     }
@@ -969,7 +1467,11 @@ fn route(
             if inside {
                 step += len * 20;
             }
-            // across a river, not along it: every step on its water or bank is dear
+            // never into a lake or the marina, or on its bank (City Gen v4: an expressway's carving would reach
+            // its water); across a river, not along it: every step on its water or bank is dear
+            if p.v4 && river.is_some_and(|r| r.pool_zone((wx, wz))) {
+                continue;
+            }
             if river.is_some_and(|r| r.zone((wx, wz))) {
                 step += len * 30;
             }

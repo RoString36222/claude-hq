@@ -257,7 +257,33 @@ Heap.prototype.pop = function(){   // -> the value; its key in this.top
 
 // [3.20.1] a driver's offset from the centre line on a carriageway `c` m centre to kerb: the kerb-side lane of a road
 // with two or three each way (worldgeom.js lanesEach), else mid-carriageway as before
+// [3.26] a full roundabout's carriageway round its island (m), as traffic.js and worldgeom.js
+var RB_LANE = 6;
+// a car route (flat [x, y, z, ...]) with every stretch inside a full roundabout's rim (the island and the RB_LANE m round
+// it; rbs: [{x, z, r}] m) taken round the island instead: an arc RB_LANE/2 m out from it, from where the route comes in
+// to where it leaves, the island on the side away from the kerb (traffic keeps left: the way the angle grows, as
+// traffic.js)
+function roundRoute(pts, rbs){
+  (rbs || []).forEach(function(rb){
+    var R = rb.r + RB_LANE, rc = rb.r + RB_LANE/2, m = pts.length/3, i = 0, out = [];
+    function inside(k){ var dx = pts[3*k] - rb.x, dz = pts[3*k + 2] - rb.z; return dx*dx + dz*dz < R*R; }
+    while(i < m){
+      if(!inside(i) || i === 0){ out.push(pts[3*i], pts[3*i + 1], pts[3*i + 2]); i++; continue; }
+      var j = i; while(j < m && inside(j)) j++;
+      if(j >= m){ for(; i < m; i++) out.push(pts[3*i], pts[3*i + 1], pts[3*i + 2]); break; }
+      var a0 = Math.atan2(pts[3*(i - 1) + 2] - rb.z, pts[3*(i - 1)] - rb.x), a1 = Math.atan2(pts[3*j + 2] - rb.z, pts[3*j] - rb.x);
+      var sweep = ((a1 - a0) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI), y = pts[3*i + 1], n = Math.max(3, Math.ceil(sweep*rc/1.5));
+      for(var k = 0; k <= n; k++){ var th = a0 + sweep*k/n; out.push(rb.x + rc*Math.cos(th), y, rb.z + rc*Math.sin(th)); }
+      i = j;
+    }
+    pts = out;
+  });
+  return pts;
+}
 function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3))); return Math.max(0.5, c*(2*n - 1)/(2*n)); }
+// [3.25] a City Gen v4 road: its own lanes each way, between its median (half width m) and the kerb, as traffic.js
+// ([3.32] a tram's centre bed counts as the median: no car drives on it)
+function npcLaneV4(c, lanes, med){ var n = Math.max(1, lanes|0); med = Math.max(0, +med || 0); return Math.max(0.5, c - (c - med)/(2*n)); }
 
 /* ---------- the sim ---------- */
 function create(doc, opts){
@@ -282,6 +308,9 @@ function create(doc, opts){
   var nodeIx = {}, NX = [], NZ = [];
   (R.nodes || []).forEach(function(n, i){ nodeIx[n.id] = i; NX.push((n.x | 0)/100); NZ.push((n.z | 0)/100); });
   var NN = NX.length, E = [], NID = (R.nodes || []).map(function(n){ return n.id; });
+  // [3.26] City Gen v4's full roundabouts: a car goes round the island, never over it (rbOf below)
+  var RBS = (R.nodes || []).filter(function(n){ return n.junction === "roundabout" && n.island > 0; })
+    .map(function(n){ return {x: (n.x | 0)/100, z: (n.z | 0)/100, r: (n.island | 0)/100}; });
   (R.edges || []).forEach(function(e){
     if(!shown(e, "min_tier")) return;
     var a = nodeIx[e.a], b = nodeIx[e.b], P = e.points || [];
@@ -306,9 +335,10 @@ function create(doc, opts){
     var width = (e.width | 0)/100, walk = (e.walk | 0)/100, cls = String(e.class || "street");
     var half = width/2;
     E.push({id: e.id, a: a, b: b, m: m, x: x, y: y, z: z, cum: cum, len: cum[m - 1], nx: nx, nz: nz, cls: cls, half: half, walkW: walk,
+            one: e.oneway === true,                         // [3.29] an interchange's ramp: driven a to b only
             walkable: cls !== "highway" && cls !== "ring" || walk > 0,
             off: walk > 0 ? half - walk/2 : Math.max(0.5, half - SIDE_IN),
-            lane: npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
+            lane: e.oneway === true ? 0 : e.v4 ? npcLaneV4((width - 2*walk)/2, e.lanes, ((e.median | 0) || (e.bed | 0))/200) : npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
   });
 
   // [play-street] the widest road meeting each node (half width) and its degree: a crossing keeps this far out of the junction
@@ -319,21 +349,23 @@ function create(doc, opts){
   function crossSt(e, atB, sig){ var c = Math.min(e.len/2 - 1, crossClear(e, atB ? e.b : e.a, sig)); return atB ? e.len - c : c; }
 
   /* graphs (CSR) for walking and driving */
-  function graph(keep){
+  // (directed: a one-way road joins its a to its b only)
+  function graph(keep, directed){
+    var back = function(e){ return !(directed && e.one); };
     var deg = new Int32Array(NN + 1), cnt = 0;
-    E.forEach(function(e){ if(keep(e)){ deg[e.a]++; deg[e.b]++; cnt += 2; } });
+    E.forEach(function(e){ if(keep(e)){ deg[e.a]++; cnt++; if(back(e)){ deg[e.b]++; cnt++; } } });
     var start = new Int32Array(NN + 1);
     for(var i = 0; i < NN; i++) start[i + 1] = start[i] + deg[i];
     var fill = start.slice(0, NN), to = new Int32Array(cnt), ed = new Int32Array(cnt);
     E.forEach(function(e, ei){
       if(!keep(e)) return;
       to[fill[e.a]] = e.b; ed[fill[e.a]++] = ei;
-      to[fill[e.b]] = e.a; ed[fill[e.b]++] = ei;
+      if(back(e)){ to[fill[e.b]] = e.a; ed[fill[e.b]++] = ei; }
     });
     return {start: start, to: to, ed: ed, keep: keep, g: new Float64Array(NN), from: new Int32Array(NN), par: new Int32Array(NN), stamp: new Int32Array(NN), gen: 0,
             heap: new Heap(64), goal: new Float64Array(NN), goalStamp: new Int32Array(NN), closed: new Int32Array(NN)};
   }
-  var GR = {walk: graph(function(e){ return e.walkable; }), car: graph(function(){ return true; })};
+  var GR = {walk: graph(function(e){ return e.walkable; }), car: graph(function(){ return true; }, true)};
   GR.walk.mode = "walk"; GR.car.mode = "car";
 
   /* segment grid: nearest edge to a point */
@@ -666,6 +698,7 @@ function create(doc, opts){
         }
       }
     }
+    if(!walk && RBS.length) pts = roundRoute(pts, RBS);
     var res = null;
     if(pts.length >= 6){
       var m = pts.length/3, P = new Float32Array(pts), C = new Float32Array(m);
@@ -843,6 +876,16 @@ function create(doc, opts){
         for(j = 0; j + 1 < m; j++){ var sl = C0[j + 1] - C0[j] || 1; NXs.push((Z0[j + 1] - Z0[j])/sl); NZs.push(-(X0[j + 1] - X0[j])/sl); }
         var walkM = (e.walk | 0)/100, half = (e.width | 0)/200;
         L.run = {x: X0, y: Y0, z: Z0, c: C0, nx: NXs, nz: NZs, len: C0[m - 1], off: (+s.side || 1)*(walkM > 0 ? half - walkM/2 : half + 0.8)};
+        // (it turns back 6 m short of each end, or further where a wider road's carriageway reaches along the footpath)
+        var R0 = L.run, runPt = function(at, d){
+          var i = 0; while(i < R0.c.length - 2 && R0.c[i + 1] < at) i++;
+          var l = R0.c[i + 1] - R0.c[i], f = l > 0 ? (at - R0.c[i])/l : 0;
+          return {x: R0.x[i] + (R0.x[i + 1] - R0.x[i])*f + R0.nx[i]*d, z: R0.z[i] + (R0.z[i + 1] - R0.z[i])*f + R0.nz[i]*d};
+        };
+        var onRoad = function(at){ return [0.7, -0.1].some(function(dd){ var q = runPt(at, R0.off + dd*(R0.off >= 0 ? 1 : -1)); return WQ.surfaceAt(LW, q.x, q.z) === "road"; }); };
+        R0.a = 6; R0.b = 6;
+        while(R0.a < R0.len/2 - 2 && onRoad(R0.a)) R0.a += 1;
+        while(R0.b < R0.len/2 - 2 && onRoad(R0.len - R0.b)) R0.b += 1;
       } else L.ring = {R: Math.max(4, (+s.r || 10)*0.7), y: WQ.groundAt(LW, s.x, s.z, true)};
     }
     X.lay = L;
@@ -856,7 +899,7 @@ function create(doc, opts){
       // runners, and every fourth a dog walker going the other way
       var dog = k % 4 === 3, v = dog ? 1.05 + 0.2*xh(id + ":v:" + k) : 2.3 + 0.9*xh(id + ":v:" + k), ts = (((t % DAY) + DAY) % DAY)/1000;
       if(L.run){
-        var R = L.run, span = Math.max(4, R.len - 12), pp = pingpong(xh(id + ":p:" + k)*2*span + (dog ? -1 : 1)*v*ts, span), at = 6 + pp.p;
+        var R = L.run, ra = R.a != null ? R.a : 6, span = Math.max(4, R.len - ra - (R.b != null ? R.b : 6)), pp = pingpong(xh(id + ":p:" + k)*2*span + (dog ? -1 : 1)*v*ts, span), at = ra + pp.p;
         var i = 0; while(i < R.c.length - 2 && R.c[i + 1] < at) i++;
         var l = R.c[i + 1] - R.c[i], f = l > 0 ? (at - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
         var off = R.off + (dog ? -0.4 : 0.3)*(R.off >= 0 ? 1 : -1);
@@ -889,7 +932,8 @@ function create(doc, opts){
   var PARADE_ROWS = 8, PARADE_ACROSS = 4, PARADE_V = 0.9, PARADE_GAP = 2.2;   // (the Kenney figures are broad: room between them)
   function paradeRoute(ev){
     if(XS.parade && XS.parade.key === ev.edges.join(",")) return XS.parade;
-    var F = CL.facts(LW), X = [], Y = [], Z = [], node = null;
+    // [3.25] and per point its edge's carriageway: from the median (if any) out to the kerb (m)
+    var F = CL.facts(LW), X = [], Y = [], Z = [], LO = [], HI = [], node = null;
     ev.edges.forEach(function(eid, n){
       var e = F.edge(eid); if(!e || !e.pts) return;
       var fwd = true;
@@ -900,11 +944,12 @@ function create(doc, opts){
         var q = fwd ? j : m - 1 - j;
         if(X.length && j === 0) continue;   // the shared junction point
         X.push(e.pts[3*q]/100); Y.push(e.pts[3*q + 1]/100); Z.push(e.pts[3*q + 2]/100);
+        LO.push((e.median || e.bed || 0)/200); HI.push(Math.max(1.5, ((e.width | 0) - 2*(e.walk | 0))/200));
       }
       node = fwd ? e.b : e.a;
     });
     var C = [0]; for(var i = 1; i < X.length; i++) C.push(C[i - 1] + Math.hypot(X[i] - X[i - 1], Z[i] - Z[i - 1]));
-    XS.parade = {key: ev.edges.join(","), x: X, y: Y, z: Z, c: C, len: C[C.length - 1] || 0};
+    XS.parade = {key: ev.edges.join(","), x: X, y: Y, z: Z, c: C, lo: LO, hi: HI, len: C[C.length - 1] || 0};
     return XS.parade;
   }
   function paradeAt(R, ev, j, t, o){
@@ -912,7 +957,11 @@ function create(doc, opts){
     if(walked < 0 || !(R.len > 1)) return false;
     var pp = pingpong(walked, R.len), i = 0; while(i < R.c.length - 2 && R.c[i + 1] < pp.p) i++;
     var l = R.c[i + 1] - R.c[i], f = l > 0 ? (pp.p - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
-    var off = (0.8 + col*1.5)*pp.dir;      // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half
+    // on the left half of the way it goes (the left of a->b is (uz, -ux)): back, the other half; [3.25] four abreast
+    // 1.5 m apart from 0.8 m out, closer where that half of the carriageway (median to kerb) is narrower
+    // (a stretch's narrower end: where one road becomes the next, the shared point is the first one's)
+    var lo = (R.lo ? Math.max(R.lo[i], R.lo[i + 1]) : 0) + 0.8, hi = R.hi ? Math.min(R.hi[i], R.hi[i + 1]) - 0.5 : 5.3, step = Math.max(0, Math.min(1.5, (hi - lo)/(PARADE_ACROSS - 1)));
+    var off = (lo + col*step)*pp.dir;
     o.x = R.x[i] + (R.x[i + 1] - R.x[i])*f + uz*off; o.z = R.z[i] + (R.z[i + 1] - R.z[i])*f - ux*off;
     o.y = R.y[i] + (R.y[i + 1] - R.y[i])*f + ROAD_UP; o.yaw = Math.atan2(ux*pp.dir, uz*pp.dir);
     o.anim = "walk"; o.speed = PARADE_V; o.size = 1; o.dog = 0;
@@ -1302,7 +1351,7 @@ var FLAVOUR = {
   barista: ["Oat milk's run out again."], "shop assistant": ["We've a sale on this week."]
 };
 
-HQV.npcSim = {create: create, population: population, localMs: localMs, sunHours: sunHours, isNight: isNight, cityClock: cityClock, CITY_TZ_MIN: CITY_TZ_MIN, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
+HQV.npcSim = {create: create, population: population, roundRoute: roundRoute, localMs: localMs, sunHours: sunHours, isNight: isNight, cityClock: cityClock, CITY_TZ_MIN: CITY_TZ_MIN, zoneJobs: zoneJobs, inPoly: inPoly, hash32: hash32,
               ridersOn: ridersOn, use: use, metroStations: metroStations, TRANSIT: TRANSIT, EVERY: EVERY,
               JOBS: JOBS, POP: POP, CHARS: CHARS, DAY: DAY, HOUR: HOUR, passHour: passHour, PASS_PER100: PASS_PER100, PASS_EPOCH: PASS_EPOCH};
 })();

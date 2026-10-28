@@ -1,7 +1,7 @@
 //! Road classes (City Gen v4): the eleven classes of the plan, each with a tram version,
 //! their lanes, widths, design speeds, capacities and curves, and the rules for changing
-//! from one to the next. Phase 1 lands them as data: the validator reports what each of
-//! today's roads would be (`legacy`); phase 2 lays the roads by them.
+//! from one to the next. Phase 2 paves the town's streets by them (organic/widen.rs, each
+//! edge's `v4`, `lanes` and `median`); `legacy` names what a road without one would be.
 //!
 //! Widths are IRC:86, FHWA and Manual for Streets figures (the plan's table), in cm:
 //!
@@ -63,6 +63,20 @@ pub enum Layout {
     Deck,
 }
 
+impl Layout {
+    /// Its name in the world doc (`Edge::tram`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::SharedSingle => "shared-single",
+            Layout::SharedDouble => "shared-double",
+            Layout::CentreBed => "centre-bed",
+            Layout::SideOfMedian => "side-of-median",
+            Layout::BehindBarriers => "behind-barriers",
+            Layout::Deck => "deck",
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // one per column of the table
 const fn c(name: &'static str, lanes: u8, two_way: bool, lane_cm: i64, median_cm: i64, side_cm: i64, walk: bool, total_cm: i64, kmh: (i64, i64), tram: Option<Tram>) -> Class {
     Class { name, lanes, two_way, lane_cm, median_cm, side_cm, walk, total_cm, kmh, tram }
@@ -97,6 +111,11 @@ pub fn class(name: &str) -> Option<&'static Class> {
 }
 
 impl Class {
+    /// Its carriageway (cm): the lanes both ways, no median, no footpaths.
+    pub fn carriageway_cm(&self) -> i64 {
+        self.total_cm - self.median_cm - 2 * self.side_cm
+    }
+
     /// Lanes counted for capacity, both ways.
     pub fn lanes_total(&self) -> i64 {
         self.lanes as i64 * if self.two_way { 2 } else { 1 }
@@ -178,6 +197,24 @@ pub fn one_step(a: &str, b: &str) -> bool {
     pair("shared", "lane") || pair("shared", "local") || pair("service", "local") || pair("service", "collector")
 }
 
+/// How high a class stands, narrowest first: the ladder, a shared street beside a lane and
+/// a service road beside a local street.
+pub fn rank(name: &str) -> usize {
+    ["lane", "shared", "local", "service", "collector", "avenue", "boulevard", "expressway", "highway"].iter().position(|&x| x == name).unwrap_or(0)
+}
+
+/// The class one step up the ladder from `name` (a shared street's is a local street, a
+/// service road's a collector); the top, a highway, stays.
+pub fn step_up(name: &str) -> &'static str {
+    let name = match name {
+        "shared" => "lane",
+        "service" => "local",
+        n => n,
+    };
+    let i = LADDER.iter().position(|&x| x == name).unwrap_or(0);
+    LADDER[(i + 1).min(LADDER.len() - 1)]
+}
+
 /// How two roads meet (the plan's table, by road pair).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Junction {
@@ -215,7 +252,8 @@ pub fn junction(a: &str, b: &str) -> Junction {
         (0 | 1, 4) => Junction::Never,
         (_, 4) => Junction::Diamond,
         (3, 3) => Junction::SignalsOrBigRoundabout,
-        (0, 0 | 1) => Junction::Priority,
+        // (a side street onto a main road gives way: the plan pairs it with nothing grander)
+        (0, _) => Junction::Priority,
         (1, 1 | 2) => Junction::RoundaboutOrSignals,
         // avenues and boulevards, and anything smaller onto a boulevard
         _ => Junction::Signals,
@@ -311,8 +349,19 @@ mod tests {
     }
 
     #[test]
+    fn a_class_steps_up_one_at_a_time() {
+        assert_eq!(step_up("avenue"), "boulevard");
+        assert_eq!(step_up("boulevard"), "expressway");
+        assert_eq!(step_up("shared"), "local");
+        assert!(one_step("shared", step_up("shared")) && one_step("service", step_up("service")));
+        assert_eq!(step_up("highway"), "highway");
+        assert!(LADDER.iter().all(|&c| one_step(c, step_up(c))));
+    }
+
+    #[test]
     fn the_junction_comes_from_the_road_pair() {
         assert_eq!(junction("local", "lane"), Junction::Priority);
+        assert_eq!(junction("local", "avenue"), Junction::Priority);
         assert_eq!(junction("collector", "avenue"), Junction::RoundaboutOrSignals);
         assert_eq!(junction("avenue", "boulevard"), Junction::Signals);
         assert_eq!(junction("collector", "collector"), Junction::RoundaboutOrSignals);

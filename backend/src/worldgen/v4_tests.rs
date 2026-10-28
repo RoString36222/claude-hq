@@ -98,3 +98,307 @@ fn fifty_seeds_break_no_hard_rule() {
         assert!(v.is_empty(), "{id}:\n{}", validate::report(&v));
     }
 }
+
+/// Phase 3: a junction's control comes from the roads that meet there.
+mod junctions {
+    use super::super::roads::{Edge, Node, Roads, MINI_ISLAND_CM, ROUNDABOUT_ISLAND_CM};
+    use super::super::transit::Transit;
+
+    fn node(id: u32, x: i64, z: i64) -> Node {
+        Node { id, x, y: 0, z, junction: None, island: None }
+    }
+
+    fn road(id: u32, a: u32, b: u32, class: &'static str, name: &str, pts: [(i64, i64); 2]) -> Edge {
+        Edge {
+            id, a, b, class: if matches!(class, "avenue" | "boulevard") { "arterial" } else { "local" }, width: 1_200, walk: 250, lanes: 1, route: None, name: name.to_string(),
+            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
+        }
+        .classed(Some(class))
+    }
+
+    /// A junction at the origin with three arms of `classes`, each `len` cm long; arms with the
+    /// same `names` are one road running on through it.
+    fn star(classes: [&'static str; 3], len: i64, names: [&str; 3]) -> Roads {
+        let ends = [(len, 0), (-len / 2, len), (-len / 2, -len)];
+        let mut nodes = vec![node(0, 0, 0)];
+        let mut edges = Vec::new();
+        for (k, (c, e)) in classes.iter().zip(ends).enumerate() {
+            nodes.push(node(k as u32 + 1, e.0, e.1));
+            edges.push(road(k as u32, 0, k as u32 + 1, c, names[k], [(0, 0), e]));
+        }
+        Roads { nodes, edges }
+    }
+
+    #[test]
+    fn collectors_meet_at_a_roundabout_where_it_fits_else_a_mini_one() {
+        let none = Transit { lines: Vec::new() };
+        // three roads: two collectors and a local street
+        const THREE: [&str; 3] = ["A Road", "B Road", "C Street"];
+        let mut r = star(["collector", "collector", "local"], 6_000, THREE);
+        r.junctions(&none, &[]);
+        assert_eq!((r.nodes[0].junction, r.nodes[0].island), (Some("roundabout"), Some(ROUNDABOUT_ISLAND_CM)));
+        // a lot 10 m from the middle: no room for the 32 m circle
+        let lot = vec![(1_000, 500), (1_500, 500), (1_500, 1_000), (1_000, 1_000)];
+        let mut r = star(["collector", "collector", "local"], 6_000, THREE);
+        r.junctions(&none, &[lot]);
+        assert_eq!((r.nodes[0].junction, r.nodes[0].island), (Some("mini"), Some(MINI_ISLAND_CM)));
+        // short arms: a mini one too
+        let mut r = star(["collector", "collector", "local"], 3_000, THREE);
+        r.junctions(&none, &[]);
+        assert_eq!(r.nodes[0].junction, Some("mini"));
+    }
+
+    #[test]
+    fn side_streets_give_way_and_avenues_get_lights() {
+        let none = Transit { lines: Vec::new() };
+        // a T: the first two arms one road running on through, the third a side road
+        let t = ["Main Road", "Main Road", "Side Street"];
+        for (classes, names, want) in [
+            (["local", "local", "lane"], t, "priority"),
+            (["avenue", "avenue", "local"], t, "priority"),
+            (["collector", "collector", "local"], t, "priority"),
+            (["avenue", "avenue", "avenue"], t, "signals"),
+            (["avenue", "avenue", "collector"], t, "roundabout"),
+        ] {
+            let mut r = star(classes, 6_000, names);
+            r.junctions(&none, &[]);
+            assert_eq!(r.nodes[0].junction, Some(want), "{classes:?}");
+        }
+    }
+
+    #[test]
+    fn a_main_road_crossing_a_side_street_has_lights_spaced_out() {
+        let none = Transit { lines: Vec::new() };
+        // a four-way: Main Road on through, Side Street across it
+        let ends = [(6_000, 0), (-6_000, 0), (0, 6_000), (0, -6_000)];
+        let (cls, names) = (["avenue", "avenue", "local", "local"], ["Main Road", "Main Road", "Side Street", "Side Street"]);
+        let mut nodes = vec![node(0, 0, 0)];
+        let mut edges = Vec::new();
+        for k in 0..4 {
+            nodes.push(node(k as u32 + 1, ends[k].0, ends[k].1));
+            edges.push(road(k as u32, 0, k as u32 + 1, cls[k], names[k], [(0, 0), ends[k]]));
+        }
+        let mut r = Roads { nodes, edges };
+        r.junctions(&none, &[]);
+        assert_eq!(r.nodes[0].junction, Some("signals"));
+    }
+
+    #[test]
+    fn a_tram_across_a_junction_never_meets_a_roundabout() {
+        use super::super::transit::Line;
+        let tram = Transit { lines: vec![Line { id: "T1".into(), kind: "tram", tier: 4, stops: Vec::new(), path: vec![1, 0, 2] }] };
+        let three = ["A Road", "B Road", "C Street"];
+        let mut r = star(["collector", "collector", "local"], 6_000, three);
+        r.junctions(&tram, &[]);
+        assert_eq!(r.nodes[0].junction, Some("priority"));
+        let mut r = star(["avenue", "collector", "local"], 6_000, three);
+        r.junctions(&tram, &[]);
+        assert_eq!(r.nodes[0].junction, Some("signals"));
+    }
+}
+
+/// Phase 6: a trumpet where each highway meets the ring and one fits (interchange.rs).
+mod interchanges {
+    use super::super::interchange::{sim_lanes, LIFT_CM, MAX_PM};
+    use super::super::roads::{deck_road, path_len, Edge};
+    use super::*;
+
+    fn at(r: &roads::Roads, n: u32) -> Vec<&Edge> {
+        r.edges.iter().filter(|e| e.a == n || e.b == n).collect()
+    }
+
+    #[test]
+    fn the_commons_ring_and_highways_are_expressways_with_trumpets() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        for e in r.edges.iter().filter(|e| roads::is_graded(e.class) && !deck_road(e)) {
+            assert_eq!((e.v4, e.width, e.walk, e.median), (Some("expressway"), 2_900, 0, Some(300)), "{} {}", e.id, e.name);
+        }
+        let stems: Vec<&Edge> = r.edges.iter().filter(|e| e.v4 == Some("flyover")).collect();
+        assert!(stems.len() >= 3, "{} trumpets", stems.len());
+        for s in stems {
+            // the flyover runs from its foot N (the highway and two slip roads) to T (the loop and the ramp round it)
+            let (foot, top) = if at(r, s.b).iter().all(|e| deck_road(e)) { (s.a, s.b) } else { (s.b, s.a) };
+            let (nf, nt) = (at(r, foot), at(r, top));
+            assert_eq!(nf.len(), 4, "N: the highway, the flyover, two slip roads");
+            assert_eq!(nf.iter().filter(|e| e.v4 == Some("expressway")).count(), 1);
+            assert_eq!(nt.len(), 3, "T: the flyover, the loop and the westbound ramp");
+            assert!(nt.iter().filter(|e| e.v4 == Some("ramp")).all(|e| e.oneway == Some(true)));
+            assert_eq!(s.oneway, None, "the flyover runs both ways");
+            for n in [foot, top] {
+                assert_eq!(r.nodes[n as usize].junction, Some("ramps"));
+            }
+            // its deck 7 m over the ring it crosses
+            let deck = r.nodes[top as usize].y;
+            let crossed = r.edges.iter().filter(|e| e.class == "ring").flat_map(|e| e.points.iter()).filter(|q| s.points.iter().any(|p| (p[0] - q[0]).pow(2) + (p[2] - q[2]).pow(2) < 1_500i64.pow(2)));
+            let ring_y = crossed.map(|q| q[1]).max().expect("the flyover crosses the ring");
+            assert!(deck - ring_y >= LIFT_CM, "{} m over the ring", (deck - ring_y) / 100);
+        }
+    }
+
+    #[test]
+    fn every_ramp_junction_has_as_many_lanes_in_as_out_and_no_ramp_is_steep() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        for n in r.nodes.iter().filter(|n| n.junction == Some("ramps")) {
+            let (mut i, mut o) = (0, 0);
+            for e in at(r, n.id) {
+                let k = sim_lanes(e);
+                let one = e.oneway == Some(true);
+                if e.b == n.id || !one {
+                    i += k;
+                }
+                if e.a == n.id || !one {
+                    o += k;
+                }
+            }
+            assert_eq!(i, o, "node {}", n.id);
+        }
+        for e in r.edges.iter().filter(|e| deck_road(e)) {
+            let rise = (e.points[0][1] - e.points[e.points.len() - 1][1]).abs();
+            assert!(rise * 1000 <= MAX_PM * path_len(&e.points), "{} {}", e.id, e.name);
+        }
+    }
+
+    #[test]
+    fn the_ring_between_a_trumpets_ramps_has_a_lane_fewer() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        let ramps = |n: u32| r.nodes[n as usize].junction == Some("ramps");
+        // (one under each flyover; between two trumpets the ring keeps its three)
+        let mids: Vec<&Edge> = r.edges.iter().filter(|e| e.class == "ring" && e.lanes == 2).collect();
+        assert_eq!(mids.len(), r.edges.iter().filter(|e| e.v4 == Some("flyover")).count());
+        assert!(mids.iter().all(|e| ramps(e.a) && ramps(e.b)));
+        assert!(r.edges.iter().filter(|e| e.class == "ring" && e.lanes != 2).all(|e| e.lanes == 3));
+    }
+
+    #[test]
+    fn a_trumpet_is_the_same_on_every_run() {
+        let a = generate("v4seed9@3", &[]).unwrap();
+        let b = generate("v4seed9@3", &[]).unwrap();
+        assert_eq!(a.hashes.roads, b.hashes.roads);
+        assert!(a.layers.roads.edges.iter().any(|e| e.v4 == Some("flyover")) || a.layers.roads.edges.iter().all(|e| e.v4 != Some("ramp")));
+    }
+}
+
+/// Phase 7: the ring under the airport, where it ran behind the terminal (tunnels.rs).
+mod tunnels {
+    use super::super::tunnels::{DEPTH_CM, MAX_PM};
+    use super::super::roads::path_len;
+    use super::*;
+
+    #[test]
+    fn the_commons_ring_goes_under_the_airport() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        let a = commons_claim();
+        let tunnel: Vec<_> = r.edges.iter().filter(|e| e.under == Some("tunnel")).collect();
+        let cuts: Vec<_> = r.edges.iter().filter(|e| e.under == Some("cutting")).collect();
+        assert_eq!((tunnel.len(), cuts.len()), (1, 2));
+        let t = tunnel[0];
+        assert_eq!(t.class, "ring");
+        // the whole stretch in the corridor is covered, DEPTH_CM under the land
+        for e in r.edges.iter().filter(|e| e.class == "ring" && e.under != Some("tunnel")) {
+            assert!(!e.points.windows(2).any(|s| a.in_corridor((s[0][0], s[0][2]), (s[1][0], s[1][2]), 0)), "{} {} in the corridor above ground", e.id, e.name);
+        }
+        for q in &t.points {
+            assert!(w.layers.terrain.height_at(q[0], q[2]) - q[1] >= DEPTH_CM - 50);
+        }
+        // each cutting from the ring's level at its outer end down to the tunnel's, no steeper than 6 %
+        for c in cuts {
+            let rise = (c.points[0][1] - c.points[c.points.len() - 1][1]).abs();
+            assert!(rise * 1000 <= MAX_PM * path_len(&c.points));
+            assert!(c.a == t.a || c.a == t.b || c.b == t.a || c.b == t.b, "a cutting meets the tunnel");
+        }
+    }
+
+    #[test]
+    fn nothing_else_runs_in_a_cutting_and_the_tracks_keep_clear() {
+        let v = validate::check(&commons3().layers);
+        assert!(!v.iter().any(|x| x.rule == "tunnel" || x.rule == "clearance"), "{}", validate::report(&v));
+    }
+}
+
+mod corridors {
+    use super::super::railway::{pier_at, PIER_CLEAR_CM, PIER_R_CM, SPAN_LONG_CM};
+    use super::super::lines::dist;
+    use super::*;
+
+    #[test]
+    fn the_commons_city_line_runs_over_a_boulevard_median_on_its_own_piers() {
+        let w = commons3();
+        let l = &w.layers;
+        let rail = l.rail.as_ref().unwrap();
+        let cl = rail.lines.iter().find(|x| x.kind == "city").expect("the Commons has a City Line");
+        let blvd: Vec<&roads::Edge> = l.roads.edges.iter().filter(|e| e.v4 == Some("boulevard")).collect();
+        assert!(blvd.len() >= 3, "a boulevard under the line");
+        for e in &blvd {
+            assert_eq!((e.median, e.class), (Some(750), "arterial"), "{} {}", e.id, e.name);
+        }
+        // its piers, each in the median (or clear ground by a station), no span over 60 m
+        assert!(cl.piers.len() >= 10, "{} piers", cl.piers.len());
+        let medians = cl.piers.iter().filter(|p| pier_at(&l.roads, &l.lots, &l.sites, (p.x, p.z)) == Some(true)).count();
+        assert!(medians * 4 >= cl.piers.len() * 3, "{medians} of {} piers in the median", cl.piers.len());
+        for w in cl.piers.windows(2) {
+            assert!(dist((w[0].x, w[0].z), (w[1].x, w[1].z)) <= SPAN_LONG_CM + 100);
+        }
+        // and the track over the boulevard keeps within the median, piers' room and all
+        let room = 750 / 2 - PIER_R_CM - PIER_CLEAR_CM;
+        // (past either end of a run of boulevard the line is on a station's frame)
+        let mut deg = std::collections::BTreeMap::new();
+        for e in &blvd {
+            *deg.entry(e.a).or_insert(0) += 1;
+            *deg.entry(e.b).or_insert(0) += 1;
+        }
+        let ends: Vec<(i64, i64)> = deg.iter().filter(|x| *x.1 == 1).map(|x| (l.roads.nodes[*x.0 as usize].x, l.roads.nodes[*x.0 as usize].z)).collect();
+        let mut over = 0;
+        for q in cl.path.iter().filter(|q| ends.iter().all(|&n| dist(n, (q[0], q[2])) > 1_825)) {
+            let d = blvd.iter().flat_map(|e| e.points.windows(2)).map(|s| organic::geom::nearest_on((q[0], q[2]), (s[0][0], s[0][2]), (s[1][0], s[1][2])).1).min().unwrap();
+            if d < 1_825 * 1_825 {
+                over += 1;
+                assert!(d <= room * room, "the track leaves the median at ({}, {})", q[0], q[2]);
+            }
+        }
+        assert!(over * 2 >= cl.path.len(), "the line runs over its boulevard most of the way");
+    }
+
+    #[test]
+    fn no_hq_lot_or_civic_building_is_under_the_boulevard() {
+        let l = &commons3().layers;
+        let blvd: Vec<&roads::Edge> = l.roads.edges.iter().filter(|e| e.v4 == Some("boulevard")).collect();
+        let near = |poly: &[[i64; 2]]| blvd.iter().any(|e| e.points.windows(2).any(|s| (0..poly.len()).any(|k| organic::geom::seg_dist2((s[0][0], s[0][2]), (s[1][0], s[1][2]), (poly[k][0], poly[k][1]), (poly[(k + 1) % poly.len()][0], poly[(k + 1) % poly.len()][1])) < (e.width / 2 - 10).pow(2))));
+        for lot in l.lots.iter().filter(|x| x.kind == "hq") {
+            assert!(!near(lot.poly.as_deref().unwrap_or(&[])), "HQ lot {} under the boulevard", lot.id);
+        }
+        for s in l.sites.iter().filter(|s| !matches!(s.kind, "transit" | "airport" | "busstop" | "tramstop" | "metro-entrance") && !s.kind.starts_with("metro")) {
+            assert!(!near(s.poly.as_deref().unwrap_or(&[])), "site {} under the boulevard", s.id);
+        }
+    }
+
+    #[test]
+    fn a_world_with_no_room_keeps_its_line_on_the_streets() {
+        // the island: an HQ's lot in the way, so no boulevard, the line's piers the client's
+        let l = &island3().layers;
+        let cl = l.rail.as_ref().unwrap().lines.iter().find(|x| x.kind == "city").unwrap();
+        assert!(cl.piers.is_empty());
+        assert!(!l.roads.edges.iter().any(|e| e.v4 == Some("boulevard") && e.name.ends_with("Boulevard") && e.median == Some(750) && cl.path.iter().any(|q| e.points.iter().any(|p| (p[0] - q[0]).abs() + (p[2] - q[2]).abs() < 200))));
+        assert!(validate::check(l).iter().any(|v| v.rule == "rail-corridor"));
+        assert!(validate::hard(l).is_empty());
+    }
+
+    #[test]
+    fn a_pier_stands_in_the_median_never_on_the_carriageway_or_a_lot() {
+        let l = &commons3().layers;
+        // (the middle of the longest piece, well clear of its junctions)
+        let e = l.roads.edges.iter().filter(|e| e.v4 == Some("boulevard")).max_by_key(|e| roads::path_len(&e.points)).unwrap();
+        let k = e.points.len() / 2;
+        let (a, b) = ((e.points[k - 1][0], e.points[k - 1][2]), (e.points[k + 1][0], e.points[k + 1][2]));
+        let mid = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
+        let n = organic::geom::unit(organic::geom::left(organic::geom::sub(b, a)));
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, mid), Some(true), "the median");
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, organic::geom::along(mid, n, 900)), None, "the carriageway");
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, organic::geom::along(mid, n, -1_600)), None, "the footpath");
+        let lot = l.lots.iter().find(|x| x.kind == "hq").unwrap();
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, (lot.x, lot.z)), None, "a lot");
+    }
+}

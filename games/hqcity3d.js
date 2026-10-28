@@ -25,7 +25,9 @@
  *                 (by rank; else sorted by user id as on @1); an island: its owner's, by the town hall.
  *   residents     games/npcsim.js + npcdraw.js, ticked each frame inside NPC_BUDGET; E on one: its line.
  *   traffic       games/traffic.js (cars, buses, trams); E at a stop: pick a stop, wait, ride (the fare
- *                 goes through POST /api/arena/city/<owner>/fare).
+ *                 goes through POST /api/arena/city/<owner>/fare). [3.27] E by a stopped car: take it (city play's
+ *                 carjack, games/playcarjack.js: w.jackPrompt / w.jack for hq3d); the car you hold is dropped from
+ *                 the traffic this City draws, collides with and hands its features (this client only).
  *   the sea       games/ocean.js (the water, the other islands from /api/arena/archipelago) and the boats
  *                 of games/hqboat.js moored alongside every dock's pier (its deck is walked on, and the
  *                 sea's land for the boats); a boat that reaches another island lands you there.
@@ -129,13 +131,13 @@ function baySearch(P, p, keep, any){
   for(var fi = 0; fi < 2; fi++){ var f = fi ? -1 : 1;
     for(var gx = -30; gx <= 30; gx += 0.5) for(var gz = -16; gz <= 16; gz += 0.5){
       if(!fits(gx, gz, f)) continue;
-      if(any) return {x: gx, z: gz, s: gx < 0 ? -1 : 1, f: f};
+      if(any) return {x: gx, z: gz, s: gx < 0 ? -1 : 1, f: f, r: f < 0 ? 2 : 0};
       // in front of the HQ first, facing the road first
       var d = (Math.abs(gx) - G.x)*(Math.abs(gx) - G.x) + (gz - G.z)*(gz - G.z) + (gz < 0 ? 400 : 0) + (f < 0 ? 2000 : 0);
       if(!best || d < best.d) best = {x: gx, z: gz, s: gx < 0 ? -1 : 1, f: f, d: d};
     }
   }
-  return best && {x: best.x, z: best.z, s: best.s, f: best.f};
+  return best && {x: best.x, z: best.z, s: best.s, f: best.f, r: best.f < 0 ? 2 : 0};
 }
 function polyOf(lot){ return lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; }); }
 // Where an HQ's car-lift bay goes on a v2 lot for an HQ of this size (grand, its wings): where it stood before the
@@ -143,7 +145,7 @@ function polyOf(lot){ return lot.poly.map(function(q){ return [q[0]/100, q[1]/10
 // footprint (the 3.5.8 rules: inside the lot, 8 m clear out of its gate, facing the road first); null when none fits.
 function garagePlace(lot, p, wings, grand){
   var G = HQV.hqLotExtras.garage;
-  if(!lot || !lot.poly || lot.poly.length < 3) return {x: G.x, z: G.z, s: 1, f: 1};
+  if(!lot || !lot.poly || lot.poly.length < 3) return {x: G.x, z: G.z, s: 1, f: 1, r: 0};
   var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6];
   var old = [[0, 0, 4.8, 3.8], walk]; if(wings >= 1) old.push([-10.5, 0.5, 3, 2.8]); if(wings >= 2) old.push([10.5, 0.5, 3, 2.8]);
   var was = baySearch(P, p, old, false);
@@ -156,6 +158,119 @@ function bayClear(b, keep){
   var G = HQV.hqLotExtras.garage, hw = G.w/2 + 0.3, hd = G.d/2 + 0.3;
   function clear(x, z, ex, ez){ return keep.every(function(K){ return !(Math.abs(x - K[0]) < ex + K[2] && Math.abs(z - K[1]) < ez + K[3]); }); }
   return clear(b.x, b.z, hw, hd) && clear(b.x, b.z + b.f*(G.d/2 + GARAGE_CLEAR/2), G.w/2, GARAGE_CLEAR/2);
+}
+/* ---------- [3.33] movable garages: your bay anywhere on your own lot, turned in quarter turns ----------
+   A garage {x, z, s, f, r} (lot frame, m): r the quarter turns of its door (0: to the lot's front, the street, +z; 1: +x;
+   2: away, -z; 3: -x); f (+1 for r 0, -1 for r 2) and s (the mirror) stay for older callers. A moved bay may carry way:
+   lot-frame points from its apron out to the street (its driveway). The default spot (garagePlace) has r 0 or 2. */
+var GARAGE_WAY = 3.5;                                        // a driveway's width (m)
+var GDIR = [[0, 1], [1, 0], [0, -1], [-1, 0]];               // a bay's door direction, by r (lot frame)
+function garageR(g){ var r = g && g.r; return r === 0 || r === 1 || r === 2 || r === 3 ? r : (g && g.f === -1 ? 2 : 0); }
+function snapHalf(v){ v = Math.round((+v || 0)*2)/2; return v === 0 ? 0 : v; }       // the 0.5 m grid (never -0)
+// a spot {x, z, r} (m) as the garage the City draws
+function toGarage(sp, way){
+  var r = garageR(sp), x = snapHalf(sp && sp.x), z = snapHalf(sp && sp.z), g = {x: x, z: z, s: x < 0 ? -1 : 1, f: r === 2 ? -1 : 1, r: r};
+  if(way && way.length) g.way = way;
+  return g;
+}
+// a lot-frame point (lx, lz) in the bay's own frame, as hqLotExtraBlocked reads it (the legacy garage's: HQV.hqLotExtras.garage);
+// r 0 and 2 exactly as before 3.33 (s mirrors; the bay is symmetric), r 1 and 3 turned back by their quarter turns
+function garageLocal(GP, lx, lz){
+  var G0 = HQV.hqLotExtras.garage, r = garageR(GP), dx = lx - GP.x, dz = lz - GP.z;
+  if(r === 0 || r === 2) return {x: G0.x + (GP.s === -1 ? -1 : 1)*dx, z: G0.z + (r === 2 ? -1 : 1)*dz};
+  var a = r*PI/2, ca = Math.cos(a), sa = Math.sin(a);
+  return {x: G0.x + dx*ca - dz*sa, z: G0.z + dx*sa + dz*ca};
+}
+// the lot's outline in its own frame (m): its polygon (v2), else its rectangle (@1)
+function lotRing(lot, p){
+  if(!lot || !p) return null;
+  var W = lot.poly && lot.poly.length >= 3 ? polyOf(lot) : (lot.w > 0 && lot.d > 0 ? [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function(k){
+    return [((lot.x || 0) + k[0]*lot.w/2)/100, ((lot.z || 0) + k[1]*lot.d/2)/100]; }) : null);
+  if(!W) return null;
+  var cr = Math.cos(p.rot || 0), sr = Math.sin(p.rot || 0);
+  return W.map(function(q){ var dx = q[0] - p.x, dz = q[1] - p.z; return [dx*cr - dz*sr, dx*sr + dz*cr]; });
+}
+// the street-side edge of the lot at column x (lot frame): the furthest +z where the column crosses its outline (-Infinity: none)
+function frontZ(R, x){
+  var best = -Infinity;
+  for(var i = 0, j = R.length - 1; i < R.length; j = i++){
+    var a = R[j], b = R[i]; if((a[0] > x) === (b[0] > x)) continue;
+    var z = a[1] + (b[1] - a[1])*(x - a[0])/(b[0] - a[0]); if(z > best) best = z;
+  }
+  return best;
+}
+// a box (centre x, z; half extents ex, ez) hits one of keep ([x, z, hx, hz])
+function boxHits(keep, x, z, ex, ez){
+  for(var k = 0; k < keep.length; k++){ var K = keep[k]; if(Math.abs(x - K[0]) < ex + K[2] && Math.abs(z - K[1]) < ez + K[3]) return true; }
+  return false;
+}
+// every point of a 5 x 5 sample of the box is on the lot (or, street: past its street-side edge, out on the street)
+function boxOn(R, x, z, ex, ez, street){
+  for(var i = -1; i <= 1; i += 0.5) for(var j = -1; j <= 1; j += 0.5){
+    var px = x + i*ex, pz = z + j*ez;
+    if(!inRing(R, px, pz) && !(street && pz >= frontZ(R, px) - 1e-6)) return false;
+  }
+  return true;
+}
+// a straight run GARAGE_WAY wide centred on column cx, from z0 towards +z to the lot's street-side edge, clear of keep: the
+// edge's z (lot frame, a metre past it), else null
+function wayOut(R, keep, cx, z0){
+  var cols = [cx - GARAGE_WAY/2, cx, cx + GARAGE_WAY/2], edge = -Infinity;
+  for(var k = 0; k < cols.length; k++){ var f = frontZ(R, cols[k]); if(!(f > -Infinity)) return null; edge = Math.max(edge, f); }
+  if(edge < z0) return z0;                                    // already out on the street
+  for(var z = z0; z <= edge + 0.5; z += 0.5) for(var c = 0; c < cols.length; c++){
+    var x = cols[c];
+    if(boxHits(keep, x, z, 0, 0)) return null;
+    if(!inRing(R, x, z) && !(z >= frontZ(R, x) - 1e-6)) return null;
+  }
+  return Math.round((edge + 1)*2)/2;
+}
+// [3.33] Does a garage fit at spot {x, z, r} (lot frame, m; snapped to the 0.5 m grid) on this lot? Pure. The bay (7 x 6.2 m, a
+// 0.3 m margin) inside the lot; clear of the HQ's footprint at the lot's grand with both wings (levelling up never invalidates
+// a saved spot) and of the walk to its door; the 8 m apron out of its door clear of both, on the lot or out over its
+// street-side edge; and a driveway GARAGE_WAY wide from the apron's end straight to the street, clear of the footprint (a
+// bay facing away: beside it, either side). -> {ok, why: "" | "outside the lot" | "on the building" | "apron blocked" |
+// "no way to the street", way: [lot-frame points from the apron out to the street]}
+function garageFits(lot, p, spot, grand){
+  function no(why){ return {ok: false, why: why, way: null}; }
+  var R = lotRing(lot, p);
+  if(!R || !spot || !isFinite(+spot.x) || !isFinite(+spot.z)) return no("outside the lot");
+  var G = HQV.hqLotExtras.garage, r = garageR(spot), x = snapHalf(spot.x), z = snapHalf(spot.z), u = GDIR[r], odd = r % 2 === 1;
+  var hx = (odd ? G.d : G.w)/2, hz = (odd ? G.w : G.d)/2;
+  if(grand == null) grand = grandOf(lot, p);
+  var foot = hqFoot(grand || 0, 2), walk = [0, HQ_DOOR + 6, 1.6, 6], keep = foot.concat([walk]);
+  if(!boxOn(R, x, z, hx + 0.3, hz + 0.3, false)) return no("outside the lot");
+  if(boxHits(keep, x, z, hx + 0.3, hz + 0.3)) return no("on the building");
+  var ax = x + u[0]*(G.d/2 + GARAGE_CLEAR/2), az = z + u[1]*(G.d/2 + GARAGE_CLEAR/2);
+  var ahx = odd ? GARAGE_CLEAR/2 : G.w/2, ahz = odd ? G.w/2 : GARAGE_CLEAR/2;
+  if(boxHits(keep, ax, az, ahx, ahz) || !boxOn(R, ax, az, ahx, ahz, true)) return no("apron blocked");
+  var ex = x + u[0]*(G.d/2 + GARAGE_CLEAR), ez = z + u[1]*(G.d/2 + GARAGE_CLEAR), way = null, e;
+  if(r === 0){ e = wayOut(R, foot, x, ez); if(e != null) way = e > ez ? [[x, e]] : []; }
+  else if(odd){ var cx = ex - u[0]*GARAGE_WAY/2; e = wayOut(R, foot, cx, z); if(e != null) way = [[cx, z], [cx, e]]; }
+  else {
+    var z0 = ez + GARAGE_WAY/2;
+    [1, -1].some(function(sd){
+      var bx = x + sd*(G.w/2 + 0.3 + GARAGE_WAY/2), q = wayOut(R, foot.concat([[x, z, hx, hz]]), bx, z0);
+      if(q != null) way = [[x, z0], [bx, z0], [bx, q]];
+      return way != null;
+    });
+  }
+  if(!way) return no("no way to the street");
+  return {ok: true, why: "", way: way.map(function(q){ return {x: q[0], z: q[1]}; })};
+}
+// [3.33] A stored spot from the Arena's HQ listing (h.garage: {lot, x, z, r}, x and z in whole decimetres) for this lot, else null
+function garageStored(h, lot){
+  var g = h && h.garage;
+  if(!g || typeof g !== "object" || !lot || typeof g.lot !== "number" || (g.lot | 0) !== g.lot || g.lot !== (lot.rank | 0)) return null;
+  var x = +g.x, z = +g.z, r = g.r;
+  if(!isFinite(x) || !isFinite(z) || Math.abs(x) > 1000 || Math.abs(z) > 1000 || !(r === 0 || r === 1 || r === 2 || r === 3)) return null;
+  return {x: snapHalf(x/10), z: snapHalf(z/10), r: r};
+}
+// [3.33] An HQ's garage: its stored spot while that is on this lot and fits, else the default (garagePlace)
+function garageOf(lot, p, h, wings, grand){
+  var st = garageStored(h, lot);
+  if(st){ var F = garageFits(lot, p, st, grandOf(lot, p)); if(F.ok) return toGarage(st, F.way); }
+  return garagePlace(lot, p, wings, grand);
 }
 // How much of its lot an HQ may fill (the HQ revamp; 3.19: in eighths, the tower's plan from 11 x 8 m to 25 x 14 m): the
 // largest step at which every part of the footprint that fitted inside the lot's polygon at the smallest size still
@@ -234,7 +349,7 @@ function snapShadow(p, dir, texel){
   return {x: a*xx + b*yx + d*zx, y: b*yy + d*zy, z: a*xz + b*yz + d*zz};
 }
 // what is part of an HQ's look (its building is rebuilt when it changes); crew counts are not
-function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou]); }
+function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou, h.garage || null]); }   // [3.33] a moved garage too
 function crewText(h){ var crew = (h && h.crew) || {}; return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them"; }
 // A mesh mergeStatic must leave alone: doors and anything tagged animated or fading, materials
 // something changes later (lit by night, blinking, scrolling, a canvas), see-through ones, and
@@ -525,7 +640,8 @@ function citySound(){
 HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorld: toWorld, pickAt: pickAt, segBox: segBox,
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
-  assignIsland: assignIsland, garagePlace: garagePlace, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  assignIsland: assignIsland, garagePlace: garagePlace, garageFits: garageFits, garageOf: garageOf, garageStored: garageStored, garageLocal: garageLocal,
+  toGarage: toGarage, garageR: garageR, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats, citySound: citySound};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -840,11 +956,13 @@ HQV.hqWorlds.city3d = function(c, w){
     E.boxes = hqBoxes(p, B);
     // the garage apron stops at the lot's front edge (the building stands HQ_DZ in front of the lot's middle)
     var ae = Math.min(11, (E.lot.d || 0)/200 - HQ_DZ);
-    E.garage = garagePlace(E.lot, p, B.wings, B.grand);
+    E.garage = garageOf(E.lot, p, h, B.wings, B.grand);                           // [3.33] its stored spot (moved), else the default
+    E.garageDef = garagePlace(E.lot, p, B.wings, B.grand);
     var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage, h.isYou)
                      : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
     (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
+    if(X.move){ hits.push(X.move); B.hits.push(X.move); }                          // [3.33] your bay's Move garage plate
     (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
     // the building (its own meshes: it fades), then the lot round it: pad, garage, apron; never
     // the car, motorbike and bicycle (you ride them)
@@ -870,7 +988,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function build(){
     if(!W) return;
     var list = (api.city && api.city()) || [];
-    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.style || null, h.cos, h.crew, !!h.isYou]; }));
+    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.style || null, h.cos, h.crew, !!h.isYou, h.garage || null]; }));
     if(key === sig && !forceYou) return; sig = key;
     var old = {}; hqs.forEach(function(E){ old[E.oid] = E; });
     var next = [], made = [];
@@ -968,9 +1086,10 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function blocked(x, z){
     if(!W) return true;
+    var tu = inTunnel(x, z); if(tu) return WD.blockedAt(W, x, z, tu.y0) || trafficAt(x, z);   // [3.30] in the tunnel under the airport: its walls, the traffic
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
-    if(WD.blockedAt(W, x, z)) return true;
+    if(WD.blockedAt(W, x, z, deckLevel(x, z))) return true;                 // [3.29] a flyover's piers below it, its parapets on it
     if(wb && wb.furnitureAt && wb.furnitureAt(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [city life] benches, stalls, cafe tables ([play-street] a table, bin or stall you drive into fast goes over)
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
@@ -993,10 +1112,10 @@ HQV.hqWorlds.city3d = function(c, w){
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
       // its garage, and its car (where it stands: you may have parked it in the street) unless you drive it
       // (moved into the legacy garage's frame when it stands elsewhere on a v2 lot; none when it has no garage)
-      var GP = L.garage, G0 = HQV.hqLotExtras.garage;
+      var GP = L.garage;
       if(L.kind === "hq" && GP){
-        var gl = function(x, z){ return {x: G0.x + GP.s*(x - GP.x), z: G0.z + (GP.f === -1 ? -1 : 1)*(z - GP.z)}; }, q = gl(lx, lz), k = L.car && gl(L.car.g.position.x, L.car.g.position.z);   // a bay facing away: its closed end is at +z
-        if(HQV.hqLotExtraBlocked(q.x, q.z, !L.car || L.car.g.visible, k && {x: k.x, z: k.z, yaw: L.car.g.rotation.y*GP.s})) return true;
+        var q = garageLocal(GP, lx, lz), k = L.car && garageLocal(GP, L.car.g.position.x, L.car.g.position.z);   // [3.33] turned into the bay's own frame (r)
+        if(HQV.hqLotExtraBlocked(q.x, q.z, !L.car || L.car.g.visible, k && {x: k.x, z: k.z, yaw: L.car.g.rotation.y*(GP.s === -1 ? -1 : 1)})) return true;
       }
     }
     for(var j = 0; j < civic.length; j++){
@@ -1008,13 +1127,35 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   function groundY(x, z){
     if(!W) return 0;
+    var tu = inTunnel(x, z); if(tu) return WD.groundAt(W, x, z, false, tu.y0);    // [3.30] the tunnel's road, not the airport over it
     if(skate && SP.inPark(x - skate.cx, z - skate.cz)) return skate.y;      // the park's flat pad; the skater adds its ramps
     if(cp){ var cpy = carparkGround(x, z); if(cpy != null) return cpy; }   // carpark: its floors and the helix
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     var fy = apGroundY(x, z); if(fy != null) return fy;                    // AIR: the airfield's platform, the terminal, the gallery
-    var gy = dy != null ? dy : WD.groundAt(W, x, z), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
+    var gy = dy != null ? dy : WD.groundAt(W, x, z, false, deckLevel(x, z)), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
     return sy != null && sy > gy ? sy : gy;
+  }
+  // [3.29] City Gen v4's flyovers and ramps stand over the roads they cross: near you, the ground is the surface at your
+  // level (world.js groundAt's yNow: on the deck when you drove up the ramp, the road beneath when you are under it);
+  // anywhere else (props, peers, the map) the ground beneath
+  var DECK_NEAR = 12;
+  function deckLevel(x, z){
+    if(!W || !W.edges) return undefined;
+    var a = c.avatar && c.avatar();
+    return a && a.hy != null && isFinite(a.hy) && Math.abs(x - a.x) < DECK_NEAR && Math.abs(z - a.z) < DECK_NEAR ? a.hy : undefined;
+  }
+  // [3.30] City Gen v4's road tunnel: near you, when you are down in it or in a cutting to it (world.js tunnelAt at your
+  // height), what stands on the land (the airport's platform and buildings over the tunnel, ...) is not down here:
+  // {y0: your height} | null
+  function inTunnel(x, z){
+    var y0 = WD.tunnelAt ? deckLevel(x, z) : undefined;
+    return y0 != null && WD.tunnelAt(W, x, z, y0) ? {y0: y0} : null;
+  }
+  // the avatar's height when it is in a tunnel or cutting (the camera's floor and its ray then stay down there), else undefined
+  function tunnelLevel(){
+    var a = W && WD.tunnelAt && c.avatar && c.avatar();
+    return a && a.hy != null && isFinite(a.hy) && WD.tunnelAt(W, a.x, a.z, a.hy) ? a.hy : undefined;
   }
   // [stunts] a ramp is driven up from its low end: from off it, a part of it higher than your knees is a wall
   function stuntWall(x, z){
@@ -1090,6 +1231,13 @@ HQV.hqWorlds.city3d = function(c, w){
     civicSites(W, tier, HQV.hqCivic.KINDS ? Object.keys(HQV.hqCivic.KINDS) : null).forEach(function(site){
       // the town hall's door is the Town Hall panel's (its tab, Live, is the page's home anyway)
       if(site.kind === "townhall") site = Object.assign({}, site, {view: null});
+      // [3.32] a tram station's platform (hqtramway.js's island) stands on the ground at its middle (a centre bed's top,
+      // the footpath): its shelter, ticket machine and board on the same
+      if(site.kind === "tramstop" && site.w >= 4000 && W){
+        var py = null;
+        try { py = WD.groundAt(W, (+site.x || 0)/100, (+site.z || 0)/100); } catch(e){ py = null; }
+        if(typeof py === "number" && isFinite(py)) site = Object.assign({}, site, {y: Math.round(py*100)});
+      }
       var B;
       try { B = HQV.hqCivic.build(c, site, {tier: tier, night: night}); } catch(e){ return; }
       civicG.add(B.g); civics.push(B);
@@ -1224,12 +1372,19 @@ HQV.hqWorlds.city3d = function(c, w){
     if(arch) return Promise.resolve(arch);
     return getJson("/api/arena/archipelago").then(function(a){ arch = a && typeof a === "object" ? a : null; return arch; });
   }
+  // [3.28] the NPC traffic level (Settings' slider: localStorage hq_traffic, 0..1; unset: traffic.js's LEVEL0, today's)
+  function trafficLevel(){
+    var v = null; try { v = localStorage.getItem("hq_traffic"); } catch(e){}
+    v = v == null || v === "" ? NaN : parseFloat(v);
+    return isFinite(v) ? Math.max(0, Math.min(1, v)) : undefined;
+  }
   // traffic, buses and trams (games/traffic.js), and the residents (games/npcsim.js, npcdraw.js)
   function setupLife(){
     var doc = WD.docOf(W);
     if(HQV.traffic){
       try {
-        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms + 330*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock
+        tsim = HQV.traffic.create(doc, {tier: tier, grow: grow, seed: W.id, W: W, traffic: trafficLevel(), local: function(ms){ return HQV.npcSim && HQV.npcSim.localMs ? HQV.npcSim.localMs(new Date(ms)) : ms + 330*60000; }});      // every ride is free (3.15, D4): no fare step; [3.21] demand, types and closures by the local clock; [3.28] the NPC traffic level
+        HQV.cityTrafficLevel = function(v){ return tsim && tsim.setLevel ? tsim.setLevel(v) : null; };     // [3.28] Settings' slider, live
         tview = HQV.traffic.view(c); S.add(tview.group);
       } catch(e){ tsim = null; tview = null; }
     }
@@ -2661,6 +2816,8 @@ HQV.hqWorlds.city3d = function(c, w){
   // the camera's floor (hq3d rigFrame): the ground, and over open water the water's surface plus 0.5 m, so a chase
   // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
   w.camGround = function(x, z){
+    var ty = tunnelLevel();
+    if(ty != null && WD.tunnelAt(W, x, z, ty)) return WD.groundAt(W, x, z, false, ty);   // [3.30] in the tunnel: its road, never the land over it
     var g = groundY(x, z);
     if(sea && sea.surface && (!W || Math.abs(x) > W.half || Math.abs(z) > W.half || !sea.boat.land(x, z))) g = Math.max(g, sea.surface(x, z) + 0.5);
     return g;
@@ -2785,6 +2942,17 @@ HQV.hqWorlds.city3d = function(c, w){
       promptV = tm ? "E  " + (tm.kind === "airport" ? "Departures" : tm.kind === "transit" ? "Trains and trips" : "Ferries and trips") : null;
     }
     return promptV;
+  };
+  // [3.27] carjack (city play's games/playcarjack.js): on foot by a stopped traffic car, hq3d's E prompt and E (getting
+  // into a vehicle is E, as with your own; F stays talking and doors)
+  function jackFeat(){ try { return play && play.feature ? play.feature("carjack") : null; } catch(e){ return null; } }
+  w.jackPrompt = function(p){
+    if(!V2 || !p || menu || bus || w.carry()) return null;
+    var J = jackFeat(); return J && J.jackPrompt ? J.jackPrompt(p) : null;
+  };
+  w.jack = function(p){
+    if(!V2 || !p || menu || bus || w.carry()) return false;
+    var J = jackFeat(); return !!(J && J.take && J.take(p));
   };
   // E: a resident's line, a stop's lines, a terminal's trips (and E again cancels a wait)
   w.use = function(p){
@@ -3045,6 +3213,8 @@ HQV.hqWorlds.city3d = function(c, w){
         } catch(e){}
       }
       try { callTraffic = tsim.at(nowMs, {x: cam ? cam.x : me0.x, z: cam ? cam.z : me0.z}, TRAFFIC_R, obs); } catch(e){}
+      var JK = jackFeat();                                 // [3.27] the car you took is yours now: not the traffic's
+      if(JK && JK.hide && callTraffic){ try { callTraffic = JK.hide(callTraffic); } catch(e){} }
     }
     if(transit){ try { transit.update(nowMs, dt, cam && cam.x != null ? cam : null); } catch(e){} }     // [3.15] first: the coach view's hide set
     if(tsim && tview && callTraffic){ try { tview.update(callTraffic, nowMs, {hide: transit ? transit.hide() : null}); } catch(e){} }
@@ -3081,6 +3251,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit){ try { transit.dispose(); } catch(e){} transit = null; }
     surfaceShow(true);
     if(tview){ try { tview.dispose(); } catch(e){} }
+    if(HQV.cityTrafficLevel){ HQV.cityTrafficLevel = null; }
     if(cev){ try { cev.dispose(); } catch(e){} cev = null; }                                         // [3.21]
     if(street){ try { street.dispose(); } catch(e){} street = null; }                                // [3.22]
     if(play){ try { play.dispose(); } catch(e){} play = null; }                                      // [3.22]
@@ -3542,10 +3713,49 @@ HQV.hqWorlds.city3d = function(c, w){
   w.setQuality = function(q){ if(wb) wb.setQuality(q); };
   w.stats = function(){ return wb ? wb.stats() : {}; };
   w.onCity = function(){ build(); };
+  /* [3.33] Move garage (games/hq3d.js garageView, ui/app/40-studio.js): your lot's frame and its garage, and the ghost bay
+     (its apron and driveway) the pointer drives, green where garageFits, red where not */
+  w.garageLot = function(){
+    var E = hqs.filter(function(e){ return e.h && e.h.isYou; })[0];
+    if(!E || !E.lot) return null;
+    var lot = E.lot, P = {x: E.x, z: E.z, rot: E.rot}, gr = grandOf(lot, P);
+    return {x: E.x, y: (E.y || 0) + PAD_UP, z: E.z, rot: E.rot, rank: lot.rank | 0, oid: E.oid, garage: E.garage, def: E.garageDef || null,
+            fits: function(sp){ return garageFits(lot, P, sp, gr); }};
+  };
+  var ghostG = null, ghostKey = null;
+  w.garageGhost = function(o){
+    var E = hqs.filter(function(e){ return e.h && e.h.isYou; })[0];
+    if(!o || !E){ if(ghostG){ hqG.remove(ghostG); disposeTree(ghostG); ghostG = null; ghostKey = null; } return false; }
+    var G = HQV.hqLotExtras.garage, r = garageR(o), ok = o.ok !== false, way = Array.isArray(o.way) ? o.way : [];
+    var key = JSON.stringify([E.oid, E.x, E.z, E.rot, r, ok, way]);
+    if(!ghostG || ghostKey !== key){
+      if(ghostG){ hqG.remove(ghostG); disposeTree(ghostG); }
+      ghostKey = key; ghostG = new THREE.Group(); ghostG.name = "hq-garage-ghost";
+      ghostG.position.set(E.x, (E.y || 0) + PAD_UP, E.z); ghostG.rotation.y = E.rot; hqG.add(ghostG);
+      var col = ok ? COL.green : COL.coral;
+      var solid = new THREE.MeshBasicMaterial({color: col, transparent: true, opacity: 0.38, depthWrite: false, toneMapped: false});
+      var flat = new THREE.MeshBasicMaterial({color: col, transparent: true, opacity: 0.24, depthWrite: false, toneMapped: false, side: THREE.DoubleSide});
+      var bay = new THREE.Group(); bay.name = "hq-garage-ghost-bay"; ghostG.add(bay);
+      var body = new THREE.Mesh(new THREE.BoxGeometry(G.w, G.h, G.d), solid); body.position.y = G.h/2; body.renderOrder = 3; bay.add(body);
+      var door = new THREE.Mesh(new THREE.BoxGeometry(G.w*0.8, 0.3, 0.3), new THREE.MeshBasicMaterial({color: col, toneMapped: false})); door.position.set(0, G.h + 0.2, G.d/2); bay.add(door);
+      var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w, GARAGE_CLEAR), flat); apron.rotation.x = -PI/2; apron.position.set(0, 0.06, G.d/2 + GARAGE_CLEAR/2); apron.renderOrder = 3; bay.add(apron);
+      for(var i = 1; i < way.length; i++){
+        var a = way[i - 1], b = way[i], L = Math.hypot(b.x - a.x, b.z - a.z); if(!(L > 0.1)) continue;
+        var strip = new THREE.Mesh(new THREE.PlaneGeometry(GARAGE_WAY, L + GARAGE_WAY), flat);
+        strip.rotation.order = "YXZ"; strip.rotation.y = Math.atan2(b.x - a.x, b.z - a.z); strip.rotation.x = -PI/2;
+        strip.position.set((a.x + b.x)/2, 0.07, (a.z + b.z)/2); strip.renderOrder = 3; ghostG.add(strip);
+      }
+      var grid = new THREE.GridHelper(60, 60, col, 0x5fd3e6); grid.position.y = 0.05; grid.material.transparent = true; grid.material.opacity = 0.22; grid.material.depthWrite = false; ghostG.add(grid);
+      ghostG.userData.bay = bay;
+    }
+    var by = ghostG.userData.bay; by.position.set(snapHalf(o.x), 0, snapHalf(o.z)); by.rotation.y = r*PI/2;
+    return true;
+  };
+  w.garageGhostState = function(){ return ghostG ? {key: ghostKey, x: ghostG.userData.bay.position.x, z: ghostG.userData.bay.position.z, r: ghostG.userData.bay.rotation.y} : null; };
   w.onLook = function(){ forceYou = true; build(); };      // your own look: your building again
   w.camHit = function(from, to){
     if(!W) return 1;
-    var t = WD.rayGround(W, from, to);
+    var t = WD.rayGround(W, from, to, undefined, tunnelLevel());   // [3.30] in a tunnel: its walls and ceiling
     var x0 = Math.min(from.x, to.x), x1 = Math.max(from.x, to.x), z0 = Math.min(from.z, to.z), z1 = Math.max(from.z, to.z);
     if(Math.hypot(to.x - from.x, to.z - from.z) > 60){ var u = 60/Math.hypot(to.x - from.x, to.z - from.z);   // only what is within 60 m
       x0 = Math.min(from.x, from.x + (to.x - from.x)*u); x1 = Math.max(from.x, from.x + (to.x - from.x)*u);

@@ -63,7 +63,8 @@ var GROUP = {downtown: "centre", commercial: "centre", finance: "centre", oldtow
   civic: "civic", hq: "civic", street: "civic"};
 function groupOfName(n){ return GROUP[String(n || "").toLowerCase()] || "home"; }
 
-function hash01(s){ return (WQ().hash32(String(s)) >>> 0)/4294967296; }
+// (FNV-1a alone clusters on keys that differ only in a trailing id; a murmur finaliser spreads them)
+function hash01(s){ var h = WQ().hash32(String(s)); h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return (h >>> 0)/4294967296; }
 function cm(v){ return (+v || 0)/100; }
 
 var STOP_RE = /(stop|station|metro|transit|halt)/;
@@ -187,7 +188,7 @@ function furniture(W){
   var out = FURN_CACHE && FURN_CACHE.get(W);
   if(out) return out;
   out = [];
-  var Q = WQ(), F = facts(W), U = landUse(W), nodes = {};
+  var Q = WQ(), F = facts(W), U = landUse(W), nodes = {}, RP = Q.railPiersOf ? Q.railPiersOf(W) : [];
   (W.nodes || []).forEach(function(n){ nodes[n.id] = {x: cm(n.x), z: cm(n.z)}; });
   var market = (W.sites || []).filter(function(s){ return s.kind === "market"; }).map(function(s){ return {x: cm(s.x), z: cm(s.z)}; });
   (W.edges || []).forEach(function(e){
@@ -199,6 +200,7 @@ function furniture(W){
       [1, -1].forEach(function(sg){
         var o = sg*(cw + 0.55), x = p.x + p.lx*o, z = p.z + p.lz*o;
         if(F.stopDist(x, z) < 8 || Q.surfaceAt(W, x, z) === "road") return;      // (another road's paving near a junction)
+        if(RP.some(function(q){ return Math.hypot(q.x - x, q.z - z) < q.r + 1.5; })) return;   // phase 8: clear of a City Line pier
         var bx = p.x + p.lx*sg*(cm(e.width)/2 + 3), bz = p.z + p.lz*sg*(cm(e.width)/2 + 3), lot = Q.lotAt(W, bx, bz);
         if(lot && lot.kind === "hq") return;
         var u = lot ? U[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name), h = hash01(W.hash + ":furn:" + e.id + ":" + Math.round(s) + ":" + sg);
@@ -403,6 +405,8 @@ function closed(W, ms){ var o = {}; events(W, ms).forEach(function(ev){ ev.edges
 // ms, heading) -> may someone walking along heading cross now (with the parallel traffic's green, never in its
 // last WALK_CLEAR s, so never while the road they cross has green).
 var SIDE_GAP = 60, SIG = {cycle: 60, amber: 3, allRed: 2, walkClear: 6, wave: 11, split: [30, 20], even: [25, 25], side: [38, 12]}, LINK = 46;
+// [3.25] the least room (m) a car needs to wait at a red between the stop line and the box behind it
+var QUEUE_ROOM = 8;
 var FOOT_RE = /^(path|footpath|foot|footway|pedestrian|walk|walkway|trail|cycleway|cycle|steps|track)$/;
 var NOSIG = {expressway: 1, ring: 1, ramp: 1, flyover: 1, underpass: 1};
 function carRoad(cls){ return !FOOT_RE.test(normCls(cls)); }
@@ -459,6 +463,13 @@ function signals(W){
             rank: mainRoad(e.cls) ? 2 : road(e.cls).kind === "shop" ? 1 : 0};
   }
   function junction(id){ return (inc[id] || []).filter(through).length >= 3; }
+  var GEN = W.nodes.some(function(n){ return n.junction != null; });
+  // the box traffic.js turns through at a node with no light: as far as it reaches along the roads there (m)
+  function boxAt(id){
+    var es = inc[id] || [], c = 0, minLen = 1e9;
+    es.forEach(function(e){ c = Math.max(c, Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2)); minLen = Math.min(minLen, lenOf(edgePts(e))); });
+    return Math.min(es.length >= 3 ? c + 2 : es.length === 2 ? 2.5 : 1, 0.4*minLen);
+  }
   var link = {}, prio = {};
   var ids = Object.keys(inc).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); });
   ids.forEach(function(id){
@@ -469,7 +480,10 @@ function signals(W){
     if(es.some(function(e){ return NOSIG[normCls(e.cls)]; })) return;
     if(es.filter(function(e){ return normCls(e.cls) === "highway"; }).length >= 2) return;      // a highway going on through
     var x = cm(n.x), z = cm(n.z), kind = null, side = false;
-    if(es.filter(through).length >= 3 && es.some(function(e){ return mainRoad(e.cls); })) kind = "main";
+    // [3.26] City Gen v4 says which junctions have lights (the roads that meet there: generator data); a world without
+    // it is lit as before
+    if(GEN) kind = n.junction === "signals" ? "main" : null;
+    else if(es.filter(through).length >= 3 && es.some(function(e){ return mainRoad(e.cls); })) kind = "main";
     // [3.22.1] a main road crossing a side street (a four-way, not a T: that stays a give-way turning)
     else if(es.length >= 4 && es.some(function(e){ return mainRoad(e.cls); })){ kind = "main"; side = true; }
     else if(es.length === 4 && es.every(function(e){ var k = road(e.cls).kind; return k === "res" || k === "shop"; })){
@@ -501,7 +515,10 @@ function signals(W){
       var heading = Math.atan2(-a.ux, -a.uz), ax = axisDist(heading, h1) < axisDist(heading, h0) ? 1 : 0;
       // a short link to the next junction: one box with this one (traffic.js), no head of its own
       var far = String(a.e.a) === String(id) ? a.e.b : a.e.a;
-      if(kind === "main" && a.len < LINK && junction(far)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
+      // ([3.25] or a link with no room for a car to wait at the red, a box behind it: City Gen v4's wider boulevards
+      // and avenues make bigger boxes)
+      var tight = a.len - a.stop - boxAt(far) < QUEUE_ROOM && (inc[far] || []).filter(function(e){ return carRoad(e.cls); }).length >= 3;
+      if(kind === "main" && ((a.len < LINK && junction(far)) || tight)){ sig.links.push(a.e.id); link[id] = (link[id] || []).concat([String(far)]); return; }
       // the middle of the stop line: across the lane coming in (the right of the way in is (uz, -ux); [3.22.3] the
       // lane is on its kerb side, SIDE x that: the left)
       var sd = driveSide();
@@ -535,9 +552,7 @@ function signals(W){
   function farTrim(w, all){
     var f = S[w.far] && (all || !S[w.far].side) ? S[w.far] : null;
     if(f){ for(var i = 0; i < f.arms.length; i++) if(f.arms[i].edge === w.edge) return f.arms[i].stop; }
-    var es = inc[w.far] || [], c = 0, minLen = 1e9;
-    es.forEach(function(e){ c = Math.max(c, Math.max(1.5, (cm(e.width) - 2*cm(e.walk))/2)); minLen = Math.min(minLen, lenOf(edgePts(e))); });
-    return Math.min(es.length >= 3 ? c + 2 : es.length === 2 ? 2.5 : 1, 0.4*minLen);
+    return boxAt(w.far);
   }
   function roomy(all){
     Object.keys(S).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){

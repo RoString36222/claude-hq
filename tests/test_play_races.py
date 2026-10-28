@@ -24,6 +24,12 @@ var V4 = {local: ["lane", "local street", "collector", "shared street", "service
           arterial: ["avenue", "boulevard", "boulevard + tram", "avenue_tram"], highway: ["highway", "expressway"], ring: ["expressway"]};
 function v4(d){ d.layers.roads.edges.forEach(function(e, i){ var o = V4[e["class"]]; if(o) e["class"] = o[i %% o.length]; }); return d; }
 var docs = {commons: doc("claude-hq@3.json.gz"), island: doc("island@3.json.gz"), v4: v4(doc("claude-hq@3.json.gz"))};
+// [3.32] on a tram's centre bed (City Gen v4 phase 9): a route down a tram avenue's middle has its gate or start on the
+// raised bed, the line across the carriageways either side
+function onBed(W, x, z){
+  var n = WD.nearestRoad(W, x, z, 30), e = n ? W.edges.filter(function(f){ return f.id === n.edge && f.bed > 0; })[0] : null;
+  return !!(e && n.dist < e.bed/200);
+}
 Object.keys(docs).forEach(function(name){
   var W = WD.pack(docs[name]), seed = P.hashStr(W.seed || W.id), R = PR.plan(W, seed, null), o = out[name] = {};
   var R2 = PR.plan(WD.pack(JSON.parse(JSON.stringify(docs[name]))), seed, null);
@@ -34,11 +40,14 @@ Object.keys(docs).forEach(function(name){
     var prev = r.start, gaps = [], off = 0, far = 0;
     r.cps.forEach(function(c){
       gaps.push(Math.hypot(c.x - prev.x, c.z - prev.z)); prev = c;
-      if(WD.surfaceAt(W, c.x, c.z) !== "road") off++;
+      // (on a road at its own level: a checkpoint on a flyover is on the deck, HQ 3.29's stacked surfaces)
+      var lv = WD.nearestRoad(W, c.x, c.z, 30);
+      // ([3.32] or down the middle of a tram's centre bed: raised paving, the gate spans the carriageways either side)
+      if(WD.surfaceAt(W, c.x, c.z, lv ? lv.y : undefined) !== "road" && !onBed(W, c.x, c.z)) off++;
       var n = WD.nearestRoad(W, c.x, c.z, 30); if(!n || n.dist > 1.5) far++;
     });
     return {id: r.id, kind: r.kind, len: r.len, laps: r.laps, cps: r.cps.length, minGap: Math.min.apply(null, gaps), maxGap: Math.max.apply(null, gaps), off: off, far: far,
-            startOn: WD.surfaceAt(W, r.start.x, r.start.z) === "road"};
+            startOn: WD.surfaceAt(W, r.start.x, r.start.z) === "road" || onBed(W, r.start.x, r.start.z)};
   });
 });
 

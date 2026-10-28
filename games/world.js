@@ -41,7 +41,10 @@
  *                polyline you walk along within BREAKWATER_HALF m, its crown walk BREAKWATER_UP m over the sea.
  *   deckAt(W, x, z)   the y of the pier deck or breakwater crown at (x, z) | null; groundAt is that deck there
  *   metroOf(W), railOf(W), gondolaOf(W): the layers in metres, every Q16 front/along also as a unit [fx, fz] and a
- *                yaw (yaw 0 faces +z, increasing yaw turns left: yaw = atan2(fx, fz))
+ *                yaw (yaw 0 faces +z, increasing yaw turns left: yaw = atan2(fx, fz)). Phase 8 (HQ 3.31): a rail line
+ *                whose doc has `piers` keeps them ([{x, y, z, h}], m); railPiersOf(W) lists them as solid columns
+ *                {x, z, r: 1, y0, y1 (the girder's soffit, RAIL_PIER.GIRDER under the rail)} and blockedAt stops at them
+ *                ([] and nothing new without the field)
  *   waterAt(W, x, z)  the body (from waterOf) whose water (x, z) is on: inside its outline, not on one of its
  *                islands, a pier or the breakwater (a bounding box first) | null
  *   holeAt(W, x, z)   inside a terrain hole (metro entrances and portals, the Island Link portal): every ring of
@@ -51,6 +54,41 @@
  * streetAt(W, x, z) give the street level over it); rayGround passes through a hole the same way. blockedAt is true on a
  * water body (not on a bridge's deck, a pier or the breakwater); surfaceAt says "water" there; no tree stands in a body or
  * a hole.
+ * City Gen v4 phase 6 (@3, HQ 3.29) interchanges: an edge with `oneway` (a ramp) packs and docOf's it back. Stacked
+ * surfaces: a flyover's or ramp's point more than DECK.ELEV (0.5 m) over the terrain is ELEVATED (the land runs on under it).
+ *   groundAt(W, x, z, street, yNow), roadY(W, x, z, yNow), surfaceAt(W, x, z, yNow), nearestRoad(W, x, z, maxM, yNow),
+ *   normalAt / slopeAlong (yNow last): without yNow the ground level, never an elevated deck; with it (the height of
+ *   whatever stands there, m) the highest surface whose y <= yNow + STEP_UP (1 m), junction heights blended within one
+ *   level only (surfaces more than 2 m apart are separate levels); nearestRoad prefers a road at that level.
+ *   decksOf(W)   the elevated stretches [{edge, pts: [[x, y, z]] (m), half, i0, i1}] (memoised)
+ *   piersOf(W)   [{x, z, r, y0, y1, edge, s, span, yaw, node?}] (m, memoised): 2 m columns on a deck's centre line every
+ *                25-30 m where its underside (y - 1.5) is 2 m or more over the ground, never within 0.5 m of a road
+ *                running under it nor on water (a span is lengthened instead); y0 ground, y1 the underside
+ *   blockedAt(W, x, z, yNow)  piers block at ground level (yNow omitted or under the underside); at a deck's level a point
+ *                beyond its edge + 0.3 m (to 3 m) is its parapet: blocked
+ *   deckOver(W, x, z, margin) the y of the highest elevated deck over (x, z) within its half + margin, or null
+ * City Gen v4 phase 7 (@3, HQ 3.30) road tunnels: an edge with `under` ("tunnel" | "cutting") packs and docOf's it back.
+ * The ring road goes under the airport: ring, an open CUTTING down to the TUNNEL's portal, the tunnel (its road level,
+ * 7 m under the land: 5.5 m clear + a 1.5 m roof), a cutting back up, ring. The land is never carved by the generator:
+ *   tunnelsOf(W)  [{edge, kind: "tunnel"|"cutting", pts: [[x, y, z]] (m), half, len, a, b, portal: [at a, at b] (that end
+ *                 meets the other kind), hole (a cutting: its footprint ring [[x, z]], half + TUN.WALL each side)}] (memoised)
+ *   holes         each cutting's footprint is a terrain hole (holeAt / holesOf, kind "cutting"); holeFloor there is the
+ *                 cutting's road; groundAt(W, x, z, true) / streetAt there is the land (the street level over the hole)
+ *   surfaces      a tunnel is a road UNDER the land: without yNow (or with yNow over its road + TUN.CLEAR) groundAt, roadY,
+ *                 surfaceAt over it are the land (the airport); with yNow at or under its road + TUN.CLEAR (you are in it,
+ *                 driving or jumping; not more than TUN.LOW = 3 m under it: hq3d's -1e9 "the street" is the land) the
+ *                 tunnel's road, and no road on the land above counts. nearestRoad passes a tunnel
+ *                 over (OFF_LEVEL) unless yNow is in it. A cutting is an ordinary open road in its hole.
+ *   blockedAt     in a tunnel at its level (yNow in it), beyond its half (14.5 m: carriageway + shoulder) are its walls; on
+ *                 the land over it nothing changes. A cutting deeper than STEP_UP: at road level (yNow closer to the road
+ *                 than to the land) beyond its half are its walls; from the land (or without yNow) its walls and the railing
+ *                 on their coping (half .. half + TUN.WALL + TUN.RAIL) block, so does the portal's headwall over the tunnel's
+ *                 mouth, and with yNow on the land the drop itself (you do not walk off into a 7 m hole)
+ *   tunnelAt(W, x, z, yNow)  {kind, edge, y (its road there), ceil (a tunnel's ceiling, else null)} when (x, z) is in a tunnel or
+ *                 cutting (within half + TUN.WALL) and yNow at its road level, else null
+ *   underOver(W, x, z, margin) the tunnel or cutting whose footprint (half + margin) covers (x, z) | null (props keep off)
+ *   rayGround(W, from, to, step, yNow) with yNow in a tunnel: its road, walls and ceiling are what the ray hits
+ * No tree stands in a cutting's hole (over a tunnel is the airport: anything goes).
  * Pure core: no THREE, no DOM at load time, so node, a worker (importScripts) and the page all load it.
  */
 (function(){
@@ -64,14 +102,32 @@ var LIVE_V = 3, COMMONS = "claude-hq@3", COMMONS_V2 = "claude-hq@2";
 var UID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // the worlds the client may ask for: the fixed ones and a personal island (the dashboard checks again)
 var WORLD_RE = /^(claude-hq@[123]|user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@[23])$/;
-var PACK_V = 4;   // bump whenever pack()'s output changes; cached records with another v are refetched
-                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy)
+var PACK_V = 6;   // bump whenever pack()'s output changes; cached records with another v are refetched
+                  // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy; 5: edges keep `oneway`)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
 // @3 water: the calm surface over sea level (games/ocean.js RIVER_Y, games/worldgeom.js RIVER_LIFT), the breakwater's
 // walkable half width, how far down a hole with nothing under it goes
 var RIVER_LIFT = 0.3, BREAKWATER_HALF = 4, BREAKWATER_UP = 2.5, HOLE_DEPTH = 6;
+// City Gen v4 phase 6 (@3, HQ 3.29) interchanges: a flyover's or ramp's point is ELEVATED where it is more than ELEV m
+// over the terrain; surfaces more than LEVEL_GAP m apart are separate levels; with yNow a surface up to STEP_UP m over
+// it is still reachable; a deck is DECK_D m deep (its underside DECK_D under the road), its parapet stands from its
+// edge to PARAPET m past it (what blocks at deck level: PARA_REACH m beyond it). Piers: single PIER_R m columns on the
+// deck's centre line every PIER_MIN..PIER_MAX m, PIER_ROAD m clear of any other road's full width, only where the
+// underside is PIER_CLEAR m or more over the ground (lower, the deck sits on a solid body)
+var ELEV = 0.5, LEVEL_GAP = 2, STEP_UP = 1.0, DECK_D = 1.5, PARAPET = 0.3, PARA_REACH = 3;
+var RAIL_PIER_R = 1, RAIL_GIRDER = 2.4;   // phase 8: a City Line pier's radius (m, railway.rs PIER_R_CM) and the girder under its rail
+var PIER_R = 1, PIER_MIN = 25, PIER_MAX = 30, PIER_NOM = 27.5, PIER_ROAD = 0.5, PIER_CLEAR = 2, PIER_STEP = 0.5;
+// City Gen v4 phase 7 (@3, HQ 3.30) road tunnels (backend/src/worldgen/tunnels.rs): TUN_CLEAR m clear over a tunnel's road
+// under a TUN_ROOF m roof; walls (and a cutting's retaining walls) TUN_WALL m thick outside its half; a cutting's coping
+// railing reaches TUN_RAIL past them; at a tunnel's level its walls block TUN_REACH m deep
+var TUN_CLEAR = 5.5, TUN_ROOF = 1.5, TUN_WALL = 1, TUN_RAIL = 0.3, TUN_REACH = 3, TUN_CELL = 32;
+// what is more than TUN_LOW m under a tunnel's or cutting's road is not in it (hq3d's "the street" sentinel, -1e9, is the
+// land over a tunnel, never the tunnel)
+var TUN_LOW = STEP_UP + LEVEL_GAP;
+function inTun(yn, y){ return yn <= y + TUN_CLEAR && yn >= y - TUN_LOW; }
+function deckRoad(e){ return !!e && (e.v4 === "flyover" || e.v4 === "ramp"); }
 
 function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
 function smoothstep(t){ t = clamp(t, 0, 1); return t*t*(3 - 2*t); }
@@ -94,7 +150,14 @@ function pack(doc){
   doc = doc || {};
   var L = doc.layers || {}, t = L.terrain || {}, d = L.districts || {}, r = L.roads || {};
   var sizeCm = doc.size_cm || 204800;
-  var nodes = (r.nodes || []).map(function(n){ return {id: n.id, x: n.x|0, y: n.y|0, z: n.z|0}; });
+  var nodes = (r.nodes || []).map(function(n){
+    var o = {id: n.id, x: n.x|0, y: n.y|0, z: n.z|0};
+    // City Gen v4 (HQ 3.26): the junction's control ("priority" | "mini" | "roundabout" | "signals") and a roundabout's
+    // island radius (cm)
+    if(n.junction != null) o.junction = String(n.junction);
+    if(n.island > 0) o.island = n.island|0;
+    return o;
+  });
   var edges = (r.edges || []).map(function(e){
     var cls = e.class === "country" ? "highway" : String(e.class || "street");
     var old = e.class === "country";
@@ -107,6 +170,17 @@ function pack(doc){
             name: e.name != null ? String(e.name) : "", pts: pts};
     if(e.min_tier != null) o.min_tier = e.min_tier|0;      // v2 islands: the tier the road opens in
     if(e.bridge) o.bridge = true;                           // it crosses the river on a deck at its points' y
+    // City Gen v4 (@3, HQ 3.25): the road's class (lanes then counts each way) and its median (cm), raised paving
+    if(e.v4 != null) o.v4 = String(e.v4);
+    if(e.median > 0) o.median = e.median|0;
+    // City Gen v4 phase 6 (@3, HQ 3.29): an interchange's ramp, driven one way only, from a to b
+    if(e.oneway === true) o.oneway = true;
+    // City Gen v4 phase 7 (@3, HQ 3.30): a piece of road below the land, "tunnel" or "cutting"
+    if(e.under === "tunnel" || e.under === "cutting") o.under = e.under;
+    // City Gen v4 phase 9 (@3, HQ 3.32): a tram street's track ("centre-bed", "shared-double", ...) and a centre bed's
+    // width (cm): raised (SIDEWALK_UP), kerbed paving down the middle that only the trams run on
+    if(typeof e.tram === "string" && e.tram) o.tram = e.tram;
+    if(e.bed > 0) o.bed = e.bed|0;
     return o;
   });
   var W = {
@@ -115,6 +189,8 @@ function pack(doc){
     districts: {cell: d.cell_cm || 800, origin: d.origin_cm != null ? d.origin_cm : -sizeCm/2, n: d.n|0,
                 k: Uint8Array.from(d.kinds || []), legend: (d.legend || []).slice()},
     nodes: nodes, edges: edges,
+    // [3.26] full roundabouts' islands (m): raised, planted ground in the road (roadUnder)
+    rbs: nodes.filter(function(n){ return n.junction === "roundabout" && n.island > 0; }).map(function(n){ return {x: n.x/100, z: n.z/100, r: n.island/100}; }),
     blocks: L.blocks || [], lots: L.lots || [], sites: L.sites || [],
     index: null
   };
@@ -146,6 +222,12 @@ function docOf(W){
     if(e.ref != null) o.ref = e.ref;
     if(e.min_tier != null) o.min_tier = e.min_tier;
     if(e.bridge) o.bridge = true;
+    if(e.v4 != null) o.v4 = e.v4;
+    if(e.median) o.median = e.median;
+    if(e.oneway) o.oneway = true;
+    if(e.under) o.under = e.under;
+    if(e.tram) o.tram = e.tram;
+    if(e.bed) o.bed = e.bed;
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},
@@ -210,6 +292,18 @@ function index(W){
   });
   // segments as flat (edge, seg) pairs, bucketed by their box grown by half + CLEAR, so the
   // point's own bucket holds every segment whose road (or tree clearance) can cover it
+  // City Gen v4 phase 6: which edges are an interchange's flyover or ramps (null in a world without them)
+  I.deck = W.edges.some(deckRoad) ? W.edges.map(deckRoad) : null;
+  // City Gen v4 phase 7: any tunnel or cutting (false in a world without them: every path as before)
+  I.under = W.edges.some(function(e){ return !!e.under; });
+  // [3.32] a world with a tram's centre bed: each edge's arc lengths and junction trims (medGap)
+  I.mid = W.edges.some(function(e){ return e.bed > 0; }) ? midTrims(W) : null;
+  // and a cutting's ends at a tunnel's portal ([at a, at b] by edge index): past one, it is the tunnel's
+  if(I.under){
+    var tn = {};
+    W.edges.forEach(function(e){ if(e.under === "tunnel"){ tn[e.a] = 1; tn[e.b] = 1; } });
+    I.portal = W.edges.map(function(e){ return e.under === "cutting" ? [!!tn[e.a], !!tn[e.b]] : null; });
+  }
   W.edges.forEach(function(e, ei){
     var p = e.pts, m = p.length/3, g = e.width/200 + CLEAR;
     for(var s = 0; s + 1 < m; s++){
@@ -239,27 +333,184 @@ function proj(e, s, x, z){
 // each edge's outer line, so the surface no longer jumps where the nearest edge switches. Off every carriageway the
 // sidewalk sits SIDEWALK_UP higher with a real kerb step, matching the drawn walk ribbon (the camera pivot spring
 // smooths the step for the view).
-var ROAD = {y: 0}, CE = [], CS = [], CD = [], CT = [], CY = [];
-function roadUnder(W, x, z){
-  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)], n = 0, gap = Infinity, i, k;
+//
+// City Gen v4 phase 6 (@3): stacked surfaces. An interchange's flyover or ramp is ELEVATED where its surface is more than
+// ELEV over the terrain there (the land runs on beneath it). Without yNow (the height, m, of whatever stands there) an
+// elevated surface is never the answer: under a flyover you are on the road or the land beneath it. With yNow the
+// surfaces under (x, z) are clustered into levels (sorted by y, a gap over LEVEL_GAP starts a new one) and the highest
+// level whose lowest surface is <= yNow + STEP_UP is the one blended (so a car on a ramp stays on it, one under the
+// flyover stays under it); when none is, the answer is the one without yNow. An elevated surface reaches PARAPET past
+// its half width (to its parapet), at grade a deck edge is a road like any other. A world without elevated surfaces
+// near (x, z) takes the original path, untouched.
+var ROAD = {y: 0, edge: -1}, CE = [], CS = [], CD = [], CT = [], CY = [], CG = [], CL = [];
+function roadUnder(W, x, z, yNow){
+  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)], n = 0, gap = Infinity, i, k, dk = I.deck, ext = 0;
+  var lv = yNow != null && isFinite(+yNow), yn = +yNow, tun = false;
   for(i = 0; i < L.length; i += 2){
     var e = W.edges[L[i]];
+    // phase 7: a tunnel's road only for what is in it (yNow at or under its road + TUN_CLEAR)
+    if(e.under === "tunnel" && !lv) continue;
     proj(e, L[i+1], x, z);
-    gap = Math.min(gap, S.d - (e.width - 2*e.walk)/200);   // every carriageway counts (a highway beside a sidewalk too)
-    if(S.d > e.width/200) continue;
+    if(e.under === "tunnel" && !inTun(yn, S.y)) continue;
+    // (past a cutting's end at a portal is the tunnel: the same rule)
+    var past = e.under === "cutting" && pastPortal(I.portal[L[i]], e.pts, x, z, e.width/200);
+    if(past && !(lv && inTun(yn, S.y))) continue;
+    // every carriageway counts (a highway beside a sidewalk too); a median (v4) is raised paving, no carriageway; so is a
+    // tram's centre bed ([3.32] phase 9: medGap, below)
+    var med = e.median ? e.median/200 : 0, g = S.d < med ? med - S.d : S.d - (e.width - 2*e.walk)/200;
+    if(S.d > e.width/200){
+      if(!(dk && dk[L[i]] && S.d <= e.width/200 + PARAPET)) continue;
+      ext++;   // a deck's parapet margin: counts only where that deck is elevated (below)
+    }
     for(k = 0; k < n && CE[k] !== L[i]; k++);
-    if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; }
+    if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; CG[k] = Infinity; }
+    CG[k] = Math.min(CG[k], g);
     if(S.d < CD[k]){ CD[k] = S.d; CS[k] = L[i+1]; CT[k] = S.t; CY[k] = S.y; }
+    if(e.under === "tunnel" || past) tun = true;
   }
   if(!n) return 0;
+  gap = medGap(W, n);
+  if(tun){
+    // in a tunnel: its road (and a cutting it meets) only, never a road on the land over it
+    var m = 0;
+    for(k = 0; k < n; k++){
+      if(!W.edges[CE[k]].under) continue;
+      CE[m] = CE[k]; CD[m] = CD[k]; CS[m] = CS[k]; CT[m] = CT[k]; CY[m] = CY[k]; CG[m] = CG[k];
+      m++;
+    }
+    n = m;
+    gap = medGap(W, n);
+  }
+  if(dk){
+    var el = 0, h = null;
+    for(k = 0; k < n; k++){
+      CL[k] = 0;
+      if(!dk[CE[k]]) continue;
+      var ed = W.edges[CE[k]];
+      CY[k] = bendY(ed, CS[k], x, z, CT[k], CY[k]);
+      if(h == null) h = heightAt(W, x, z);
+      if(CY[k] - h > ELEV){ CL[k] = 1; el++; }
+      else if(CD[k] > ed.width/200) CL[k] = -1;   // past an at-grade deck road's half: not on it
+    }
+    if(el || ext) return levelUnder(W, x, z, yNow, n);
+  }
   var sw = 0, sy = 0, best = 0;
   for(k = 0; k < n; k++){
-    var ek = W.edges[CE[k]], hk = ek.width/200, y = bendY(ek, CS[k], x, z, CT[k], CY[k]);
+    var ek = W.edges[CE[k]], hk = ek.width/200, y = dk && dk[CE[k]] ? CY[k] : bendY(ek, CS[k], x, z, CT[k], CY[k]);
     var w = hk > 0 ? smoothstep(1 - CD[k]/hk) : 0;
     sw += w; sy += w*y; CY[k] = y;
     if(CD[k] < CD[best]) best = k;
   }
   ROAD.y = sw > 0 ? sy/sw : CY[best];
+  ROAD.edge = CE[best];
+  for(i = 0; W.rbs && i < W.rbs.length; i++){ var rb = W.rbs[i]; if((x - rb.x)*(x - rb.x) + (z - rb.z)*(z - rb.z) < rb.r*rb.r){ gap = 1; break; } }
+  if(gap <= 0) return 1;
+  ROAD.y += SIDEWALK_UP;
+  return 2;
+}
+// the least carriageway gap of roadUnder's n candidates (CG: each edge's least over its segments, <= 0 on a carriageway).
+// [3.32] A tram's centre bed (I.mid: a world with one) is raised paving, no carriageway: (x, z) is on it where its edge's
+// nearest segment has it within the bed's half width, alongside the edge (not past its end) and between the edge's
+// junction trims (worldgeom.js armClear: the bed stops short of a junction box, runs on through a node where the road
+// just carries on); there only another road alongside, with (x, z) on its carriageway and off its own median or bed,
+// makes it road. (Taken per segment as a median is, any segment's clamped end a few metres along, its own edge's or the
+// next one's, would count as carriageway: the bed would be road everywhere but next to its points.)
+function medGap(W, n){
+  var gap = Infinity, M = W.index && W.index.mid, k, at = -1, h = 0;
+  for(k = 0; k < n; k++) gap = Math.min(gap, CG[k]);
+  if(!M || gap > 0) return gap;
+  for(k = 0; k < n && at < 0; k++){
+    var hk = stripHalf(W.edges[CE[k]]);
+    if(hk > 0 && CD[k] < hk && inStrip(W, M, k)){ at = k; h = hk; }
+  }
+  if(at < 0) return gap;
+  for(k = 0; k < n; k++){
+    if(k === at) continue;
+    var e = W.edges[CE[k]], g = CD[k] - (e.width - 2*e.walk)/200, hb = stripHalf(e) || (e.median ? e.median/200 : 0);
+    if(g <= 0 && !pastEnd(W, k) && !(hb > 0 && CD[k] < hb)) return g;
+  }
+  return h - CD[at];
+}
+function stripHalf(e){ return e.bed > 0 && !e.median ? e.bed/200 : 0; }
+// candidate k's nearest point is past an end of its edge (clamped there), not alongside it
+function pastEnd(W, k){ var e = W.edges[CE[k]], ns = e.pts.length/3 - 1; return (CS[k] === 0 && CT[k] <= 0) || (CS[k] === ns - 1 && CT[k] >= 1); }
+function inStrip(W, M, k){
+  if(pastEnd(W, k)) return false;
+  var o = M[CE[k]], j = CS[k], s = o.cum[j] + CT[k]*(o.cum[j + 1] - o.cum[j]);
+  return s >= o.t[0] && s <= o.len - o.t[1];
+}
+// per edge {cum (m along at each point), len, t: [trim at a, trim at b]} (worldgeom.js prep's tA / tB, the same rule)
+var TRIM_MAX = 25;
+function midTrims(W){
+  var inc = {}, out = [];
+  W.edges.forEach(function(e){
+    var p = e.pts, m = p.length/3, cum = new Float64Array(Math.max(1, m)), j;
+    for(j = 1; j < m; j++) cum[j] = cum[j - 1] + Math.hypot((p[3*j] - p[3*j - 3])/100, (p[3*j + 2] - p[3*j - 1])/100);
+    var L = m ? cum[m - 1] : 0, o = {cum: cum, len: L, t: [0, 0]};
+    out.push(o);
+    if(m < 2 || e.a === e.b || !(L > 0)) return;
+    [0, 1].forEach(function(end){
+      var s = end ? L - Math.min(3, L) : Math.min(3, L), i = 0;
+      while(i < m - 2 && cum[i + 1] < s) i++;
+      var f = cum[i + 1] > cum[i] ? (s - cum[i])/(cum[i + 1] - cum[i]) : 0, qx = (p[3*i] + (p[3*i + 3] - p[3*i])*f)/100, qz = (p[3*i + 2] + (p[3*i + 5] - p[3*i + 2])*f)/100;
+      var k = end ? m - 1 : 0, dx = qx - p[3*k]/100, dz = qz - p[3*k + 2]/100, l = Math.hypot(dx, dz) || 1, id = end ? e.b : e.a;
+      (inc[id] = inc[id] || []).push({o: o, end: end, h: e.width/200, dx: dx/l, dz: dz/l});
+    });
+  });
+  Object.keys(inc).forEach(function(id){
+    var arms = inc[id];
+    if(arms.length < 2) return;
+    arms.forEach(function(a){
+      var t = 0;
+      arms.forEach(function(b){ if(b !== a) t = Math.max(t, armClear(a.h, b.h, a.dx*b.dx + a.dz*b.dz) + 0.3); });
+      a.o.t[a.end] = Math.min(t, TRIM_MAX, a.o.len*0.45);
+    });
+  });
+  return out;
+}
+// worldgeom.js armClear: how far along arm a (half width ha) its edge clears arm b's band (half width hb), dot c
+function armClear(ha, hb, c){
+  c = clamp(c, -1, 1);
+  var s = Math.sqrt(1 - c*c);
+  if(s < 1e-3) return c > 0 ? TRIM_MAX : 0;
+  var t = (hb + ha*c)/s;
+  if(c < 0) t = Math.min(t, ha*s/-c);
+  return Math.max(0, t);
+}
+// is (x, z) past an end of a cutting's points p that is a tunnel's portal (pt: [at a, at b]), within ~its half h of it?
+function pastPortal(pt, p, x, z, h){
+  if(!pt) return false;
+  var m = p.length/3;
+  if(pt[0] && rawT(p, 0, x, z) < 0 && Math.abs(x - p[0]/100) + Math.abs(z - p[2]/100) <= 2*h) return true;
+  return pt[1] && rawT(p, m - 2, x, z) > 1 && Math.abs(x - p[3*m-3]/100) + Math.abs(z - p[3*m-1]/100) <= 2*h;
+}
+// roadUnder where elevated surfaces are among the n candidates (CL: 1 elevated, 0 at grade, -1 not on it at all)
+function levelUnder(W, x, z, yNow, n){
+  var ord = [], pick = null, k, j;
+  for(k = 0; k < n; k++){
+    if(CL[k] < 0) continue;
+    if(CL[k] === 0) CY[k] = bendY(W.edges[CE[k]], CS[k], x, z, CT[k], CY[k]);
+    ord.push(k);
+  }
+  ord.sort(function(a, b){ return CY[a] - CY[b] || CE[a] - CE[b]; });
+  if(yNow != null && isFinite(+yNow)){
+    var lv = [], cur = null;
+    ord.forEach(function(k){ if(cur && CY[k] - CY[cur[cur.length - 1]] <= LEVEL_GAP) cur.push(k); else lv.push(cur = [k]); });
+    for(j = lv.length - 1; j >= 0 && !pick; j--) if(CY[lv[j][0]] <= +yNow + STEP_UP) pick = lv[j];
+  }
+  if(!pick) pick = ord.filter(function(k){ return CL[k] === 0; });
+  if(!pick.length) return 0;
+  var sw = 0, sy = 0, best = pick[0], gap = Infinity;
+  pick.forEach(function(k){
+    var ek = W.edges[CE[k]], hk = ek.width/200, w = hk > 0 ? smoothstep(1 - CD[k]/hk) : 0;
+    sw += w; sy += w*CY[k];
+    // an elevated deck is carriageway out to its parapet
+    gap = Math.min(gap, CL[k] === 1 ? Math.min(CG[k], CD[k] - hk - PARAPET) : CG[k]);
+    if(CD[k] < CD[best]) best = k;
+  });
+  ROAD.y = sw > 0 ? sy/sw : CY[best];
+  ROAD.edge = CE[best];
+  for(var i = 0; W.rbs && i < W.rbs.length; i++){ var rb = W.rbs[i]; if((x - rb.x)*(x - rb.x) + (z - rb.z)*(z - rb.z) < rb.r*rb.r){ gap = 1; break; } }
   if(gap <= 0) return 1;
   ROAD.y += SIDEWALK_UP;
   return 2;
@@ -333,16 +584,22 @@ function siteAt(W, x, z){
   return null;
 }
 
-function nearestRoad(W, x, z, maxM){
+// yNow (optional, m): prefer the road at that level (one whose point there is over yNow + STEP_UP, or more than
+// STEP_UP + LEVEL_GAP under it, only when there is no other within maxM)
+var OFF_LEVEL = 1e4;
+function nearestRoad(W, x, z, maxM, yNow){
   maxM = maxM != null ? +maxM : 40;
-  var I = index(W), nb = I.nb, best = null, bd = Infinity;
+  var I = index(W), nb = I.nb, best = null, bd = Infinity, lv = yNow != null && isFinite(+yNow), yn = +yNow;
   eachBucket(W, nb, x - maxM, x + maxM, z - maxM, z + maxM, function(b){
     var L = I.segs[b];
     for(var i = 0; i < L.length; i += 2){
       var e = W.edges[L[i]], s = L[i+1];
       proj(e, s, x, z);
-      if(S.d < bd || (S.d === bd && best && e.id < best.edge)){
-        bd = S.d;
+      var key = S.d;
+      if(lv && (S.y > yn + STEP_UP || S.y < yn - STEP_UP - LEVEL_GAP)) key += OFF_LEVEL;
+      else if(e.under === "tunnel" && !(lv && inTun(yn, S.y))) key += OFF_LEVEL;   // (phase 7: under the land)
+      if(key < bd || (key === bd && best && e.id < best.edge)){
+        bd = key;
         var p = e.pts;
         best = {edge: e.id, seg: s, t: S.t, dist: S.d, x: S.x, y: S.y, z: S.z,
                 yaw: Math.atan2((p[3*s+3] - p[3*s])/100, (p[3*s+5] - p[3*s+2])/100),
@@ -353,11 +610,11 @@ function nearestRoad(W, x, z, maxM){
   return best && best.dist <= maxM ? best : null;
 }
 
-function roadY(W, x, z){ return roadUnder(W, x, z) ? ROAD.y : null; }
+function roadY(W, x, z, yNow){ return roadUnder(W, x, z, yNow) ? ROAD.y : null; }
 
-function surfaceAt(W, x, z){
+function surfaceAt(W, x, z, yNow){
   if(Math.abs(x) > W.half || Math.abs(z) > W.half) return "edge";
-  var r = roadUnder(W, x, z);
+  var r = roadUnder(W, x, z, yNow);
   if(r === 1) return "road";
   if(r === 2) return "sidewalk";
   if(W.water && waterAt(W, x, z)) return "water";
@@ -377,11 +634,15 @@ function padOf(W, x, z){
   return null;
 }
 
-// street: true gives the street level over a terrain hole too (@3); without it a hole's ground is its floor (holeFloor)
-function groundAt(W, x, z, street){
-  if(!street && (W.metro || W.rail)){ var f = holeFloor(W, x, z); if(f != null) return f; }
+// street: true gives the street level over a terrain hole too (@3); without it a hole's ground is its floor (holeFloor).
+// yNow (optional, m): the height of whatever stands there. Without it the ground level, never an elevated deck (under a
+// flyover: the road or the land beneath it); with it the highest surface whose y <= yNow + STEP_UP (roadUnder's levels)
+function groundAt(W, x, z, street, yNow){
+  if(!street && holey(W)){ var f = holeFloor(W, x, z); if(f != null) return f; }
+  // phase 7: the street level over a cutting is the land it is cut through
+  if(street && index(W).under){ var hc = holeRec(W, x, z); if(hc && hc.kind === "cutting") return heightAt(W, x, z); }
   if(W.water){ var dk = deckAt(W, x, z); if(dk != null) return dk; }   // @3: a pier's deck, the breakwater's crown
-  if(roadUnder(W, x, z)) return ROAD.y;
+  if(roadUnder(W, x, z, yNow)) return ROAD.y;
   var I = index(W), nb = I.nb, L = I.pads[bOf(W, z, nb)*nb + bOf(W, x, nb)], bd = Infinity, py = 0;
   for(var i = 0; i < L.length; i++){
     var p = I.padList[L[i]], R = p.rect;
@@ -397,19 +658,19 @@ function groundAt(W, x, z, street){
 
 function streetAt(W, x, z){ return groundAt(W, x, z, true); }
 
-function normalAt(W, x, z){
+function normalAt(W, x, z, yNow){
   var e = 0.5;
-  var gx = (groundAt(W, x + e, z) - groundAt(W, x - e, z))/(2*e);
-  var gz = (groundAt(W, x, z + e) - groundAt(W, x, z - e))/(2*e);
+  var gx = (groundAt(W, x + e, z, false, yNow) - groundAt(W, x - e, z, false, yNow))/(2*e);
+  var gz = (groundAt(W, x, z + e, false, yNow) - groundAt(W, x, z - e, false, yNow))/(2*e);
   var l = Math.sqrt(gx*gx + 1 + gz*gz);
   return {x: -gx/l, y: 1/l, z: -gz/l};
 }
 
-function slopeAlong(W, x, z, yaw, len){
+function slopeAlong(W, x, z, yaw, len, yNow){
   len = len != null ? +len : 1.5;
   if(!(len > 0)) return 0;
   var sx = Math.sin(yaw || 0)*len, sz = Math.cos(yaw || 0)*len;
-  return (groundAt(W, x + sx, z + sz) - groundAt(W, x - sx, z - sz))/(2*len);
+  return (groundAt(W, x + sx, z + sz, false, yNow) - groundAt(W, x - sx, z - sz, false, yNow))/(2*len);
 }
 
 function slopeFactor(grade, kind){
@@ -593,7 +854,9 @@ function railOf(W){
   var L = W.rail, sea = L.sea, su = sea ? q16(sea.front) : null;
   M.rail = {
     lines: (L.lines || []).filter(Boolean).map(function(l){
-      return {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: strs(l.stations), path: pathM(l.path), kinds: strs(l.kinds), tier: (l.tier|0) || 1};
+      var o = {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: strs(l.stations), path: pathM(l.path), kinds: strs(l.kinds), tier: (l.tier|0) || 1};
+      if(Array.isArray(l.piers)) o.piers = railPiersM(l.piers);   // phase 8: the generator's viaduct piers (only when the doc has them)
+      return o;
     }),
     stations: (L.stations || []).filter(Boolean).map(function(s){
       var u = q16(s.along);
@@ -604,6 +867,46 @@ function railOf(W){
     holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; })
   };
   return M.rail;
+}
+// City Gen v4 phase 8: a rail line's piers [{x, y, z, h}] (cm: the foot at (x, z), the ground there y, the rail h over
+// it) in metres; any without a finite x, z dropped
+function railPiersM(P){
+  return (P || []).filter(function(p){ return p && isFinite(+p.x) && isFinite(+p.z); })
+    .map(function(p){ return {x: cm(p.x), y: cm(p.y), z: cm(p.z), h: Math.max(0, cm(p.h))}; });
+}
+// every rail line's doc piers as solid columns [{x, z, r, y0, y1, line}] (m): RAIL_PIER_R round (railway.rs PIER_R_CM),
+// from the foot y0 up to the girder's soffit y1 (RAIL_GIRDER under the rail); [] when no line has piers (memoised)
+function railPiersOf(W){
+  if(!W || !W.rail) return [];
+  var M = memoOf(W);
+  if(M.railPiers !== undefined) return M.railPiers;
+  var R = railOf(W), out = [], grid = {};
+  (R ? R.lines : []).forEach(function(l){
+    (l.piers || []).forEach(function(p){
+      out.push({x: p.x, z: p.z, r: RAIL_PIER_R, y0: p.y, y1: p.y + Math.max(0, p.h - RAIL_GIRDER), line: l.id});
+    });
+  });
+  out.forEach(function(p){
+    for(var j = Math.floor((p.z - p.r)/DECK_CELL); j <= Math.floor((p.z + p.r)/DECK_CELL); j++)
+      for(var i = Math.floor((p.x - p.r)/DECK_CELL); i <= Math.floor((p.x + p.r)/DECK_CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(p);
+  });
+  M.railPierIx = grid;
+  M.railPiers = out;
+  return out;
+}
+// a rail pier at (x, z), for something at yNow (m; omitted: at ground level) under the viaduct's girder
+function railPierHit(W, x, z, yNow){
+  if(!W || !W.rail) return false;
+  var M = memoOf(W);
+  if(M.railPiers === undefined) railPiersOf(W);
+  if(!M.railPiers.length) return false;
+  var L = M.railPierIx[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return false;
+  for(var i = 0; i < L.length; i++){
+    var p = L[i], dx = x - p.x, dz = z - p.z;
+    if(dx*dx + dz*dz < p.r*p.r && (yNow == null || !isFinite(+yNow) || +yNow < p.y1)) return true;
+  }
+  return false;
 }
 function gondolaOf(W){
   if(!W || !W.gondola) return null;
@@ -621,8 +924,9 @@ function gondolaOf(W){
 }
 // every terrain hole once, {P: [[x, z], ...] (m), b (box), kind: "entrance"|"portal"|"hole"|"rail", ref}, in a 32 m grid
 var HOLE_CELL = 32;
+function holey(W){ return !!(W.metro || W.rail || index(W).under); }
 function holeIndex(W){
-  if(!W || !(W.metro || W.rail)) return null;
+  if(!W || !holey(W)) return null;
   var M = memoOf(W);
   if(M.holes !== undefined) return M.holes;
   var list = [], seen = {}, grid = {}, mo = metroOf(W), ro = railOf(W);
@@ -644,6 +948,8 @@ function holeIndex(W){
     mo.holes.forEach(function(P){ add(P, "hole", null); });
   }
   if(ro) ro.holes.forEach(function(P){ add(P, "rail", null); });
+  // phase 7: every cutting's footprint (the land opens down to its road)
+  tunnelsOf(W).forEach(function(t){ if(t.hole) add(t.hole, "cutting", t); });
   M.holes = list.length ? {list: list, grid: grid} : null;
   return M.holes;
 }
@@ -672,6 +978,7 @@ function nearestPathY(paths, x, z){
 function holeFloor(W, x, z){
   var h = holeRec(W, x, z);
   if(!h) return null;
+  if(h.kind === "cutting"){ tunProj(h.ref, x, z); return TP.y; }   // phase 7: the cutting's road
   var street = groundAt(W, x, z, true), y = null, mo = metroOf(W), ro = railOf(W);
   if(h.kind === "entrance" && mo){
     var st = mo.stations.filter(function(s){ return s.id === h.ref.station; })[0];
@@ -682,6 +989,347 @@ function holeFloor(W, x, z){
     y = nearestPathY(ro.lines.map(function(l){ return l.path; }), x, z);
   }
   return y != null && isFinite(y) && y < street - 0.5 ? y : street - HOLE_DEPTH;
+}
+
+/* ---------- City Gen v4 phase 6 (@3): decks and piers, memoised per world ([] in a world without them) ---------- */
+// The elevated stretches of the flyovers and ramps: [{edge, pts: [[x, y, z], ...] (m), half, i0, i1}], every run of
+// elevated points (ELEV over the terrain) with the point on the ground before and after it where there is one (so a
+// stretch runs from where the road leaves the ground), in the edge's order a -> b; i0/i1 its first/last point's index.
+function decksOf(W){
+  if(!W || !W.edges) return [];
+  var M = memoOf(W);
+  if(M.decks !== undefined) return M.decks;
+  var out = [];
+  W.edges.forEach(function(e){
+    if(!deckRoad(e)) return;
+    var p = e.pts, m = p.length/3, up = [], i, j;
+    for(i = 0; i < m; i++) up.push(p[3*i+1]/100 - heightAt(W, p[3*i]/100, p[3*i+2]/100) > ELEV);
+    for(i = 0; i < m; i = j + 1){
+      j = i;
+      if(!up[i]) continue;
+      while(j + 1 < m && up[j + 1]) j++;
+      var a = Math.max(0, i - 1), b = Math.min(m - 1, j + 1), pts = [];
+      for(var k = a; k <= b; k++) pts.push([p[3*k]/100, p[3*k+1]/100, p[3*k+2]/100]);
+      if(pts.length >= 2) out.push({edge: e.id, pts: pts, half: e.width/200, i0: a, i1: b});
+    }
+  });
+  M.decks = out;
+  return out;
+}
+// the decks' segments in a DECK_CELL m grid, each grown by half + PARA_REACH | null without decks
+var DECK_CELL = 32, DK = {d: 0, y: 0, x: 0, z: 0};
+function deckIndex(W){
+  var M = memoOf(W);
+  if(M.deckIx !== undefined) return M.deckIx;
+  var D = decksOf(W), grid = {};
+  D.forEach(function(d, di){
+    var g = d.half + PARA_REACH;
+    for(var s = 0; s + 1 < d.pts.length; s++){
+      var a = d.pts[s], b = d.pts[s+1];
+      for(var j = Math.floor((Math.min(a[2], b[2]) - g)/DECK_CELL); j <= Math.floor((Math.max(a[2], b[2]) + g)/DECK_CELL); j++)
+        for(var i = Math.floor((Math.min(a[0], b[0]) - g)/DECK_CELL); i <= Math.floor((Math.max(a[0], b[0]) + g)/DECK_CELL); i++)
+          (grid[i + "," + j] = grid[i + "," + j] || []).push(di, s);
+    }
+  });
+  return (M.deckIx = D.length ? grid : null);
+}
+// (x, z) on deck segment a -> b ([x, y, z] m): plan distance, and the deck's point there, in DK
+function deckProj(a, b, x, z){
+  var ux = b[0] - a[0], uz = b[2] - a[2], L2 = ux*ux + uz*uz, t = L2 > 0 ? clamp(((x - a[0])*ux + (z - a[2])*uz)/L2, 0, 1) : 0;
+  DK.x = a[0] + ux*t; DK.z = a[2] + uz*t; DK.y = a[1] + (b[1] - a[1])*t;
+  DK.d = Math.sqrt((x - DK.x)*(x - DK.x) + (z - DK.z)*(z - DK.z));
+}
+// the y (m) of the highest elevated deck whose footprint (its half + margin m) covers (x, z), or null: what a renderer
+// keeps its props and furniture off
+function deckOver(W, x, z, margin){
+  var G = W ? deckIndex(W) : null, L = G && G[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return null;
+  var D = decksOf(W), m = Math.min(+margin || 0, PARA_REACH), best = null;
+  for(var i = 0; i < L.length; i += 2){
+    var d = D[L[i]];
+    deckProj(d.pts[L[i+1]], d.pts[L[i+1] + 1], x, z);
+    if(DK.d > d.half + m || (best != null && DK.y <= best)) continue;
+    if(DK.y - heightAt(W, DK.x, DK.z) > ELEV) best = DK.y;
+  }
+  return best;
+}
+// The decks' piers: [{x, z, r, y0, y1, edge, s, span, yaw, node?}] (m). Single columns PIER_R m in radius on a deck's
+// centre line every PIER_MIN..PIER_MAX m (PIER_NOM preferred) along every stretch where the deck's underside (DECK_D
+// under its surface) is PIER_CLEAR m or more over the ground; a spot within PIER_ROAD m of another road's full width
+// (carriageway + pavement) that runs under the deck, on water or in a terrain hole is skipped and the span lengthened
+// (a flyover's span over the ring is one span). Where such a stretch ends at a node high enough (a trumpet's T) one
+// pier stands under the node (`node`: its id, shared by the decks meeting there). y0 the ground (the terrain), y1 the
+// deck's underside; s is m along the stretch from its first point, span the m back to the previous support (a pier,
+// the node, or the start of the high stretch, where the solid body under a low deck ends); yaw the deck's direction.
+function piersOf(W){
+  if(!W || !W.edges) return [];
+  var M = memoOf(W);
+  if(M.piers !== undefined) return M.piers;
+  var D = decksOf(W), out = [], nodes = {}, inc = {}, nodePier = {};
+  if(D.length){
+    (W.nodes || []).forEach(function(n){ nodes[n.id] = n; });
+    W.edges.forEach(function(e){ (inc[e.a] = inc[e.a] || []).push(e.id); (inc[e.b] = inc[e.b] || []).push(e.id); });
+  }
+  var edgeOf = {};
+  W.edges.forEach(function(e){ edgeOf[e.id] = e; });
+  D.forEach(function(d){
+    var P = d.pts, Sa = [0], e = edgeOf[d.edge], k;
+    for(k = 1; k < P.length; k++) Sa.push(Sa[k-1] + Math.sqrt((P[k][0] - P[k-1][0])*(P[k][0] - P[k-1][0]) + (P[k][2] - P[k-1][2])*(P[k][2] - P[k-1][2])));
+    var len = Sa[Sa.length - 1];
+    if(!(len > 0)) return;
+    function at(s){
+      var j = 0;
+      while(j < P.length - 2 && Sa[j + 1] < s) j++;
+      var L = Sa[j + 1] - Sa[j], t = L > 0 ? clamp((s - Sa[j])/L, 0, 1) : 0, a = P[j], b = P[j + 1];
+      return {x: a[0] + (b[0] - a[0])*t, y: a[1] + (b[1] - a[1])*t, z: a[2] + (b[2] - a[2])*t, yaw: Math.atan2(b[0] - a[0], b[2] - a[2])};
+    }
+    function tall(q){ return q.y - DECK_D - heightAt(W, q.x, q.z) >= PIER_CLEAR; }
+    var own = {}; own[d.edge] = 1;
+    // the runs (m along the stretch) where the deck is high enough for piers, sampled every PIER_STEP m
+    var runs = [], run = null, n = Math.max(1, Math.ceil(len/PIER_STEP));
+    for(k = 0; k <= n; k++){
+      var s = len*k/n;
+      if(tall(at(s))){ if(!run) run = [s, s]; run[1] = s; } else if(run){ runs.push(run); run = null; }
+    }
+    if(run) runs.push(run);
+    // the stretch's ends at its edge's nodes (when the stretch reaches them)
+    var endNode = [d.i0 === 0 ? e.a : null, d.i1 === e.pts.length/3 - 1 ? e.b : null];
+    runs.forEach(function(r){
+      var last = r[0];
+      [[0, r[0] <= PIER_STEP], [1, r[1] >= len - PIER_STEP]].forEach(function(c){
+        var id = endNode[c[0]], nd = id != null ? nodes[id] : null;
+        if(!c[1] || !nd || nodePier[id] !== undefined) return;
+        var ign = {};
+        (inc[id] || []).forEach(function(eid){ ign[eid] = 1; });
+        var q = {x: nd.x/100, y: nd.y/100, z: nd.z/100}, g = heightAt(W, q.x, q.z);
+        nodePier[id] = null;
+        if(q.y - DECK_D - g < PIER_CLEAR || !pierOk(W, q.x, q.z, q.y, ign)) return;
+        var o = {x: q.x, z: q.z, r: PIER_R, y0: g, y1: q.y - DECK_D, edge: d.edge, s: c[0] ? len : 0, span: 0, yaw: at(c[0] ? len : 0).yaw, node: id};
+        nodePier[id] = o;
+        out.push(o);
+      });
+      for(var guard = 0; r[1] - last > PIER_MAX && guard < 1000; guard++){
+        var got = null;
+        // PIER_NOM first, then outward to PIER_MIN..PIER_MAX, then further (a lengthened span) until the run's end
+        for(var dt = 0; !got; dt += PIER_STEP){
+          var ts = dt === 0 ? [PIER_NOM] : [PIER_NOM - dt, PIER_NOM + dt], any = false;
+          for(var u = 0; u < ts.length && !got; u++){
+            var t = ts[u];
+            if(t < PIER_MIN - 1e-9 || last + t > r[1] - PIER_STEP) continue;
+            any = true;
+            var q = at(last + t);
+            if(!tall(q) || !pierOk(W, q.x, q.z, q.y, own)) continue;
+            got = {x: q.x, z: q.z, r: PIER_R, y0: heightAt(W, q.x, q.z), y1: q.y - DECK_D, edge: d.edge, s: last + t, span: t, yaw: q.yaw};
+          }
+          if(!any && PIER_NOM + dt > r[1] - last) break;
+        }
+        if(!got) break;
+        out.push(got);
+        last = got.s;
+      }
+    });
+  });
+  // a grid for blockedAt
+  var grid = {};
+  out.forEach(function(p){
+    for(var j = Math.floor((p.z - p.r)/DECK_CELL); j <= Math.floor((p.z + p.r)/DECK_CELL); j++)
+      for(var i = Math.floor((p.x - p.r)/DECK_CELL); i <= Math.floor((p.x + p.r)/DECK_CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(p);
+  });
+  M.pierIx = grid;
+  M.piers = out;
+  return out;
+}
+// may a pier stand at (x, z) under a deck whose surface is at y? Not on water or in a hole, nor within PIER_ROAD m of the
+// full width of a road (but those in `own`) that runs under the deck there
+function pierOk(W, x, z, y, own){
+  var hm = W.half - 2, r = PIER_R, i;
+  if(!(Math.abs(x) <= hm && Math.abs(z) <= hm)) return false;
+  var ring = [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]];
+  for(i = 0; i < ring.length; i++){
+    var px = x + ring[i][0], pz = z + ring[i][1];
+    if(W.river && riverAt(W, px, pz)) return false;
+    if(W.water && (bodyAt(W, px, pz) || deckAt(W, px, pz) != null)) return false;
+    if(holey(W) && holeRec(W, px, pz)) return false;
+  }
+  var I = index(W), nb = I.nb, L = I.segs[bOf(W, z, nb)*nb + bOf(W, x, nb)];
+  for(i = 0; i < L.length; i += 2){
+    var e = W.edges[L[i]];
+    if(own[e.id]) continue;
+    proj(e, L[i+1], x, z);
+    if(S.d <= e.width/200 + PIER_ROAD + r && S.y < y - DECK_D - ELEV) return false;
+  }
+  return true;
+}
+// a pier at (x, z), for something at yNow (m; omitted: at ground level) under its deck's underside
+function pierHit(W, x, z, yNow){
+  var M = memoOf(W);
+  if(M.piers === undefined) piersOf(W);
+  var L = M.pierIx[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return false;
+  for(var i = 0; i < L.length; i++){
+    var p = L[i], dx = x - p.x, dz = z - p.z;
+    if(dx*dx + dz*dz < p.r*p.r && (yNow == null || !isFinite(+yNow) || +yNow < p.y1)) return true;
+  }
+  return false;
+}
+// at a deck's level (yNow within STEP_UP under to LEVEL_GAP over its surface, where it is elevated), beyond its edge +
+// PARAPET (up to PARA_REACH past it) and on no deck: the parapet. Free where a road at your level runs there (the
+// at-grade road a deck rises beside)
+function parapetHit(W, x, z, yNow){
+  if(yNow == null || !isFinite(+yNow)) return false;
+  var G = deckIndex(W), L = G && G[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return false;
+  var D = decksOf(W), yn = +yNow, near = false;
+  for(var i = 0; i < L.length; i += 2){
+    var d = D[L[i]];
+    deckProj(d.pts[L[i+1]], d.pts[L[i+1] + 1], x, z);
+    if(DK.d > d.half + PARA_REACH || yn < DK.y - STEP_UP || yn > DK.y + LEVEL_GAP) continue;
+    if(DK.y - heightAt(W, DK.x, DK.z) <= ELEV) continue;
+    if(DK.d <= d.half + PARAPET) return false;
+    near = true;
+  }
+  if(!near) return false;
+  return !(roadUnder(W, x, z, yn) && Math.abs(ROAD.y - yn) <= STEP_UP);
+}
+
+/* ---------- City Gen v4 phase 7 (@3): road tunnels and cuttings, memoised per world ([] in a world without them) ---------- */
+function tunnelsOf(W){
+  if(!W || !W.edges) return [];
+  var M = memoOf(W);
+  if(M.tunnels !== undefined) return M.tunnels;
+  var B = W.tierBase || W, out = [], kindAt = {};
+  B.edges.forEach(function(e){
+    if(e.under !== "tunnel" && e.under !== "cutting") return;
+    (kindAt[e.a] = kindAt[e.a] || {})[e.under] = 1;
+    (kindAt[e.b] = kindAt[e.b] || {})[e.under] = 1;
+  });
+  B.edges.forEach(function(e){
+    if(e.under !== "tunnel" && e.under !== "cutting") return;
+    var p = e.pts, pts = [], i;
+    for(i = 0; i + 2 < p.length; i += 3){
+      var q = [p[i]/100, p[i+1]/100, p[i+2]/100], l = pts[pts.length - 1];
+      if(!l || Math.abs(q[0] - l[0]) + Math.abs(q[2] - l[2]) > 1e-6) pts.push(q);
+    }
+    if(pts.length < 2) return;
+    var other = e.under === "tunnel" ? "cutting" : "tunnel", len = 0;
+    for(i = 1; i < pts.length; i++) len += Math.sqrt((pts[i][0] - pts[i-1][0])*(pts[i][0] - pts[i-1][0]) + (pts[i][2] - pts[i-1][2])*(pts[i][2] - pts[i-1][2]));
+    var t = {edge: e.id, kind: e.under, pts: pts, half: e.width/200, len: len, a: e.a, b: e.b,
+             portal: [!!(kindAt[e.a] && kindAt[e.a][other]), !!(kindAt[e.b] && kindAt[e.b][other])], hole: null};
+    if(e.under === "cutting") t.hole = offsetRing(pts, t.half + TUN_WALL);
+    out.push(t);
+  });
+  M.tunnels = out;
+  return out;
+}
+// the ring round a polyline [[x, y, z]] (m) w m either side (mitred): its left side out, its right side back ([[x, z]])
+function offsetRing(P, w){
+  var Lf = [], Rt = [], n = P.length;
+  for(var i = 0; i < n; i++){
+    var a = P[Math.max(0, i - 1)], c = P[Math.min(n - 1, i + 1)], dx = c[0] - a[0], dz = c[2] - a[2], l = Math.sqrt(dx*dx + dz*dz) || 1;
+    var lx = dz/l, lz = -dx/l, k = 1;
+    if(i > 0 && i < n - 1){
+      var sx = P[i][0] - a[0], sz = P[i][2] - a[2], sl = Math.sqrt(sx*sx + sz*sz) || 1;
+      k = 1/Math.max(0.5, lx*sz/sl - lz*sx/sl);
+    }
+    Lf.push([P[i][0] + lx*w*k, P[i][2] + lz*w*k]);
+    Rt.push([P[i][0] - lx*w*k, P[i][2] - lz*w*k]);
+  }
+  return Lf.concat(Rt.reverse());
+}
+// the tunnels' and cuttings' segments in a TUN_CELL m grid, each grown by half + TUN_WALL + TUN_REACH | null without any
+function tunnelGrid(W){
+  var M = memoOf(W);
+  if(M.tunIx !== undefined) return M.tunIx;
+  var T = tunnelsOf(W), grid = {};
+  T.forEach(function(t){
+    var g = t.half + TUN_WALL + TUN_REACH, seen = {};
+    for(var s = 0; s + 1 < t.pts.length; s++){
+      var a = t.pts[s], b = t.pts[s+1];
+      for(var j = Math.floor((Math.min(a[2], b[2]) - g)/TUN_CELL); j <= Math.floor((Math.max(a[2], b[2]) + g)/TUN_CELL); j++)
+        for(var i = Math.floor((Math.min(a[0], b[0]) - g)/TUN_CELL); i <= Math.floor((Math.max(a[0], b[0]) + g)/TUN_CELL); i++){
+          var key = i + "," + j;
+          if(seen[key]) continue;
+          seen[key] = 1;
+          (grid[key] = grid[key] || []).push(t);
+        }
+    }
+  });
+  return (M.tunIx = T.length ? grid : null);
+}
+// (x, z) on a tunnel's or cutting's line, in TP: d (plan distance), y (its road there), end (-1 alongside it, else 0 / 1:
+// past its first / last point), past (m beyond that end), lat (m from that end segment's line)
+var TP = {d: 0, y: 0, end: -1, past: 0, lat: 0};
+function tunProj(t, x, z){
+  var P = t.pts, n = P.length, best = Infinity;
+  for(var i = 0; i + 1 < n; i++){
+    var a = P[i], b = P[i+1], ux = b[0] - a[0], uz = b[2] - a[2], L2 = ux*ux + uz*uz;
+    var r = L2 > 0 ? ((x - a[0])*ux + (z - a[2])*uz)/L2 : 0, u = clamp(r, 0, 1), qx = a[0] + ux*u, qz = a[2] + uz*u;
+    var d = Math.sqrt((x - qx)*(x - qx) + (z - qz)*(z - qz));
+    if(!(d < best)) continue;
+    best = d;
+    var Ls = Math.sqrt(L2);
+    TP.d = d; TP.y = a[1] + (b[1] - a[1])*u;
+    TP.end = i === 0 && r < 0 ? 0 : (i + 2 === n && r > 1 ? 1 : -1);
+    TP.past = TP.end === 0 ? -r*Ls : (TP.end === 1 ? (r - 1)*Ls : 0);
+    TP.lat = Ls > 0 ? Math.abs((x - a[0])*uz - (z - a[2])*ux)/Ls : d;
+  }
+}
+// what is in a tunnel or cutting at (x, z) at level yNow (its road level: a tunnel's up to its road + TUN_CLEAR, a cutting's
+// nearer its road than the land), or null; a tunnel's ceiling is its road + TUN_CLEAR
+function tunnelAt(W, x, z, yNow){
+  if(yNow == null || !isFinite(+yNow)) return null;
+  var G = tunnelGrid(W), L = G && G[Math.floor(x/TUN_CELL) + "," + Math.floor(z/TUN_CELL)];
+  if(!L) return null;
+  var yn = +yNow, best = null;
+  for(var i = 0; i < L.length; i++){
+    var t = L[i];
+    tunProj(t, x, z);
+    if(TP.d > t.half + TUN_WALL) continue;
+    if(t.kind === "tunnel"){
+      if(TP.end >= 0 || !inTun(yn, TP.y)) continue;
+      return {kind: "tunnel", edge: t.edge, y: TP.y, ceil: TP.y + TUN_CLEAR};
+    }
+    var dep = heightAt(W, x, z) - TP.y;
+    if(!best && TP.end < 0 && dep > STEP_UP && yn < TP.y + dep/2 && yn >= TP.y - TUN_LOW) best = {kind: "cutting", edge: t.edge, y: TP.y, ceil: null};
+  }
+  return best;
+}
+// the tunnel or cutting whose footprint (its half + margin m, alongside it or past an end) covers (x, z), or null: what a
+// renderer keeps its gantries off
+function underOver(W, x, z, margin){
+  var G = W ? tunnelGrid(W) : null, L = G && G[Math.floor(x/TUN_CELL) + "," + Math.floor(z/TUN_CELL)];
+  if(!L) return null;
+  var m = Math.min(+margin || 0, TUN_WALL + TUN_REACH);
+  for(var i = 0; i < L.length; i++){
+    tunProj(L[i], x, z);
+    if(TP.d <= L[i].half + m && (TP.end < 0 || TP.past <= m)) return L[i];
+  }
+  return null;
+}
+// blocked by a tunnel's or cutting's walls, a cutting's coping railing or a portal's headwall (blockedAt's rules)
+function tunnelHit(W, x, z, yNow){
+  var G = tunnelGrid(W), L = G && G[Math.floor(x/TUN_CELL) + "," + Math.floor(z/TUN_CELL)];
+  if(!L) return false;
+  var lv = yNow != null && isFinite(+yNow), yn = +yNow, rail = TUN_WALL + TUN_RAIL;
+  for(var i = 0; i < L.length; i++){
+    var t = L[i];
+    tunProj(t, x, z);
+    if(TP.d > t.half + TUN_WALL + TUN_REACH && !(TP.end >= 0 && TP.past <= rail && TP.lat <= t.half + rail)) continue;
+    var y = TP.y;
+    if(t.kind === "tunnel"){
+      // its walls, for what is in it; on the land over it nothing changes
+      if(lv && inTun(yn, y) && TP.end < 0 && TP.d > t.half) return true;
+      continue;
+    }
+    var dep = heightAt(W, x, z) - y;
+    if(dep <= STEP_UP) continue;   // (its shallow end: a step you take)
+    var low = lv && yn < y + dep/2 && yn >= y - TUN_LOW;
+    if(TP.end < 0){
+      if(low){ if(TP.d > t.half) return true; }
+      else if(TP.d > t.half ? TP.d <= t.half + rail : lv) return true;
+    } else if(!low && t.portal[TP.end] && TP.past <= rail && TP.lat <= t.half + rail) return true;
+  }
+  return false;
 }
 
 function trees(W){
@@ -701,7 +1349,7 @@ function trees(W){
     if(W.river && (riverAt(W, x, z) || riverAt(W, x + CLEAR, z) || riverAt(W, x - CLEAR, z) || riverAt(W, x, z + CLEAR) || riverAt(W, x, z - CLEAR))) continue;
     // @3: none in a lake, canal or the marina, on a pier, or in a terrain hole
     if(W.water && (bodyAt(W, x, z) || bodyAt(W, x + CLEAR, z) || bodyAt(W, x - CLEAR, z) || bodyAt(W, x, z + CLEAR) || bodyAt(W, x, z - CLEAR) || deckAt(W, x, z) != null)) continue;
-    if((W.metro || W.rail) && (holeRec(W, x, z) || holeRec(W, x + CLEAR, z) || holeRec(W, x - CLEAR, z) || holeRec(W, x, z + CLEAR) || holeRec(W, x, z - CLEAR))) continue;
+    if(holey(W) && (holeRec(W, x, z) || holeRec(W, x + CLEAR, z) || holeRec(W, x - CLEAR, z) || holeRec(W, x, z + CLEAR) || holeRec(W, x, z - CLEAR))) continue;
     var pine = ((h2 >>> 16) & 3) === 0;
     out.push({x: x, z: z, s: 0.8 + ((h2 >>> 8) & 0xff)/255*0.6, kind: (name === "forest" ? !pine : pine) ? "pine" : "round"});
   }
@@ -714,10 +1362,18 @@ function trees(W){
   return out;
 }
 
-function blockedAt(W, x, z){
+// yNow (optional, m): the height of whatever moves there. A deck's piers block at ground level (yNow omitted or under
+// the deck's underside); at a deck's level its parapets block (parapetHit). Without yNow, as before but the piers.
+function blockedAt(W, x, z, yNow){
   var hm = W.half - 2;
   if(!(x >= -hm && x <= hm && z >= -hm && z <= hm)) return true;
   var I = index(W), nb = I.nb, b = bOf(W, z, nb)*nb + bOf(W, x, nb), L = I.bld[b], R = I.bldRect, i, k;
+  // phase 7: a tunnel's and a cutting's walls, a cutting's railing and headwalls; in a tunnel nothing on the land over it
+  if(I.under){
+    if(tunnelHit(W, x, z, yNow)) return true;
+    var ta = yNow != null ? tunnelAt(W, x, z, yNow) : null;
+    if(ta && ta.ceil != null) return false;
+  }
   for(i = 0; i < L.length; i++){
     k = 4*L[i];
     if(!(x >= R[k] && x <= R[k+1] && z >= R[k+2] && z <= R[k+3])) continue;
@@ -734,14 +1390,25 @@ function blockedAt(W, x, z){
   }
   // @3: a lake, canal or the marina is water (a bridge's deck, a pier and the breakwater are not)
   if(W.water && waterAt(W, x, z) && !roadUnder(W, x, z)) return true;
+  // City Gen v4 phase 6: the decks' piers and parapets
+  if(I.deck && (pierHit(W, x, z, yNow) || parapetHit(W, x, z, yNow))) return true;
+  // phase 8: the City Line's piers, where the doc places them
+  if(W.rail && railPierHit(W, x, z, yNow)) return true;
   return false;
 }
 
-function rayGround(W, from, to, step){
+// yNow (optional, m): the level the ray is cast from (phase 7: in a tunnel its road, walls and ceiling stop it)
+function rayGround(W, from, to, step, yNow){
   step = step > 0 ? +step : 2;
   var dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
-  var n = Math.max(1, Math.ceil(Math.sqrt(dx*dx + dy*dy + dz*dz)/step));
-  function under(t){ return from.y + dy*t < groundAt(W, from.x + dx*t, from.z + dz*t) + 0.25; }
+  var n = Math.max(1, Math.ceil(Math.sqrt(dx*dx + dy*dy + dz*dz)/step)), lv = yNow != null && isFinite(+yNow) && index(W).under;
+  function under(t){
+    var x = from.x + dx*t, z = from.z + dz*t, y = from.y + dy*t;
+    if(!lv) return y < groundAt(W, x, z) + 0.25;
+    if(y < groundAt(W, x, z, false, yNow) + 0.25) return true;
+    var ta = tunnelAt(W, x, z, yNow);
+    return !!(ta && ta.ceil != null && y > ta.ceil - 0.25);
+  }
   for(var i = 0; i <= n; i++){
     if(!under(i/n)) continue;
     if(i === 0) return 0;
@@ -991,7 +1658,12 @@ var api = HQV.world = {
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
-  blockedAt: blockedAt, trees: trees, riverAt: riverAt, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
+  blockedAt: blockedAt, trees: trees, decksOf: decksOf, piersOf: piersOf, railPiersOf: railPiersOf, railPierHit: railPierHit,
+  RAIL_PIER: {R: RAIL_PIER_R, GIRDER: RAIL_GIRDER}, deckOver: deckOver, STEP_UP: STEP_UP,
+  tunnelsOf: tunnelsOf, tunnelAt: tunnelAt, underOver: underOver,
+  TUN: {CLEAR: TUN_CLEAR, ROOF: TUN_ROOF, WALL: TUN_WALL, RAIL: TUN_RAIL, REACH: TUN_REACH, LOW: TUN_LOW},
+  DECK: {ELEV: ELEV, LEVEL_GAP: LEVEL_GAP, DEPTH: DECK_D, PARAPET: PARAPET, PIER_R: PIER_R, PIER_MIN: PIER_MIN, PIER_MAX: PIER_MAX,
+         PIER_ROAD: PIER_ROAD, PIER_CLEAR: PIER_CLEAR}, riverAt: riverAt, rayGround: rayGround, roadLabels: roadLabels, junctions: junctions,
   load: load, onChange: onChange, current: current, cacheMs: cacheMs
 };
 })();

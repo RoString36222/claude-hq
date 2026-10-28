@@ -46,7 +46,12 @@
 //! it (the ring alone may pass behind the terminal, in its corridor, until phase 6 takes it
 //! under; it stops either side where only the long way round would pass it); the dock,
 //! port, stadium, lines and the Island Link keep off it; its grounds grow no trees; and the
-//! validator (validate.rs) fails a world where anything else stands in it.
+//! validator (validate.rs) fails a world where anything else stands in it. Phase 2 (HQ
+//! 3.25): the town's streets paved by the plan's road classes (classes.rs, organic/widen.rs),
+//! each edge's `v4`, `lanes` and `median`; the ring and highways keep their widths until
+//! phase 6 gives them their interchanges. Phase 3 (HQ 3.26): each junction's control
+//! (roads.rs `Roads::junctions`, the node's `junction` and a roundabout's `island`), by the
+//! roads that meet there.
 //!
 //! Layout (where roads, blocks, lots and sites are) comes from the seed and the
 //! profile only; terrain edits change heights, never layout. The result is a
@@ -62,6 +67,8 @@ pub mod classes;
 pub mod civic;
 pub mod districts;
 pub mod gondola;
+pub mod corridor;
+pub mod interchange;
 pub mod island;
 pub mod lines;
 pub mod metro;
@@ -74,6 +81,7 @@ pub mod rng;
 pub mod roads;
 pub mod terrain;
 pub mod transit;
+pub mod tunnels;
 pub mod validate;
 pub mod water;
 pub mod zones;
@@ -247,6 +255,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         let water = plan.as_ref().map_or(Vec::new(), |w| w.outlines());
         organic::generate(seed, &p, &base, river.as_ref(), &water)?
     };
+    let mut corridor: Option<corridor::Corridor> = None;
     let (zones, transit, island) = if version == 1 {
         (None, None, None)
     } else {
@@ -254,18 +263,74 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         if coast.is_some() {
             island::trim(&mut roads);
         }
+        // City Gen v4 (phase 6): a trumpet where each highway meets the ring, where one fits
+        if p.v4 {
+            let claim = claims::Airport::of(&city.sites);
+            let keep = interchange::Keep { blocks: &city.blocks, claim: claim.as_ref(), river: river.as_ref(), coast: coast.as_ref().map(|c| c.poly.as_slice()) };
+            let (made, kept) = interchange::build(&mut roads, &base, &keep);
+            // phase 7: the ring under the airport, where it ran behind the terminal
+            tunnels::build(&mut roads, claim.as_ref(), &base);
+            // phase 8: the City Line's corridor, a boulevard cut under its alignment
+            if version >= 3 {
+                let mut polys: Vec<Vec<[i64; 2]>> = plan.as_ref().map_or(Vec::new(), |w| w.outlines().iter().map(|b| b.iter().map(|q| [q.0, q.1]).collect()).collect());
+                if let Some(r) = river.as_ref() {
+                    polys.push(r.poly.clone());
+                }
+                let shore: Option<Vec<[i64; 2]>> = coast.as_ref().map(|c| c.poly.iter().map(|q| [q.0, q.1]).collect());
+                let (lots, sites) = (city.lots.clone(), city.sites.clone());
+                let c = lines::Ctx { seed, profile: &p, terrain: &base, roads: &roads, lots: &lots, sites: &sites, river: river.as_ref(), water: &polys, coast: shore.as_deref() };
+                // (the alignment, and whether it crosses water, on the streets as they are)
+                let found = railway::alignment(&c).map(|cl| {
+                    let land = lines::Land::new(&c);
+                    let wet: Vec<bool> = corridor::samples(&cl.path).into_iter().map(|q| land.wet(q)).collect();
+                    (cl, wet)
+                });
+                if let Some((cl, wet)) = found {
+                    let mut r2 = roads.clone();
+                    match corridor::cut(&mut r2, &mut city, &base, &cl, &wet, claim.as_ref()) {
+                        Ok(k) => {
+                            roads = r2;
+                            corridor = Some(k);
+                        }
+                        Err(why) => {
+                            if std::env::var("HQ_IX").is_ok() {
+                                eprintln!("corridor: none ({why})");
+                            }
+                        }
+                    }
+                }
+            }
+            // (HQ_IX=1 worldgen <id>: what each junction became, for tuning)
+            if std::env::var("HQ_IX").is_ok() {
+                eprintln!("interchanges: {made} made, kept at grade: {kept:?}");
+            }
+        }
         civic::outside(&p, &base, &roads, &mut city, river.as_ref());
         // a personal island's first bus loop keeps to its tier-2 town (20 m in from the ring)
         let inner = (p.name == "island").then(|| island::RADII_CM[1] - 2_000);
         let mut transit = transit::generate(&roads, &city.sites, &city.lots, inner);
         let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
+        // City Gen v4 (phase 2): a tram runs down the middle of its street until phase 8
+        // gives it its own bed, so a street a tram line runs on has no median yet
+        roads.untram_unused(&transit);
+        roads.tram_on(&transit);
+        // phase 9: the tram stations on their tracks
+        if p.v4 {
+            transit::stations(&roads, &mut transit, &mut city.sites, &base);
+        }
+        roads.trams_in_the_middle(&transit);
+        // phase 3: each junction's control, by the roads that meet there
+        if p.v4 {
+            let clear: Vec<Vec<(i64, i64)>> = city.lots.iter().filter_map(|l| l.poly.as_ref()).chain(city.sites.iter().filter_map(|s| s.poly.as_ref())).map(|p| p.iter().map(|q| (q[0], q[1])).collect()).collect();
+            roads.junctions(&transit, &clear);
+        }
         (Some(zones::layer(seed, &city.blocks)), Some(transit), island)
     };
 
     let mut terrain = base;
     terrain.apply(edits)?;
     roads.seat(&terrain, &p)?;
-    roads.carve(&mut terrain);
+    roads.carve(&mut terrain, |q| river.as_ref().is_some_and(|r| r.wet(q)));
     // @3: the rest of the water, then the lines, their claims made sites before every
     // lot and site is seated on the final ground
     let water = match (plan, river.as_ref(), island::Coast::new(seed, &p)) {
@@ -273,7 +338,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         _ => None,
     };
     let (metro, rail, gondola) = if version >= 3 {
-        let (m, r, g) = lines(seed, &p, &terrain, &roads, &mut city, river.as_ref(), water.as_ref(), island.as_ref())?;
+        let (m, r, g) = lines(seed, &p, &terrain, &roads, &mut city, river.as_ref(), water.as_ref(), island.as_ref(), corridor.as_ref().map(|k| &k.cl))?;
         (Some(m), Some(r), Some(g))
     } else {
         (None, None, None)
@@ -317,6 +382,7 @@ fn lines(
     river: Option<&river::River>,
     water: Option<&water::Water>,
     island: Option<&island::Island>,
+    cl: Option<&railway::Cl>,
 ) -> Result<(metro::Metro, railway::Rail, gondola::Gondola), String> {
     let mut polys: Vec<Vec<[i64; 2]>> = water.map_or(Vec::new(), |w| w.bodies.iter().map(|b| b.poly.clone()).collect());
     if let Some(r) = river {
@@ -330,7 +396,7 @@ fn lines(
     claim(city, &taken)?;
     let (lots, sites) = ctx(city);
     let c = lines::Ctx { lots: &lots, sites: &sites, ..c };
-    let (rail, rc) = railway::plan(&c, &metro)?;
+    let (rail, rc) = railway::plan(&c, &metro, cl)?;
     claim(city, &rc)?;
     taken.extend(rc);
     let (lots, sites) = ctx(city);
@@ -378,6 +444,12 @@ fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
             tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None,
         });
     }
+    retire_lots(city, &gone);
+    Ok(())
+}
+
+/// Take lots `gone` out of the city, the rest numbered again (ids and growth ranks in order).
+fn retire_lots(city: &mut city::City, gone: &std::collections::BTreeSet<u32>) {
     if !gone.is_empty() {
         city.lots.retain(|l| !gone.contains(&l.id));
         let mut by_grow: Vec<(u32, usize)> = city.lots.iter().enumerate().map(|(k, l)| (l.grow.unwrap_or(u32::MAX), k)).collect();
@@ -391,5 +463,4 @@ fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
             l.id = k as u32;
         }
     }
-    Ok(())
 }

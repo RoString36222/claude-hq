@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.24.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.33.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -294,6 +294,11 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 - **Arena is off by default.** When enabled it publishes daily *counts* only — never conversation
   content, file paths or project names — and its device token lives in `arena-link.json`, outside
   `config.json`, so it is never served to the page. See [Arena](#-arena-multiplayer--optional).
+- **HQ Studio and movable garages (Arena, optional).** HQ Studio sends only your style document (enum
+  keys, colours, grid cells). Moving your HQ's garage bay sends four small integers about your own HQ
+  lot, `{lot, x, z, r}` (the lot's rank, where the bay sits inside it in decimetres, its quarter turns),
+  through `POST /api/arena/hq/garage` (`/reset` puts it back); others see it on your lot. Nothing from
+  your transcripts goes into either.
 
 ---
 
@@ -318,7 +323,8 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
 `GET /api/arena/cali/board?window={season,30d,7d,all,lastseason}` · `GET /api/arena/cali/orders` ·
 `POST /api/action` · `POST /api/config` · `POST /api/meta` · `POST /api/evo-choice` ·
-`POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order`
+`POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order` ·
+`GET /api/arena/hq/garage` · `POST /api/arena/hq/garage` · `POST /api/arena/hq/garage/reset`
 (all POSTs CSRF-guarded).
 
 ---
@@ -415,6 +421,114 @@ and feature guide.
 
 ## Changelog
 
+- **3.33.0 — City Gen v4, phase 10: move your garage.** Your HQ's car-lift bay no longer has to stay where the city
+  put it.
+  - **Moving it:** click the MOVE plate on the bay, or use "Move your garage…" in HQ Studio. A ghost bay follows the
+    pointer on a half-metre grid over your lot: green where it fits, red with the reason where it doesn't. R turns
+    it a quarter, and Enter saves. The arrow keys and a "Door faces" choice do the same from the keyboard.
+  - **What fits:** the bay stays inside your lot and clear of your tower at its biggest, so levelling up never
+    breaks it. It needs 8 m clear in front of its door and a way out to the street. Cars leave a side- or
+    back-facing bay along its driveway.
+  - **Who sees it:** everyone. Your spot goes to the Arena with your HQ, four small numbers (lot, x, z, turn) about
+    your own lot, and other players see your garage there. On an older Arena it is kept on this machine, and only
+    you see it moved.
+  - **HQs stay put:** every HQ stays on its lot. Spacing the HQs out, the plan's other half of this phase, is left
+    for later.
+- **3.32.0 — City Gen v4, phase 9: trams on their own roads.** The streets trams run on are now real tram roads, and
+  their stops are proper stations.
+  - **Tram roads:** on avenues and collectors the trams run on a raised, kerbed bed of setts down the middle that cars
+    never drive on. On narrower roads they share the inner lane. The road is widened for the tram, and lots give up
+    a strip of frontage. No HQ moves.
+  - **Stations:** where there's room, a station is a 40 m platform. It's an island between the tracks on a wide bed,
+    otherwise at the kerb, with a shelter, a ticket machine and a departure board. Stations sit on a straight run,
+    clear of junctions, about 300 m apart. Where side streets leave no room, the old kerb stop stays.
+  - **Track ends:** tracks run on to a junction instead of ending mid-block.
+  - **The boulevard:** trams keep off the City Line's boulevard.
+  - **Also:** a light's phases now follow the road a car or bus actually comes in on, so nobody runs a red where two
+    roads meet the junction at a shallow angle.
+- **3.31.0 — City Gen v4, phase 8: the City Line over its own boulevard.** On the Commons, the elevated City Line no
+  longer runs over small streets on piers the browser spaced anywhere, some of them in traffic lanes or in lots. The
+  world generator now cuts a 36.5 m boulevard under the line, from Central toward the airport, and stands the
+  viaduct's piers in its planted median.
+  - **The boulevard:** streets it crosses meet it at T junctions at least 50 m apart, and main roads always get
+    one. Side streets that can't join end in a cul-de-sac. The lots it crosses are retired, but never an HQ's.
+  - **The piers:** 2 m columns about every 27.5 m, with single spans of up to 60 m over the junctions. They are
+    solid, and nothing (trees, lamps, benches, parked cars) stands within 1.5 m of one.
+  - **Where it fits:** a world whose line would cross an HQ's lot, a civic building or a graded road keeps its line
+    as before. That's most test seeds and the personal islands for now.
+  - **Also:** trams keep off the boulevard. Where it cuts a tram street, the tram runs on each side as its own line.
+    You can wait for a bus at the stop itself, even when the bus pulls up a way along the kerb. Joggers no longer
+    turn round in a junction.
+- **3.30.0 — City Gen v4, phase 7: the Ring Road under the airport.** The Ring Road no longer runs past the back of the
+  airport terminal. It drops into an open cutting, runs through a 300 m cut-and-cover tunnel 7 m under the airport,
+  and climbs out the other side.
+  - **The tunnel:** the cuttings have retaining walls and railings. The tunnel has portals, a lit ceiling and
+    emergency walkways.
+  - **Driving it:** you can drive straight through. Traffic uses it too.
+  - **Lines kept clear:** the metro and the Island Link keep clear of it.
+- **3.29.0 — City Gen v4, phase 6: expressways and trumpet interchanges.** The Ring Road and the highways are now
+  29 m expressways: three lanes each way, hard shoulders and a concrete crash barrier down the middle.
+  - **Trumpets:** where a highway meets the Ring Road and there's room, a trumpet interchange replaces the flat
+    junction. The highway climbs a flyover over the ring, a loop ramp comes down to the far side, and a ramp curls up
+    round it. Slip roads join the near side. Everything is one-way and nothing crosses at street level. The Commons has
+    three, and the other three highway junctions stay at street level (a bridge, an awkward angle, or the coast is in
+    the way).
+  - **Decks you can use:** you can drive or walk up the ramps and over the flyover, and pass underneath. Decks have
+    parapets, columns every 25–30 m, and retaining walls where they are low.
+  - **Traffic:** NPC traffic uses the ramps and drives two lanes each way on the expressways, keeping the lane by the
+    barrier free. The Commons has about 290 cars at the usual setting, up from 167. Residents' cars and the satnav
+    respect the one-way ramps.
+  - **Validator:** new rules check lane balance at every ramp junction, ramp grades of 6% or less, and 7 m of
+    clearance under every deck.
+- **3.28.0 — City Gen v4, phase 5: road capacity and an NPC traffic slider.** Settings has a new **NPC traffic**
+  slider for the 3D City, which changes the open City straight away:
+  - **85%** is the usual traffic.
+  - **100%** fills every road to the plan's comfortable level (at most 22 cars a km of lane).
+  - **0%** leaves the roads to the buses, trams and you.
+
+  Every road also has a hard limit of one car per 7.5 m of lane, which no road ever passes. Buses and trams keep their
+  timetables at any level. The setting is saved only in this browser, and everyone on the same setting sees the same
+  cars.
+- **3.27.0 — City Gen v4, phase 4: curved roads, and a few street changes.**
+  - **Curved roads:**
+    - The Ring Road and the highways now sweep in smooth curves instead of grid staircases (the Commons' kinks go
+      from 139 to 18).
+    - Bends in town streets are arcs, kept within the kerb so no lot or HQ moves.
+  - **The police are fairer:** most offences add half a star or less, so one small slip is a warning that wears off by
+    itself. Once they lose sight of you, a star goes in 6 s + 3 s a star (it was twice that).
+  - **Real cars in traffic:** the ordinary cars nearest you are the dealership's own everyday cars (hatches, saloons,
+    SUVs and coupes), each with its own paint. They're the same cars on every player's screen.
+  - **E to take a car:** stand by a stopped traffic car and press E to take it and drive off. A police car that sees
+    you adds half a star. Get out and it stays parked; walk far away and it rejoins the traffic. It only happens on
+    your screen: everyone else's street carries on as before.
+- **3.26.0 — City Gen v4, phase 3: junctions that fit their roads.** Every junction in the City now gets its control
+  from the roads that meet there, by the v4 plan's road-pair table:
+  - **Side streets give way:** where local streets meet, or a side street joins a main road at a T, the lesser road
+    gets give-way lines.
+  - **Mini roundabouts** where collectors meet each other or a main road, and at five-arm junctions: a painted white
+    dome that cars and buses drive round.
+  - **Traffic lights** where main roads cross, and (as 3.22.1 had it) where a main road crosses a side street, at
+    least 60 m from the next light. The lights now come from the world itself, so every player's City has them in
+    the same places.
+
+  A full roundabout, with a raised, planted island that the traffic and residents' cars go round, goes only where its
+  32 m circle has room. Today's streets rarely give it that, so the Commons has none yet. A tram line never meets a
+  roundabout. On screen the Commons is as busy as before.
+- **3.25.0 — City Gen v4, phase 2: real road classes.** Every street in the City now belongs to one of the v4 plan's road
+  classes and is paved at that class's real width (IRC and UK *Manual for Streets* figures):
+  - **Avenues** (22 m) on the main roads: two 3.5 m lanes each way and a raised 2 m median, with white lines.
+  - **Collectors** (12 m) gather the local streets.
+  - **Local streets** (10.5 m) and **lanes** (9 m) for dead ends and short streets.
+  - **Shared streets** (9.5 m) in the old town and round the plaza, paved in pavers, with no lines or zebra crossings.
+
+  A street changes class only one step at a time. Local streets are slimmer than 3.20.1's game-style ones, so lots have
+  more ground, and every HQ stays on its lot. Cars, buses and residents' cars drive in the class's own lanes, keep out of
+  the median, and lorries are back on the main roads. Where a short approach to a light leaves no room for a car to
+  wait, the light and the junction behind it work as one. Still to come:
+  - **Boulevards** (36.5 m, planted median): no main road has 50 m blocks all along yet, which a boulevard's junctions
+    need. They come with a later layout phase.
+  - **Streets a tram runs down** keep no median until phase 8 gives trams their own bed.
+  - **The ring and highways** become expressways together with their interchanges in phase 6.
 - **3.24.0 — City Gen v4, phase 1: the airport gets its own land.** The Commons' airport now claims its land before
   any road is laid. The claim covers:
   - the terminal with its forecourt, car park and control tower

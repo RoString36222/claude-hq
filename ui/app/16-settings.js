@@ -423,6 +423,23 @@ function ambientVolumeNow(){
     if(v && E && E.ambientPreview && !(E.calm && E.calm())) E.ambientPreview();
   });
 })();
+/* ---- [3.28] NPC traffic in the 3D City (localStorage hq_traffic, 0..1; unset = 85%, the usual): games/traffic.js's
+   level, set live on the City that is open (HQV.cityTrafficLevel) ---- */
+(function(){
+  var r=$("setTraffic"), lbl=$("setTrafficVal"); if(!r) return;
+  function now(){ var v=null; try { v=localStorage.getItem("hq_traffic"); } catch(e){} v=v===null||v===""?NaN:parseFloat(v); return isFinite(v)?Math.max(0,Math.min(1,v)):0.85; }
+  function label(v){ if(lbl) lbl.textContent = v ? v+"%" : "none"; r.setAttribute("aria-valuetext", v ? v+"%" : "None"); }
+  function show(){ var v=Math.round(now()*100); r.value=v; label(v); }
+  show();
+  var back=$("settingsBack"); if(back) new MutationObserver(function(){ if(back.classList.contains("open")) show(); }).observe(back, {attributes:true, attributeFilter:["class"]});
+  r.addEventListener("input", function(){
+    var v=Math.max(0, Math.min(100, Math.round(+r.value||0)));
+    try { localStorage.setItem("hq_traffic", String(v/100)); } catch(e){}
+    if(window.HQV && typeof HQV.cityTrafficLevel==="function"){ try { HQV.cityTrafficLevel(v/100); } catch(e){} }
+    label(v);
+  });
+  r.addEventListener("change", function(){ var v=Math.max(0, Math.min(100, Math.round(+r.value||0))); announce(v ? "NPC traffic "+v+"%" : "No NPC traffic"); });
+})();
 // Work signals: the PR switch only means something while the main one is on.
 (function(){ var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs"); if(ws && wp) ws.addEventListener("change", function(){ wp.disabled=!ws.checked; if(!ws.checked) wp.checked=false; }); })();
 

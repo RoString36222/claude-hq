@@ -29,8 +29,11 @@ var doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(FIX + "claude-hq@3.json.gz"
 var widths = {};
 doc.layers.roads.edges.forEach(function(e){ if(e["class"] === "local" || e["class"] === "arterial") (widths[e["class"]] = widths[e["class"]] || {})[e.width] = 1; });
 var L = T.lanes(WD.pack(doc), 5), out = {widths: {local: Object.keys(widths.local).map(Number), arterial: Object.keys(widths.arterial).map(Number)}, two: 0, onLine: 0, cars: 0};
+// ([3.29] an expressway, ramp or flyover lays its lanes LANE_W out from its median: tests/test_interchange_traffic.py)
+var xway = {};
+doc.layers.roads.edges.forEach(function(e){ if(e.v4 === "expressway" || e.v4 === "ramp" || e.v4 === "flyover") xway[e.id] = 1; });
 L.forEach(function(e){
-  if(!e.cars || e.tram || e.bus[0] || e.bus[1]) return;
+  if(!e.cars || e.tram || e.bus[0] || e.bus[1] || xway[e.id]) return;
   out.cars++;
   var n = Math.max(1, Math.min(3, Math.floor(e.half/3.3)));
   if(n >= 2){ out.two++; for(var k = 1; k < n; k++) if(Math.abs(e.carOff - e.half*k/n) < 1.0) out.onLine++; }
@@ -62,9 +65,15 @@ class Source(unittest.TestCase):
     def test_lane_lines_and_traffic_agree(self):
         geom, traffic, npc = read("games", "worldgeom.js"), read("games", "traffic.js"), read("games", "npcsim.js")
         self.assertIn("function lanesEach(cw){ return Math.max(1, Math.min(3, Math.floor(cw/3.3))); }", geom)
-        self.assertIn("var n = Math.max(1, Math.min(3, Math.floor(c/3.3)));", traffic)
-        self.assertIn("c*(2*n - 1)/(2*n)", traffic)
+        # ([3.32] a tram street's lay: the old tram by the centre line still has no median for its cars' lanes, a centre
+        # bed stands for one, a shared lay keeps the class's own)
+        self.assertIn("var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = lay === \"old\" ? 0 : lay === \"bed\" ? E.bedH : E.med;", traffic)
+        self.assertIn("c - (c - med)/(2*n)", traffic)
         self.assertIn("function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3)));", npc)
+        # [3.25] a v4 road: its own lanes between its median and the kerb, the same in the lines, the traffic and the
+        # residents' cars (worldgeom.js v4Lines puts a lane line every (cw - med)/n out from the median)
+        self.assertIn("var o = m + (cw - m)*k/n;", geom)
+        self.assertIn("return Math.max(0.5, c - (c - med)/(2*n)); }", npc)
 
     def test_driving_is_swept_slides_and_unsticks(self):
         hq = read("games", "hq3d.js")

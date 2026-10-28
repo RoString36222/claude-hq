@@ -215,6 +215,8 @@ function legsOf(G, A, B, mode){
     if(n === bB && g[n] + (G.LEN[B.k] - B.s)/vB < best){ best = g[n] + (G.LEN[B.k] - B.s)/vB; end = n; }
     for(var j = G.off[n]; j < G.off[n + 1]; j++){
       var k = G.adj[j], o = G.EA[k] === n ? G.EB[k] : G.EA[k], c = g[n] + G.LEN[k]/speedOf(G, k, mode);
+      // ([3.29] an interchange's ramp is driven from its a to its b only)
+      if(mode !== "walk" && G.EB[k] === n && G.EA[k] !== n && G.W.edges[G.keep[k]].oneway) continue;
       if(closed[o] === gen) continue;
       if(stamp[o] !== gen || c < g[o]){ stamp[o] = gen; g[o] = c; from[o] = k; H.push(c + hd(o), o); }
     }

@@ -415,7 +415,7 @@ class Traffic(unittest.TestCase):
         v = self.r["view"]
         self.assertTrue(v["instanced"])
         self.assertEqual(v["carCount"], min(v["cap"], v["n"]["car"]))
-        self.assertEqual(v["n"]["car"], 200, "up to 200 cars drawn")
+        self.assertEqual(v["n"]["car"], 320, "up to 320 cars drawn ([3.29] the expressways' lanes hold more)")
         self.assertLessEqual(v["calls"], 12, "a draw call per body kind, not per car")
         self.assertEqual(sum(v["n"][k] for k in ("fire", "ambulance", "police")), 1)
         self.assertEqual(v["n"]["beacon"], 2, "an emergency vehicle has its light bar")
@@ -496,7 +496,8 @@ Object.keys(worlds).forEach(function(name){
       if(Math.hypot(v.x - p.x, v.z - p.z) > 0.01) bigJump += 1000;
       for(var i = 0; i < trip.seats + trip.standing; i++){
         var sp = trip.seat(i, tm), inside = parts.some(function(q){ var lc = local(q, sp.x, sp.z); return Math.abs(lc.x) < spec.wid/2 - 0.05 && Math.abs(lc.z) < q.len/2 + (kind === "tram" ? 0.55 : 0); });
-        checked++; if(!inside || Math.abs(sp.y - p.y - 0.45) > 0.46) outSeat++;
+        // ([3.32] give or take a raised bed's 0.15 m: a tram straddling its end has its sections at two heights)
+        checked++; if(!inside || Math.abs(sp.y - p.y - 0.45) > 0.46 + 0.15) outSeat++;
       }
       var dr = trip.door(tm), dl = Math.min.apply(null, parts.map(function(q){ var lc = local(q, dr.x, dr.z); return Math.abs(Math.abs(lc.x) - spec.wid/2) + Math.max(0, Math.abs(lc.z) - q.len/2); }));
       if(dl > 0.5) doorFar++;
@@ -550,6 +551,11 @@ class Streets(unittest.TestCase):
             l = self.r[w]["lanes"]
             self.assertGreater(l["tram"], 0, w)
             self.assertEqual(l["bad"], 0, "%s: lanes() equals the sim's lateral plan, with or without the sim" % w)
+            if w == "v3":
+                # [3.32] City Gen v4 phase 9: the @3 tram streets say how their track is laid: inside a centre bed (an
+                # avenue's 9.2 m, a collector's 7.2 m) or in the innermost lane of a shared avenue / collector
+                self.assertEqual(sorted(round(v, 3) for v in l["tramOffs"]), [1.75, 2.025, 2.75, 3.025], w)
+                continue
             self.assertEqual(len(l["tramOffs"]), 1, w)
             self.assertAlmostEqual(l["tramOffs"][0], 1.475, 9, "%s: a tram lane is 1.475 m off the centre line" % w)
 

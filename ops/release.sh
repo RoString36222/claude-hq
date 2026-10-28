@@ -159,11 +159,12 @@ prune() {  # impl
 
 cmd_check() {
   say "Repo tests (frontend sync, ops)"
-  ( cd "$REPO" && python3 -m unittest discover -s tests -q ) && ok "tests"
+  # (each step stops the check when it fails: "all green" only when all of them are)
+  ( cd "$REPO" && python3 -m unittest discover -s tests -q ) && ok "tests" || die "repo tests failed"
   say "Arena backend tests + clippy"
-  ( cd "$BACKEND" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "backend"
+  ( cd "$BACKEND" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "backend" || die "backend tests or clippy failed"
   say "HQ server tests + clippy"
-  ( cd "$REPO/dashboard-rs" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "dashboard-rs"
+  ( cd "$REPO/dashboard-rs" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "dashboard-rs" || die "HQ server tests or clippy failed"
   ok "all green: safe to merge"
 }
 

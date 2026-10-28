@@ -71,9 +71,10 @@ function kerbPoint(W, x, z){
   var dx = x - n.x, dz = z - n.z, L = Math.hypot(dx, dz);
   if(L < 0.01){ dx = Math.cos(n.yaw); dz = -Math.sin(n.yaw); L = 1; }      // on the centre line: the left-hand side
   dx /= L; dz /= L;
-  var offs = [n.carriage + walk*0.5, n.carriage + walk*0.3, n.carriage + walk*0.7];
-  for(var i = 0; i < offs.length; i++){
-    var px = Math.round((n.x + dx*offs[i])*100)/100, pz = Math.round((n.z + dz*offs[i])*100)/100;
+  // across the footpath, then (a cafe's tables, a bench in the way) a few metres along the kerb either way
+  var offs = [n.carriage + walk*0.5, n.carriage + walk*0.3, n.carriage + walk*0.7], along = [0, 2, -2, 4, -4];
+  for(var j = 0; j < along.length; j++) for(var i = 0; i < offs.length; i++){
+    var px = Math.round((n.x + dx*offs[i] - dz*along[j])*100)/100, pz = Math.round((n.z + dz*offs[i] + dx*along[j])*100)/100;
     if(Q.surfaceAt(W, px, pz) === "sidewalk" && !Q.blockedAt(W, px, pz))
       return {x: px, z: pz, edge: n.edge, street: n.name ? String(n.name).slice(0, 40) : "", yaw: Math.atan2(-dx, -dz)};
   }

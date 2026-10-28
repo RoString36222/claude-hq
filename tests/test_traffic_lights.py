@@ -31,7 +31,8 @@ function doc(p){ return JSON.parse(zlib.gunzipSync(fs.readFileSync(FIX + p)).toS
 // a v4-shaped world: v4's class names (and their tram versions) on @3's roads
 const V4 = {local: ["lane", "local street", "collector", "shared street", "service road", "local street + tram"],
             arterial: ["avenue", "boulevard", "boulevard + tram", "avenue_tram"], highway: ["highway", "expressway"], ring: ["expressway"]};
-function v4(d){ d.layers.roads.edges.forEach(function(e, i){ const o = V4[e["class"]]; if(o) e["class"] = o[i %% o.length]; }); return d; }
+// ([3.29] not the roads the generator already classes as expressways, ramps and flyovers: the interchanges keep theirs)
+function v4(d){ d.layers.roads.edges.forEach(function(e, i){ const o = V4[e["class"]]; if(o && !e.v4) e["class"] = o[i %% o.length]; }); return d; }
 const SRC = {commons: function(){ return doc("claude-hq@3.json.gz"); }, island: function(){ return doc("island@3.json.gz"); }, v4: function(){ return v4(doc("claude-hq@3.json.gz")); }};
 const FAST = {expressway: 1, ring: 1, ramp: 1, flyover: 1, underpass: 1};
 const DAY = Date.UTC(2026, 9, 27, 10), NIGHT = Date.UTC(2026, 9, 27, 3);
@@ -41,11 +42,13 @@ function boxes(list){
   const b = [];
   list.forEach(function(v){
     const S0 = T.SPEC[v.type] || T.SPEC[v.kind], S = S0 && S0.len < T.SPEC.car.len ? S0 : T.SPEC.car;
-    if(v.kind === "car") b.push({id: v.id, x: v.x, z: v.z, yaw: v.yaw, len: S.len, wid: S.wid});
+    if(v.kind === "car") b.push({id: v.id, x: v.x, y: v.y, z: v.z, yaw: v.yaw, len: S.len, wid: S.wid});
   });
   return b;
 }
 function overlap(a, b){
+  // ([3.29] a car on a flyover over one on the road it crosses: 7 m apart, not touching)
+  if(Math.abs((a.y || 0) - (b.y || 0)) > 3) return false;
   const ax = [Math.sin(a.yaw), Math.cos(a.yaw)], ay = [ax[1], -ax[0]], bx = [Math.sin(b.yaw), Math.cos(b.yaw)], by = [bx[1], -bx[0]];
   const d = [b.x - a.x, b.z - a.z], axes = [ax, ay, bx, by];
   function r(u, x, y, Ln, Wd){ return Math.abs(x[0]*u[0] + x[1]*u[1])*Ln/2 + Math.abs(y[0]*u[0] + y[1]*u[1])*Wd/2; }
@@ -66,6 +69,9 @@ Object.keys(SRC).forEach(function(name){
   const inc = {};
   W.edges.forEach(function(e){ (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
   o.lights = ids.length;
+  // [3.26] City Gen v4's junction data: lights only where it says signals
+  o.genSignals = W.nodes.filter(function(n){ return n.junction === "signals"; }).length;
+  o.offGen = ids.filter(function(id){ const n = W.nodes.find(function(q){ return String(q.id) === String(id); }); return o.genSignals && (!n || n.junction !== "signals"); }).length;
   o.kinds = {}; ids.forEach(function(id){ o.kinds[S[id].kind] = (o.kinds[S[id].kind] || 0) + 1; });
   o.onFast = ids.filter(function(id){
     const es = inc[id] || [];
@@ -143,7 +149,8 @@ Object.keys(SRC).forEach(function(name){
   V.update(DAY, {x: sg.x, z: sg.z});
   let inst = true;
   V.group.traverse(function(m){ if(m.isMesh && !m.isInstancedMesh) inst = false; });
-  const pole = V.arms[0], car = P[0];
+  // (a car on a street open today: one under roadworks has its parked cars cleared away)
+  const shut = L.closed(W, DAY) || {}, pole = V.arms[0], car = P.filter(function(c){ return !shut[c.edge]; })[0];
   V.update(DAY, {x: car.x, z: car.z});
   o.view = {calls: V.drawCalls(), inst: inst, pole: V.blocked(pole.x, pole.z), poleBeside: V.blocked(pole.x + 2.5, pole.z + 2.5), car: V.blocked(car.x, car.z), info: V.info()};
   V.dispose();
@@ -172,9 +179,14 @@ class TrafficLights(unittest.TestCase):
             self.assertEqual(o["onFast"], [], w + ": no light on a highway's mainline, an expressway or a ring road")
             self.assertEqual(o["armless"], 0, w)
             self.assertTrue(o["same"], w + ": the lights are a pure function of the world")
-        self.assertGreater(self.o["island"]["kinds"].get("local", 0), 0, "downtown crossroads get lights too")
-        # [3.22.1] and side streets: a main road crossing one, and crossroads out of town, spaced out (the commons had 17)
-        self.assertGreaterEqual(self.o["commons"]["lights"], 35, "side-street crossings get lights too")
+        # [3.26] where the world says which junctions have signals (City Gen v4), the lights are there and nowhere else
+        # (a downtown crossroads of local streets gives way, as the plan's road-pair table has it)
+        for w in self.worlds():
+            self.assertGreater(self.o[w]["genSignals"], 0, w)
+            self.assertEqual(self.o[w]["offGen"], 0, w + ": a light where the world has no signals")
+        # and nearly all of them lit (two a short link apart are one junction: the busier keeps its light)
+        for w in self.worlds():
+            self.assertGreaterEqual(self.o[w]["lights"] * 4, self.o[w]["genSignals"] * 3, w)
 
     def test_every_light_cycles_and_its_axes_take_turns(self):
         for w in self.worlds():
@@ -208,7 +220,9 @@ class TrafficLights(unittest.TestCase):
             self.assertGreater(o["day"], o["night"], w + ": calmer at night")
             self.assertGreater(o["dayFar"], o["day"], w + ": the wider view shows more")
         c = self.o["commons"]
-        self.assertGreater(c["day"], 1.8 * c["oldDay"], "about twice the cars on screen in the commons by day")
+        # (about twice: [3.26] City Gen v4's junctions light fewer side streets than 3.22.1 did, and its mini roundabouts
+        # fill the City without lights a little more)
+        self.assertGreater(c["day"], 1.7 * c["oldDay"], "about twice the cars on screen in the commons by day")
         self.assertGreater(self.o["island"]["dayFar"], 1.5 * self.o["island"]["oldDay"])
 
     def test_the_same_for_everyone(self):

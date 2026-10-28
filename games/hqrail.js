@@ -560,9 +560,13 @@ function railView(W){
   var sea = L.sea, su = sea ? unit(sea.front) : null;
   var out = {
     lines: (L.lines || []).filter(Boolean).map(function(l){
-      return {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: (l.stations || []).map(String),
+      var o = {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: (l.stations || []).map(String),
               path: (l.path || []).filter(function(p){ return p && p.length >= 3; }).map(function(p){ return [cm(p[0]), cm(p[1]), cm(p[2])]; }),
               kinds: (l.kinds || []).map(String), tier: (l.tier | 0) || 1};
+      // City Gen v4 phase 8: the generator's viaduct piers [{x, y, z, h}] (m), only when the doc has them (world.js railOf)
+      if(Array.isArray(l.piers)) o.piers = l.piers.filter(function(p){ return p && isFinite(+p.x) && isFinite(+p.z); })
+        .map(function(p){ return {x: cm(p.x), y: cm(p.y), z: cm(p.z), h: Math.max(0, cm(p.h))}; });
+      return o;
     }),
     stations: (L.stations || []).filter(Boolean).map(function(s){
       var u = unit(s.along);

@@ -184,7 +184,9 @@ function create(c, o){
     if(!trip || !R || !R.session) return null;
     if(ride) tryf(function(){ ride.cancel(true); });
     var Sx = null;
-    Sx = R.session({trip: trip, view: viewFor(trip.mode), announce: announce, toast: o.toast, calm: function(){ return calm() || reduced(); }, reduced: reduced(),
+    // (the stop you wait at: a bus held back from a junction's box may pull up a way along from it)
+    var sv = svc[trip.mode], stopAt = sv ? (tryf(function(){ return sv.stops(); }, []) || []).filter(function(st){ return st && st.id === trip.from; })[0] || null : null;
+    Sx = R.session({trip: trip, stopAt: stopAt ? {x: num(stopAt.x, 0), z: num(stopAt.z, 0)} : null, view: viewFor(trip.mode), announce: announce, toast: o.toast, calm: function(){ return calm() || reduced(); }, reduced: reduced(),
       sfx: function(n, so){ sfxM(n, so); }, me: function(){ var m = me(); return {x: m.x, y: m.y, z: m.z}; }, userId: o.userId, world: worldId, seed: seed,
       announcer: ANN, now: function(){ return Date.now(); },
       under: function(){ /* the underground controller follows the ride (ctl.step riding) */ },

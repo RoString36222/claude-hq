@@ -434,6 +434,29 @@ pub fn hq_style_body(style: Option<&Value>) -> Result<Value, &'static str> {
     }
 }
 
+/// Movable garages (HQ 3.33): `|x| <= 400` and `|z| <= 300` decimetres in the
+/// lot's own frame, `r` quarter turns `0..=3`, `lot` a lot rank (u32).
+pub const HQ_GARAGE_X_MAX: i64 = 400;
+pub const HQ_GARAGE_Z_MAX: i64 = 300;
+pub const HQ_GARAGE_R_MAX: i64 = 3;
+
+/// `{lot, x, z, r}` for PUT /v1/hq/me/garage, rebuilt from an allowlist: an
+/// object with exactly those four keys, each a JSON integer in range (the
+/// Arena checks the same; this keeps anything else off the wire). The result
+/// is a fresh object of four integers, never the page's own value.
+pub fn hq_garage_body(body: &Value) -> Result<Value, &'static str> {
+    let o = body.as_object().ok_or("garage must be an object")?;
+    if o.len() != 4 || o.keys().any(|k| !matches!(k.as_str(), "lot" | "x" | "z" | "r")) {
+        return Err("garage takes exactly lot, x, z and r");
+    }
+    let int = |k: &str, lo: i64, hi: i64| o.get(k).and_then(Value::as_i64).filter(|n| (lo..=hi).contains(n));
+    let lot = int("lot", 0, i64::from(u32::MAX)).ok_or("lot must be a whole number 0..=4294967295")?;
+    let x = int("x", -HQ_GARAGE_X_MAX, HQ_GARAGE_X_MAX).ok_or("x must be a whole number -400..=400")?;
+    let z = int("z", -HQ_GARAGE_Z_MAX, HQ_GARAGE_Z_MAX).ok_or("z must be a whole number -300..=300")?;
+    let r = int("r", 0, HQ_GARAGE_R_MAX).ok_or("r must be a whole number 0..=3")?;
+    Ok(json!({"lot": lot, "x": x, "z": z, "r": r}))
+}
+
 /// `a,b,c` -> user ids (each [`valid_user_id`], at most [`HQ_STYLE_IDS_MAX`], duplicates dropped).
 pub fn hq_style_ids(raw: &str) -> Result<Vec<String>, &'static str> {
     let mut out: Vec<String> = Vec::new();
@@ -1257,6 +1280,40 @@ impl App {
         }
     }
 
+    // ---- Movable garages (HQ 3.33) -----------------------------------------
+
+    /// GET /v1/hq/me/garage -> `{"garage": {lot, x, z, r} | null}`. Egress: the
+    /// device token only. An Arena without movable garages answers 404, passed
+    /// through so the page keeps its spot local-only.
+    pub fn arena_hq_garage(&self) -> (u16, Value) {
+        self.authed_get("/v1/hq/me/garage")
+    }
+
+    /// PUT /v1/hq/me/garage. Egress: exactly four small integers about your own
+    /// HQ lot -- `lot` (its rank), `x` / `z` (decimetres inside it), `r`
+    /// (quarter turns) -- rebuilt by [`hq_garage_body`], plus the device token;
+    /// nothing from transcripts, sessions or paths. A bad body is refused here
+    /// (400) and nothing is sent. An Arena without the route answers 404,
+    /// passed through.
+    pub fn arena_hq_garage_put(&self, body: &Value) -> (u16, Value) {
+        if self.authed().is_none() {
+            return not_paired();
+        }
+        match hq_garage_body(body) {
+            Ok(b) => self.authed_send("PUT", "/v1/hq/me/garage", b),
+            Err(e) => (400, json!({"error": e})),
+        }
+    }
+
+    /// DELETE /v1/hq/me/garage: back to the default spot. Egress: the device
+    /// token only, no body. An Arena without the route answers 404, passed through.
+    pub fn arena_hq_garage_reset(&self) -> (u16, Value) {
+        match self.authed() {
+            Some((t, b)) => self.arena_request("DELETE", &format!("{}/v1/hq/me/garage", b), Some(&t), None),
+            None => not_paired(),
+        }
+    }
+
     pub fn arena_portrait_put(&self, png: &[u8]) -> (u16, Value) {
         match self.authed() {
             Some((t, b)) => http_bytes("PUT", &format!("{}/v1/me/portrait", b), &t, "image/png", png),
@@ -1915,6 +1972,73 @@ pub(crate) mod tests {
         app.clear_link();
         assert_eq!(app.arena_hq_style_put(Some(&json!(null))), (400, json!({"error": "not paired"})));
         assert_eq!(app.arena_hq_styles(a).0, 400);
+    }
+
+    #[test]
+    fn hq_garage_bodies_are_checked_locally() {
+        let ok = |v: Value| hq_garage_body(&v).unwrap_or_else(|e| panic!("{e}: {v}"));
+        assert_eq!(ok(json!({"lot": 3, "x": -12, "z": 40, "r": 1})), json!({"lot": 3, "x": -12, "z": 40, "r": 1}));
+        assert_eq!(ok(json!({"r": 3, "z": -300, "x": 400, "lot": 0})), json!({"lot": 0, "x": 400, "z": -300, "r": 3}));
+        assert_eq!(ok(json!({"lot": 4294967295u64, "x": -400, "z": 300, "r": 0}))["lot"], json!(4294967295u64));
+        for bad in [
+            json!(null), json!([1, 2, 3, 0]), json!("1,2,3,0"), json!({}),
+            json!({"lot": 3, "x": 0, "z": 0}),                          // missing r
+            json!({"lot": 3, "x": 0, "z": 0, "r": 0, "y": 0}),          // an extra key
+            json!({"lot": 3, "x": 0, "z": 0, "name": "x"}),             // a stranger in r's place
+            json!({"lot": 3, "x": 0, "z": 0, "r": 4}),
+            json!({"lot": 3, "x": 0, "z": 0, "r": -1}),
+            json!({"lot": 3, "x": 401, "z": 0, "r": 0}),
+            json!({"lot": 3, "x": -401, "z": 0, "r": 0}),
+            json!({"lot": 3, "x": 0, "z": 301, "r": 0}),
+            json!({"lot": 3, "x": 0, "z": -301, "r": 0}),
+            json!({"lot": -1, "x": 0, "z": 0, "r": 0}),
+            json!({"lot": 4294967296u64, "x": 0, "z": 0, "r": 0}),
+            json!({"lot": 3, "x": 1.5, "z": 0, "r": 0}),
+            json!({"lot": 3, "x": 1.0, "z": 0, "r": 0}),
+            json!({"lot": "3", "x": 0, "z": 0, "r": 0}),
+            json!({"lot": 3, "x": 0, "z": null, "r": 0}),
+            json!({"lot": 3, "x": 0, "z": 0, "r": true}),
+        ] {
+            assert!(hq_garage_body(&bad).is_err(), "{bad}");
+        }
+        let posts = crate::server::post_paths();
+        assert!(posts.contains(&"/api/arena/hq/garage") && posts.contains(&"/api/arena/hq/garage/reset"));
+    }
+
+    #[test]
+    fn hq_garage_routes_reach_the_arena_and_pass_its_status_through() {
+        let (_d, app) = app();
+        let reply = Arc::new(Mutex::new((200, json!({"garage": null}))));
+        let sent = stub(&app, "https://arena.example", reply.clone());
+        assert_eq!(app.arena_hq_garage(), (200, json!({"garage": null})));
+        app.arena_hq_garage_put(&json!({"lot": 7, "x": 12, "z": -30, "r": 2}));
+        app.arena_hq_garage_reset();
+        {
+            let s = sent.lock().unwrap();
+            assert_eq!((s[0].0.as_str(), s[0].1.as_str(), &s[0].3), ("GET", "https://arena.example/v1/hq/me/garage", &None));
+            assert_eq!((s[1].0.as_str(), s[1].1.as_str()), ("PUT", "https://arena.example/v1/hq/me/garage"));
+            assert_eq!(s[1].3, Some(json!({"lot": 7, "x": 12, "z": -30, "r": 2})));
+            assert_eq!((s[2].0.as_str(), s[2].1.as_str(), &s[2].3), ("DELETE", "https://arena.example/v1/hq/me/garage", &None));
+        }
+        // refused locally: nothing sent
+        assert_eq!(app.arena_hq_garage_put(&json!({"lot": 7, "x": 12, "z": -30, "r": 4})).0, 400);
+        assert_eq!(app.arena_hq_garage_put(&json!({"lot": 7, "x": 12, "z": -30, "r": 0, "note": "hi"})).0, 400);
+        assert_eq!(sent.lock().unwrap().len(), 3);
+        // the Arena's 422 comes back as is
+        *reply.lock().unwrap() = (422, json!({"detail": "garage.x: out of range (-400..=400)"}));
+        assert_eq!(app.arena_hq_garage_put(&json!({"lot": 7, "x": 0, "z": 0, "r": 0})).0, 422);
+        // an Arena without movable garages: its 404 comes back as a 404
+        *reply.lock().unwrap() = (404, json!({"error": "Not Found"}));
+        assert_eq!(app.arena_hq_garage(), (404, json!({"error": "Not Found"})));
+        assert_eq!(app.arena_hq_garage_put(&json!({"lot": 7, "x": 0, "z": 0, "r": 0})).0, 404);
+        assert_eq!(app.arena_hq_garage_reset().0, 404);
+        // unpaired: nothing leaves
+        let n = sent.lock().unwrap().len();
+        app.clear_link();
+        assert_eq!(app.arena_hq_garage(), (400, json!({"error": "not paired"})));
+        assert_eq!(app.arena_hq_garage_put(&json!({"lot": 7, "x": 0, "z": 0, "r": 0})), (400, json!({"error": "not paired"})));
+        assert_eq!(app.arena_hq_garage_reset(), (400, json!({"error": "not paired"})));
+        assert_eq!(sent.lock().unwrap().len(), n);
     }
 
     #[test]

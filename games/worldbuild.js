@@ -20,6 +20,10 @@
  *             sea level in the mounted ocean's calm material (games/ocean.js riverMaterial()), else the plane's
  *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`);
  *             opts.gap leaves every bridge's pieces over the water out (games/hqbridges.js draws opening spans there)
+ *             (HQ 3.29: an interchange's decks, parapets, piers and the T's slab ride in the same mesh: 1 per tile they cross)
+ *   tunnels   (HQ 3.30) per tile a tunnel or cutting crosses, one mesh (`tunnel`) of their roads, marks, barrier,
+ *             retaining walls, the tunnel's walls, ceiling, walkways, portals and ceiling lights (lit 1: emissive, always
+ *             on), drawn before the sea and marking the stencil, so the sea is not drawn down a cutting or in the tunnel
  *   water     (@3 docs with Layers.water) world-wide: every lake, canal and the marina as one mesh (worldgeom waterGeo) in
  *             the river's calm material (games/ocean.js riverMaterial(); the lakes in its calm lake variant: aLake = 1,
  *             smaller ripples and more of the sky), quays, the breakwater, lily pads and reeds as one vertex-coloured
@@ -28,7 +32,7 @@
  * only the tiles and products worldgeom.tierDiff names, and a job that finishes at a stale tier is redone.
  * Draw calls: <= 8 per tile within 300 m, <= 4 beyond, + 4 world-wide (+ 1 sea on an island; + at most 6 for city life's
  * furniture, one per kind within 300 m); a river adds 1 world-wide
- * and 1 per tile a bridge crosses; @3 water adds at most 3 world-wide (surface, works, foam). A terrain hole (@3) is cut
+ * and 1 per tile a bridge crosses (HQ 3.30: and 1 per tile a tunnel or cutting crosses); @3 water adds at most 3 world-wide (surface, works, foam). A terrain hole (@3) is cut
  * out of the tiles' own meshes and adds none.
  * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
  * No THREE, no DOM at load time: THREE comes from c.THREE inside create().
@@ -232,9 +236,21 @@ function create(c, W, opts){
     }
     m.frame = new THREE.MeshStandardMaterial({color: 0x8a9096, roughness: 0.5, metalness: 0.5});
     m.bridge = std({roughness: 0.8});
-    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge", "works"].forEach(function(k){ settle(m[k]); });
+    // [3.30] a tunnel's and its cuttings' roads and structure, and its ceiling lights (always on): drawn before the sea
+    // (games/ocean.js, renderOrder -10), marking the stencil (1) wherever they draw so the sea skips those pixels, as
+    // games/hqmetro.js's street works do: the Commons' sea plane lies 4 m down, over the cuttings' and the tunnel's road
+    // (its lights: lit = 1, emissive day and night)
+    m.tunnel = stencilMark(patch(std({roughness: 0.85, emissive: new THREE.Color(0xfff1d6), emissiveIntensity: 1.3}), "tunnel", function(sh){
+      sh.vertexShader = rep(sh.vertexShader, "common", "attribute float lit;\nvarying float vLit;");
+      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vLit = lit;");
+    }, function(sh){
+      sh.fragmentShader = rep(sh.fragmentShader, "common", "varying float vLit;");
+      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit;");
+    }));
+    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge", "works", "tunnel"].forEach(function(k){ settle(m[k]); });
     return m;
   }
+  function stencilMark(m){ m.stencilWrite = true; m.stencilRef = 1; m.stencilFunc = THREE.AlwaysStencilFunc; m.stencilZPass = THREE.ReplaceStencilOp; return m; }
   // What the weather leaves on the ground (HQ 3.2, games/hqweather.js settled): snow lying in patches on whatever faces
   // up -- roads, pavements, grass, roofs, tree crowns -- and, after rain, surfaces darker and glossier where wet.
   // A patch on top of the material's own (the windows' rows, the trees' sway), keyed apart so they compile once.
@@ -476,6 +492,8 @@ function create(c, W, opts){
       set(T, "kerbwalk", mesh(mergeGeo([m.roads.kerb, m.roads.walk]), M.walk, T));
       set(T, "roadfar", mesh(mergeGeo([m.roads.asphalt, lifted(m.roads.marks, FAR_MARK_LIFT)]), M.asphalt, T));
       set(T, "bridge", mesh(m.roads.bridge, M.bridge, T));   // none in a doc without bridges
+      set(T, "tunnel", mesh(m.roads.tunnel, M.tunnel, T));   // [3.30] none in a doc without tunnels
+      if(T.m.tunnel) T.m.tunnel.renderOrder = -20;          // (before the sea: the stencil)
     }
     if(m.buildings1) set(T, "body1", mesh(m.buildings1.body, M.body, T));
     if(m.buildings0){ set(T, "body0", mesh(m.buildings0.body, M.body0, T)); set(T, "win0", mesh(m.buildings0.win, M.win, T)); T.b0 = true; }

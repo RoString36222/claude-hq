@@ -19,6 +19,7 @@ mod db;
 mod fps;
 mod strike;
 mod hq;
+mod hqgarage;
 mod hqstyle;
 mod kart;
 mod loot;

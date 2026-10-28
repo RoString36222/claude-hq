@@ -49,7 +49,9 @@
  * the integrator moves the player along (trip.pose(ms)); trip.pay() calls the onFare hook once (the
  * integrator POSTs /api/arena/city/:owner/fare {kind}). HQ 3.15 rides are free: new code uses service().
  * HQ 3.15 (docs/plans/transport-revamp.md 3.1, 3.2, 5.3), pure:
- *   lanes(W, tier, sim?)      per edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}
+ *   lanes(W, tier, sim?)      per edge {id, a, b, tram, tramOff, tramLay, bed, bus: [dir0, dir1], busOff, cars, carOff, half}
+ *                             ([3.32] tramLay: the doc edge's `tram` ("centre-bed", "shared-double", ...), bed: a centre bed's half
+ *                             width, m, 0 without one)
  *   tramPaths(W, tier, sim?)  the tram track centre lines as driven: lanes, turn curves through the boxes and
  *                             the terminus crossovers, [{line, lines, kind, key, pts: [x, y, z, ...]}]
  *   tramStops(W, tier, sim?)  where each line's tram stands at each stop
@@ -84,6 +86,15 @@
  * Emergency runs ignore the lights (they take each box when it is clear, as before). lightAt(x, z, heading, ms) ->
  * {state, sig, dist} the light ahead (for the police); signals() the lights. Without lights the plan is today's.
  * street(THREE, scene, W): the lights (poles, lit heads, stop lines) and cityLife.parked(W)'s cars, drawn near you.
+ * HQ 3.27 the garage's cars on the street: an ordinary car (type "car"; a taxi keeps its yellow and its roof sign) is drawn
+ * as one of the dealership's cars (games/vehicles/catalogue.json, bodies by games/hqvehiclemodels.js) once the catalogue
+ * and the models are loaded. streetCars(cat) picks MODEL_N everyday cars (hatch, sedan, SUV, coupe in turn; no hyper or
+ * super cars, no Formula 1, no bikes), carLook(id, models) gives a vehicle its model and one of that model's paints
+ * from a hash of its id (pure: every client and the carjack feature, games/playcarjack.js, agree). view() bakes each model
+ * once into one vertex-coloured geometry (its paint parts marked, so the per-instance paint colours only them), scaled
+ * uniformly to fit the car's SPEC (len x wid: collisions and the clash tests are unchanged), one InstancedMesh per model:
+ * MODEL_N draw calls at most instead of the box car's two, for the MODEL_NEAR cars nearest the camera (the list is
+ * nearest first); farther ones, and every car while no model is ready (node, the tests, a failed load), are the box car.
  */
 (function(){
 "use strict";
@@ -119,12 +130,21 @@ var GAP = 2.6;                          // bumper to bumper, at the closest
 var V_STRAIGHT = 9, V_TURN = 6.5, V_UTURN = 3, V_CREEP = 2.5, CLEAR = 0.6, CLASH = 0.3, H_MIN = 6, H_MAX = 16, REPS = 3;
 var DWELL = 20, FARE = 2, LAYOVER = 30, XOVER = 30, BLOCK = 15, BAY = 2.9, RAMP = 12, BAY_BLOCK = 3, BAY_YAW = 0.15;
 var DENS = [0.3, 0.45, 0.6, 0.72, 0.85];  // share of a ring's slots with a car, per tier
+// [3.28] City Gen v4 phase 5: the NPC traffic level (Settings' slider, 0..1; o.traffic, sim.setLevel): LEVEL0 is today's
+// (the tier's DENS); 1 every slot the timetable has; 0 none. A ring never holds more than LOS_D cars a km of its lane at
+// the level (the plan's comfortable level of service D, 22 at 100%) nor one per CAR_M of it (the hard cap: classes.rs)
+var LEVEL0 = 0.85, LOS_D = 22, CAR_M = 7.5;
+// [3.29] an expressway's lane width (classes.rs: 3.5 m), its lanes laid from the median out
+var LANE_W = 3.5;
 var HEADWAY = {bus: 240, tram: 300};      // target seconds between vehicles on a line
 var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEAR = 120, EV_FAR = 1200, EV_HW = 1.25, EV_TRY = 90, EV_HOLD = 90;
 var EV_KINDS = ["fire", "ambulance", "police"];
+// [3.27] the garage's cars on the street: how many models, the body types they come from (in turn), how many of the
+// nearest cars are drawn as one (the rest: the box car), and each model's instances at most
+var MODEL_N = 6, MODEL_TYPES = ["hatch", "sedan", "suv", "coupe"], MODEL_NEAR = 40, MODEL_CAP = 40;   // (about 5k triangles a model: 40 of them ~210k)
 var EV_SITES = {fire: {fire: 1}, ambulance: {hospital: 1, clinic: 1}, police: {police: 1}};
 var PULL_TAPER = 10, LOOK = 34, BRAKE = 14, CATCH = 0.6, CATCH_MAX = 4, OBS_R = 2.4;
-var CAP = {car: 200, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
+var CAP = {car: 320, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 160, lorry: 100, scooter: 120, bike: 120, taxi: 120};   // [3.22] more of the types: platoons
 // [3.22] traffic lights: a wait shorter than SIG_EPS s is rolled through; QSOFT m the softness of a queue's hold, QSTEP s
 // its check's step; the lights' cycle (HQV.cityLife.SIG.cycle), a car's start after its green comes on, the window
 // periods (each divides the next, and the cycle), the most cars in a platoon (on a ring through lights; elsewhere),
@@ -140,6 +160,19 @@ var SIDE = -1;
 // lanes are cut back until their ends are PIN_W m apart
 var PIN_GAP = 2*SPEC.car.len + GAP, PIN_W = 7;
 var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5b, 0x6b4bb8, 0xd9772b, 0x8fb8de, 0x5a1f2b, 0xb7c2a0];
+
+// [3.29] City Gen v4 phase 6: the car lanes the sim drives a way on a road (backend interchange.rs `sim_lanes`, the
+// generator's lane balance): an expressway's lanes less the one by the median (kept free for overtaking), an
+// interchange's ramp's or flyover's own, one on every other road (as before)
+// City Gen v4 phase 9 (HQ 3.32): a tram track in a centre bed of half width h (m): the body (SPEC.tram.wid) inside the
+// bed's kerb (0.15 m) with BED_MARGIN to spare, so an avenue's 9.2 m bed leaves 3.4 m between the two bodies for a
+// 3 m island; the bed stands BED_UP (world.js SIDEWALK_UP) over the road
+var BED_UP = 0.15, BED_MARGIN = 0.1;
+function tramBed(h){ var hw = SPEC.tram.wid/2; return Math.max(hw + 0.2, (+h || 0) - 0.15 - hw - BED_MARGIN); }
+function simLanes(e){
+  var v4 = e && e.v4, n = Math.max(1, (e && e.lanes) | 0);
+  return v4 === "expressway" ? Math.max(1, n - 1) : v4 === "ramp" || v4 === "flyover" ? n : 1;
+}
 
 /* ---------- small maths ---------- */
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -231,6 +264,24 @@ function turnPts(p0, d0, p1, d1, n){
     var t = i/n, u = 1 - t, b0 = u*u*u, b1 = 3*u*u*t, b2 = 3*u*t*t, b3 = t*t*t;
     out.push([b0*p0[0] + b1*c0[0] + b2*c1[0] + b3*p1[0], p0[1] + (p1[1] - p0[1])*t, b0*p0[2] + b1*c0[1] + b2*c1[1] + b3*p1[2]]);
   }
+  return out;
+}
+// [3.26] a turn round a roundabout's island: from the lane in onto the circle RB_LANE/2 m out from the island (a mini
+// one's: 2 m round its painted dome), round it with the island on the side away from the kerb ([3.22.3] to the right,
+// with traffic on the left: anticlockwise in x-z, the way the angle grows) and off onto the lane out; Bezier joins
+var RB_LANE = 6;
+function roundPts(n, rb, p0, d0, p1, d1){
+  var rc = rb.r + (rb.full ? RB_LANE/2 : 2), dir = SIDE === -1 ? 1 : -1, out = [];
+  var a0 = Math.atan2(p0[2] - n.z, p0[0] - n.x), a1 = Math.atan2(p1[2] - n.z, p1[0] - n.x), lead = Math.min(0.6, 4/rc);
+  var s = a0 + dir*lead, sweep = ((dir*(a1 - lead*dir - s)) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI);
+  if(sweep < 0.2) sweep += 2*Math.PI;
+  var steps = Math.max(4, Math.ceil(sweep*rc/1.5)), y = (p0[1] + p1[1])/2;
+  function on(t){ var th = s + dir*sweep*t; return [n.x + rc*Math.cos(th), y, n.z + rc*Math.sin(th)]; }
+  function tan(t){ var th = s + dir*sweep*t; return [-Math.sin(th)*dir, Math.cos(th)*dir]; }
+  var e0 = turnPts(p0, d0, on(0), tan(0), 6);
+  e0.forEach(function(q){ out.push(q); });
+  for(var k = 1; k < steps; k++) out.push(on(k/steps));
+  turnPts(on(1), tan(1), p1, d1, 6).forEach(function(q){ out.push(q); });
   return out;
 }
 // a D-shaped loop from p0 heading d0 back to p0 heading -d0, R m deep and away from the kerb (the way a
@@ -343,12 +394,21 @@ function create(doc, o){
   var tier = clamp(num(o.tier, 1) | 0, 1, 5), grow = clamp(num(o.grow, 0), 0, 1000);
   var seed = typeof o.seed === "number" ? o.seed | 0 : hash32(o.seed != null ? o.seed : (doc.id || "city"));
   var dens = tier >= 5 ? DENS[4] : DENS[tier - 1] + (DENS[tier] - DENS[tier - 1])*grow/1000;
+  // [3.28] the slots are filled for the fullest level (densMax), the level then keeps its share of them (curDens: today's at LEVEL0)
+  var level = clamp(num(o.traffic, LEVEL0), 0, 1), densMax = Math.min(1, dens/LEVEL0);
+  function levelDens(){ return level === LEVEL0 ? dens : densMax*level; }
+  var curDens = levelDens();
   var fareHook = typeof o.onFare === "function" ? o.onFare : null;
   var tmpA = {}, tmpB = {}, tmpC = {};
 
   // nodes and active edges, in metres
   var nodes = {}, nodeIds = [];
-  (R.nodes || []).forEach(function(n){ nodes[n.id] = {id: n.id, x: num(n.x, 0)/100, y: num(n.y, 0)/100, z: num(n.z, 0)/100, inc: []}; nodeIds.push(n.id); });
+  (R.nodes || []).forEach(function(n){
+    nodes[n.id] = {id: n.id, x: num(n.x, 0)/100, y: num(n.y, 0)/100, z: num(n.z, 0)/100, inc: []};
+    // [3.26] City Gen v4: a roundabout (mini or full) and its island's radius (m): turns go round it
+    if((n.junction === "mini" || n.junction === "roundabout") && n.island > 0) nodes[n.id].rb = {full: n.junction === "roundabout", r: n.island/100};
+    nodeIds.push(n.id);
+  });
   var edges = [];
   (R.edges || []).forEach(function(e){
     if(e.min_tier != null && (e.min_tier | 0) > tier) return;
@@ -358,7 +418,13 @@ function create(doc, o){
       : (e.pts ? ptsOfPacked(e.pts) : [[A.x, A.y, A.z], [B.x, B.y, B.z]]);
     var width = num(e.width, 1200), walk = num(e.walk, 200), cls = String(e["class"] || e.cls || "street");
     var E = {i: edges.length, id: e.id, a: e.a, b: e.b, cls: cls, art: !!ARTERIAL[cls], pts: pts, len: len2(pts),
-             c: Math.max(1.5, (width - 2*walk)/200), bus: [false, false], tram: false};
+             c: Math.max(1.5, (width - 2*walk)/200), bus: [false, false], tram: false,
+             // City Gen v4 (HQ 3.25): its lanes each way and its raised median's half width (m)
+             lanesV4: e.v4 ? Math.max(1, e.lanes|0) : 0, med: e.median > 0 ? e.median/200 : 0,
+             // [3.29] an interchange's ramp runs one way (a to b); the car lanes the sim drives a way (simLanes)
+             one: e.oneway === true, k: simLanes(e),
+             // City Gen v4 phase 9 (HQ 3.32): how a tram street's track is laid, and a centre bed's half width (m)
+             tramLay: typeof e.tram === "string" ? e.tram : null, bedH: e.tram === "centre-bed" && e.bed > 0 ? e.bed/200 : 0};
     if(E.len < 1) return;
     edges.push(E); A.inc.push(E.i); B.inc.push(E.i);
   });
@@ -420,22 +486,52 @@ function create(doc, o){
   // lateral plan per edge: m from the centre line toward the kerb ([3.22.3] SIDE: the left), per direction
   edges.forEach(function(E){
     var inner = 0.15, c = E.c, tw = SPEC.tram.wid, cw = SPEC.car.wid, bw = SPEC.bus.wid;
-    E.tramOff = E.tram ? inner + tw/2 : null;
-    // [3.20.1] in the kerb-side lane of a road with two or three each way (worldgeom.js lanesEach), else mid-carriageway
-    var n = Math.max(1, Math.min(3, Math.floor(c/3.3)));
-    var in2 = E.tram ? inner + tw + 0.3 : inner, carOff = Math.max(in2 + cw/2 + 0.1, E.tram ? 0 : c*(2*n - 1)/(2*n)), anyBus = E.bus[0] || E.bus[1];
+    // [3.20.1] in the kerb-side lane of a road with two or three each way (worldgeom.js lanesEach), else mid-carriageway;
+    // [3.25] a v4 road's own lanes, between its median and the kerb
+    // [3.32] phase 9: a tram street's lay (lay): "bed" a centre bed, the trams inside it (tramBed) and the cars outside
+    // it, its half width standing for the median; "shared" the tram in the innermost lane, the cars in the class's own
+    // lanes outside it; "old" (a doc without the field, or a lay no world uses yet) the tram by the centre line, as ever
+    var lay = !E.tram ? null : E.bedH > 0 ? "bed" : /^shared-/.test(E.tramLay || "") ? "shared" : "old";
+    var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = lay === "old" ? 0 : lay === "bed" ? E.bedH : E.med;
+    E.tramOff = lay === "bed" ? tramBed(E.bedH) : lay === "shared" ? Math.max(inner + tw/2, med + (c - med)/(2*n)) : lay ? inner + tw/2 : null;
+    var in2 = lay && lay !== "bed" ? E.tramOff + tw/2 + 0.3 : med + inner, carOff = Math.max(in2 + cw/2 + 0.1, lay === "old" ? 0 : c - (c - med)/(2*n)), anyBus = E.bus[0] || E.bus[1];
     if(anyBus) carOff = in2 + cw/2 + 0.1;
     var carEdge = carOff + cw/2;
     E.cars = E.art && carEdge <= c + 0.05 && (!anyBus || carEdge + 0.25 + bw <= c);
     E.carOff = E.cars ? carOff : null;
+    // [3.29] every lane the sim drives a way, from the kerb in (kerb first, then each lane's width further in); a one-way
+    // road's across its whole carriageway, centred
+    // (a road with shoulders and no footpaths, an expressway, has its lanes LANE_W wide out from the median, the
+    // shoulder beyond the kerb lane)
+    var shoulder = E.k > 1 && !E.one && !E.tram && !anyBus, lw = shoulder ? Math.min(LANE_W, (c - med)/n) : (c - med)/n, kerb = shoulder ? med + n*lw - lw/2 : carOff;
+    E.carOffs = !E.cars ? [] : E.one ? Array.apply(null, Array(E.k)).map(function(_, j){ return ((E.k - 1)/2 - j)*Math.min(LANE_W, 2*c/E.k); })
+      : Array.apply(null, Array(E.k)).map(function(_, j){ return kerb - j*lw; });
+    if(shoulder && E.cars){ E.carOff = kerb; E.room = Math.max(0, c - kerb - cw/2 - 0.15); }
     E.busOff = Math.max(c - bw/2 - 0.1, (E.cars ? carEdge + 0.25 : in2) + bw/2);
     E.room = E.cars ? Math.max(0, c - (anyBus ? bw + 0.35 : 0) - carEdge - 0.15) : 0;   // how far a car can pull over
     // an emergency vehicle never shares a car lane: it runs on the tram track, else in the bus lane,
     // else down the middle when that clears both car lanes (else it does not use the road)
     E.evOff = E.tram ? E.tramOff : anyBus ? E.busOff : 0;
     E.evKind = E.tram ? "tram" : anyBus ? "bus" : null;
-    E.ev = !!(E.tram || anyBus || !E.cars || carOff - cw/2 >= EV_HW + 0.1);
+    E.ev = !E.one && !!(E.tram || anyBus || !E.cars || (!med && carOff - cw/2 >= EV_HW + 0.1));
   });
+  // [3.32] a centre bed's car lanes that end at a node where the bed runs on (two edges meet there, the other a bed with
+  // no cars of its own: its one lane each way the bus's) would turn their cars back across the bed: no cars on that edge
+  // either, and so on down the street to a junction (old docs have no bed: nothing changes)
+  for(var bedPass = 0, bedMore = true; bedMore && bedPass < 64; bedPass++){
+    bedMore = false;
+    edges.forEach(function(E){
+      if(!E.cars || !(E.bedH > 0) || E.one) return;
+      var dead = [E.a, E.b].some(function(id){
+        var inc = nodes[id].inc, O = inc.length === 2 ? edges[inc[0] === E.i ? inc[1] : inc[0]] : null;
+        return !!(O && O !== E && O.bedH > 0 && !O.cars);
+      });
+      if(!dead) return;
+      E.cars = false; E.carOff = null; E.carOffs = []; E.room = 0; E.ev = !E.one;
+      if(E.bus[0] || E.bus[1]) E.busOff = Math.max(E.c - SPEC.bus.wid/2 - 0.1, E.bedH + 0.15 + SPEC.bus.wid/2);
+      bedMore = true;
+    });
+  }
 
   // junction radii: the boxes vehicles turn through. A node where a side street (no traffic of its
   // own, but an emergency run may come down it) meets a through road is a junction too: its box spans
@@ -447,6 +543,9 @@ function create(doc, o){
     var list = used[id], deg = nodes[id].inc.filter(function(i){ return edges[i].ev || list.indexOf(edges[i]) >= 0; }).length, maxC = 0, minLen = 1e9;
     list.forEach(function(E){ maxC = Math.max(maxC, E.c); minLen = Math.min(minLen, E.len); });
     radius[id] = Math.min(deg >= 3 ? maxC + 2 : deg === 2 ? 2.5 : 1, 0.4*minLen);
+    // [3.26] a full roundabout's box is its whole circle (as worldgeom.js trims the roads to its rim)
+    var rb = nodes[id].rb;
+    if(rb && rb.full) radius[id] = Math.min(Math.max(radius[id], rb.r + RB_LANE + 0.5), 0.45*minLen);
   });
 
   // [3.22] traffic lights (HQV.cityLife.signals, on the packed world): at a signalised node every lane in stops at
@@ -468,6 +567,10 @@ function create(doc, o){
   if(sigOn){ try { lo = mod(num(localOf(0), 0)/1000, SIG_C); } catch(e){ lo = 0; } }
   function trimOf(node, E){
     var r = radius[node] || 0, st = sigStop[node];
+    // [3.29] a road the sim drives several lanes a way, or one way (an expressway, a ramp), keeps its lanes out of a box
+    // that short roads beside it make smaller than its own half width (a highway's end in town by a bridge's short
+    // approaches): their ends never reach past the box's side into the roads crossing it
+    if((E.k > 1 || E.one) && r < E.c) r = Math.min(E.c, 0.45*E.len);
     if(st && st[E.id] != null) r = Math.max(r, Math.min(st[E.id], 0.4*E.len));
     return r;
   }
@@ -505,10 +608,10 @@ function create(doc, o){
       var c = clusterOf ? clusterOf[p.node] : null, last = out[out.length - 1];
       var q = {};
       for(var k in p) q[k] = p[k];
-      q.nodes = [p.node]; q.hs = [p.h];
+      q.nodes = [p.node]; q.hs = [p.h]; q.eins = [p.ein];
       if(c != null && last && last.box === c && p.sIn >= last.sOut - 1e-6 && last.nodes.indexOf(p.node) < 0 && p.v > V_UTURN && last.v > V_UTURN){
         last.sOut = p.sOut; last.v = Math.min(last.v, p.v); last.curve = last.curve.concat(p.curve.slice(1));
-        last.nodes.push(p.node); last.hs.push(p.h); last.turn = last.turn || p.turn;
+        last.nodes.push(p.node); last.hs.push(p.h); last.eins.push(p.ein); last.turn = last.turn || p.turn;
         last.occ = (last.sOut - last.sIn + spec.len - last.front)/last.v + CLEAR;
         return;
       }
@@ -517,7 +620,7 @@ function create(doc, o){
     });
     out.forEach(function(q){
       q.sn = null;
-      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; }
+      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; q.ein = q.eins[i]; }
       if(q.box != null) q.node = q.box;
     });
     return out;
@@ -528,7 +631,10 @@ function create(doc, o){
   // (x0, x1: m more cut off its start and end: a car ring's lanes either side of a hairpin, below)
   function lanePts(E, dir, off, x0, x1){
     var pts = dir ? E.pts.slice().reverse() : E.pts, from = dir ? E.b : E.a, to = dir ? E.a : E.b;
-    return trimPts(offsetPts(pts, SIDE*off), trimOf(from, E) + (x0 || 0), trimOf(to, E) + (x1 || 0));
+    var P = trimPts(offsetPts(pts, SIDE*off), trimOf(from, E) + (x0 || 0), trimOf(to, E) + (x1 || 0));
+    // [3.32] the track in a centre bed runs on the bed, BED_UP over the road
+    if(E.bedH > 0 && E.tramOff != null && off === E.tramOff) P = P.map(function(p){ return [p[0], p[1] + BED_UP, p[2]]; });
+    return P;
   }
   function laneNode(E, dir, end){ return end ? (dir ? E.a : E.b) : (dir ? E.b : E.a); }
 
@@ -570,7 +676,8 @@ function create(doc, o){
       // an emergency run turning round down the middle of the road comes back to where it went in:
       // it loops round inside the box rather than spinning on the spot
       var node = laneNode(lanes[i].e, lanes[i].dir, true), loop = open && Math.abs(ang) > 2.5 && Math.hypot(Q[0][0] - p0[0], Q[0][2] - p0[2]) < 1;
-      var curve = loop ? loopPts(p0, d0, Math.max(radius[node] || 0, spec.len)) : turnPts(p0, d0, Q[0], d1, 10);
+      var rbn = nodes[node] && nodes[node].rb;
+      var curve = loop ? loopPts(p0, d0, Math.max(radius[node] || 0, spec.len)) : rbn ? roundPts(nodes[node], rbn, p0, d0, Q[0], d1) : turnPts(p0, d0, Q[0], d1, 10);
       var sIn = Math.max(s0 + 0.1, acc - front);
       // the turn's last point is the next lane's first; the closing turn ends the line (s = len is s = 0)
       for(var k = 1; k < curve.length - (last ? 0 : 1); k++) add(curve[k]);
@@ -578,7 +685,7 @@ function create(doc, o){
       var sOut = last ? acc : acc + Math.hypot(Q[0][0] - pts[pts.length - 1][0], Q[0][2] - pts[pts.length - 1][2]);
       passes.push({node: node, sIn: sIn, sOut: sOut, v: vb, curve: curve, wid: spec.wid,
                    occ: (sOut - sIn + spec.len - front)/vb + CLEAR, key: lanes[i].e.i*2 + lanes[i].dir, turn: Math.abs(ang) > 0.5,
-                   h: Math.atan2(d0[0], d0[1]), front: front});
+                   h: Math.atan2(d0[0], d0[1]), ein: lanes[i].e.id, front: front});
     }
     return {pl: plOf(pts), passes: clusterOf ? boxes(passes, spec) : passes, raw: passes, cusps: cusps, lanes: lanes, ranges: ranges, rev: rev, open: !!open};
   }
@@ -598,24 +705,37 @@ function create(doc, o){
   // ---- car rings: pair lanes in and out at every node ----
   var carEdges = edges.filter(function(E){ return E.cars; }), nextLane = {};
   var byNode = {};
+  // [3.29] a lane is (edge, way, j): j its lane from the kerb in, on a road the sim drives more than one lane a way
+  // (an expressway, an interchange's ramps); a one-way road has its lanes one way only
+  function laneKey(E, dir, j){ return (E.i*2 + dir)*8 + (j || 0); }
+  function dirsOf(E){ return E.one ? [0] : [0, 1]; }
   carEdges.forEach(function(E){
-    [0, 1].forEach(function(dir){
+    dirsOf(E).forEach(function(dir){
       var to = laneNode(E, dir, true), from = laneNode(E, dir, false);
-      (byNode[to] = byNode[to] || {inn: [], out: []}).inn.push({e: E, dir: dir});
-      (byNode[from] = byNode[from] || {inn: [], out: []}).out.push({e: E, dir: dir});
+      for(var j = 0; j < E.k; j++){
+        (byNode[to] = byNode[to] || {inn: [], out: []}).inn.push({e: E, dir: dir, j: j});
+        (byNode[from] = byNode[from] || {inn: [], out: []}).out.push({e: E, dir: dir, j: j});
+      }
     });
   });
   Object.keys(byNode).sort(function(a, b){ return (+a) - (+b) || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(id){
     var J = byNode[id], n = J.inn.length, cost = [];
+    // [3.29] where a road has more than one lane a way or runs one way (merges and diverges), each lane goes on to the
+    // lane nearest where it ends: the turn plus how far apart the two lanes' ends are (no two lanes cross); elsewhere the
+    // cheapest turns, a seeded tiebreak (as before)
+    var multi = J.inn.concat(J.out).some(function(l){ return l.e.k > 1 || l.e.one; });
+    if(J.out.length !== n){ errors.push("node " + id + ": " + n + " lanes in, " + J.out.length + " out"); return; }
     J.inn.forEach(function(a, i){
-      var d0 = dirAt(a.dir ? a.e.pts.slice().reverse() : a.e.pts, true);
+      var d0 = dirAt(a.dir ? a.e.pts.slice().reverse() : a.e.pts, true), P = multi ? lanePts(a.e, a.dir, a.e.carOffs[a.j]) : null;
       cost.push(J.out.map(function(b, j){
         var d1 = dirAt(b.dir ? b.e.pts.slice().reverse() : b.e.pts, false);
-        var u = b.e === a.e && n > 1 ? 10 : 0;
-        return Math.abs(turnAngle(d0, d1)) + u + 0.4*h01(seed, a.e.i*2 + a.dir, b.e.i*2 + b.dir);
+        var u = b.e === a.e && b.dir !== a.dir && n > 1 ? 10 : 0;
+        if(!multi) return Math.abs(turnAngle(d0, d1)) + u + 0.4*h01(seed, a.e.i*2 + a.dir, b.e.i*2 + b.dir);
+        var p = P[P.length - 1], q = lanePts(b.e, b.dir, b.e.carOffs[b.j])[0];
+        return Math.abs(turnAngle(d0, d1)) + u + 0.2*Math.hypot(q[0] - p[0], q[2] - p[2]);
       }));
     });
-    assign(cost).forEach(function(j, i){ var a = J.inn[i], b = J.out[j]; nextLane[a.e.i*2 + a.dir] = b; });
+    assign(cost).forEach(function(j, i){ var a = J.inn[i], b = J.out[j]; nextLane[laneKey(a.e, a.dir, a.j)] = b; });
   });
   // the cheapest pairing: every permutation up to 7 lanes, greedy beyond
   function assign(cost){
@@ -636,14 +756,15 @@ function create(doc, o){
   }
   var rings = [], seen = {};
   carEdges.forEach(function(E){
-    [0, 1].forEach(function(dir){
-      var k = E.i*2 + dir;
+    dirsOf(E).forEach(function(dir){ for(var j0 = 0; j0 < E.k; j0++) (function(j0){
+      var k = laneKey(E, dir, j0);
       if(seen[k]) return;
-      var lanes = [], cur = {e: E, dir: dir};
-      while(cur && !seen[cur.e.i*2 + cur.dir]){
-        seen[cur.e.i*2 + cur.dir] = 1;
-        lanes.push({e: cur.e, dir: cur.dir, off: cur.e.carOff, room: cur.e.room});
-        cur = nextLane[cur.e.i*2 + cur.dir];
+      var lanes = [], cur = {e: E, dir: dir, j: j0};
+      while(cur && !seen[laneKey(cur.e, cur.dir, cur.j)]){
+        seen[laneKey(cur.e, cur.dir, cur.j)] = 1;
+        // (only the kerb lane has room to pull over into)
+        lanes.push({e: cur.e, dir: cur.dir, j: cur.j || 0, off: cur.e.carOffs[cur.j || 0], room: cur.j ? 0 : cur.e.room});
+        cur = nextLane[laneKey(cur.e, cur.dir, cur.j)];
       }
       // [3.22.3] a hairpin (round the inside of an acute fork: with traffic on the left, where the lanes in and out all
       // but meet, and run side by side a car's width apart back from there) would fold a platoon back onto itself: the
@@ -653,17 +774,21 @@ function create(doc, o){
         var b = lanes[(i + 1) % lanes.length];
         if(b.e === a.e || lanes.length < 2) return;
         var P = lanePts(a.e, a.dir, a.off), Q = lanePts(b.e, b.dir, b.off), p0 = P[P.length - 1], q0 = Q[0];
-        if(Math.abs(turnAngle(dirAt(P, true), dirAt(Q, false))) <= 2 || Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_GAP) return;
+        // [3.25] or the inside of a sharp bend, where the lane out starts behind the lane in's end (the two cross before
+        // the node: City Gen v4's medians put the kerb lane further out): cut back until they no longer cross
+        var d0 = dirAt(P, true), crossed = function(){ return (q0[0] - p0[0])*d0[0] + (q0[2] - p0[2])*d0[1] < 0; };
+        var bend = Math.abs(turnAngle(d0, dirAt(Q, false))) > 0.5 && crossed();
+        if(!bend && (Math.abs(turnAngle(d0, dirAt(Q, false))) <= 2 || Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_GAP)) return;
         for(var x = 1; x <= 30; x++){
           if(len2(P) - x < 8 || len2(Q) - x < 8) break;
           P = lanePts(a.e, a.dir, a.off, a.x0, (a.x1 || 0) + x); Q = lanePts(b.e, b.dir, b.off, (b.x0 || 0) + x, b.x1);
           p0 = P[P.length - 1]; q0 = Q[0];
-          if(Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_W){ a.x1 = (a.x1 || 0) + x; b.x0 = (b.x0 || 0) + x; break; }
+          if(bend ? !crossed() : Math.hypot(p0[0] - q0[0], p0[2] - q0[2]) >= PIN_W){ a.x1 = (a.x1 || 0) + x; b.x0 = (b.x0 || 0) + x; break; }
         }
       });
       var r = route(lanes, SPEC.car); r.id = rings.length; r.kind = "car";
       rings.push(r);
-    });
+    })(j0); });
   });
 
   // ---- transit routes and stops ----
@@ -738,6 +863,7 @@ function create(doc, o){
     if(layoutMemo) return layoutMemo;
     var lanesOut = edges.map(function(E){
       return {id: E.id, i: E.i, a: E.a, b: E.b, cls: E.cls, len: E.len, half: E.c, tram: !!E.tram, tramOff: E.tram ? E.tramOff : null,
+              tramLay: E.tram ? E.tramLay : null, bed: E.tram && E.bedH > 0 ? E.bedH : 0,
               bus: [!!E.bus[0], !!E.bus[1]], busOff: E.bus[0] || E.bus[1] ? E.busOff : null, cars: !!E.cars, carOff: E.cars ? E.carOff : null};
     });
     var pieces = [], byKey = {}, stopsOut = [];
@@ -852,7 +978,14 @@ function create(doc, o){
   }
   // [3.22] at a node with lights, movements coming in on different axes never share a window (each colour is one
   // axis's); sigAxis is the light's own (cityLife.sigAxis)
-  function passAxis(p){ var sg = p.sn != null ? sigAt[p.sn] : null; return sg ? (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0) : 0; }
+  // ([3.32] the axis of the light's own arm on the road it comes in by, where it has one: a shallow arm's heading and the
+  // way a vehicle comes in can fall either side of 45 degrees)
+  function passAxis(p){
+    var sg = p.sn != null ? sigAt[p.sn] : null;
+    if(!sg) return 0;
+    var arm = p.ein != null && sg.arms ? sg.arms.filter(function(a){ return a.edge === p.ein && a.axis != null; })[0] : null;
+    return arm ? arm.axis : (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0);
+  }
   function colour(P, sig){
     var colours = [], widths = [];
     P.forEach(function(p){
@@ -1306,7 +1439,7 @@ function create(doc, o){
       if(sigOn && Math.floor(m/k) > 2 && queueOk(r, k, Pn, Math.floor(m/k) - 1)){ nMax = Math.floor(m/k) - 1; break; }
       k++;
     }
-    r.k = k; r.m = m; r.cars = []; r.leads = [];
+    r.k = k; r.m = m; r.cars = []; r.leads = []; r.all = [];
     if(r.pl.len < 2*G) return;
     for(var i = 0; i < m; i++){
       if((r.blocked >> (i % r.R)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k) || cand.length >= nMax) continue;
@@ -1317,14 +1450,28 @@ function create(doc, o){
       var lead = null;
       for(var j = 0; j < Pn; j++){
         var fill = sigOn ? FILL[Math.min(j, FILL.length - 1)] : 1, hv = h01(seed, r.id*977 + 11 + 7*j, i);
-        if(hv >= dens*fill) continue;
+        if(hv >= densMax*fill) continue;
         var c = {id: "c" + r.id + "." + i + (j ? "." + j : ""), ring: r, kind: "car", shift: i*Hr, paint: Math.floor(h01(seed, r.id, i*31 + 5 + 7919*j)*PAINT.length),
                  slot: i, fol: j, fill: fill, hv: hv, ut: h01(seed, r.id*613 + 29 + 7*j, i)};
-        r.cars.push(c); cars.push(c);
-        if(!lead){ lead = c; r.leads.push(c); }
+        r.all.push(c);
       }
     });
+    // (their order by hash: the level keeps the first of them, as many as the ring's lane takes)
+    r.all.slice().sort(function(a, b){ return a.hv - b.hv || (a.id < b.id ? -1 : 1); }).forEach(function(c, n){ c.rank = n; });
   });
+  // [3.28] the cars there are at the level: under its share of the slots, and within the ring's cap (LOS_D a km at the
+  // level, one per CAR_M); each slot's first such car leads its platoon. Run again by setLevel (then lifeOf, below)
+  function capOf(r){ return Math.floor(Math.min(level*LOS_D*r.pl.len/1000, r.pl.len/CAR_M)); }
+  function applyLevel(){
+    curDens = levelDens(); cars = [];
+    rings.forEach(function(r){
+      var cap = capOf(r), lastSlot = null;
+      r.cars = r.all.filter(function(c){ return c.hv < curDens*c.fill && c.rank < cap; });
+      r.leads = [];
+      r.cars.forEach(function(c){ c.st = null; cars.push(c); if(c.slot !== lastSlot){ r.leads.push(c); lastSlot = c.slot; } });
+    });
+  }
+  applyLevel();
 
   // ---- [3.21] city life (games/citylife.js): how many of the slots' cars are out, what they are, closed streets ----
   // A car exists when its slot hash hv < dens (above, unchanged); it is out on a lap when hv < dens*demand(local hour
@@ -1363,7 +1510,10 @@ function create(doc, o){
       d = d || WQ.districtAt(LW, x, z);
       return d && d.k != null ? FA.group(d.k) : "home";
     };
-    rings.forEach(function(r){
+    rings.forEach(function(r){ lifeOf(r); });
+  }
+  function lifeOf(r){
+      if(!life) return;
       // its street kind: the commonest by length; its edges (for closures); whether it turns round anywhere
       var byKind = {}, best = null;
       r.edgeIds = {};
@@ -1387,7 +1537,6 @@ function create(doc, o){
         while(li < r.ranges.length - 1 && r.ranges[li][1] < sm) li++;
         c.grp = String(groupAt(p.x, p.z, p.yaw, r.lanes[li].e.c) || "home");
       });
-    });
   }
   function fitsType(c, type){
     var r = c.ring, L0 = SPEC[type].len;
@@ -1412,7 +1561,7 @@ function create(doc, o){
     if(c.st && c.st.k === k) return c.st;
     if(!life) return (c.st = {k: k, show: true, type: "car", hour: null});
     var t0 = r.prof.base + c.shift + k*r.prof.T, h = CL.hourOf ? CL.hourOf(localOf(t0*1000)) : mod(localOf(t0*1000)/36e5, 24);
-    var show = c.hv < dens*(c.fill || 1)*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
+    var show = c.hv < curDens*(c.fill || 1)*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
     var type = CL.pick(CL.mix(c.grp || "home", r.kindL, h), c.ut);
     if(!SPEC[type] || TYPES.indexOf(type) < 0) type = "car";
     if(type === "lorry" && (!fitsType(c, "lorry") || (sigOn && c.fol > 0))) type = "van";
@@ -2030,6 +2179,9 @@ function create(doc, o){
     // [3.21] every car's lap state at timeMs (out or not, its type, the local hour its lap started), and what is closed
     cars: function(timeMs){ var t = num(timeMs, 0)/1000; return cars.map(function(c){ var q = carState(c, t); return {id: c.id, ring: c.ring.id, show: q.show, type: q.type, hour: q.hour, group: c.grp || null}; }); },
     closed: function(timeMs){ return closedFn ? closedAt(localOf(num(timeMs, 0))) : {}; },
+    // [3.28] the NPC traffic level (0..1, Settings' slider): which of the slots' cars there are, from now on
+    level: function(){ return level; },
+    setLevel: function(v){ var L2 = clamp(num(+v, LEVEL0), 0, 1); if(L2 === level) return level; level = L2; applyLevel(); rings.forEach(lifeOf); return level; },
     layout: layout, doc: doc, seed: seed,
     _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; }, sigAt: sigAt,
         sites: sites, stopIndex: stopIndex, partPose: partPose, sections: sections, mod: mod,
@@ -2080,7 +2232,7 @@ function layoutOf(W, tier, sim){
   if(layoutCache.length > 4) layoutCache.shift();
   return L;
 }
-// per active edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}: m from the centre line
+// per active edge {id, a, b, tram, tramOff, tramLay, bed, bus: [dir0, dir1], busOff, cars, carOff, half}: m from the centre line
 // toward the kerb (SIDE x the right of travel)
 function lanes(W, tier, sim){ return layoutOf(W, tier, sim).lanes; }
 // the track centre lines the trams drive: [{line, lines, kind: "lane"|"turn"|"xover", key, pts: [x, y, z, ...]}]
@@ -2339,6 +2491,34 @@ function soundOf(v){
   return {sk: sk, voice: voice, rpm: Math.round(rpm)};
 }
 
+/* ---------- [3.27] the garage's cars on the street (pure) ---------- */
+function bodyOf(v){ return String((v && v.body) || String((v && v["class"]) || "").split(".")[1] || ""); }
+// MODEL_N everyday cars of the catalogue: listed (a numbered slot, not a reserve or the starter), with dims, a hatch, a
+// sedan, an SUV and a coupe in turn (each type by id), so the street has a bit of everything and the same everywhere
+function streetCars(cat){
+  var L = ((cat && cat.vehicles) || []).filter(function(v){
+    return v && typeof v.id === "string" && String(v["class"] || "").split(".")[0] === "car" && typeof v.slot === "number" && v.dims
+      && MODEL_TYPES.indexOf(bodyOf(v)) >= 0;
+  }).sort(function(a, b){ return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+  var by = MODEL_TYPES.map(function(t){ return L.filter(function(v){ return bodyOf(v) === t; }); }), out = [];
+  for(var r = 0; out.length < MODEL_N; r++){
+    var any = false;
+    for(var k = 0; k < by.length && out.length < MODEL_N; k++) if(by[k][r]){ out.push(by[k][r]); any = true; }
+    if(!any) break;
+  }
+  return out;
+}
+// a car's look, from its id: which of the models (i, its catalogue id) and which of its paints (an index into
+// entry.paints, as hq3d's presence sends it, `vp`), and that paint's colour. null: no models (draw the box car)
+function carLook(id, models){
+  if(id == null || !models || !models.length) return null;
+  var h = hash32(String(id) + ":look"), i = h % models.length, e = models[i] || {}, ps = Array.isArray(e.paints) ? e.paints : [];
+  var pi = ps.length ? (h >>> 7) % ps.length : 0, hx = ps[pi] && /^#[0-9a-fA-F]{6}$/.test(ps[pi].hex) ? parseInt(ps[pi].hex.slice(1), 16) : PAINT[h % PAINT.length];
+  return {i: i, id: e.id || null, paint: pi, hex: hx};
+}
+// does this vehicle (as at() lists it) get a garage model? an ordinary car; a taxi, van, lorry or two-wheeler keeps its own
+function modelled(v){ return !!v && v.kind === "car" && (!v.type || v.type === "car"); }
+
 /* ---------- drawing: instanced bodies (THREE from c.THREE, only inside view()) ---------- */
 function view(c){
   var THREE = c.THREE, group = new THREE.Group(), meshes = {}, mtx = new THREE.Matrix4(), q = new THREE.Quaternion(),
@@ -2473,6 +2653,95 @@ function view(c){
   inst("beacon", new THREE.BoxGeometry(0.28, 0.14, 0.2), CAP.fire*2 + CAP.ambulance*2 + CAP.police*2 + CAP.taxi, beaconM);   // (and the taxis' roof signs)
   var BEACON_Y = {fire: 2.6, ambulance: 2.8, police: 1.55}, BEACON_Z = {fire: 3.3, ambulance: 2.6, police: -0.2};
 
+  /* [3.27] the garage's cars: each model baked into one geometry (positions, normals, its colours, a paint mask), one
+     InstancedMesh each. The material colours a vertex by its own colour, and a painted one also by the instance's paint
+     (the shader's instance colour, mixed in by the mask: trim, glass, tyres and lamps keep their own). */
+  var MODELS = [], modelM = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.42, metalness: 0.3}), modelGen = 0, dead = false;
+  var CV = THREE.ShaderChunk && THREE.ShaderChunk.color_vertex, CV_LINE = "vColor.rgb *= instanceColor.rgb;";
+  if(CV && CV.indexOf(CV_LINE) >= 0){
+    modelM.onBeforeCompile = function(sh){
+      sh.vertexShader = sh.vertexShader.replace("#include <color_pars_vertex>", "#include <color_pars_vertex>\nattribute float hqPaint;")
+        .replace("#include <color_vertex>", CV.replace(CV_LINE, "vColor.rgb *= mix(vec3(1.0), instanceColor.rgb, hqPaint);"));
+    };
+    modelM.customProgramCacheKey = function(){ return "hq-traffic-paint"; };
+  }
+  // a rig's visible meshes as one geometry, centred, wheels on the ground, scaled to the car's footprint; null if empty
+  function bake(R){
+    if(!R || !R.g) return null;
+    var P = [], N = [], C = [], K = [], k = new THREE.Color();
+    R.g.position.set(0, 0, 0); R.g.rotation.set(0, 0, 0); R.g.scale.set(1, 1, 1);
+    R.g.updateMatrixWorld(true);
+    R.g.traverseVisible(function(o){
+      if(!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+      var g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+      if(!g.attributes.normal) g.computeVertexNormals();
+      g.applyMatrix4(o.matrixWorld);
+      var mats = Array.isArray(o.material) ? o.material : null, pos = g.attributes.position, nor = g.attributes.normal, vc = g.attributes.color;
+      var groups = mats && g.groups.length ? g.groups : [{start: 0, count: pos.count, materialIndex: 0}];
+      groups.forEach(function(gr){
+        var m = mats ? mats[gr.materialIndex] : o.material;
+        if(!m || m.visible === false) return;
+        var paint = !!(m.userData && m.userData.paint), end = Math.min(pos.count, gr.start + (isFinite(gr.count) ? gr.count : pos.count));
+        if(paint || !m.color) k.setRGB(1, 1, 1); else k.copy(m.color);
+        for(var i = Math.max(0, gr.start); i < end; i++){
+          P.push(pos.getX(i), pos.getY(i), pos.getZ(i)); N.push(nor.getX(i), nor.getY(i), nor.getZ(i));
+          if(vc && m.vertexColors && !paint) C.push(k.r*vc.getX(i), k.g*vc.getY(i), k.b*vc.getZ(i)); else C.push(k.r, k.g, k.b);
+          K.push(paint ? 1 : 0);
+        }
+      });
+      g.dispose();
+    });
+    if(P.length < 9) return null;
+    var out = new THREE.BufferGeometry();
+    out.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+    out.setAttribute("normal", new THREE.Float32BufferAttribute(N, 3));
+    out.setAttribute("color", new THREE.Float32BufferAttribute(C, 3));
+    out.setAttribute("hqPaint", new THREE.Float32BufferAttribute(K, 1));
+    out.computeBoundingBox();
+    var bb = out.boundingBox, sx = bb.max.x - bb.min.x, sz = bb.max.z - bb.min.z;
+    if(!(sx > 0.1 && sz > 0.1)){ out.dispose(); return null; }
+    // uniformly, to fit the sim's car (SPEC.car: what collides and what the clash tests measure)
+    var s = Math.min(SPEC.car.len/sz, SPEC.car.wid/sx);
+    out.translate(-(bb.min.x + bb.max.x)/2, -bb.min.y, -(bb.min.z + bb.max.z)/2);
+    out.scale(s, s, s);
+    out.computeBoundingBox(); out.computeBoundingSphere();
+    return out;
+  }
+  function modelOf(i, geo){
+    var key = "model" + i, m = meshes[key];
+    if(m){ group.remove(m); m.geometry.dispose(); m.dispose(); delete meshes[key]; }
+    if(geo) inst(key, geo, MODEL_CAP, modelM);
+  }
+  // the catalogue (games/vehicles/catalogue.json) -> the models drawn; false while hqvehiclemodels.js is not loaded
+  function setModels(cat){
+    var VM = HQV.hqVehicleModels, gen = ++modelGen;
+    for(var j = 0; j < MODEL_N; j++) modelOf(j, null);
+    MODELS = [];
+    if(!VM || !VM.build || !cat || dead) return false;
+    var list = streetCars(cat);
+    list.forEach(function(entry, i){
+      var R = null, geo = null;
+      try { R = VM.build(c, entry, null); } catch(err){ R = null; }
+      try { geo = bake(R); } catch(err){ geo = null; }
+      modelOf(i, geo);                                  // (none: the cars of this model stay box cars)
+      // a real model (entry.model3d) swaps in when it has loaded: bake it again then
+      if(R && R.ready && typeof R.ready.then === "function") R.ready.then(function(){
+        if(gen !== modelGen || dead) return;
+        var g2 = null; try { g2 = bake(R); } catch(err){ g2 = null; }
+        if(g2) modelOf(i, g2);
+      }, function(){});
+    });
+    MODELS = list;
+    return MODELS.length > 0;
+  }
+  // the catalogue, if the City has it or can load it (nothing here without hqvehiclemodels.js: the box cars stay)
+  if(HQV.hqVehicleModels){
+    var cat0 = null;
+    try { cat0 = typeof c.catalogue === "function" ? c.catalogue() : null; } catch(err){ cat0 = null; }
+    if(cat0) setModels(cat0);
+    else if(HQV.hqVehicles && HQV.hqVehicles.load){ try { HQV.hqVehicles.load().then(function(cat){ if(!MODELS.length && !dead) setModels(cat); }, function(){}); } catch(err){} }
+  }
+
   var sc2 = new THREE.Vector3(1, 1, 1);
   function put(m, i, x, y, z, yaw, hex, sx, sy, sz){
     e.set(0, yaw, 0); q.setFromEuler(e); p.set(x, y, z); mtx.compose(p, q, sx ? sc2.set(sx, sy, sz) : sc); m.setMatrixAt(i, mtx);
@@ -2481,7 +2750,7 @@ function view(c){
   // opts.hide: {vehicleId: true} for the vehicles a detailed model draws instead (games/hqcoach.js near())
   function update(vehicles, timeMs, opts){
     var n = {car: 0, bus: 0, tram: 0, fire: 0, ambulance: 0, police: 0, beacon: 0, van: 0, lorry: 0, scooter: 0, bike: 0}, flash = Math.floor(num(timeMs, 0)/250) & 1;
-    var hide = opts && opts.hide;
+    var hide = opts && opts.hide, box = 0, mn = 0, mc = MODELS.map(function(){ return 0; });   // [3.27] box cars, model cars (each model's)
     (vehicles || []).forEach(function(v){
       var k = v.kind;
       if(n[k] == null || (hide && hide[v.id])) return;
@@ -2501,8 +2770,11 @@ function view(c){
         return;
       }
       if(n[k] >= CAP[k]) return;
+      // [3.27] one of the garage's cars, for the nearest ordinary ones (each model's mesh while it has room)
+      var lk = MODELS.length && mn < MODEL_NEAR && modelled(v) ? carLook(v.id, MODELS) : null, mm = lk && meshes["model" + lk.i];
+      if(mm && mc[lk.i] < MODEL_CAP){ put(mm, mc[lk.i]++, v.x, v.y, v.z, v.yaw, lk.hex); mn++; n.car++; return; }
       if(k === "car"){
-        put(meshes.car, n.car, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, n.car, v.x, v.y, v.z, v.yaw);
+        put(meshes.car, box, v.x, v.y, v.z, v.yaw, v.paint != null ? v.paint : 0x8a9199); put(meshes.carDetail, box, v.x, v.y, v.z, v.yaw); box++;
         if(v.type === "taxi" && n.beacon < meshes.beacon.instanceMatrix.count){
           var ts = Math.sin(v.yaw), tc = Math.cos(v.yaw);
           put(meshes.beacon, n.beacon++, v.x - 0.36*ts, v.y + 1.87, v.z - 0.36*tc, v.yaw, TAXI_SIGN, 2.1, 1.3, 1.2);
@@ -2527,15 +2799,22 @@ function view(c){
         if(m.instanceColor) m.instanceColor.needsUpdate = true;
       });
     });
+    // [3.27] the box cars drew from their own count; each model's mesh its own
+    meshes.car.count = meshes.carDetail.count = box;
+    mc.forEach(function(cn, i){ var m = meshes["model" + i]; if(!m) return; m.count = cn; m.instanceMatrix.needsUpdate = true; if(m.instanceColor) m.instanceColor.needsUpdate = true; });
+    n.model = mn;
     return n;
   }
   function drawCalls(){ var d = 0; for(var k in meshes) if(meshes[k].count > 0) d++; return d; }
   function dispose(){
+    dead = true; modelGen++;
     for(var k in meshes){ meshes[k].geometry.dispose(); meshes[k].dispose(); }
-    vc.dispose(); paintM.dispose(); beaconM.dispose();
+    vc.dispose(); paintM.dispose(); beaconM.dispose(); modelM.dispose();
     if(group.parent) group.parent.remove(group);
   }
-  return {group: group, meshes: meshes, update: update, drawCalls: drawCalls, dispose: dispose};
+  // [3.27] models(): the catalogue entries drawn on the street (empty: the box cars); look(v): a vehicle's, as drawn
+  return {group: group, meshes: meshes, update: update, drawCalls: drawCalls, dispose: dispose, setModels: setModels,
+          models: function(){ return MODELS.slice(); }, look: function(v){ return modelled(v) ? carLook(v.id, MODELS) : null; }};
 }
 
 /* ---------- [3.22] the street: traffic lights and parked cars (THREE only inside street()) ---------- */
@@ -2728,8 +3007,9 @@ function street(THREE, scene, W, o){
   return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose, arms: arms};
 }
 
-HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
+HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, LEVEL0: LEVEL0, LOS_D: LOS_D, CAR_M: CAR_M, simLanes: simLanes, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
                lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
+               streetCars: streetCars, carLook: carLook, modelled: modelled, MODEL_N: MODEL_N, MODEL_NEAR: MODEL_NEAR,
                _: {plOf: plOf, plAt: plAt, offsetPts: offsetPts, trimPts: trimPts, Profile: Profile, fastest: fastest, ease: ease}};
 })();

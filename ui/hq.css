@@ -2570,3 +2570,11 @@ html.hq-calm .hqs-chip{transition:none}
 .hqs-back .hqs .modal-b{padding-top:10px}
 .hqs-back .hqs .hqs-l{min-width:78px}
 @media(max-width:700px){.modalback.hqs-back{justify-content:center;padding:16px}}
+/* [3.33] Move garage (ui/app/40-studio.js): a narrow panel docked right over your lot; the cursor pad says if the ghost fits */
+.hqg-back .hqg{width:min(340px,100%)}
+.hqg .hqs-pad.good{border-color:var(--good);border-style:solid}
+.hqg .hqs-pad.bad{border-color:var(--warn);border-style:solid}
+.hqg .hqs-foot .hbtn{flex:0 0 auto}
+.hqg .hqs-pad{transition:border-color var(--t-fast) var(--ease)}
+html.hq-calm .hqg .hqs-pad{transition:none}
+@media (prefers-reduced-motion: reduce){.hqg .hqs-pad{transition:none}}

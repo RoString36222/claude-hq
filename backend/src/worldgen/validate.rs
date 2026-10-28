@@ -15,7 +15,9 @@
 //!   road-water     a road that is no bridge runs over a lake, canal or the marina
 //!   class-width    (hard, phase 2) a v4 road whose carriageway, lanes or median are not
 //!                  its class's, or whose footpaths are narrower (a lane at its layout
-//!                  width excepted; a street a tram runs down has no median until phase 8)
+//!                  width excepted; a street a tram runs down off its own tram street has no median; a tram
+//!                  street's tram version (phase 9): its raised centre bed, the median and the tram's
+//!                  width, or its lanes, the tram in them)
 //!   junction       (hard, phase 3) a junction of town roads without the control its roads
 //!                  call for (roads.rs `junction_kinds`: give way, a mini or full roundabout,
 //!                  signals), or a full roundabout without room on every arm
@@ -44,6 +46,13 @@
 //!   rail-corridor  (phase 8) a City Line with no boulevard under it (corridor.rs could not
 //!                  cut one: an HQ's lot, a civic site or a graded road in its way), its
 //!                  piers then the client's own
+//!   tram           (hard, phase 9) on a world with tram streets: a tram line on a road that is
+//!                  not a tram version (`Edge::tram`), a station's 40 m by 3 m platform not
+//!                  on a straight run of its track (within 1 m of the chord) clear of every
+//!                  junction's box (the widest road crossing it, and 3 m), or a line whose track
+//!                  ends mid-block: not at a junction, its street's end or one of its stations
+//!   tram-station   (phase 9) a tram stop with no room on its line for a 40 m platform (side
+//!                  streets every 24 to 48 m), left at the kerb as before
 //!   clearance      (hard, phase 6) a flyover or ramp crossing a road it does not meet
 //!                  less than 7 m over it (5.5 m clear and its deck), or a road crossing
 //!                  another at grade with no junction (listed: `road-overlap`)
@@ -81,7 +90,83 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     decks(l, &mut out);
     tunnels(l, &mut out);
     piers(l, &mut out);
+    trams(l, &mut out);
     out
+}
+
+/// Phase 9: the tram lines' roads, stations and ends.
+fn trams(l: &Layers, out: &mut Vec<Violation>) {
+    use super::transit::{track, PLATFORM_BOW_CM, PLATFORM_JUNCTION_CM, PLATFORM_LEN_CM, PLATFORM_W_CM};
+    let r = &l.roads;
+    if !r.edges.iter().any(|e| e.tram.is_some()) {
+        return;
+    }
+    let Some(t) = l.transit.as_ref() else { return };
+    let mut deg: BTreeMap<u32, usize> = BTreeMap::new();
+    for e in &r.edges {
+        *deg.entry(e.a).or_default() += 1;
+        *deg.entry(e.b).or_default() += 1;
+    }
+    let junction = |n: u32| deg.get(&n).copied().unwrap_or(0) >= 3;
+    let node = |n: u32| r.nodes.get(n as usize).map_or((0, 0), |q| (q.x, q.z));
+    let mut soft = Vec::new();
+    for line in t.lines.iter().filter(|x| x.kind == "tram") {
+        let mut put = |what: String, at: P| out.push(Violation { rule: "tram", hard: true, what: format!("{}: {what}", line.id), at: [at.0, at.1] });
+        for w in line.path.windows(2) {
+            if !r.edges.iter().any(|e| ((e.a == w[0] && e.b == w[1]) || (e.a == w[1] && e.b == w[0])) && e.tram.is_some()) {
+                put(format!("runs off its tram street between nodes {} and {}", w[0], w[1]), node(w[0]));
+            }
+        }
+        let (pts, _) = track(r, &line.path);
+        let stations: Vec<&super::city::Site> = l.sites.iter().filter(|s| line.stops.contains(&s.id)).collect();
+        for s in &stations {
+            let c = (s.x, s.z);
+            let f = s.front.unwrap_or([0, 0]);
+            let u = (-f[1], f[0]);
+            let ends = ((c.0 + u.0 * s.w / 2 / 65_536, c.1 + u.1 * s.w / 2 / 65_536), (c.0 - u.0 * s.w / 2 / 65_536, c.1 - u.1 * s.w / 2 / 65_536));
+            if s.w != PLATFORM_LEN_CM || s.d != PLATFORM_W_CM {
+                soft.push(Violation { rule: "tram-station", hard: false, what: format!("{}: {} is a stop at the kerb, no room for a platform", line.id, s.id), at: [c.0, c.1] });
+                continue;
+            }
+            // straight: its track beside it within the bow of the platform's axis
+            let chord = super::lines::dist(ends.0, ends.1).max(1);
+            let near: Vec<P> = pts.iter().copied().filter(|&q| seg_dist2(q, q, ends.0, ends.1) < 1_500 * 1_500).collect();
+            let bent = near.iter().any(|&q| {
+                let cross = ((q.0 - ends.0 .0) as i128 * (ends.1 .1 - ends.0 .1) as i128 - (q.1 - ends.0 .1) as i128 * (ends.1 .0 - ends.0 .0) as i128).abs() / chord as i128;
+                let along = ((q.0 - ends.0 .0) as i128 * (ends.1 .0 - ends.0 .0) as i128 + (q.1 - ends.0 .1) as i128 * (ends.1 .1 - ends.0 .1) as i128) / chord as i128;
+                along > 0 && along < chord as i128 && (cross - near_off(&near, ends)).abs() > PLATFORM_BOW_CM as i128 + 50
+            });
+            if bent {
+                put(format!("{} on a bend", s.id), c);
+            }
+            for (&n, _) in deg.iter().filter(|x| *x.1 >= 3) {
+                let reach = r.edges.iter().filter(|e| (e.a == n || e.b == n) && e.tram.is_none()).map(|e| e.width / 2).max().unwrap_or(0) + PLATFORM_JUNCTION_CM - 100;
+                if r.edges.iter().any(|e| (e.a == n || e.b == n) && e.tram.is_some()) && seg_dist2(node(n), node(n), ends.0, ends.1) < reach * reach {
+                    put(format!("{} in junction {n}'s box", s.id), c);
+                }
+            }
+        }
+        // its track ends at a junction or one of its stations
+        for &n in [line.path.first(), line.path.last()].into_iter().flatten() {
+            let q = node(n);
+            if !junction(n) && deg.get(&n) != Some(&1) && !stations.iter().any(|s| super::lines::dist((s.x, s.z), q) <= s.w / 2 + 3_000) {
+                put(format!("its track ends mid-block at node {n}"), q);
+            }
+        }
+    }
+    out.extend(soft);
+}
+
+/// The track's usual distance (cm) from a platform's axis (an island 0, a kerb's platform
+/// beside it), from the points near it: the median of their offsets.
+fn near_off(near: &[P], ends: (P, P)) -> i128 {
+    let chord = super::lines::dist(ends.0, ends.1).max(1) as i128;
+    let mut offs: Vec<i128> = near
+        .iter()
+        .map(|q| ((q.0 - ends.0 .0) as i128 * (ends.1 .1 - ends.0 .1) as i128 - (q.1 - ends.0 .1) as i128 * (ends.1 .0 - ends.0 .0) as i128).abs() / chord)
+        .collect();
+    offs.sort();
+    offs.get(offs.len() / 2).copied().unwrap_or(0)
 }
 
 /// Phase 8: the viaducts' piers, where they stand and how far apart.
@@ -311,7 +396,19 @@ fn classes(l: &Layers, out: &mut Vec<Violation>) {
         let Some(name) = e.v4 else { continue };
         let median = if tram.contains(&(e.a.min(e.b), e.a.max(e.b))) { e.median.or(class(name).map(|c| c.median_cm).filter(|&m| m > 0)) } else { e.median };
         let p = e.points.first().map_or([0, 0], |q| [q[0], q[2]]);
+        // (phase 9: a tram street's tram version: its bed down the middle, or its lanes widened)
         let ok = class(name).is_some_and(|c| {
+            if let Some(layout) = e.tram {
+                let added = c.tram.map_or(0, |t| t.added_cm);
+                let carriageway = e.width - 2 * e.walk - e.bed.unwrap_or(0) - e.median.unwrap_or(0);
+                let lanes = e.lanes == c.lanes && e.walk >= c.side_cm;
+                return lanes
+                    && if layout == "centre-bed" {
+                        e.median.is_none() && e.bed == Some(c.median_cm + added) && carriageway == c.carriageway_cm()
+                    } else {
+                        e.bed.is_none() && e.median.unwrap_or(0) == c.median_cm && (carriageway == c.carriageway_cm() || carriageway == c.carriageway_cm() + added || (name == "lane" && e.width < c.total_cm + added))
+                    };
+            }
             let carriageway = e.width - 2 * e.walk - median.unwrap_or(0);
             // (a class with no footpaths has shoulders: its whole width, no walk)
             let width = if c.walk { (carriageway == c.carriageway_cm() && e.walk >= c.side_cm) || (name == "lane" && e.width < c.total_cm) } else { e.width == c.total_cm && e.walk == 0 };

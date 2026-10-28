@@ -35,7 +35,7 @@
 //! (`shift_sites`), onto what was its own lot's ground.
 
 use super::super::city::{Block, Lot, Site};
-use super::super::classes::class;
+use super::super::classes::{class, Layout};
 use super::super::river::River;
 use super::super::noise::isqrt;
 use super::super::profile::{Profile, Tier};
@@ -65,6 +65,9 @@ pub struct Paving<'a> {
     /// How many steps down its ladder graph edge e is paved (a lot it would reach cannot
     /// give way): 0 its street's own width, the last its layout width.
     pub narrow: Vec<u8>,
+    /// City Gen v4 (phase 9): per graph edge, per rung of its ladder, how a tram street's track
+    /// is laid at that width: its class's tram version, else in the traffic lanes.
+    trams: Vec<Vec<Option<Layout>>>,
 }
 
 /// The tier a street of `tiers` is paved at: weighted, from the seed and the street.
@@ -126,6 +129,13 @@ impl Paving<'_> {
             out.push((layout, walk * layout / paved.max(1)));
         }
         (out, Vec::new())
+    }
+
+    /// City Gen v4 (phase 9): graph edge e's tram layout, where it is paved as its class's tram version.
+    pub fn tram(&self, e: u32) -> Option<Layout> {
+        let t = &self.trams[e as usize];
+        let k = (self.narrow[e as usize] as usize).min(t.len().saturating_sub(1));
+        t.get(k).copied().flatten()
     }
 
     /// City Gen v4: the class graph edge e is paved at (None before v4).
@@ -292,11 +302,34 @@ pub fn widen<'a>(
     sites: &mut [Site],
     roles: &[Option<&'static str>],
     river: Option<&River>,
+    tram_streets: &[bool],
 ) -> Paving<'a> {
-    let (ladders, names): (Vec<Vec<(i64, i64)>>, Vec<Vec<&'static str>>) = (0..g.edges.len() as u32).map(|e| Paving::ladder(p, g, seed, e, roles.get(e as usize).copied().flatten())).unzip();
+    let (mut ladders, mut names): (Vec<Vec<(i64, i64)>>, Vec<Vec<&'static str>>) = (0..g.edges.len() as u32).map(|e| Paving::ladder(p, g, seed, e, roles.get(e as usize).copied().flatten())).unzip();
+    // City Gen v4 (phase 9): a tram street tries each class first as its tram version (the bed
+    // or the widened lanes added), then the class as it is with the tram in its traffic lanes,
+    // before it steps down a class: the tram keeps its street's class where the lots allow
+    let mut trams: Vec<Vec<Option<Layout>>> = ladders.iter().map(|l| vec![None; l.len()]).collect();
+    for e in 0..g.edges.len() {
+        if !tram_streets.get(e).copied().unwrap_or(false) || names[e].is_empty() {
+            continue;
+        }
+        let (mut l2, mut n2, mut t2) = (Vec::new(), Vec::new(), Vec::new());
+        for (k, &name) in names[e].iter().enumerate() {
+            let shared = if class(name).is_some_and(|c| c.lanes >= 2 || c.name == "local") { Layout::SharedDouble } else { Layout::SharedSingle };
+            if let Some(t) = class(name).and_then(|c| c.tram).filter(|_| k == 0 || names[e][k - 1] != name) {
+                l2.push((ladders[e][k].0 + t.added_cm, ladders[e][k].1));
+                n2.push(name);
+                t2.push(Some(t.layout));
+            }
+            l2.push(ladders[e][k]);
+            n2.push(name);
+            t2.push(Some(shared));
+        }
+        (ladders[e], names[e], trams[e]) = (l2, n2, t2);
+    }
     let widest = ladders.iter().flatten().map(|w| w.0).max().unwrap_or(0);
     let reach = p.local_tiers.iter().chain(p.arterial_tiers).map(|t| t.cm).fold(p.paved_avenue_cm.max(p.paved_road_cm).max(widest), i64::max);
-    let mut pv = Paving { p, g, ladders, names, reach, narrow: vec![0; g.edges.len()] };
+    let mut pv = Paving { p, g, ladders, names, reach, narrow: vec![0; g.edges.len()], trams };
     if p.paved_road_cm == p.road_cm && p.paved_avenue_cm == p.avenue_cm && p.local_tiers.is_empty() && p.arterial_tiers.is_empty() && roles.is_empty() {
         return pv;
     }

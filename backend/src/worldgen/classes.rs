@@ -63,6 +63,20 @@ pub enum Layout {
     Deck,
 }
 
+impl Layout {
+    /// Its name in the world doc (`Edge::tram`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::SharedSingle => "shared-single",
+            Layout::SharedDouble => "shared-double",
+            Layout::CentreBed => "centre-bed",
+            Layout::SideOfMedian => "side-of-median",
+            Layout::BehindBarriers => "behind-barriers",
+            Layout::Deck => "deck",
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // one per column of the table
 const fn c(name: &'static str, lanes: u8, two_way: bool, lane_cm: i64, median_cm: i64, side_cm: i64, walk: bool, total_cm: i64, kmh: (i64, i64), tram: Option<Tram>) -> Class {
     Class { name, lanes, two_way, lane_cm, median_cm, side_cm, walk, total_cm, kmh, tram }

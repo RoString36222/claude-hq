@@ -411,7 +411,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 Edge {
                     id: 0, a: at[w], b: at[w + 1], class: "arterial", width: c.total_cm, walk: c.side_cm, lanes: 1, route: None,
                     name: format!("{name} Boulevard"), points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), min_tier: None,
-                    bridge: None, v4: None, median: None, oneway: None, under: None,
+                    bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
                 }
                 .classed(Some("boulevard")),
             );
@@ -423,13 +423,13 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 let st = &stubs[k];
                 let p = &st.proto;
                 let pts = resample(&[st.q, jq], STEP_CM);
-                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, ..p.clone() };
-                // (a main road narrower than an avenue meets the boulevard as one: no bend of
+                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, tram: None, bed: None, ..p.clone() };
+                // (a join is its street's class as it is, never its tram version: no tram crosses
+                // the boulevard; a main road narrower than an avenue meets it as one, no bend of
                 // two roads more than a class apart)
-                if p.class == "arterial" && p.v4 != Some("avenue") {
-                    if let Some(av) = class("avenue") {
-                        j = Edge { width: av.total_cm, walk: av.side_cm, ..j }.classed(Some("avenue"));
-                    }
+                let name = if p.class == "arterial" && p.v4 != Some("avenue") { Some("avenue") } else { p.v4 };
+                if let Some(k) = name.filter(|_| p.tram.is_some() || name != p.v4).and_then(class) {
+                    j = Edge { width: k.total_cm, walk: k.side_cm, median: None, ..j }.classed(Some(k.name));
                 }
                 joins.push(j);
             }

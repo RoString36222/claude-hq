@@ -149,10 +149,20 @@ pub fn alignment(c: &Ctx) -> Option<Cl> {
     let dry: Vec<bool> = (0..c.roads.nodes.len() as u32).map(|n| net.degree(n) > 0 && !land.wet(net.pos(n))).collect();
     let central = net.nearest(door(hub), |n| dry[n as usize] && net.arterial_degree(n) >= 1).or_else(|| net.nearest(door(hub), |n| dry[n as usize]))?;
     let targets: Vec<P> = ["port", "airport"].iter().filter_map(|k| c.sites.iter().find(|s| s.kind == *k)).map(door).collect();
-    // the boulevard under it may take no HQ's lot: where it would, the streets beside that lot
-    // cost `HQ_PEN` times as much and the line is planned again
+    // the boulevard under it may take no HQ's lot nor a civic site (corridor.rs refuses both; the
+    // stops it retires, the hub, the airport and the port are the line's own): where it would, the
+    // streets beside it cost `HQ_PEN` times as much and the line is planned again. (On @3 the HQs
+    // are drawn after the corridor, so it is the sites that steer it.)
     let half = super::classes::class("boulevard").map_or(0, |k| k.total_cm / 2);
-    let hqs: Vec<Vec<P>> = c.lots.iter().filter(|l| l.kind == "hq").filter_map(|l| l.poly.as_deref()).map(pts).collect();
+    let keep_off = |kind: &str| !matches!(kind, "transit" | "busstop" | "tramstop" | "airport" | "port" | "dock");
+    let hqs: Vec<Vec<P>> = c
+        .lots
+        .iter()
+        .filter(|l| l.kind == "hq")
+        .filter_map(|l| l.poly.as_deref())
+        .chain(c.sites.iter().filter(|s| keep_off(s.kind)).filter_map(|s| s.poly.as_deref()))
+        .map(pts)
+        .collect();
     let mut last = None;
     for _ in 0..HQ_TRIES {
         let (path, at, stops) = city_line(&land, &net, central, &targets, &dry)?;
@@ -172,8 +182,8 @@ pub fn alignment(c: &Ctx) -> Option<Cl> {
     last
 }
 
-/// How many times the City Line is planned again round HQs' lots, and what the streets
-/// beside one then cost (per mille).
+/// How many times the City Line is planned again round HQs' lots and civic sites, and what the
+/// streets beside one then cost (per mille).
 const HQ_TRIES: usize = 8;
 const HQ_PEN: i64 = 20_000;
 

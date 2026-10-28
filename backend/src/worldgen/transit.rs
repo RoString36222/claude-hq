@@ -533,7 +533,8 @@ pub fn stations(r: &Roads, t: &mut Transit, sites: &mut Vec<Site>, terrain: &sup
             let u = ((b.0 - a.0) * ONE / l, (b.1 - a.1) * ONE / l);
             let n = (-u.1, u.0);
             let e = edge(s)?;
-            let (centre, front) = if e.tram == Some("centre-bed") {
+            // (an island only on a bed wide enough to hold one between its tracks: else the kerb's)
+            let (centre, front) = if e.tram == Some("centre-bed") && e.bed.unwrap_or(0) >= ISLAND_BED_CM {
                 (c, n)
             } else {
                 let side = if (door.0 - c.0) as i128 * n.0 as i128 + (door.1 - c.1) as i128 * n.1 as i128 >= 0 { 1 } else { -1 };

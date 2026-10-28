@@ -238,7 +238,9 @@ function layout(W, tier, opts){
     }
     if(!(lb > 4) || !(la > 0.5) || !isFinite(la)) return null;
     var yaw = Math.cos(ty - st.yaw) >= 0 ? ty : ty + Math.PI, rx = -Math.cos(yaw), rz = Math.sin(yaw);
-    var centre = !!(E && E.bed > 0), along = (cx - st.x)*rx + (cz - st.z)*rz, side = along >= 0 ? 1 : -1;
+    // (an island in the middle of a bed; on a bed too narrow for one between its tracks the generator stands the
+    // platform at the kerb: by where it is, not the road)
+    var along = (cx - st.x)*rx + (cz - st.z)*rz, side = along >= 0 ? 1 : -1, centre = !!(E && E.bed > 0) && Math.abs(along) <= E.bed;
     var y = gy(cx, st.y, cz);   // (the ground at its middle: a centre bed's top, the footpath, the road; hqcity3d.js stands hqcivic.js's shelter on the same)
     return {id: "island:" + s.id, site: s.id, stop: st.id, line: st.line, lines: [st.line], ei: st.ei, dir: st.dir, x: cx, y: y, z: cz, yaw: yaw,
             side: side, both: centre, platform: centre ? "centre" : "kerb", len: lb, w: la, h: ISLAND_H, inner: Math.abs(along) - la/2, kerb: !centre,

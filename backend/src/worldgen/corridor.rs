@@ -145,6 +145,12 @@ struct Stub {
     off: i64,
 }
 
+/// A road's width (cm) without its tram's (phase 9): a tram street paved as its class's tram version
+/// may be paved back when no line runs there, so the cut reaches it as its class.
+fn bare(e: &Edge) -> i64 {
+    e.v4.and_then(class).and_then(|c| c.tram).filter(|t| Some(t.layout.name()) == e.tram).map_or(e.width, |t| e.width - t.added_cm)
+}
+
 /// Cut the corridor. `wet`: whether the alignment is over water every `SAMPLE_CM` along it (the
 /// boulevard runs on each stretch of land long enough, the line bridging the water between).
 /// On Err (the reason) nothing is changed.
@@ -225,7 +231,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
     }
     for e in &roads.edges {
         let fast = is_graded(e.class) || matches!(e.v4, Some("expressway") | Some("ramp") | Some("flyover")) || e.under.is_some();
-        if fast && e.points.windows(2).any(|w| band.near((w[0][0], w[0][2]), (w[1][0], w[1][2]), half + e.width / 2)) {
+        if fast && e.points.windows(2).any(|w| band.near((w[0][0], w[0][2]), (w[1][0], w[1][2]), half + bare(e) / 2)) {
             return Err(format!("graded road {}", e.id));
         }
     }
@@ -241,7 +247,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
     let mut pieces: Vec<Edge> = Vec::new();
     let mut stubs: Vec<Stub> = Vec::new();
     for e in &roads.edges {
-        let reach = half + e.width / 2;
+        let reach = half + bare(e) / 2;
         if !e.points.windows(2).any(|w| band.near((w[0][0], w[0][2]), (w[1][0], w[1][2]), reach)) {
             kept.push(e.clone());
             continue;
@@ -424,12 +430,17 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 let p = &st.proto;
                 let pts = resample(&[st.q, jq], STEP_CM);
                 let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, tram: None, bed: None, ..p.clone() };
-                // (a join is its street's class as it is, never its tram version: no tram crosses
-                // the boulevard; a main road narrower than an avenue meets it as one, no bend of
-                // two roads more than a class apart)
-                let name = if p.class == "arterial" && p.v4 != Some("avenue") { Some("avenue") } else { p.v4 };
-                if let Some(k) = name.filter(|_| p.tram.is_some() || name != p.v4).and_then(class) {
+                // (a join is its street's class as it is, never its tram version: no tram crosses the
+                // boulevard)
+                if let Some(k) = p.tram.and(p.v4).and_then(class) {
                     j = Edge { width: k.total_cm, walk: k.side_cm, median: None, ..j }.classed(Some(k.name));
+                }
+                // (a main road narrower than an avenue meets the boulevard as one: no bend of
+                // two roads more than a class apart)
+                if p.class == "arterial" && p.v4 != Some("avenue") {
+                    if let Some(av) = class("avenue") {
+                        j = Edge { width: av.total_cm, walk: av.side_cm, ..j }.classed(Some("avenue"));
+                    }
                 }
                 joins.push(j);
             }

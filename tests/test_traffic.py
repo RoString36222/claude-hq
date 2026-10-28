@@ -496,7 +496,8 @@ Object.keys(worlds).forEach(function(name){
       if(Math.hypot(v.x - p.x, v.z - p.z) > 0.01) bigJump += 1000;
       for(var i = 0; i < trip.seats + trip.standing; i++){
         var sp = trip.seat(i, tm), inside = parts.some(function(q){ var lc = local(q, sp.x, sp.z); return Math.abs(lc.x) < spec.wid/2 - 0.05 && Math.abs(lc.z) < q.len/2 + (kind === "tram" ? 0.55 : 0); });
-        checked++; if(!inside || Math.abs(sp.y - p.y - 0.45) > 0.46) outSeat++;
+        // ([3.32] give or take a raised bed's 0.15 m: a tram straddling its end has its sections at two heights)
+        checked++; if(!inside || Math.abs(sp.y - p.y - 0.45) > 0.46 + 0.15) outSeat++;
       }
       var dr = trip.door(tm), dl = Math.min.apply(null, parts.map(function(q){ var lc = local(q, dr.x, dr.z); return Math.abs(Math.abs(lc.x) - spec.wid/2) + Math.max(0, Math.abs(lc.z) - q.len/2); }));
       if(dl > 0.5) doorFar++;

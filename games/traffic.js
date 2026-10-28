@@ -608,10 +608,10 @@ function create(doc, o){
       var c = clusterOf ? clusterOf[p.node] : null, last = out[out.length - 1];
       var q = {};
       for(var k in p) q[k] = p[k];
-      q.nodes = [p.node]; q.hs = [p.h];
+      q.nodes = [p.node]; q.hs = [p.h]; q.eins = [p.ein];
       if(c != null && last && last.box === c && p.sIn >= last.sOut - 1e-6 && last.nodes.indexOf(p.node) < 0 && p.v > V_UTURN && last.v > V_UTURN){
         last.sOut = p.sOut; last.v = Math.min(last.v, p.v); last.curve = last.curve.concat(p.curve.slice(1));
-        last.nodes.push(p.node); last.hs.push(p.h); last.turn = last.turn || p.turn;
+        last.nodes.push(p.node); last.hs.push(p.h); last.eins.push(p.ein); last.turn = last.turn || p.turn;
         last.occ = (last.sOut - last.sIn + spec.len - last.front)/last.v + CLEAR;
         return;
       }
@@ -620,7 +620,7 @@ function create(doc, o){
     });
     out.forEach(function(q){
       q.sn = null;
-      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; }
+      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; q.ein = q.eins[i]; }
       if(q.box != null) q.node = q.box;
     });
     return out;
@@ -685,7 +685,7 @@ function create(doc, o){
       var sOut = last ? acc : acc + Math.hypot(Q[0][0] - pts[pts.length - 1][0], Q[0][2] - pts[pts.length - 1][2]);
       passes.push({node: node, sIn: sIn, sOut: sOut, v: vb, curve: curve, wid: spec.wid,
                    occ: (sOut - sIn + spec.len - front)/vb + CLEAR, key: lanes[i].e.i*2 + lanes[i].dir, turn: Math.abs(ang) > 0.5,
-                   h: Math.atan2(d0[0], d0[1]), front: front});
+                   h: Math.atan2(d0[0], d0[1]), ein: lanes[i].e.id, front: front});
     }
     return {pl: plOf(pts), passes: clusterOf ? boxes(passes, spec) : passes, raw: passes, cusps: cusps, lanes: lanes, ranges: ranges, rev: rev, open: !!open};
   }
@@ -978,7 +978,14 @@ function create(doc, o){
   }
   // [3.22] at a node with lights, movements coming in on different axes never share a window (each colour is one
   // axis's); sigAxis is the light's own (cityLife.sigAxis)
-  function passAxis(p){ var sg = p.sn != null ? sigAt[p.sn] : null; return sg ? (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0) : 0; }
+  // ([3.32] the axis of the light's own arm on the road it comes in by, where it has one: a shallow arm's heading and the
+  // way a vehicle comes in can fall either side of 45 degrees)
+  function passAxis(p){
+    var sg = p.sn != null ? sigAt[p.sn] : null;
+    if(!sg) return 0;
+    var arm = p.ein != null && sg.arms ? sg.arms.filter(function(a){ return a.edge === p.ein && a.axis != null; })[0] : null;
+    return arm ? arm.axis : (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0);
+  }
   function colour(P, sig){
     var colours = [], widths = [];
     P.forEach(function(p){

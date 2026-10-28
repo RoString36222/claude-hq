@@ -171,7 +171,9 @@ pub fn plan(c: &Ctx) -> Result<(Metro, Vec<Claim>), String> {
         return Ok((m, claims));
     };
     let hq = door(hub);
-    let dry: Vec<bool> = (0..c.roads.nodes.len() as u32).map(|n| net.degree(n) > 0 && !land.wet(net.pos(n))).collect();
+    // (never a node of a road tunnel or cutting, phase 7: no station over one, and its nodes leave the layout as it was)
+    let below: std::collections::HashSet<u32> = c.roads.edges.iter().filter(|e| e.under.is_some()).flat_map(|e| [e.a, e.b]).collect();
+    let dry: Vec<bool> = (0..c.roads.nodes.len() as u32).map(|n| net.degree(n) > 0 && !below.contains(&n) && !land.wet(net.pos(n))).collect();
     let usable = |n: u32| dry[n as usize];
     let central = net
         .nearest(hq, |n| usable(n) && net.arterial_degree(n) >= 3 && dist(net.pos(n), hq) <= 20_000)
@@ -657,14 +659,55 @@ fn pick(line: &[P], at: &[usize], nodes: &[u32], net: &Net, land: &Land, side: P
 fn levels(land: &Land, track: &[P], depth: i64) -> Vec<i64> {
     let h: Vec<i64> = track.iter().map(|&q| land.height(q)).collect();
     let n = h.len() as i64;
-    (0..n)
+    let mut ys: Vec<i64> = (0..n)
         .map(|i| {
             let (a, b) = ((i - 4).max(0), (i + 4).min(n - 1));
             let avg = (a..=b).map(|j| h[j as usize]).sum::<i64>() / (b - a + 1) - depth;
             avg.clamp(h[i as usize] - DEPTH_MAX_CM, h[i as usize] - DEPTH_MIN_CM)
         })
-        .collect()
+        .collect();
+    // City Gen v4 (phase 7): under a road tunnel or cutting, ROAD_TUNNEL_GAP below its road, easing down to it and
+    // back at UNDER_PM
+    let unders: Vec<&super::roads::Edge> = land.c.roads.edges.iter().filter(|e| e.under.is_some()).collect();
+    if !unders.is_empty() {
+        // (each point of the track takes the cap of the segments either side of it that pass near the road)
+        let near = |a: P, b: P| -> Option<i64> {
+            unders
+                .iter()
+                .filter_map(|e| {
+                    let r = e.width / 2 + 800;
+                    e.points.windows(2).filter(|w| super::organic::geom::seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), a, b) < r * r).map(|w| w[0][1].min(w[1][1]) - ROAD_TUNNEL_GAP).min()
+                })
+                .min()
+        };
+        let caps: Vec<Option<i64>> = (0..track.len())
+            .map(|i| {
+                let prev = if i > 0 { near(track[i - 1], track[i]) } else { None };
+                let next = if i + 1 < track.len() { near(track[i], track[i + 1]) } else { None };
+                match (prev, next) {
+                    (Some(p), Some(q)) => Some(p.min(q)),
+                    (p, q) => p.or(q),
+                }
+            })
+            .collect();
+        let mut at = vec![0i64; track.len()];
+        for i in 1..track.len() {
+            at[i] = at[i - 1] + dist(track[i - 1], track[i]);
+        }
+        for (i, c) in caps.iter().enumerate() {
+            let Some(c) = *c else { continue };
+            for j in 0..ys.len() {
+                ys[j] = ys[j].min(c + (at[i] - at[j]).abs() * UNDER_PM / 1000);
+            }
+        }
+    }
+    ys
 }
+
+/// City Gen v4 (phase 7): how far (cm) a metro track keeps under a road tunnel's road, and the
+/// grade (per mille) it dives at to pass under one.
+const ROAD_TUNNEL_GAP: i64 = 1_100;
+const UNDER_PM: i64 = 30;
 
 /// The ramp from the end of `path` (its last platform's end, rail level `y0`) to a depot
 /// on gentle open land (`fits`: the depot footprints open land holds): the shortest
@@ -697,6 +740,16 @@ fn depot_link(land: &Land, open: &OpenMap, fits: &[(P, usize)], path: &[P], y0: 
         let lead = ahead(end, d0, STEP_CM);
         let Some(mut ln) = dubins(lead, d0, ahead(q, a0, -DEPOT_LEN_CM / 2), a0, 20_000) else { continue };
         ln.insert(0, lead);
+        // (phase 7: the ramp keeps clear of road tunnels and cuttings, under or over; the main line dives under them)
+        let near_under = |a: P, b: P| {
+            land.c.roads.edges.iter().filter(|e| e.under.is_some()).any(|e| {
+                let r = e.width / 2 + 800;
+                e.points.windows(2).any(|w| super::organic::geom::seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), a, b) < r * r)
+            })
+        };
+        if std::iter::once(end).chain(ln.iter().copied()).collect::<Vec<P>>().windows(2).any(|w| near_under(w[0], w[1])) {
+            continue;
+        }
         let d = a0;
         let mouth = *ln.last().unwrap();
         let depot = rect(ahead(mouth, d, DEPOT_LEN_CM / 2), d, DEPOT_LEN_CM, DEPOT_W_CM);

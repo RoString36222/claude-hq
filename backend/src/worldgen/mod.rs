@@ -80,6 +80,7 @@ pub mod rng;
 pub mod roads;
 pub mod terrain;
 pub mod transit;
+pub mod tunnels;
 pub mod validate;
 pub mod water;
 pub mod zones;
@@ -265,6 +266,8 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
             let claim = claims::Airport::of(&city.sites);
             let keep = interchange::Keep { blocks: &city.blocks, claim: claim.as_ref(), river: river.as_ref(), coast: coast.as_ref().map(|c| c.poly.as_slice()) };
             let (made, kept) = interchange::build(&mut roads, &base, &keep);
+            // phase 7: the ring under the airport, where it ran behind the terminal
+            tunnels::build(&mut roads, claim.as_ref(), &base);
             // (HQ_IX=1 worldgen <id>: what each junction became, for tuning)
             if std::env::var("HQ_IX").is_ok() {
                 eprintln!("interchanges: {made} made, kept at grade: {kept:?}");

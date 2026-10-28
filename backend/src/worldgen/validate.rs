@@ -31,6 +31,10 @@
 //!                  where its ramps meet without as many of the traffic sim's lanes in as
 //!                  out (interchange.rs `sim_lanes`)
 //!   deck-grade     (hard, phase 6) a flyover or ramp steeper than 6 % over any 8 m
+//!   tunnel         (hard, phase 7) a road tunnel less than 6.5 m under the land over it, a
+//!                  cutting steeper than 6 %, or a metro or rail track within 4 m of either
+//!                  (in plan, past the road's half width) and 8 m of its level (a bored
+//!                  tunnel's crown 5 m over the rails, its slab 1 m under the road: 2 m between)
 //!   clearance      (hard, phase 6) a flyover or ramp crossing a road it does not meet
 //!                  less than 7 m over it (5.5 m clear and its deck), or a road crossing
 //!                  another at grade with no junction (listed: `road-overlap`)
@@ -66,7 +70,36 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     junctions(l, &mut out);
     curves(l, &mut out);
     decks(l, &mut out);
+    tunnels(l, &mut out);
     out
+}
+
+/// Phase 7: the road tunnels' depth, their cuttings' grade, and the metro and rail kept off them.
+fn tunnels(l: &Layers, out: &mut Vec<Violation>) {
+    use super::tunnels::{DEPTH_CM, MAX_PM};
+    let unders: Vec<&super::roads::Edge> = l.roads.edges.iter().filter(|e| e.under.is_some()).collect();
+    for e in &unders {
+        let at = [e.points[0][0], e.points[0][2]];
+        if e.under == Some("tunnel") && e.points.iter().any(|q| l.terrain.height_at(q[0], q[2]) - q[1] < DEPTH_CM - 50) {
+            out.push(Violation { rule: "tunnel", hard: true, what: format!("road {} {}: too shallow", e.id, e.name), at });
+        }
+        let rise = (e.points[0][1] - e.points[e.points.len() - 1][1]).abs();
+        if rise * 1000 > (MAX_PM + 2) * super::roads::path_len(&e.points) {
+            out.push(Violation { rule: "tunnel", hard: true, what: format!("road {} {}: steeper than 6 %", e.id, e.name), at });
+        }
+    }
+    let tracks = l.metro.iter().flat_map(|m| m.lines.iter().map(|x| &x.path)).chain(l.rail.iter().flat_map(|r| r.lines.iter().map(|x| &x.path)));
+    for path in tracks {
+        for q in path.iter() {
+            if let Some(e) = unders.iter().find(|e| {
+                let r = e.width / 2 + 400;
+                e.points.windows(2).any(|w| seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), (q[0], q[2]), (q[0], q[2])) < r * r && ((w[0][1] + w[1][1]) / 2 - q[1]).abs() < 800)
+            }) {
+                out.push(Violation { rule: "tunnel", hard: true, what: format!("a track meets road {} {}", e.id, e.name), at: [q[0], q[2]] });
+                break;
+            }
+        }
+    }
 }
 
 /// Phase 6: the interchanges' ramps, their grades and the clearance under every deck.
@@ -140,7 +173,8 @@ fn decks(l: &Layers, out: &mut Vec<Violation>) {
                 }
                 seen.insert((ka.min(kb), ka.max(kb)));
                 let gap = (a0[1] + a1[1] - b0[1] - b1[1]).abs() / 2;
-                let decked = super::roads::deck_road(ea) || super::roads::deck_road(eb);
+                // (a road crossing over a tunnel 7 m down is no meeting; one crossing a cutting is)
+                let decked = super::roads::deck_road(ea) || super::roads::deck_road(eb) || ea.under.is_some() || eb.under.is_some();
                 if decked && gap < LIFT_CM - 50 {
                     out.push(Violation { rule: "clearance", hard: true, what: format!("{} over {}: {} cm", ea.name, eb.name, gap), at: [p0.0, p0.1] });
                 } else if !decked && gap < LIFT_CM - 50 {

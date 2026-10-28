@@ -20,7 +20,7 @@ merges on its own and leaves the City playable:
 | 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | **3.26.0** |
 | 4 | Curved roads: arcs, minimum radii by design speed | **3.27.0** |
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | **3.28.0** |
-| 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges; tunnels next) |
+| 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | |
 | 8 | Trams on any road class, with stations | |
 | 9 | HQ spacing and movable garages | |
@@ -377,3 +377,27 @@ Before this phase the Commons had 172 cars. The new cap trims one loop by 5.
 
 Most junctions left at grade have a highway that is too short or meets the ring at an angle (91), or another junction
 or a bridge too close on the ring (63). A later layout phase (or tunnels) can take more of them.
+
+## Phase 7 (3.30.0): the ring under the airport
+
+- **Generator (`backend/src/worldgen/tunnels.rs`):** where the ring runs in the corridor behind the terminal, its edge
+  is split into the ring, a cutting, the tunnel, a cutting and the ring again. The pieces below the land carry
+  `under: "tunnel" | "cutting"`.
+  - **The tunnel:** covers the corridor and 20 m beyond. Its road is level, 7 m (5.5 m clear + 1.5 m roof) under the
+    lowest land over it.
+  - **Each cutting:** at least 175 m long and long enough to come down at 4.5 % from the land at its outer end, kept
+    60 m clear of the edge's junctions.
+  - **Land:** nothing over the tunnel or the cuttings is carved; the client opens the cuttings as terrain holes.
+  - **Metro and Island Link:** the metro dives 11 m under a road tunnel or cutting it passes, at 3 %; a depot's ramp
+    keeps clear of one, and no station stands on one's nodes (so the metro lays out as it did before the tunnel). The
+    Island Link skips a route that would come within 8 m of one. Splitting the ring keeps every other road's id.
+- **Validator:** `tunnel` (hard): 6.5 m or more of land over the tunnel's road, cuttings no steeper than 6 %, no metro
+  or rail track within 8 m of the road's level beside it. `clearance` now counts a road crossing a cutting.
+- **Client:**
+  - `world.js` and `worldgeom.js`: the cuttings are holes with retaining walls. The tunnel is a lit box under the land
+    with portals.
+  - Driving it uses the stacked surfaces of phase 6.
+
+| | Commons | 50 seeds + the Commons |
+|---|---|---|
+| A tunnel under the airport | yes, 303 m with two cuttings of 375 m and 368 m | 13 of 50 seeds (the rest pass the airport elsewhere) |

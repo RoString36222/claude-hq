@@ -5,7 +5,7 @@ Under node, on the @3 Commons fixture with games/world.js, games/citylife.js and
     interchange.rs sim_lanes);
   - a ramp (oneway) is driven a to b only, and the cars use the ramps and the flyovers;
   - an expressway's lanes are LANE_W apart out from its median, its shoulder beyond the kerb lane;
-  - a car on a flyover over the ring drives 7 m above the ring's traffic;
+  - cars drive up on the decks, over 5 m above the land, and through the tunnel under the airport (3.30), 5 m under it;
   - an older doc without the oneway field still builds (an older dashboard sees two-way roads).
 Skipped without node. Stdlib only."""
 import json
@@ -40,17 +40,18 @@ out.used = used; out.wrongWay = wrong;
 // an expressway's lanes from the median out
 var ex = s._.edges.filter(function(E){ return E.lanesV4 && byId[E.id].v4 === "expressway" && E.cars; })[0];
 out.offs = ex ? ex.carOffs : null; out.med = ex ? ex.med : null; out.k = ex ? ex.k : null; out.lanes = ex ? byId[ex.id].lanes : null;
-// cars over the ring on a flyover: the highest car near each flyover's crossing, against the ring's traffic there
-var D = Date.UTC(2026, 9, 27, 8), high = 0, both = 0;
+// cars up on the decks: over the land by more than 5 m (the flyovers' spans, the top of the loops)
+var D = Date.UTC(2026, 9, 27, 8), high = 0;
 for (var t = 0; t < 900; t += 3) {
-  var v = s.at(D + t*1000, {x: 0, z: 0}, 1e9).filter(function(c){ return c.kind === "car"; });
-  for (var i = 0; i < v.length; i++) for (var j = 0; j < v.length; j++) {
-    if (i === j) continue;
-    var dx = v[i].x - v[j].x, dz = v[i].z - v[j].z;
-    if (dx*dx + dz*dz < 9 && v[i].y - v[j].y > 6.5) high++;
-  }
+  s.at(D + t*1000, {x: 0, z: 0}, 1e9).forEach(function(c){ if(c.kind === "car" && c.y - WD.heightAt(W, c.x, c.z) > 5) high++; });
 }
 out.stacked = high;
+// [3.30] and through the tunnel under the airport: more than 5 m under the land
+var low = 0;
+for (var t2 = 0; t2 < 900; t2 += 3) {
+  s.at(D + t2*1000, {x: 0, z: 0}, 1e9).forEach(function(c){ if(c.kind === "car" && WD.heightAt(W, c.x, c.z) - c.y > 5) low++; });
+}
+out.under = low; out.tunnels = R.edges.filter(function(e){ return e.under === "tunnel"; }).length;
 // an older doc: no oneway field
 var old = raw(); old.layers.roads.edges.forEach(function(e){ delete e.oneway; });
 var Wo = WD.pack(old), so = T.create(WD.docOf(Wo), {tier: 5, seed: Wo.id, W: Wo, local: 0});
@@ -88,8 +89,12 @@ class InterchangeTraffic(unittest.TestCase):
         self.assertAlmostEqual(offs[0], med + 3 * 3.5 - 1.75, places=3)
         self.assertAlmostEqual(offs[0] - offs[1], 3.5, places=3)
 
-    def test_cars_on_the_flyover_pass_over_the_ring(self):
+    def test_cars_drive_up_on_the_decks(self):
         self.assertGreater(self.o["stacked"], 0)
+
+    def test_cars_drive_through_the_tunnel(self):
+        self.assertEqual(self.o["tunnels"], 1)
+        self.assertGreater(self.o["under"], 0)
 
     def test_an_older_doc_still_builds(self):
         self.assertEqual(self.o["oldErrors"], [])

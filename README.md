@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.29.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.30.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,13 @@ and feature guide.
 
 ## Changelog
 
+- **3.30.0 — City Gen v4, phase 7: the Ring Road under the airport.** The Ring Road no longer runs past the back of the
+  airport terminal. It drops into an open cutting, runs through a 300 m cut-and-cover tunnel 7 m under the airport,
+  and climbs out the other side.
+  - **The tunnel:** the cuttings have retaining walls and railings. The tunnel has portals, a lit ceiling and
+    emergency walkways.
+  - **Driving it:** you can drive straight through. Traffic uses it too.
+  - **Lines kept clear:** the metro and the Island Link keep clear of it.
 - **3.29.0 — City Gen v4, phase 6: expressways and trumpet interchanges.** The Ring Road and the highways are now
   29 m expressways: three lanes each way, hard shoulders and a concrete crash barrier down the middle.
   - **Trumpets:** where a highway meets the Ring Road and there's room, a trumpet interchange replaces the flat

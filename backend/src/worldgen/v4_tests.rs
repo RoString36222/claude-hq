@@ -111,7 +111,7 @@ mod junctions {
     fn road(id: u32, a: u32, b: u32, class: &'static str, name: &str, pts: [(i64, i64); 2]) -> Edge {
         Edge {
             id, a, b, class: if matches!(class, "avenue" | "boulevard") { "arterial" } else { "local" }, width: 1_200, walk: 250, lanes: 1, route: None, name: name.to_string(),
-            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None, oneway: None,
+            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None,
         }
         .classed(Some(class))
     }
@@ -278,5 +278,43 @@ mod interchanges {
         let b = generate("v4seed9@3", &[]).unwrap();
         assert_eq!(a.hashes.roads, b.hashes.roads);
         assert!(a.layers.roads.edges.iter().any(|e| e.v4 == Some("flyover")) || a.layers.roads.edges.iter().all(|e| e.v4 != Some("ramp")));
+    }
+}
+
+/// Phase 7: the ring under the airport, where it ran behind the terminal (tunnels.rs).
+mod tunnels {
+    use super::super::tunnels::{DEPTH_CM, MAX_PM};
+    use super::super::roads::path_len;
+    use super::*;
+
+    #[test]
+    fn the_commons_ring_goes_under_the_airport() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        let a = commons_claim();
+        let tunnel: Vec<_> = r.edges.iter().filter(|e| e.under == Some("tunnel")).collect();
+        let cuts: Vec<_> = r.edges.iter().filter(|e| e.under == Some("cutting")).collect();
+        assert_eq!((tunnel.len(), cuts.len()), (1, 2));
+        let t = tunnel[0];
+        assert_eq!(t.class, "ring");
+        // the whole stretch in the corridor is covered, DEPTH_CM under the land
+        for e in r.edges.iter().filter(|e| e.class == "ring" && e.under != Some("tunnel")) {
+            assert!(!e.points.windows(2).any(|s| a.in_corridor((s[0][0], s[0][2]), (s[1][0], s[1][2]), 0)), "{} {} in the corridor above ground", e.id, e.name);
+        }
+        for q in &t.points {
+            assert!(w.layers.terrain.height_at(q[0], q[2]) - q[1] >= DEPTH_CM - 50);
+        }
+        // each cutting from the ring's level at its outer end down to the tunnel's, no steeper than 6 %
+        for c in cuts {
+            let rise = (c.points[0][1] - c.points[c.points.len() - 1][1]).abs();
+            assert!(rise * 1000 <= MAX_PM * path_len(&c.points));
+            assert!(c.a == t.a || c.a == t.b || c.b == t.a || c.b == t.b, "a cutting meets the tunnel");
+        }
+    }
+
+    #[test]
+    fn nothing_else_runs_in_a_cutting_and_the_tracks_keep_clear() {
+        let v = validate::check(&commons3().layers);
+        assert!(!v.iter().any(|x| x.rule == "tunnel" || x.rule == "clearance"), "{}", validate::report(&v));
     }
 }

@@ -533,6 +533,11 @@ pub fn stations(r: &Roads, t: &mut Transit, sites: &mut Vec<Site>, terrain: &sup
             let u = ((b.0 - a.0) * ONE / l, (b.1 - a.1) * ONE / l);
             let n = (-u.1, u.0);
             let e = edge(s)?;
+            // (never on a bridge: the platform's run of track all on land)
+            let (k0, k1) = (pos(s - half).1, pos(s + half).1);
+            if (k0..=k1.min(on.len() - 1)).any(|k| r.edges.get(on[k] as usize).is_some_and(|x| x.bridge == Some(true))) {
+                return None;
+            }
             // (none beside a bed too narrow for an island between its tracks: the tram would stop in the
             // bed with a car lane between it and the kerb)
             if e.tram == Some("centre-bed") && e.bed.unwrap_or(0) < ISLAND_BED_CM {

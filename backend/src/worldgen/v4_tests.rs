@@ -318,3 +318,85 @@ mod tunnels {
         assert!(!v.iter().any(|x| x.rule == "tunnel" || x.rule == "clearance"), "{}", validate::report(&v));
     }
 }
+
+mod corridors {
+    use super::super::railway::{pier_at, PIER_CLEAR_CM, PIER_R_CM, SPAN_LONG_CM};
+    use super::super::lines::dist;
+    use super::*;
+
+    #[test]
+    fn the_commons_city_line_runs_over_a_boulevard_median_on_its_own_piers() {
+        let w = commons3();
+        let l = &w.layers;
+        let rail = l.rail.as_ref().unwrap();
+        let cl = rail.lines.iter().find(|x| x.kind == "city").expect("the Commons has a City Line");
+        let blvd: Vec<&roads::Edge> = l.roads.edges.iter().filter(|e| e.v4 == Some("boulevard")).collect();
+        assert!(blvd.len() >= 3, "a boulevard under the line");
+        for e in &blvd {
+            assert_eq!((e.median, e.class), (Some(750), "arterial"), "{} {}", e.id, e.name);
+        }
+        // its piers, each in the median (or clear ground by a station), no span over 60 m
+        assert!(cl.piers.len() >= 10, "{} piers", cl.piers.len());
+        let medians = cl.piers.iter().filter(|p| pier_at(&l.roads, &l.lots, &l.sites, (p.x, p.z)) == Some(true)).count();
+        assert!(medians * 4 >= cl.piers.len() * 3, "{medians} of {} piers in the median", cl.piers.len());
+        for w in cl.piers.windows(2) {
+            assert!(dist((w[0].x, w[0].z), (w[1].x, w[1].z)) <= SPAN_LONG_CM + 100);
+        }
+        // and the track over the boulevard keeps within the median, piers' room and all
+        let room = 750 / 2 - PIER_R_CM - PIER_CLEAR_CM;
+        // (past either end of a run of boulevard the line is on a station's frame)
+        let mut deg = std::collections::BTreeMap::new();
+        for e in &blvd {
+            *deg.entry(e.a).or_insert(0) += 1;
+            *deg.entry(e.b).or_insert(0) += 1;
+        }
+        let ends: Vec<(i64, i64)> = deg.iter().filter(|x| *x.1 == 1).map(|x| (l.roads.nodes[*x.0 as usize].x, l.roads.nodes[*x.0 as usize].z)).collect();
+        let mut over = 0;
+        for q in cl.path.iter().filter(|q| ends.iter().all(|&n| dist(n, (q[0], q[2])) > 1_825)) {
+            let d = blvd.iter().flat_map(|e| e.points.windows(2)).map(|s| organic::geom::nearest_on((q[0], q[2]), (s[0][0], s[0][2]), (s[1][0], s[1][2])).1).min().unwrap();
+            if d < 1_825 * 1_825 {
+                over += 1;
+                assert!(d <= room * room, "the track leaves the median at ({}, {})", q[0], q[2]);
+            }
+        }
+        assert!(over * 2 >= cl.path.len(), "the line runs over its boulevard most of the way");
+    }
+
+    #[test]
+    fn no_hq_lot_or_civic_building_is_under_the_boulevard() {
+        let l = &commons3().layers;
+        let blvd: Vec<&roads::Edge> = l.roads.edges.iter().filter(|e| e.v4 == Some("boulevard")).collect();
+        let near = |poly: &[[i64; 2]]| blvd.iter().any(|e| e.points.windows(2).any(|s| (0..poly.len()).any(|k| organic::geom::seg_dist2((s[0][0], s[0][2]), (s[1][0], s[1][2]), (poly[k][0], poly[k][1]), (poly[(k + 1) % poly.len()][0], poly[(k + 1) % poly.len()][1])) < (e.width / 2 - 10).pow(2))));
+        for lot in l.lots.iter().filter(|x| x.kind == "hq") {
+            assert!(!near(lot.poly.as_deref().unwrap_or(&[])), "HQ lot {} under the boulevard", lot.id);
+        }
+        for s in l.sites.iter().filter(|s| !matches!(s.kind, "transit" | "airport" | "busstop" | "tramstop" | "metro-entrance") && !s.kind.starts_with("metro")) {
+            assert!(!near(s.poly.as_deref().unwrap_or(&[])), "site {} under the boulevard", s.id);
+        }
+    }
+
+    #[test]
+    fn a_world_with_no_room_keeps_its_line_on_the_streets() {
+        // the island: an HQ's lot in the way, so no boulevard, the line's piers the client's
+        let l = &island3().layers;
+        let cl = l.rail.as_ref().unwrap().lines.iter().find(|x| x.kind == "city").unwrap();
+        assert!(cl.piers.is_empty());
+        assert!(!l.roads.edges.iter().any(|e| e.v4 == Some("boulevard") && e.name.ends_with("Boulevard") && e.median == Some(750) && cl.path.iter().any(|q| e.points.iter().any(|p| (p[0] - q[0]).abs() + (p[2] - q[2]).abs() < 200))));
+        assert!(validate::check(l).iter().any(|v| v.rule == "rail-corridor"));
+        assert!(validate::hard(l).is_empty());
+    }
+
+    #[test]
+    fn a_pier_stands_in_the_median_never_on_the_carriageway_or_a_lot() {
+        let l = &commons3().layers;
+        let e = l.roads.edges.iter().find(|e| e.v4 == Some("boulevard") && e.points.len() >= 3).unwrap();
+        let (a, b) = ((e.points[0][0], e.points[0][2]), (e.points[2][0], e.points[2][2]));
+        let mid = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
+        let n = organic::geom::unit(organic::geom::left(organic::geom::sub(b, a)));
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, mid), Some(true), "the median");
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, organic::geom::along(mid, n, 900)), None, "the carriageway");
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, organic::geom::along(mid, n, -1_600)), None, "the footpath");
+        let lot = l.lots.iter().find(|x| x.kind == "hq").unwrap();
+        assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, (lot.x, lot.z)), None, "a lot");
+    }
+}

@@ -177,6 +177,10 @@ function pack(doc){
     if(e.oneway === true) o.oneway = true;
     // City Gen v4 phase 7 (@3, HQ 3.30): a piece of road below the land, "tunnel" or "cutting"
     if(e.under === "tunnel" || e.under === "cutting") o.under = e.under;
+    // City Gen v4 phase 9 (@3, HQ 3.32): a tram street's track ("centre-bed", "shared-double", ...) and a centre bed's
+    // width (cm): raised (SIDEWALK_UP), kerbed paving down the middle that only the trams run on
+    if(typeof e.tram === "string" && e.tram) o.tram = e.tram;
+    if(e.bed > 0) o.bed = e.bed|0;
     return o;
   });
   var W = {
@@ -222,6 +226,8 @@ function docOf(W){
     if(e.median) o.median = e.median;
     if(e.oneway) o.oneway = true;
     if(e.under) o.under = e.under;
+    if(e.tram) o.tram = e.tram;
+    if(e.bed) o.bed = e.bed;
     return o;
   });
   var D = W.districts, layers = {roads: {nodes: W.nodes, edges: edges},
@@ -290,6 +296,8 @@ function index(W){
   I.deck = W.edges.some(deckRoad) ? W.edges.map(deckRoad) : null;
   // City Gen v4 phase 7: any tunnel or cutting (false in a world without them: every path as before)
   I.under = W.edges.some(function(e){ return !!e.under; });
+  // [3.32] a world with a tram's centre bed: each edge's arc lengths and junction trims (medGap)
+  I.mid = W.edges.some(function(e){ return e.bed > 0; }) ? midTrims(W) : null;
   // and a cutting's ends at a tunnel's portal ([at a, at b] by edge index): past one, it is the tunnel's
   if(I.under){
     var tn = {};
@@ -347,9 +355,9 @@ function roadUnder(W, x, z, yNow){
     // (past a cutting's end at a portal is the tunnel: the same rule)
     var past = e.under === "cutting" && pastPortal(I.portal[L[i]], e.pts, x, z, e.width/200);
     if(past && !(lv && inTun(yn, S.y))) continue;
-    // every carriageway counts (a highway beside a sidewalk too); a median (v4) is raised paving, no carriageway
+    // every carriageway counts (a highway beside a sidewalk too); a median (v4) is raised paving, no carriageway; so is a
+    // tram's centre bed ([3.32] phase 9: medGap, below)
     var med = e.median ? e.median/200 : 0, g = S.d < med ? med - S.d : S.d - (e.width - 2*e.walk)/200;
-    gap = Math.min(gap, g);
     if(S.d > e.width/200){
       if(!(dk && dk[L[i]] && S.d <= e.width/200 + PARAPET)) continue;
       ext++;   // a deck's parapet margin: counts only where that deck is elevated (below)
@@ -361,17 +369,17 @@ function roadUnder(W, x, z, yNow){
     if(e.under === "tunnel" || past) tun = true;
   }
   if(!n) return 0;
+  gap = medGap(W, n);
   if(tun){
     // in a tunnel: its road (and a cutting it meets) only, never a road on the land over it
     var m = 0;
-    gap = Infinity;
     for(k = 0; k < n; k++){
       if(!W.edges[CE[k]].under) continue;
       CE[m] = CE[k]; CD[m] = CD[k]; CS[m] = CS[k]; CT[m] = CT[k]; CY[m] = CY[k]; CG[m] = CG[k];
-      gap = Math.min(gap, CG[m]);
       m++;
     }
     n = m;
+    gap = medGap(W, n);
   }
   if(dk){
     var el = 0, h = null;
@@ -399,6 +407,75 @@ function roadUnder(W, x, z, yNow){
   if(gap <= 0) return 1;
   ROAD.y += SIDEWALK_UP;
   return 2;
+}
+// the least carriageway gap of roadUnder's n candidates (CG: each edge's least over its segments, <= 0 on a carriageway).
+// [3.32] A tram's centre bed (I.mid: a world with one) is raised paving, no carriageway: (x, z) is on it where its edge's
+// nearest segment has it within the bed's half width, alongside the edge (not past its end) and between the edge's
+// junction trims (worldgeom.js armClear: the bed stops short of a junction box, runs on through a node where the road
+// just carries on); there only another road alongside, with (x, z) on its carriageway and off its own median or bed,
+// makes it road. (Taken per segment as a median is, any segment's clamped end a few metres along, its own edge's or the
+// next one's, would count as carriageway: the bed would be road everywhere but next to its points.)
+function medGap(W, n){
+  var gap = Infinity, M = W.index && W.index.mid, k, at = -1, h = 0;
+  for(k = 0; k < n; k++) gap = Math.min(gap, CG[k]);
+  if(!M || gap > 0) return gap;
+  for(k = 0; k < n && at < 0; k++){
+    var hk = stripHalf(W.edges[CE[k]]);
+    if(hk > 0 && CD[k] < hk && inStrip(W, M, k)){ at = k; h = hk; }
+  }
+  if(at < 0) return gap;
+  for(k = 0; k < n; k++){
+    if(k === at) continue;
+    var e = W.edges[CE[k]], g = CD[k] - (e.width - 2*e.walk)/200, hb = stripHalf(e) || (e.median ? e.median/200 : 0);
+    if(g <= 0 && !pastEnd(W, k) && !(hb > 0 && CD[k] < hb)) return g;
+  }
+  return h - CD[at];
+}
+function stripHalf(e){ return e.bed > 0 && !e.median ? e.bed/200 : 0; }
+// candidate k's nearest point is past an end of its edge (clamped there), not alongside it
+function pastEnd(W, k){ var e = W.edges[CE[k]], ns = e.pts.length/3 - 1; return (CS[k] === 0 && CT[k] <= 0) || (CS[k] === ns - 1 && CT[k] >= 1); }
+function inStrip(W, M, k){
+  if(pastEnd(W, k)) return false;
+  var o = M[CE[k]], j = CS[k], s = o.cum[j] + CT[k]*(o.cum[j + 1] - o.cum[j]);
+  return s >= o.t[0] && s <= o.len - o.t[1];
+}
+// per edge {cum (m along at each point), len, t: [trim at a, trim at b]} (worldgeom.js prep's tA / tB, the same rule)
+var TRIM_MAX = 25;
+function midTrims(W){
+  var inc = {}, out = [];
+  W.edges.forEach(function(e){
+    var p = e.pts, m = p.length/3, cum = new Float64Array(Math.max(1, m)), j;
+    for(j = 1; j < m; j++) cum[j] = cum[j - 1] + Math.hypot((p[3*j] - p[3*j - 3])/100, (p[3*j + 2] - p[3*j - 1])/100);
+    var L = m ? cum[m - 1] : 0, o = {cum: cum, len: L, t: [0, 0]};
+    out.push(o);
+    if(m < 2 || e.a === e.b || !(L > 0)) return;
+    [0, 1].forEach(function(end){
+      var s = end ? L - Math.min(3, L) : Math.min(3, L), i = 0;
+      while(i < m - 2 && cum[i + 1] < s) i++;
+      var f = cum[i + 1] > cum[i] ? (s - cum[i])/(cum[i + 1] - cum[i]) : 0, qx = (p[3*i] + (p[3*i + 3] - p[3*i])*f)/100, qz = (p[3*i + 2] + (p[3*i + 5] - p[3*i + 2])*f)/100;
+      var k = end ? m - 1 : 0, dx = qx - p[3*k]/100, dz = qz - p[3*k + 2]/100, l = Math.hypot(dx, dz) || 1, id = end ? e.b : e.a;
+      (inc[id] = inc[id] || []).push({o: o, end: end, h: e.width/200, dx: dx/l, dz: dz/l});
+    });
+  });
+  Object.keys(inc).forEach(function(id){
+    var arms = inc[id];
+    if(arms.length < 2) return;
+    arms.forEach(function(a){
+      var t = 0;
+      arms.forEach(function(b){ if(b !== a) t = Math.max(t, armClear(a.h, b.h, a.dx*b.dx + a.dz*b.dz) + 0.3); });
+      a.o.t[a.end] = Math.min(t, TRIM_MAX, a.o.len*0.45);
+    });
+  });
+  return out;
+}
+// worldgeom.js armClear: how far along arm a (half width ha) its edge clears arm b's band (half width hb), dot c
+function armClear(ha, hb, c){
+  c = clamp(c, -1, 1);
+  var s = Math.sqrt(1 - c*c);
+  if(s < 1e-3) return c > 0 ? TRIM_MAX : 0;
+  var t = (hb + ha*c)/s;
+  if(c < 0) t = Math.min(t, ha*s/-c);
+  return Math.max(0, t);
 }
 // is (x, z) past an end of a cutting's points p that is a tunnel's portal (pt: [at a, at b]), within ~its half h of it?
 function pastPortal(pt, p, x, z, h){

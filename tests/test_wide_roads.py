@@ -65,7 +65,9 @@ class Source(unittest.TestCase):
     def test_lane_lines_and_traffic_agree(self):
         geom, traffic, npc = read("games", "worldgeom.js"), read("games", "traffic.js"), read("games", "npcsim.js")
         self.assertIn("function lanesEach(cw){ return Math.max(1, Math.min(3, Math.floor(cw/3.3))); }", geom)
-        self.assertIn("var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = E.tram ? 0 : E.med;", traffic)
+        # ([3.32] a tram street's lay: the old tram by the centre line still has no median for its cars' lanes, a centre
+        # bed stands for one, a shared lay keeps the class's own)
+        self.assertIn("var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = lay === \"old\" ? 0 : lay === \"bed\" ? E.bedH : E.med;", traffic)
         self.assertIn("c - (c - med)/(2*n)", traffic)
         self.assertIn("function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3)));", npc)
         # [3.25] a v4 road: its own lanes between its median and the kerb, the same in the lines, the traffic and the

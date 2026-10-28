@@ -389,8 +389,10 @@ mod corridors {
     #[test]
     fn a_pier_stands_in_the_median_never_on_the_carriageway_or_a_lot() {
         let l = &commons3().layers;
-        let e = l.roads.edges.iter().find(|e| e.v4 == Some("boulevard") && e.points.len() >= 3).unwrap();
-        let (a, b) = ((e.points[0][0], e.points[0][2]), (e.points[2][0], e.points[2][2]));
+        // (the middle of the longest piece, well clear of its junctions)
+        let e = l.roads.edges.iter().filter(|e| e.v4 == Some("boulevard")).max_by_key(|e| roads::path_len(&e.points)).unwrap();
+        let k = e.points.len() / 2;
+        let (a, b) = ((e.points[k - 1][0], e.points[k - 1][2]), (e.points[k + 1][0], e.points[k + 1][2]));
         let mid = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
         let n = organic::geom::unit(organic::geom::left(organic::geom::sub(b, a)));
         assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, mid), Some(true), "the median");

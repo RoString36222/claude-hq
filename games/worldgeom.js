@@ -54,6 +54,14 @@
  *                       (headwall, sign band), the tunnel's ceiling lights (lit 1) (only in a doc with tunnels). A
  *                       cutting's hole is cut from the terrain, ground and road tiles (its own road rides in `tunnel`); no
  *                       prop stands in one, no gantry over a tunnel or cutting (HQV.world.underOver)
+ * HQ 3.34 (City Gen v4 phase 11) road paint and planted medians, all on v4 fields (a doc without them builds as before):
+ *                       a boulevard's median planted with trees (props.trees) and clipped hedges, an avenue's with low
+ *                       shrubs (both in `kerb`), clear of noses, piers, holes and decks (medianPlan); thin white edge lines
+ *                       inside an avenue's, collector's or boulevard's kerbs; a solid stop line where a minor road meets
+ *                       one two classes above it at a priority junction (the give-way dashes elsewhere; the lights' stop
+ *                       lines stay games/traffic.js's); lane arrows 15-25 m before the line on 2+ lane approaches
+ *                       (arrowPlan; traffic keeps left); a yellow box at lights where an avenue or boulevard meets, and
+ *                       chevrons in a ramp's gore. All in `marks`: no new mesh, no new draw call.
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -601,7 +609,15 @@ function v4Lines(E){
   else if(n > 1) out.push({o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow});
   else out.push({o: 0, w: 0.12, dash: true, c: COL.white});
   for(var k = 1; k < n; k++){ var o = m + (cw - m)*k/n; out.push({o: -o, w: 0.12, dash: true, c: COL.white}, {o: o, w: 0.12, dash: true, c: COL.white}); }
-  return out;
+  return out.concat(kerbLines(E, m));
+}
+// [3.34] an avenue's, a collector's or a boulevard's thin white edge lines EDGE_IN m inside its kerbs (none where the
+// carriageway is too narrow to keep a lane between them and what is painted inside)
+var EDGE_IN = 0.3, EDGE_W = 0.12;
+function kerbLines(E, m){
+  var o = E.cw - EDGE_IN;
+  if(!(E.v4 === "avenue" || E.v4 === "collector" || E.v4 === "boulevard") || o - (m > 0 ? m + 0.25 : 0) < 2.5) return [];
+  return [{o: -o, w: EDGE_W, c: COL.white}, {o: o, w: EDGE_W, c: COL.white}];
 }
 // A street a tram runs on (tramEdges) has no centre line: the tram's two lanes take the middle (traffic.js tramOff,
 // 1.475 m each side of the centre, a 2.65 m body), so it gets their two edge lines TRAM_EDGE m outside each lane, in
@@ -615,7 +631,7 @@ function tramLines(W, E){
     var m = E.bed, n = E.lanes || 1;
     out.push({o: -(m + 0.25), w: 0.12, c: COL.white}, {o: m + 0.25, w: 0.12, c: COL.white});
     for(var k = 1; k < n; k++){ var ok = m + (cw - m)*k/n; out.push({o: -ok, w: 0.12, dash: true, c: COL.white}, {o: ok, w: 0.12, dash: true, c: COL.white}); }
-    return out;
+    return out.concat(kerbLines(E, m));
   }
   if(o + 0.06 <= cw - 0.15) out.push({o: -o, w: 0.12, c: COL.white}, {o: o, w: 0.12, c: COL.white});
   if((E.cls === "ring" || E.cls === "highway") && cw - 1 > o + 0.3) out.push({o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white});
@@ -1087,6 +1103,8 @@ function roadTile(W, tx, tz, flat, gap){
     var e0 = E.tA, e1 = E.len - E.tB;
     if(flat && E.under) return;   // (phase 7: no terrain clamp piece)
     if(E.under && tg) tunnelTile(tg, W, E, tx, tz);   // (its whole length)
+    // [3.34] a median's hedges or shrubs (the trees are props), each by the tile of its middle
+    if(!flat && E.med > 0) plantBlocks(kerb, W, C, E, tx, tz);
     if(e1 - e0 < 0.05) return;
     if(gap && E.bridge && !flat) dryRuns(W, E, e0, e1).forEach(function(r){ ribbon(E, r[0], r[1]); });
     else ribbon(E, e0, e1);
@@ -1172,6 +1190,8 @@ function roadTile(W, tx, tz, flat, gap){
     if(tg && arms.every(function(a){ return a.E.under; })) junction(W, C, n, arms, tg, tg, tg, walk, null);
     else junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk, flat ? null : br);
   });
+  // [3.34] lane arrows on the approaches to junctions, by the tile holding each arrow's middle
+  if(!flat) arrowPlan(W, C).forEach(function(Ar){ if(inTile(Ar.x, Ar.z, tx, tz)) paintArrow(marks, W, Ar); });
   // phase 6: the decks' piers standing in this tile
   if(!flat && br && C.deck) WQ().piersOf(W).forEach(function(p){
     var E = C.byId[p.edge];
@@ -1227,6 +1247,11 @@ function junction(W, C, n, arms, asph, marks, kerb, walk, dk){
   // one's raised and planted), and give-way lines across the way in on every arm that gives way
   if(n.junction === "roundabout" || n.junction === "mini") roundabout(W, n, asph, marks, kerb, walk, yAt);
   if(n.junction && n.junction !== "signals" && n.junction !== "ramps") giveWays(W, C, n, arms, marks);
+  // [3.34] a yellow box where an avenue or a boulevard meets at lights (their stop lines are games/traffic.js's), a
+  // ramp's gore chevrons
+  var mY = function(p){ return yAt([p[0], 0, p[1]]) + MARK_LIFT; };
+  if(n.junction === "signals" && arms.length >= 3 && arms.some(function(a){ return a.E.v4 === "avenue" || a.E.v4 === "boulevard"; })) boxJunction(n, arms, ring, marks, mY);
+  if(n.junction === "ramps") goreChevrons(n, arms, marks, mY);
   // phase 6: a trumpet's T (an elevated `ramps` junction) on its own slab: the patch's underside, and where no arm
   // leaves it, a parapet over a fascia (an open span) or a retaining wall (low)
   if(dk && n.junction === "ramps"){
@@ -1299,10 +1324,312 @@ function giveWays(W, C, n, arms, marks){
     // (the way in: toward the node, on the kerb side; the edge's left is +l, so its end arm's way in is +l when traffic
     // keeps left)
     var sg = (a.end ? 1 : -1)*(side === -1 ? 1 : -1), lo = E.med || E.bed || 0;
+    // [3.34] a minor road meeting a main road two classes above it (a street onto an avenue, a collector onto a
+    // boulevard) is a stop: one solid line STOP_W wide across its way in, where the give-way dashes would be
+    if(n.junction === "priority" && !all && top - rk(a) >= 2){
+      var t0 = a.t + 0.4, t1 = t0 + STOP_W, stS = a.end ? stations(E, E.len - t1, E.len - t0) : stations(E, t0, t1);
+      if(E.cw - 0.2 > lo + 0.4) strip(marks, W, E, stS, sg > 0 ? lo + 0.2 : -(E.cw - 0.2), sg > 0 ? E.cw - 0.2 : -(lo + 0.2), MARK_LIFT, COL.white, null, null);
+      return;
+    }
     [0.4, 1.0].forEach(function(d){
       var s0 = a.t + d, s1 = s0 + 0.25, st = a.end ? stations(E, E.len - s1, E.len - s0) : stations(E, s0, s1);
       for(var o = lo + 0.2; o + 0.4 < E.cw; o += 0.9) strip(marks, W, E, st, sg > 0 ? o : -o - 0.5, sg > 0 ? o + 0.5 : -o, MARK_LIFT, COL.white, null, null);
     });
+  });
+}
+
+/* ---------- City Gen v4 phase 11 (HQ 3.34): planted medians and junction paint ---------- */
+// A boulevard's median (v4 "boulevard", median > 0) gets a tree on its centre line about every PLANT_TREE m and a row
+// of clipped hedge blocks along each side; an avenue's narrow one a line of low shrubs every SHRUB_STEP m, no trees.
+// Every plant keeps PLANT_NOSE m back from the median's noses (the junction box and its zebra), PLANT_PIER m clear of a
+// City Line pier or an interchange pier, out of terrain holes and off any deck; a tree within RAIL_TREE m of an
+// elevated City Line's path in plan stands only where its crown clears the girder. A tram's centre bed has none.
+// The trees ride in the tile's instanced trees (allProps), the hedges and shrubs in its kerb geo: no new mesh.
+var PLANT_NOSE = 5.5, PLANT_TREE = 12, PLANT_PIER = 1.5, RAIL_TREE = 4.5, RAIL_NEAR = 40, RAIL_GAP = 1.2, STOP_W = 0.3;
+// a round tree's height per unit scale (games/worldbuild.js: its crown's top 5.1 m up, drawn 0.85 x s tall)
+var TREE_TOP = 5.1*0.85;
+var HEDGE_LEN = 4.4, HEDGE_STEP = 5.2, HEDGE_W = 0.9, HEDGE_IN = 0.55, HEDGE_H = 0.7;
+var SHRUB_LEN = 1.3, SHRUB_STEP = 3.2, SHRUB_W = 1.1, SHRUB_H = 0.55;
+COL.hedge = [0.19, 0.35, 0.17]; COL.hedgeTop = [0.25, 0.44, 0.21]; COL.shrub = [0.22, 0.38, 0.19]; COL.shrubTop = [0.30, 0.47, 0.22];
+function railPaths(W){
+  var C = prep(W);
+  if(C.railSegs !== undefined) return C.railSegs;
+  var Q = WQ(), R = Q.railOf ? Q.railOf(W.tierBase || W) : null, out = [];
+  (R ? R.lines : []).forEach(function(l){
+    if(!l || !l.piers || !l.piers.length) return;   // (an elevated line: the one with doc piers)
+    for(var i = 1; i < l.path.length; i++) out.push([l.path[i - 1][0], l.path[i - 1][2], l.path[i][0], l.path[i][2]]);
+  });
+  return (C.railSegs = out);
+}
+function segDist(x, z, s){
+  var dx = s[2] - s[0], dz = s[3] - s[1], L = dx*dx + dz*dz, t = L > 0 ? clamp(((x - s[0])*dx + (z - s[1])*dz)/L, 0, 1) : 0;
+  return hypot(x - s[0] - dx*t, z - s[1] - dz*t);
+}
+// the plants on E's median: {trees: [{x, y, z, s, kind}], blocks: [{s0, s1, o0, o1, h, side, top}]} (null: none)
+function medianPlan(W, C, E){
+  var M = C.plants || (C.plants = {});
+  if(M[E.id] !== undefined) return M[E.id];
+  var out = null, blvd = E.v4 === "boulevard";
+  if(E.med > 0 && (blvd || E.v4 === "avenue") && !E.deck && !E.under && !E.bridge){
+    var Q = WQ(), HS = holeSet(W), PI = C.deck ? Q.piersOf(W) : [], RP = Q.railPiersOf ? Q.railPiersOf(W) : [], RS = railPaths(W);
+    var a = E.tA + PLANT_NOSE, b = E.len - E.tB - PLANT_NOSE, mh = E.med, seed = W.hash + ":plant:" + E.id + ":";
+    // (a plant from (x, z) to (x1, z1) (omitted: a point), reach m round that line: clear of the piers, holes and decks)
+    var clear = function(x, z, reach, x1, z1){
+      var i, sg = [x, z, x1 != null ? x1 : x, z1 != null ? z1 : z], mx = (sg[0] + sg[2])/2, mz = (sg[1] + sg[3])/2;
+      if(HS && (inHoles(HS, sg[0], sg[1]) || inHoles(HS, mx, mz) || inHoles(HS, sg[2], sg[3]))) return false;
+      for(i = 0; i < RP.length; i++) if(segDist(RP[i].x, RP[i].z, sg) < RP[i].r + PLANT_PIER + reach) return false;
+      for(i = 0; i < PI.length; i++) if(segDist(PI[i].x, PI[i].z, sg) < PI[i].r + PLANT_PIER + reach) return false;
+      return !(Q.deckOver && (Q.deckOver(W, sg[0], sg[1], 2) != null || Q.deckOver(W, sg[2], sg[3], 2) != null));
+    };
+    out = {trees: [], blocks: []};
+    if(b - a > 2){
+      var blockRow = function(o0, o1, len, step, h, side, top, tag){
+        var n = Math.max(1, Math.floor((b - a - len)/step) + 1), s = a + (b - a - len - (n - 1)*step)/2, hw = Math.abs(o1 - o0)/2, om = (o0 + o1)/2;
+        for(var k = 0; k < n; k++, s += step){
+          var s0 = s, s1 = s + len;
+          if(s0 < a - 1e-6 || s1 > b + 1e-6) continue;
+          var P0 = pointAt(E, s0), P1 = pointAt(E, s1);
+          if(!clear(P0.x + P0.lx*om, P0.z + P0.lz*om, hw, P1.x + P1.lx*om, P1.z + P1.lz*om)) continue;
+          var hj = Q.hash32(seed + tag + ":" + k)/4294967296;
+          out.blocks.push({s0: s0, s1: s1, o0: o0, o1: o1, h: h*(0.88 + 0.24*hj), side: side, top: top});
+        }
+      };
+      if(blvd){
+        // trees on the centre line, a hedge row along each side
+        var nt = Math.max(1, Math.round((b - a)/PLANT_TREE)), sp = (b - a)/nt;
+        for(var k = 0; k < nt; k++){
+          var s = a + sp*(k + 0.5), P = pointAt(E, s), h1 = Q.hash32(seed + "tree:" + k);
+          if(!clear(P.x, P.z, 1.5)) continue;
+          var ty = yWalk(W, E, P, 0) + LIFT, ts = 0.82 + (h1 & 0xff)/255*0.26;
+          if(RS.some(function(sg){ return segDist(P.x, P.z, sg) < RAIL_TREE; })){
+            // under the City Line's viaduct: only a tree whose crown stays RAIL_GAP m under the girder's soffit (the
+            // lowest of the piers within RAIL_NEAR m), smaller where it must
+            var soff = Infinity;
+            RP.forEach(function(p){ if(hypot(p.x - P.x, p.z - P.z) < RAIL_NEAR) soff = Math.min(soff, p.y1); });
+            ts = Math.min(ts, (soff - RAIL_GAP - ty)/TREE_TOP);
+            if(!(ts >= 0.6)) continue;
+          }
+          out.trees.push({x: P.x, y: ty, z: P.z, s: ts, kind: "round"});
+        }
+        [-1, 1].forEach(function(sg){
+          var oi = mh - HEDGE_IN - HEDGE_W, oo = mh - HEDGE_IN;
+          blockRow(sg*oi, sg*oo, HEDGE_LEN, HEDGE_STEP, HEDGE_H, COL.hedge, COL.hedgeTop, "h" + sg);
+        });
+      } else {
+        var hw2 = Math.min(SHRUB_W, 2*mh - 0.5)/2;
+        if(hw2 > 0.2) blockRow(-hw2, hw2, SHRUB_LEN, SHRUB_STEP, SHRUB_H, COL.shrub, COL.shrubTop, "s");
+      }
+    }
+  }
+  return (M[E.id] = out);
+}
+// a clipped hedge block (or shrub): a box on the median's top, its sides drawn in by a fifth of its height (no bottom)
+function plantBlocks(g, W, C, E, tx, tz){
+  var P = medianPlan(W, C, E);
+  if(!P) return;
+  P.blocks.forEach(function(k){
+    var A = pointAt(E, k.s0), B = pointAt(E, k.s1);
+    if(!inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz)) return;
+    var om = (k.o0 + k.o1)/2, ya = yWalk(W, E, A, om) + LIFT - 0.02, yb = yWalk(W, E, B, om) + LIFT - 0.02;
+    var lo = Math.min(k.o0, k.o1), hi = Math.max(k.o0, k.o1), d = Math.min(0.2*k.h, (hi - lo)/3, (k.s1 - k.s0)/3);
+    var A2 = pointAt(E, k.s0 + d), B2 = pointAt(E, k.s1 - d), ta = ya + k.h, tb = yb + k.h;
+    var b0 = at(A, lo, ya), b1 = at(B, lo, yb), b2 = at(B, hi, yb), b3 = at(A, hi, ya);
+    var t0 = at(A2, lo + d, ta), t1 = at(B2, lo + d, tb), t2 = at(B2, hi - d, tb), t3 = at(A2, hi - d, ta);
+    var lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
+    face(g, [t0, t1, t2, t3], k.top, UP);
+    face(g, [b0, b1, t1, t0], k.side, [-lx, 0.3, -lz]);
+    face(g, [b3, b2, t2, t3], k.side, [lx, 0.3, lz]);
+    face(g, [b0, b3, t3, t0], k.side, [-A.dx, 0.3, -A.dz]);
+    face(g, [b1, b2, t2, t1], k.side, [B.dx, 0.3, B.dz]);
+  });
+}
+
+// plan polygons [[x, z]]: the part of a convex polygon where sg (n . p - c) >= 0
+function clipHalf2(P, nx, nz, c, sg){
+  var out = [], m = P.length;
+  for(var i = 0; i < m; i++){
+    var p = P[i], q = P[(i + 1) % m], dp = sg*(nx*p[0] + nz*p[1] - c), dq = sg*(nx*q[0] + nz*q[1] - c);
+    if(dp >= 0) out.push(p);
+    if((dp >= 0) !== (dq >= 0)){ var t = dp/(dp - dq); out.push([p[0] + (q[0] - p[0])*t, p[1] + (q[1] - p[1])*t]); }
+  }
+  return out;
+}
+// convex P clipped to convex K (either winding)
+function clipConvex(P, K){
+  var m = K.length, ar = 0, i;
+  for(i = 0; i < m; i++) ar += K[i][0]*K[(i + 1) % m][1] - K[(i + 1) % m][0]*K[i][1];
+  var sg = ar > 0 ? 1 : -1;
+  for(i = 0; i < m && P.length >= 3; i++){
+    var p = K[i], q = K[(i + 1) % m], nx = -(q[1] - p[1]), nz = q[0] - p[0];
+    P = clipHalf2(P, nx, nz, nx*p[0] + nz*p[1], sg);
+  }
+  return P;
+}
+function area2(P){ var a = 0; for(var i = 0; i < P.length; i++){ var q = P[(i + 1) % P.length]; a += P[i][0]*q[1] - q[0]*P[i][1]; } return Math.abs(a)/2; }
+// stripes along (ux, uz), every sp m (phase: through (ox, oz)), w m wide, across convex plan polygon P, painted at yOf
+function hatch(g, P, ux, uz, sp, w, ox, oz, c, yOf){
+  var nx = -uz, nz = ux, lo = Infinity, hi = -Infinity, base = nx*ox + nz*oz;
+  P.forEach(function(p){ var d = nx*p[0] + nz*p[1] - base; lo = Math.min(lo, d); hi = Math.max(hi, d); });
+  for(var k = Math.ceil((lo - w/2)/sp); k*sp - w/2 < hi; k++){
+    var Q = clipHalf2(clipHalf2(P, nx, nz, base + k*sp - w/2, 1), nx, nz, base + k*sp + w/2, -1);
+    if(Q.length >= 3 && area2(Q) > 0.004) face(g, Q.map(function(p){ return [p[0], yOf(p), p[1]]; }), c, UP);
+  }
+}
+// a painted line from plan point p to q, w m wide
+function paintLine(g, p, q, w, c, yOf){
+  var dx = q[0] - p[0], dz = q[1] - p[1], l = hypot(dx, dz);
+  if(l < 0.05) return;
+  var nx = -dz/l*w/2, nz = dx/l*w/2;
+  face(g, [[p[0] + nx, 0, p[1] + nz], [q[0] + nx, 0, q[1] + nz], [q[0] - nx, 0, q[1] - nz], [p[0] - nx, 0, p[1] - nz]].map(function(v){ return [v[0], yOf([v[0], v[2]]), v[2]]; }), c, UP);
+}
+// [3.34] a yellow box junction: a border just inside the patch and a criss-cross of diagonals over it (at 45 degrees to
+// the main road), at every signal junction where an avenue or a boulevard meets
+var BOX_IN = 0.6, BOX_SP = 2.6, BOX_W = 0.15;
+function boxJunction(n, arms, ring, marks, yOf){
+  var main = arms.slice().sort(function(p, q){ return (RANK[q.E.v4] || 0) - (RANK[p.E.v4] || 0) || p.E.id - q.E.id; })[0];
+  var R = ring.map(function(p){ var dx = p[0] - n.x, dz = p[2] - n.z, l = hypot(dx, dz), k = l > BOX_IN ? (l - BOX_IN)/l : 0; return [n.x + dx*k, n.z + dz*k]; });
+  var m = R.length, y0 = main.yaw + Math.PI/4, y1 = main.yaw - Math.PI/4;
+  for(var k = 0; k < m; k++){
+    var T = [[n.x, n.z], R[k], R[(k + 1) % m]];
+    if(area2(T) < 0.01) continue;
+    hatch(marks, T, Math.sin(y0), Math.cos(y0), BOX_SP, BOX_W, n.x, n.z, COL.yellow, yOf);
+    hatch(marks, T, Math.sin(y1), Math.cos(y1), BOX_SP, BOX_W, n.x, n.z, COL.yellow, yOf);
+    paintLine(marks, R[k], R[(k + 1) % m], BOX_W, COL.yellow, yOf);
+  }
+}
+// [3.34] chevrons on a ramp's gore: between a ramp and the expressway it leaves or joins (consecutive arms, under 60
+// degrees apart), the wedge their facing edges close back toward the node, inside the junction patch: its two sides
+// outlined and V-shaped stripes across it
+var GORE_SP = 2.4, GORE_W = 0.4, GORE_EDGE = 0.2;
+// the offset (m) of a road's outer painted edge line (v4Lines: an expressway's outside its last lane, else 1 m in)
+function edgeLineOf(E){
+  if(E.v4 === "expressway" && E.med > 0){
+    var o = E.med;
+    for(var k = 1; k <= (E.lanes || 1) && E.med + 3.5*k <= E.cw - 0.1; k++) o = E.med + 3.5*k;
+    return o;
+  }
+  return E.cw > 1.5 ? E.cw - 1 : E.cw;
+}
+// the gores at a ramps node: [{M, pa, pb}] (plan points: the wedge's apex and its two outer corners)
+function goresAt(n, arms){
+  var out = [];
+  if(n.junction !== "ramps" || arms.length < 2) return out;
+  for(var k = 0; k < arms.length; k++){
+    var a = arms[k], b = arms[(k + 1) % arms.length];
+    if([a.E.v4, b.E.v4].sort().join(",") !== "expressway,ramp" || a.dx*b.dx + a.dz*b.dz < 0.5) continue;
+    // (between the two roads' painted edge lines, so the shoulders are in it)
+    var Sa = armStation(a.E, a.end, a.t), Sb = armStation(b.E, b.end, b.t), oa = edgeLineOf(a.E), ob = edgeLineOf(b.E);
+    var pa = [Sa.x + Sa.lx*oa, Sa.z + Sa.lz*oa], pb = [Sb.x - Sb.lx*ob, Sb.z - Sb.lz*ob];
+    // pa - u da = pb - v db (u, v > 0: back toward the node)
+    var det = -Sa.dx*Sb.dz + Sa.dz*Sb.dx;
+    if(Math.abs(det) < 1e-6) continue;
+    var rx = pb[0] - pa[0], rz = pb[1] - pa[1], u = (rx*Sb.dz - rz*Sb.dx)/det, v = (-Sa.dx*rz + Sa.dz*rx)/det;
+    if(!(u > 0.5 && v > 0.5 && u < 60 && v < 60)) continue;
+    var Mp = [pa[0] - u*Sa.dx, pa[1] - u*Sa.dz];
+    if(area2([Mp, pa, pb]) < 1 || hypot((pa[0] + pb[0])/2 - Mp[0], (pa[1] + pb[1])/2 - Mp[1]) < 0.5) continue;
+    out.push({M: Mp, pa: pa, pb: pb});
+  }
+  return out;
+}
+function goreChevrons(n, arms, marks, yOf){
+  goresAt(n, arms).forEach(function(g){
+    var Mp = g.M, pa = g.pa, pb = g.pb, G = [Mp, pa, pb], mid = [(pa[0] + pb[0])/2, (pa[1] + pb[1])/2];
+    var ax = mid[0] - Mp[0], az = mid[1] - Mp[1], al = hypot(ax, az);
+    ax /= al; az /= al;
+    // the axis splits it: each half's stripes at 50 degrees to the axis, mirrored, so they meet in a V on it
+    [[pa, 1], [pb, -1]].forEach(function(h){
+      var Hp = clipConvex(G, [Mp, h[0], mid]);
+      if(Hp.length < 3) return;
+      var th = h[1]*0.87, ux = ax*Math.cos(th) - az*Math.sin(th), uz = ax*Math.sin(th) + az*Math.cos(th);
+      hatch(marks, Hp, ux, uz, GORE_SP, GORE_W, Mp[0], Mp[1], COL.white, yOf);
+      paintLine(marks, Mp, h[0], GORE_EDGE, COL.white, yOf);
+    });
+  });
+}
+// [3.34] lane arrows painted on the approach to a junction (signals or priority, three arms or more) on a carriageway
+// of 2+ lanes each way (an avenue's or a boulevard's): ARROW_LEN m long, their tips ARROW_BACK m back from the stop or
+// give-way line (beyond the zebra where there is one). Each lane's arrow follows the arms there: traffic keeps to the
+// left (traffic.js SIDE -1, India / the UK), so the kerb lane turns left (and goes straight on where it can), the lane
+// by the median turns right (and goes straight on), any between goes straight on; mirrored for SIDE 1.
+var ARROW_LEN = 5, ARROW_BACK = 15, ARROW_BACK_MAX = 25, ARROW_REACH = 60, ARROW_TURN = 0.6;
+function arrowSide(){ return (HQV.traffic && HQV.traffic.SIDE === 1) ? 1 : -1; }
+function arrowPlan(W, C){
+  if(C.arrows) return C.arrows;
+  var out = [], side = arrowSide();
+  C.nodeIds.forEach(function(id){
+    var n = C.nodes[id], arms = C.inc[id] || [];
+    if(!n || (n.junction !== "signals" && n.junction !== "priority") || arms.length < 3) return;
+    arms.forEach(function(a){
+      var E = a.E;
+      if((E.v4 !== "avenue" && E.v4 !== "boulevard") || (E.lanes || 1) < 2 || E.deck || E.under) return;
+      if(E.oneway && !a.end) return;   // (no traffic comes in this way)
+      var hasL = false, hasS = false, hasR = false, fx = -a.dx, fz = -a.dz;
+      arms.forEach(function(b){
+        if(b === a || (b.E.oneway && b.end)) return;
+        // (the turn onto b: + to the left of travel, whose left is (-a.dz, a.dx))
+        var th = Math.atan2(b.dx*(-a.dz) + b.dz*a.dx, b.dx*fx + b.dz*fz);
+        if(Math.abs(th) > 2.8) return;
+        if(th > ARROW_TURN) hasL = true; else if(th < -ARROW_TURN) hasR = true; else hasS = true;
+      });
+      if(!(hasL || hasR)) return;   // (straight on only: nothing to say)
+      // the near turn (to the kerb) and the far one, as traffic keeps
+      var nearT = side === -1 ? hasL : hasR, farT = side === -1 ? hasR : hasL, NEAR = side === -1 ? "L" : "R", FAR = side === -1 ? "R" : "L";
+      var stop = a.t + (crossed(C, E, a.end) ? 5.5 : 1.25);
+      // the approach, back from the junction: this edge, and on through any plain bend (a node of two arms) onto the
+      // same road's next edge, up to ARROW_REACH m: [{E, end (its end toward the junction), at (m from the junction
+      // to that end), lo, hi (where paint may go on it, m from that end)}]
+      var chain = [], cur = a, at0 = 0, guard = 0;
+      while(cur && at0 < ARROW_REACH && guard++ < 6){
+        var Ec = cur.E, endc = cur.end, far = endc ? Ec.a : Ec.b, farTrim = endc ? Ec.tA : Ec.tB;
+        chain.push({E: Ec, end: endc, at: at0, lo: cur === a ? stop : cur.t + 0.5, hi: Ec.len - farTrim - (crossed(C, Ec, endc ? 0 : 1) ? 5.5 : 0.5)});
+        var fa = C.inc[far] || [], nx = null;
+        if(fa.length === 2 && far !== id){
+          nx = fa[0].E === Ec ? fa[1] : fa[0];
+          if(nx.E === Ec || nx.E.v4 !== E.v4 || nx.E.lanes !== E.lanes || (nx.E.med || 0) !== (E.med || 0) || (nx.E.bed || 0) !== (E.bed || 0) || nx.E.deck || nx.E.under) nx = null;
+          // (it leaves the bend node: its end there is the junction side of it)
+        }
+        at0 += Ec.len;
+        cur = nx;
+      }
+      var spot = null;
+      for(var back = ARROW_BACK; back <= ARROW_BACK_MAX && !spot; back += 1){
+        var tipC = stop + back, tailC = tipC + ARROW_LEN;
+        chain.forEach(function(c){ if(!spot && tipC - c.at >= c.lo + 0.5 && tailC - c.at <= c.hi - 0.5) spot = {c: c, tip: tipC - c.at, back: back}; });
+      }
+      if(!spot) return;
+      var Ea = spot.c.E, nL = E.lanes, mo = E.med || E.bed || 0;
+      for(var j = 0; j < nL; j++){
+        // lane j from the median out (j = nL - 1: the kerb lane)
+        var kind = j === nL - 1 ? (nearT ? (hasS ? "S" + NEAR : NEAR) : (hasS ? "S" : FAR)) :
+                   j === 0 ? (farT ? (hasS ? "S" + FAR : FAR) : (hasS ? "S" : NEAR)) : (hasS ? "S" : (farT ? FAR : NEAR));
+        var o = mo + (Ea.cw - mo)*(j + 0.5)/nL, off = side === -1 ? -o : o;
+        var S = armStation(Ea, spot.c.end, spot.tip + ARROW_LEN/2);
+        out.push({E: Ea, end: spot.c.end, tip: spot.tip, back: spot.back, off: off, kind: kind, node: id, x: S.x + S.lx*off, z: S.z + S.lz*off});
+      }
+    });
+  });
+  return (C.arrows = out);
+}
+// an arrow's pieces in its own frame (u along the way of travel from its tail, v to the left of travel): convex polygons
+function arrowShape(kind){
+  var P = [], w = 0.15;
+  function seg(u0, v0, u1, v1){ var du = u1 - u0, dv = v1 - v0, l = hypot(du, dv), nu = -dv/l*w, nv = du/l*w; P.push([[u0 + nu, v0 + nv], [u1 + nu, v1 + nv], [u1 - nu, v1 - nv], [u0 - nu, v0 - nv]]); }
+  function head(u, v, du, dv, len, hw){ P.push([[u - dv*hw, v + du*hw], [u + du*len, v + dv*len], [u + dv*hw, v - du*hw]]); }
+  var straight = kind.indexOf("S") >= 0, turn = kind.indexOf("L") >= 0 ? 1 : (kind.indexOf("R") >= 0 ? -1 : 0), r = Math.SQRT1_2;
+  if(straight){ seg(0, 0, 3.4, 0); head(3.4, 0, 1, 0, 1.6, 0.6); }
+  if(turn && straight){ seg(1.4, 0, 2.3, 0.9*turn); head(2.3, 0.9*turn, r, r*turn, 1.2, 0.5); }
+  if(turn && !straight){ seg(0, 0, 2.7, 0); seg(2.55, 0, 3.3, 0.75*turn); head(3.3, 0.75*turn, r, r*turn, 1.4, 0.55); }
+  return P;
+}
+function paintArrow(g, W, Ar){
+  var E = Ar.E, st = {};
+  arrowShape(Ar.kind).forEach(function(poly){
+    face(g, poly.map(function(q){
+      // (u from the tail toward the node: the station that far from the node; v to the left of travel, which is the
+      // arm frame's right)
+      var d = Ar.tip + ARROW_LEN - q[0], key = d.toFixed(4), S = st[key] || (st[key] = armStation(E, Ar.end, d)), o = Ar.off - q[1];
+      return at(S, o, yRoad(W, E, S, o) + MARK_LIFT);
+    }), COL.white, UP);
   });
 }
 
@@ -2553,6 +2880,8 @@ function allProps(W){
     b[kind].push(o);
   }
   Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: gY(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
+  // [3.34] the trees on a boulevard's median (medianPlan; the hedges and shrubs are the road tile's)
+  C.E.forEach(function(E){ var P = medianPlan(W, C, E); if(P) P.trees.forEach(function(t){ put("trees", {x: t.x, y: t.y, z: t.z, s: t.s, kind: t.kind}); }); });
   C.E.forEach(function(E){
     if(E.walk > 0 && (streetish(E.cls) || aveish(E.cls))){
       // lamps every 30 m on both sidewalks, staggered by 15 m
@@ -2640,6 +2969,15 @@ function overTunnel(W, o){
   var Q = WQ(), ux = Math.cos(o.yaw || 0), uz = -Math.sin(o.yaw || 0);
   for(var i = -2; i <= 2; i++) if(Q.underOver(W, o.x + ux*GANTRY_POST*i/2, o.z + uz*GANTRY_POST*i/2, 3)) return true;
   return false;
+}
+// [3.34] what phase 11 paints and plants, as plain data (tests, tools): {arrows: [{edge, end, node, kind, tip, off, x,
+// z}], plants: [{edge, len, tA, tB, med (m), trees, blocks}], gores: [{node, M, pa, pb}]}
+function roadPaint(W){
+  var C = prep(W), out = {arrows: [], plants: [], gores: []};
+  arrowPlan(W, C).forEach(function(A){ out.arrows.push({edge: A.E.id, end: A.end, node: A.node, kind: A.kind, tip: A.tip, back: A.back, off: A.off, x: A.x, z: A.z}); });
+  C.E.forEach(function(E){ var P = medianPlan(W, C, E); if(P) out.plants.push({edge: E.id, len: E.len, tA: E.tA, tB: E.tB, med: E.med, trees: P.trees.slice(), blocks: P.blocks.map(function(k){ return {s0: k.s0, s1: k.s1, o0: k.o0, o1: k.o1, h: k.h}; })}); });
+  C.nodeIds.forEach(function(id){ var n = C.nodes[id]; if(n) goresAt(n, C.inc[id] || []).forEach(function(g){ out.gores.push({node: id, M: g.M, pa: g.pa, pb: g.pb}); }); });
+  return out;
 }
 function props(W, tx, tz){
   var b = allProps(W)[tileKey(tx, tz)];
@@ -2740,7 +3078,9 @@ function tierDiff(W, a, b){
     var t0 = tileOf(R.x0 - m, R.z0 - m), t1 = tileOf(R.x1 + m, R.z1 + m);
     for(var tz = t0.tz; tz <= t1.tz; tz++) for(var tx = t0.tx; tx <= t1.tx; tx++) set[tileKey(tx, tz)] = 1;
   }
-  boxes.forEach(function(R){ if(R.road) cover(sets.roads, R, 0); cover(sets.terrain, R, TERRAIN_REACH); cover(sets.props, R, PROP_REACH); });
+  // ([3.34] a v4 doc's lane arrows for a junction may stand on the road beyond a bend node: its reach)
+  var roadM = (B.edges || []).some(function(e){ return e.v4; }) ? ARROW_REACH + ARROW_BACK_MAX + ARROW_LEN : 0;
+  boxes.forEach(function(R){ if(R.road) cover(sets.roads, R, roadM); cover(sets.terrain, R, TERRAIN_REACH); cover(sets.props, R, PROP_REACH); });
   // ground and buildings land in the tile of their centroid / centre: the union of both tiers' items
   [view(B, lo), view(B, hi)].forEach(function(V){
     groundItems(V).forEach(function(it){
@@ -2817,4 +3157,8 @@ HQV.worldgeom = {
   SEA_HIDE: SEA_HIDE, meshY: meshY,
   waterGeo: waterGeo, tramEdges: tramEdges, cutHoles: cutHoles, holeSet: holeSet, TRAM: {INNER: TRAM_INNER, W: TRAM_W, EDGE: TRAM_EDGE}
 };
+// [3.34] phase 11's paint and planting
+HQV.worldgeom.roadPaint = roadPaint;
+HQV.worldgeom.PAINT = {PLANT_NOSE: PLANT_NOSE, PLANT_PIER: PLANT_PIER, ARROW_LEN: ARROW_LEN, ARROW_BACK: ARROW_BACK, ARROW_BACK_MAX: ARROW_BACK_MAX,
+  STOP_W: STOP_W, EDGE_IN: EDGE_IN, COL: {hedge: COL.hedge, hedgeTop: COL.hedgeTop, shrub: COL.shrub, shrubTop: COL.shrubTop, white: COL.white, yellow: COL.yellow}};
 })();

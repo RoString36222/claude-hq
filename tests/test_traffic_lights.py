@@ -149,7 +149,8 @@ Object.keys(SRC).forEach(function(name){
   V.update(DAY, {x: sg.x, z: sg.z});
   let inst = true;
   V.group.traverse(function(m){ if(m.isMesh && !m.isInstancedMesh) inst = false; });
-  const pole = V.arms[0], car = P[0];
+  // (a car on a street open today: one under roadworks has its parked cars cleared away)
+  const shut = L.closed(W, DAY) || {}, pole = V.arms[0], car = P.filter(function(c){ return !shut[c.edge]; })[0];
   V.update(DAY, {x: car.x, z: car.z});
   o.view = {calls: V.drawCalls(), inst: inst, pole: V.blocked(pole.x, pole.z), poleBeside: V.blocked(pole.x + 2.5, pole.z + 2.5), car: V.blocked(car.x, car.z), info: V.info()};
   V.dispose();

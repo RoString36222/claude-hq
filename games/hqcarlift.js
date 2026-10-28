@@ -12,7 +12,8 @@
  *   padLocal() -> {x, z, w, d, yaw}: the bay in the lot's frame, the footprint of the old garage
  *     (HQV.hqLotExtras.garage), so garagePlace and hqLotExtraBlocked still hold.
  *   streetSpot(C, E?) -> {x, y, z, yaw, camYaw}: on the street apron in front of the bay, facing the road (away
- *     from the tower). E: your HQ's {x, z, rot, garage: {x, z, s}} when the caller has it (hqcity3d's E), else
+ *     from the tower). E: your HQ's {x, z, rot, garage: {x, z, s, f, r, way}} when the caller has it (hqcity3d's E; [3.33]
+ *     r the door's quarter turns, 1 and 3 a side door; way a moved bay's driveway, lot frame), else
  *     C.homeLot, else derived from C.home (your door, as hqcity3d's at()).
  *   padSpot(L?) -> {x, y, z, yaw, camYaw}: the platform in the basement (L.pad overrides the default spot).
  *   carries(from, to, ride, door) -> bool: you keep your ride through this door (a carlift door, riding a car,
@@ -105,14 +106,20 @@ function lotOf(C, E){
     p = {x: h.x - fx*back, z: h.z - fz*back, rot: r};
   }
   if(!gar || !isFinite(gar.x) || !isFinite(gar.z)) gar = {x: P.x, z: P.z, s: 1, f: 1};
-  return {p: p, gar: {x: +gar.x, z: +gar.z, s: gar.s === -1 ? -1 : 1, f: gar.f === -1 ? -1 : 1}, P: P, y: num(C && C.home && C.home.y, 0)};
+  // [3.33] r: its door's quarter turns (0 the road, 1 +x, 2 away, 3 -x), else from f; way: a moved bay's driveway (lot frame)
+  var r = gar.r === 0 || gar.r === 1 || gar.r === 2 || gar.r === 3 ? gar.r : gar.f === -1 ? 2 : 0;
+  var way = Array.isArray(gar.way) ? gar.way.filter(function(q){ return q && isFinite(q.x) && isFinite(q.z); }).map(function(q){ return {x: +q.x, z: +q.z}; }) : [];
+  return {p: p, gar: {x: +gar.x, z: +gar.z, s: gar.s === -1 ? -1 : 1, f: r === 2 ? -1 : 1, r: r, way: way}, P: P, y: num(C && C.home && C.home.y, 0)};
 }
 function pose(x, y, z, yaw){ return {x: x, y: y, z: z, yaw: yaw, camYaw: yaw + 0.55}; }
-// lot-frame points of the bay: its middle, its door line and the apron's far end (the way its door faces: f), and the
-// heading out of it (the lot's +z, or its -z for a bay facing away from the HQ)
+// lot-frame points of the bay: its middle, its door line and the apron's far end (the way its door faces: r), and the
+// heading out of it (the lot's +z, its -z for a bay facing away from the HQ, [3.33] +-x for a side door); way: a moved bay's
+// driveway from its apron to the street (world points; none for a default bay, whose apron is on the road's side)
+var GDIR = [[0, 1], [1, 0], [0, -1], [-1, 0]];
 function lotPoints(F){
-  var g = F.gar, d = F.P.d, f = g.f === -1 ? -1 : 1;
-  return {pad: toWorld(F.p, g.x, g.z), door: toWorld(F.p, g.x, g.z + f*d/2), apron: toWorld(F.p, g.x, g.z + f*(d/2 + APRON)), out: F.p.rot + (f < 0 ? Math.PI : 0)};
+  var g = F.gar, d = F.P.d, r = g.r | 0, u = GDIR[r] || GDIR[0];
+  return {pad: toWorld(F.p, g.x, g.z), door: toWorld(F.p, g.x + u[0]*d/2, g.z + u[1]*d/2), apron: toWorld(F.p, g.x + u[0]*(d/2 + APRON), g.z + u[1]*(d/2 + APRON)),
+          out: F.p.rot + (r === 2 ? Math.PI : r*Math.PI/2), way: (g.way || []).map(function(q){ return toWorld(F.p, q.x, q.z); })};
 }
 function streetSpot(C, E){
   var F = lotOf(C, E); if(!F) return null;
@@ -157,16 +164,19 @@ var CP = {
   bayOf: function(site){ return site && site.pad ? siteBay(site) : null; },   // the carpark's newer name (#135)
   release: function(){},   // one pad, nothing reserved: matches the carpark's release(site, key)
   assign: function(site, keys){ var o = {}; (keys || []).slice(0, 1).forEach(function(k){ o[String(k)] = 0; }); return o; },
-  // from the pad, out of the door, to the end of the apron (all at y 0: the rise is played before, rise())
+  // from the pad, out of the door, to the end of the apron (all at y 0: the rise is played before, rise()); [3.33] a moved
+  // bay on along its driveway (site.way) to the street
   exitPath: function(bay, site){
     site = site || (bay && bay._site); if(!site) return [];
-    var a = line(site.pad, site.door, 3), b = line(site.door, site.apron, 3).slice(1);
-    return a.concat(b);
+    var a = line(site.pad, site.door, 3), b = line(site.door, site.apron, 3).slice(1), out = a.concat(b), at = site.apron;
+    (site.way || []).forEach(function(q){ var n = Math.max(1, Math.min(12, Math.round(Math.hypot(q.x - at.x, q.z - at.z)/3))); out = out.concat(line(at, q, n).slice(1)); at = q; });
+    return out;
   },
   entryPath: function(bay, site){ return CP.exitPath(bay, site).reverse(); },
   entrance: function(site, G){
     if(!site) return null;
-    var a = site.apron, out = {x: a.x, z: a.z, yaw: site.rot, door: {x: site.door.x, z: site.door.z}, road: null}, N = HQV.hqnav;
+    var wy = site.way && site.way.length ? site.way : null, a = wy ? wy[wy.length - 1] : site.apron;   // [3.33] a driveway's end, on the street
+    var out = {x: a.x, z: a.z, yaw: site.rot, door: {x: site.door.x, z: site.door.z}, road: null}, N = HQV.hqnav;
     if(G && N && N.snap){ try { var s = N.snap(G, a.x, a.z); if(s){ out.road = s; out.x = s.x; out.z = s.z; } } catch(e){} }
     return out;
   },
@@ -187,6 +197,7 @@ function liftSite(C, uid, E){
   var Q = lotPoints(F), r = Q.out;
   var site = {id: "carlift:" + String(uid == null ? "me" : uid), kind: "carlift", uid: uid, rot: r, w: F.P.w, d: F.P.d,
               pad: {x: Q.pad.x, z: Q.pad.z, yaw: r}, door: Q.door, apron: Q.apron};
+  if(Q.way.length) site.way = Q.way;                         // [3.33] a moved bay's driveway out to the street
   return {cp: CP, site: site};
 }
 // the vehicle's climb out of B1 before it drives off (or, sent home, its sink back down)

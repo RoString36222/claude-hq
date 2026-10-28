@@ -49,7 +49,9 @@
  * the integrator moves the player along (trip.pose(ms)); trip.pay() calls the onFare hook once (the
  * integrator POSTs /api/arena/city/:owner/fare {kind}). HQ 3.15 rides are free: new code uses service().
  * HQ 3.15 (docs/plans/transport-revamp.md 3.1, 3.2, 5.3), pure:
- *   lanes(W, tier, sim?)      per edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}
+ *   lanes(W, tier, sim?)      per edge {id, a, b, tram, tramOff, tramLay, bed, bus: [dir0, dir1], busOff, cars, carOff, half}
+ *                             ([3.32] tramLay: the doc edge's `tram` ("centre-bed", "shared-double", ...), bed: a centre bed's half
+ *                             width, m, 0 without one)
  *   tramPaths(W, tier, sim?)  the tram track centre lines as driven: lanes, turn curves through the boxes and
  *                             the terminus crossovers, [{line, lines, kind, key, pts: [x, y, z, ...]}]
  *   tramStops(W, tier, sim?)  where each line's tram stands at each stop
@@ -162,6 +164,11 @@ var PAINT = [0xc8323c, 0x2a6fd6, 0xf2f2ee, 0x2b2f36, 0x8a9199, 0xe8b730, 0x2f8f5
 // [3.29] City Gen v4 phase 6: the car lanes the sim drives a way on a road (backend interchange.rs `sim_lanes`, the
 // generator's lane balance): an expressway's lanes less the one by the median (kept free for overtaking), an
 // interchange's ramp's or flyover's own, one on every other road (as before)
+// City Gen v4 phase 9 (HQ 3.32): a tram track in a centre bed of half width h (m): the body (SPEC.tram.wid) inside the
+// bed's kerb (0.15 m) with BED_MARGIN to spare, so an avenue's 9.2 m bed leaves 3.4 m between the two bodies for a
+// 3 m island; the bed stands BED_UP (world.js SIDEWALK_UP) over the road
+var BED_UP = 0.15, BED_MARGIN = 0.1;
+function tramBed(h){ var hw = SPEC.tram.wid/2; return Math.max(hw + 0.2, (+h || 0) - 0.15 - hw - BED_MARGIN); }
 function simLanes(e){
   var v4 = e && e.v4, n = Math.max(1, (e && e.lanes) | 0);
   return v4 === "expressway" ? Math.max(1, n - 1) : v4 === "ramp" || v4 === "flyover" ? n : 1;
@@ -415,7 +422,9 @@ function create(doc, o){
              // City Gen v4 (HQ 3.25): its lanes each way and its raised median's half width (m)
              lanesV4: e.v4 ? Math.max(1, e.lanes|0) : 0, med: e.median > 0 ? e.median/200 : 0,
              // [3.29] an interchange's ramp runs one way (a to b); the car lanes the sim drives a way (simLanes)
-             one: e.oneway === true, k: simLanes(e)};
+             one: e.oneway === true, k: simLanes(e),
+             // City Gen v4 phase 9 (HQ 3.32): how a tram street's track is laid, and a centre bed's half width (m)
+             tramLay: typeof e.tram === "string" ? e.tram : null, bedH: e.tram === "centre-bed" && e.bed > 0 ? e.bed/200 : 0};
     if(E.len < 1) return;
     edges.push(E); A.inc.push(E.i); B.inc.push(E.i);
   });
@@ -477,11 +486,15 @@ function create(doc, o){
   // lateral plan per edge: m from the centre line toward the kerb ([3.22.3] SIDE: the left), per direction
   edges.forEach(function(E){
     var inner = 0.15, c = E.c, tw = SPEC.tram.wid, cw = SPEC.car.wid, bw = SPEC.bus.wid;
-    E.tramOff = E.tram ? inner + tw/2 : null;
     // [3.20.1] in the kerb-side lane of a road with two or three each way (worldgeom.js lanesEach), else mid-carriageway;
     // [3.25] a v4 road's own lanes, between its median and the kerb
-    var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = E.tram ? 0 : E.med;
-    var in2 = E.tram ? inner + tw + 0.3 : med + inner, carOff = Math.max(in2 + cw/2 + 0.1, E.tram ? 0 : c - (c - med)/(2*n)), anyBus = E.bus[0] || E.bus[1];
+    // [3.32] phase 9: a tram street's lay (lay): "bed" a centre bed, the trams inside it (tramBed) and the cars outside
+    // it, its half width standing for the median; "shared" the tram in the innermost lane, the cars in the class's own
+    // lanes outside it; "old" (a doc without the field, or a lay no world uses yet) the tram by the centre line, as ever
+    var lay = !E.tram ? null : E.bedH > 0 ? "bed" : /^shared-/.test(E.tramLay || "") ? "shared" : "old";
+    var n = E.lanesV4 || Math.max(1, Math.min(3, Math.floor(c/3.3))), med = lay === "old" ? 0 : lay === "bed" ? E.bedH : E.med;
+    E.tramOff = lay === "bed" ? tramBed(E.bedH) : lay === "shared" ? Math.max(inner + tw/2, med + (c - med)/(2*n)) : lay ? inner + tw/2 : null;
+    var in2 = lay && lay !== "bed" ? E.tramOff + tw/2 + 0.3 : med + inner, carOff = Math.max(in2 + cw/2 + 0.1, lay === "old" ? 0 : c - (c - med)/(2*n)), anyBus = E.bus[0] || E.bus[1];
     if(anyBus) carOff = in2 + cw/2 + 0.1;
     var carEdge = carOff + cw/2;
     E.cars = E.art && carEdge <= c + 0.05 && (!anyBus || carEdge + 0.25 + bw <= c);
@@ -502,6 +515,23 @@ function create(doc, o){
     E.evKind = E.tram ? "tram" : anyBus ? "bus" : null;
     E.ev = !E.one && !!(E.tram || anyBus || !E.cars || (!med && carOff - cw/2 >= EV_HW + 0.1));
   });
+  // [3.32] a centre bed's car lanes that end at a node where the bed runs on (two edges meet there, the other a bed with
+  // no cars of its own: its one lane each way the bus's) would turn their cars back across the bed: no cars on that edge
+  // either, and so on down the street to a junction (old docs have no bed: nothing changes)
+  for(var bedPass = 0, bedMore = true; bedMore && bedPass < 64; bedPass++){
+    bedMore = false;
+    edges.forEach(function(E){
+      if(!E.cars || !(E.bedH > 0) || E.one) return;
+      var dead = [E.a, E.b].some(function(id){
+        var inc = nodes[id].inc, O = inc.length === 2 ? edges[inc[0] === E.i ? inc[1] : inc[0]] : null;
+        return !!(O && O !== E && O.bedH > 0 && !O.cars);
+      });
+      if(!dead) return;
+      E.cars = false; E.carOff = null; E.carOffs = []; E.room = 0; E.ev = !E.one;
+      if(E.bus[0] || E.bus[1]) E.busOff = Math.max(E.c - SPEC.bus.wid/2 - 0.1, E.bedH + 0.15 + SPEC.bus.wid/2);
+      bedMore = true;
+    });
+  }
 
   // junction radii: the boxes vehicles turn through. A node where a side street (no traffic of its
   // own, but an emergency run may come down it) meets a through road is a junction too: its box spans
@@ -578,10 +608,10 @@ function create(doc, o){
       var c = clusterOf ? clusterOf[p.node] : null, last = out[out.length - 1];
       var q = {};
       for(var k in p) q[k] = p[k];
-      q.nodes = [p.node]; q.hs = [p.h];
+      q.nodes = [p.node]; q.hs = [p.h]; q.eins = [p.ein];
       if(c != null && last && last.box === c && p.sIn >= last.sOut - 1e-6 && last.nodes.indexOf(p.node) < 0 && p.v > V_UTURN && last.v > V_UTURN){
         last.sOut = p.sOut; last.v = Math.min(last.v, p.v); last.curve = last.curve.concat(p.curve.slice(1));
-        last.nodes.push(p.node); last.hs.push(p.h); last.turn = last.turn || p.turn;
+        last.nodes.push(p.node); last.hs.push(p.h); last.eins.push(p.ein); last.turn = last.turn || p.turn;
         last.occ = (last.sOut - last.sIn + spec.len - last.front)/last.v + CLEAR;
         return;
       }
@@ -590,7 +620,7 @@ function create(doc, o){
     });
     out.forEach(function(q){
       q.sn = null;
-      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; }
+      for(var i = 0; i < q.nodes.length && q.sn == null; i++) if(sigAt[q.nodes[i]]){ q.sn = String(q.nodes[i]); q.h = q.hs[i]; q.ein = q.eins[i]; }
       if(q.box != null) q.node = q.box;
     });
     return out;
@@ -601,7 +631,10 @@ function create(doc, o){
   // (x0, x1: m more cut off its start and end: a car ring's lanes either side of a hairpin, below)
   function lanePts(E, dir, off, x0, x1){
     var pts = dir ? E.pts.slice().reverse() : E.pts, from = dir ? E.b : E.a, to = dir ? E.a : E.b;
-    return trimPts(offsetPts(pts, SIDE*off), trimOf(from, E) + (x0 || 0), trimOf(to, E) + (x1 || 0));
+    var P = trimPts(offsetPts(pts, SIDE*off), trimOf(from, E) + (x0 || 0), trimOf(to, E) + (x1 || 0));
+    // [3.32] the track in a centre bed runs on the bed, BED_UP over the road
+    if(E.bedH > 0 && E.tramOff != null && off === E.tramOff) P = P.map(function(p){ return [p[0], p[1] + BED_UP, p[2]]; });
+    return P;
   }
   function laneNode(E, dir, end){ return end ? (dir ? E.a : E.b) : (dir ? E.b : E.a); }
 
@@ -652,7 +685,7 @@ function create(doc, o){
       var sOut = last ? acc : acc + Math.hypot(Q[0][0] - pts[pts.length - 1][0], Q[0][2] - pts[pts.length - 1][2]);
       passes.push({node: node, sIn: sIn, sOut: sOut, v: vb, curve: curve, wid: spec.wid,
                    occ: (sOut - sIn + spec.len - front)/vb + CLEAR, key: lanes[i].e.i*2 + lanes[i].dir, turn: Math.abs(ang) > 0.5,
-                   h: Math.atan2(d0[0], d0[1]), front: front});
+                   h: Math.atan2(d0[0], d0[1]), ein: lanes[i].e.id, front: front});
     }
     return {pl: plOf(pts), passes: clusterOf ? boxes(passes, spec) : passes, raw: passes, cusps: cusps, lanes: lanes, ranges: ranges, rev: rev, open: !!open};
   }
@@ -830,6 +863,7 @@ function create(doc, o){
     if(layoutMemo) return layoutMemo;
     var lanesOut = edges.map(function(E){
       return {id: E.id, i: E.i, a: E.a, b: E.b, cls: E.cls, len: E.len, half: E.c, tram: !!E.tram, tramOff: E.tram ? E.tramOff : null,
+              tramLay: E.tram ? E.tramLay : null, bed: E.tram && E.bedH > 0 ? E.bedH : 0,
               bus: [!!E.bus[0], !!E.bus[1]], busOff: E.bus[0] || E.bus[1] ? E.busOff : null, cars: !!E.cars, carOff: E.cars ? E.carOff : null};
     });
     var pieces = [], byKey = {}, stopsOut = [];
@@ -944,7 +978,14 @@ function create(doc, o){
   }
   // [3.22] at a node with lights, movements coming in on different axes never share a window (each colour is one
   // axis's); sigAxis is the light's own (cityLife.sigAxis)
-  function passAxis(p){ var sg = p.sn != null ? sigAt[p.sn] : null; return sg ? (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0) : 0; }
+  // ([3.32] the axis of the light's own arm on the road it comes in by, where it has one: a shallow arm's heading and the
+  // way a vehicle comes in can fall either side of 45 degrees)
+  function passAxis(p){
+    var sg = p.sn != null ? sigAt[p.sn] : null;
+    if(!sg) return 0;
+    var arm = p.ein != null && sg.arms ? sg.arms.filter(function(a){ return a.edge === p.ein && a.axis != null; })[0] : null;
+    return arm ? arm.axis : (CL.sigAxis ? CL.sigAxis(sg, p.h) : 0);
+  }
   function colour(P, sig){
     var colours = [], widths = [];
     P.forEach(function(p){
@@ -2191,7 +2232,7 @@ function layoutOf(W, tier, sim){
   if(layoutCache.length > 4) layoutCache.shift();
   return L;
 }
-// per active edge {id, a, b, tram, tramOff, bus: [dir0, dir1], busOff, cars, carOff, half}: m from the centre line
+// per active edge {id, a, b, tram, tramOff, tramLay, bed, bus: [dir0, dir1], busOff, cars, carOff, half}: m from the centre line
 // toward the kerb (SIDE x the right of travel)
 function lanes(W, tier, sim){ return layoutOf(W, tier, sim).lanes; }
 // the track centre lines the trams drive: [{line, lines, kind: "lane"|"turn"|"xover", key, pts: [x, y, z, ...]}]

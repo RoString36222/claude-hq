@@ -14,7 +14,11 @@
  *              arterial carries a tram each way, kerb-side poles with one arm elsewhere
  *   wires      contact wire 5.6 m up, a messenger above it, droppers, pull-offs on curves (line segments)
  *   islands    a 0.3 m boarding island with a yellow ribbed tactile edge at every stop, and a totem in the line
- *              colour with the line badge (the shelter is hqcivic's)
+ *              colour with the line badge (the shelter is hqcivic's); [3.32] a station whose site is a 40 x 3 m platform
+ *              (City Gen v4 phase 9) gets one island on the site's rectangle: down the middle of a centre bed between
+ *              the tracks (tactile both sides) or at the kerb (tactile on the track side). The tracks themselves follow
+ *              traffic.js's offsets: inside a centre bed (on it, 0.15 m up), in the innermost lane of a shared street;
+ *              a centre bed is the reservation already (worldgeom.js draws it), so no asphalt or setts overlay on it
  * view(c, W, tier, opts) -> V: draws it in at most 10 draw calls (rails, bed, stencils, furniture, badges, poles,
  * arms, insulators, wires); rails, bed and wire within 480 m of the camera, poles within 300 m (120 m cells,
  * rebuilt when the camera changes cell). V.update(ms, dt, cam), V.setNight(on), V.drawCalls(), V.triangles(),
@@ -28,6 +32,7 @@ var HQV = root.HQV = root.HQV || {};
 var GAUGE = 1.435, HEAD = 0.07, GROOVE = 0.04, RAIL_C = GAUGE/2 + HEAD/2, RAIL_Y = 0.01, BED_Y = 0.006;
 var POLE_MAX = 30, CHORD = 0.4, STAGGER = 0.2, WIRE_H = 5.6, MESSENGER = 0.9, SAG = 0.55, POLE_H = 7.2;
 var RESERVED = 60, STENCIL = 120, SETTS = 25, ISLAND_H = 0.3, ISLAND_L = 30, ENVELOPE = 1.45;
+var PLATFORM_W = 4000;   // [3.32] a tramstop site this wide (cm) or wider is a station's platform (40 m x 3 m)
 var CELL = 120, FAR_RAIL = 480, FAR_POLE = 300;
 var STEP = 1;    // track samples (m) for poles, beds and the chord rule
 
@@ -174,9 +179,21 @@ function layout(W, tier, opts){
   });
 
   // ---- stops: islands (merged per stop and direction) and totems ----
-  var islands = [], totems = [];
+  // [3.32] City Gen v4 phase 9: a station whose site is a platform (w >= PLATFORM_W, its poly a rectangle along the
+  // track) gets one island on that rectangle for every line and both ways: down the middle of a centre bed between the
+  // two tracks (a tactile edge each side), or at the kerb (a tactile edge on the track side). Kerb stops on a lot and
+  // older docs keep the island beside the track.
+  var islands = [], totems = [], siteById = {};
+  ((W.sites || (W.layers && W.layers.sites)) || []).forEach(function(s){ if(s && s.kind === "tramstop" && s.id != null) siteById[s.id] = s; });
   stops.forEach(function(st){
     var E = st.ei != null ? laneByI[st.ei] : null, tr = byKey["L:" + st.ei + ":" + st.dir];
+    var P = platformOf(siteById[st.id], st, E);
+    if(P){
+      var have = islands.filter(function(I){ return I.site === P.site; })[0];
+      if(have){ if(have.lines.indexOf(st.line) < 0) have.lines.push(st.line); return; }
+      islands.push(P);
+      return;
+    }
     // the island runs along the track the tram stands on (its tangent there, the way the tram faces)
     var yaw = st.yaw, bt = null, bd = Infinity;
     tracks.forEach(function(t){ if(t.kind === "lane"){ var d = nearPoly(st.x, st.z, t.P); if(d < bd){ bd = d; bt = t; } } });
@@ -208,6 +225,27 @@ function layout(W, tier, opts){
              track: {x: st.x, z: st.z}, onTrack: !!tr};
     islands.push(I);
   });
+  // a station's platform from its site: the poly's long side for the yaw (the way the stopped tram faces), its short
+  // side for the width; the island's top ISLAND_H over the track it serves (on the bed for a centre one)
+  function platformOf(s, st, E){
+    if(!s || !(s.w >= PLATFORM_W) || !s.poly || s.poly.length < 4) return null;
+    var Q = s.poly.map(function(p){ return [(+p[0] || 0)/100, (+p[1] || 0)/100]; }), cx = 0, cz = 0, lb = 0, la = Infinity, ty = 0;
+    Q.forEach(function(p){ cx += p[0]/Q.length; cz += p[1]/Q.length; });
+    for(var i = 0; i < Q.length; i++){
+      var a = Q[i], b = Q[(i + 1) % Q.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if(l > lb){ lb = l; ty = Math.atan2(b[0] - a[0], b[1] - a[1]); }
+      if(l > 0.05) la = Math.min(la, l);
+    }
+    if(!(lb > 4) || !(la > 0.5) || !isFinite(la)) return null;
+    var yaw = Math.cos(ty - st.yaw) >= 0 ? ty : ty + Math.PI, rx = -Math.cos(yaw), rz = Math.sin(yaw);
+    // (an island in the middle of a bed; on a bed too narrow for one between its tracks the generator stands the
+    // platform at the kerb: by where it is, not the road)
+    var along = (cx - st.x)*rx + (cz - st.z)*rz, side = along >= 0 ? 1 : -1, centre = !!(E && E.bed > 0) && Math.abs(along) <= E.bed;
+    var y = gy(cx, st.y, cz);   // (the ground at its middle: a centre bed's top, the footpath, the road; hqcity3d.js stands hqcivic.js's shelter on the same)
+    return {id: "island:" + s.id, site: s.id, stop: st.id, line: st.line, lines: [st.line], ei: st.ei, dir: st.dir, x: cx, y: y, z: cz, yaw: yaw,
+            side: side, both: centre, platform: centre ? "centre" : "kerb", len: lb, w: la, h: ISLAND_H, inner: Math.abs(along) - la/2, kerb: !centre,
+            track: {x: st.x, z: st.z}, onTrack: true};
+  }
   islands.forEach(function(I){
     var fx = Math.sin(I.yaw), fz = Math.cos(I.yaw);
     I.lines.sort();
@@ -242,9 +280,10 @@ function layout(W, tier, opts){
   // ---- beds: runs of asphalt (a reserved stretch over 60 m), setts (near a stop) or grass (by a park) ----
   var beds = [], stencils = [];
   chains.forEach(function(ch){
-    var S = sample(ch.P, 2), reserved = ch.kind === "run" && ch.len > RESERVED, run = null, sinceStencil = STENCIL/2;
+    // ([3.32] a centre bed is the reservation, in setts already (worldgeom.js): only grass by a park over it)
+    var S = sample(ch.P, 2), onBed = !!(ch.E && ch.E.bed > 0), reserved = ch.kind === "run" && ch.len > RESERVED && !onBed, run = null, sinceStencil = STENCIL/2;
     S.forEach(function(p, k){
-      var near = stops.some(function(st){ return Math.hypot(st.x - p.x, st.z - p.z) < SETTS; });
+      var near = !onBed && stops.some(function(st){ return Math.hypot(st.x - p.x, st.z - p.z) < SETTS; });
       var kind = near ? "setts" : isPark(p.x - p.tz*3.5, p.z + p.tx*3.5) || isPark(p.x + p.tz*3.5, p.z - p.tx*3.5) ? "grass" : reserved ? "asphalt" : null;
       if(!run || run.kind !== kind){
         if(run && run.kind && run.P.length >= 2) beds.push(run);
@@ -289,8 +328,20 @@ function layout(W, tier, opts){
     poles.push(p);
     return p;
   }
+  // the lane (a traffic.lanes row) under point p of chain ch: its nearest lane track's ([3.32] a chain can run on from a
+  // centre bed's tracks into a shared street's, each with its own offset)
+  function laneAt(ch, p){
+    var best = ch.E, bd = Infinity;
+    ch.keys.forEach(function(k){
+      var t = byKey[k];
+      if(!t || t.kind !== "lane" || !laneByI[t.ei]) return;
+      var d = nearPoly(p.x, p.z, t.P);
+      if(d < bd){ bd = d; best = laneByI[t.ei]; }
+    });
+    return best;
+  }
   function centrePole(ch, p, r){
-    var E = ch.E, to = E && E.tramOff != null ? E.tramOff : 1.475;
+    var E = laneAt(ch, p), to = E && E.tramOff != null ? E.tramOff : 1.475;
     // the centre line is tramOff away from the kerb of either track (left of travel = (tz, -tx); [3.22.3] SD x that)
     return addPole(ch.keys[0], "centre", p.x + SD*p.tz*to, p.y, p.z - SD*p.tx*to, Math.atan2(p.tx, p.tz), to + STAGGER + 0.35, true, r);
   }
@@ -312,7 +363,7 @@ function layout(W, tier, opts){
         addPole(ch.keys[0], "curve", p.x + rx*lt, p.y, p.z + rz*lt, yaw + (lt > 0 ? Math.PI/2 : -Math.PI/2), Math.abs(lt) + 0.3, false, r);
       } else if(ch.cls === "two0") centrePole(ch, p, r);
       else {
-        var E = ch.E, half = E ? E.half : 4, to = E && E.tramOff != null ? E.tramOff : 1.475, edge = half;
+        var E = laneAt(ch, p), half = E ? E.half : 4, to = E && E.tramOff != null ? E.tramOff : 1.475, edge = half;
         if(E && E.bus[ch.dir] && E.busOff != null) edge = Math.max(half, E.busOff + 1.3);
         var lat = edge + 0.45 - to;
         addPole(ch.keys[0], "kerb", p.x + SD*rx*lat, p.y, p.z + SD*rz*lat, yaw + SD*Math.PI/2, lat + STAGGER + 0.3, false, r);   // ([3.22.3] the kerb: SD)
@@ -477,13 +528,15 @@ function geometry(Lay){
   Lay.islands.forEach(function(I){
     var fx = Math.sin(I.yaw), fz = Math.cos(I.yaw), rx = -fz, rz = fx;
     boxAt(I.x, I.y, I.z, I.yaw, I.w, I.h, I.len, COL.island);
-    // the tactile edge: ribs across a 0.4 m yellow band along the track side
-    var e = -(I.side || 1)*(I.w/2 - 0.2), ribs = Math.floor(I.len/0.3);
-    boxAt(I.x + rx*e, I.y + I.h, I.z + rz*e, I.yaw, 0.4, 0.004, I.len, COL.tactile);
-    for(var k = 0; k < ribs; k += 2){
-      var d = -I.len/2 + (k + 0.5)*0.3;
-      boxAt(I.x + rx*e + fx*d, I.y + I.h + 0.004, I.z + rz*e + fz*d, I.yaw, 0.36, 0.006, 0.12, COL.tactile);
-    }
+    // the tactile edge: ribs across a 0.4 m yellow band along the track side ([3.32] both sides of a centre platform)
+    (I.both ? [-1, 1] : [-(I.side || 1)]).forEach(function(sd){
+      var e = sd*(I.w/2 - 0.2), ribs = Math.floor(I.len/0.3);
+      boxAt(I.x + rx*e, I.y + I.h, I.z + rz*e, I.yaw, 0.4, 0.004, I.len, COL.tactile);
+      for(var k = 0; k < ribs; k += 2){
+        var d = -I.len/2 + (k + 0.5)*0.3;
+        boxAt(I.x + rx*e + fx*d, I.y + I.h + 0.004, I.z + rz*e + fz*d, I.yaw, 0.36, 0.006, 0.12, COL.tactile);
+      }
+    });
   });
   Lay.totems.forEach(function(t, k){
     var cc = [((t.color >> 16) & 255)/255, ((t.color >> 8) & 255)/255, (t.color & 255)/255];

@@ -84,9 +84,32 @@ pub struct Edge {
     /// over it untouched) or "cutting" (open, down to a tunnel's portal). tunnels.rs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub under: Option<&'static str>,
+    /// City Gen v4 (phase 9, @3): on a tram street, how its tram version lays the track
+    /// (classes.rs `Layout::name`: "centre-bed", "shared-double", "shared-single", ...);
+    /// `width` then includes the tram's added width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tram: Option<&'static str>,
+    /// The raised, kerbed tram bed down its middle (cm), on a "centre-bed" road: the class's
+    /// median and the tram's added width together (`median` is then none, so an older
+    /// dashboard draws its trams down a flush middle, as before).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bed: Option<i64>,
 }
 
 impl Edge {
+    /// City Gen v4 (phase 9): make it its class's tram version, laid as `layout` (the width is
+    /// the paving's, the tram's added width in it).
+    pub fn trammed(mut self, layout: Option<super::classes::Layout>) -> Edge {
+        let Some(l) = layout else { return self };
+        self.tram = Some(l.name());
+        if l == super::classes::Layout::CentreBed {
+            let added = self.v4.and_then(super::classes::class).and_then(|c| c.tram).map_or(0, |t| t.added_cm);
+            self.bed = Some(self.median.unwrap_or(0) + added);
+            self.median = None;
+        }
+        self
+    }
+
     /// City Gen v4: make it a road of class `name` (its lanes and median from classes.rs).
     pub fn classed(mut self, name: Option<&'static str>) -> Edge {
         let Some(c) = name.and_then(super::classes::class) else { return self };
@@ -240,6 +263,52 @@ impl Roads {
 
     /// City Gen v4 (phase 2): no median on an edge a tram line runs along (its track is
     /// down the middle, where the median would be, until phase 8's tram beds).
+    /// City Gen v4 (phase 9): a tram street's tram version where no tram line runs on it (a
+    /// stretch the City Line's boulevard cut off with one station or none) is its class as it is
+    /// again: its own width (the ground it took a verge), its median back.
+    pub fn untram_unused(&mut self, transit: &super::transit::Transit) {
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            if e.tram.is_some() && !on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                if let Some(c) = e.v4.and_then(super::classes::class) {
+                    // (paved as its class's own tram version: the tram's width comes off; with the
+                    // tram in its lanes it was the class's width already)
+                    if let Some(t) = c.tram.filter(|t| Some(t.layout.name()) == e.tram) {
+                        e.width -= t.added_cm;
+                    }
+                    e.median = (c.median_cm > 0).then_some(c.median_cm);
+                }
+                e.tram = None;
+                e.bed = None;
+            }
+        }
+    }
+
+    /// City Gen v4 (phase 9): a road a tram line runs on that is no tram version (where a line runs
+    /// on past its street's end to a junction) carries the tram in its lanes: its width as it is.
+    pub fn tram_on(&mut self, transit: &super::transit::Transit) {
+        if !self.edges.iter().any(|e| e.tram.is_some()) {
+            return;
+        }
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            if e.tram.is_none() && e.v4.is_some() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                let two = e.v4.and_then(super::classes::class).is_some_and(|c| c.lanes >= 2 || c.name == "local");
+                e.tram = Some(if two { super::classes::Layout::SharedDouble } else { super::classes::Layout::SharedSingle }.name());
+            }
+        }
+    }
+
     pub fn trams_in_the_middle(&mut self, transit: &super::transit::Transit) {
         let mut on = BTreeSet::new();
         for l in transit.lines.iter().filter(|l| l.kind == "tram") {
@@ -248,7 +317,8 @@ impl Roads {
             }
         }
         for e in &mut self.edges {
-            if e.median.is_some() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+            // (phase 9: a tram street's own tram version keeps its median, or has its bed)
+            if e.median.is_some() && e.tram.is_none() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
                 e.median = None;
             }
         }
@@ -498,7 +568,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
@@ -721,7 +791,7 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
-        min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None,
+        min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
     }
 }
 

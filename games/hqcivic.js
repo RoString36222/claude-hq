@@ -844,7 +844,33 @@ BUILD.busstop = function(k){
   k.box(Math.min(k.W, len + 2), 0.15, 0.3, k.m(0xb5b1a8, {roughness: 0.9}), 0, PLINTH + 0.07, k.D/2 - 0.15);   // the kerb
   k.door(0, k.D/2 - 0.6 - DOOR_OUT, {kind: "busstop", main: true, noMesh: true});
 };
+// [3.32] City Gen v4 phase 9: a station's site is its platform (w >= STATION_W cm, 40 m x 3 m along the track): the
+// island itself is hqtramway.js's (ISLAND_H high, its tactile edges), so here only what stands on it: the shelter, a
+// ticket machine at one end of it and a departure board on two posts at the other, sharing the shelter's materials
+var STATION_W = 4000, STATION_H = 0.3;
+function tramStation(k){
+  var len = Math.min(6, k.W - 4), steel = k.m(k.frameCol, {metalness: 0.6, roughness: 0.4}), lit = k.n(0x0d1a24, 0xf4fbff, 0.3, 1.4);
+  var body = k.m(0x2f3a44, {roughness: 0.5, metalness: 0.3}), zc = Math.max(-k.D/2 + 0.95, -0.55);
+  var g = new k.THREE.Group(); g.position.y = STATION_H - PLINTH; k.g.add(g);
+  var save = k.g; k.g = g;
+  shelter(k, 0, zc, len, "Tram");
+  // the ticket machine: a cabinet, its lit screen and the card reader on the face toward the platform's middle
+  var tx = -len/2 - 2.2, tz = zc + 0.2;
+  k.box(0.7, 1.7, 0.45, body, tx, PLINTH + 0.85, tz).name = "tramstop:ticket";
+  k.box(0.5, 0.36, 0.03, lit, tx, PLINTH + 1.3, tz + 0.24);
+  k.box(0.22, 0.12, 0.05, steel, tx, PLINTH + 0.95, tz + 0.25);
+  // the departure board: two posts and a lit board both ways along the platform
+  var bx = len/2 + 3.2, by = PLINTH + 2.9;
+  [-1, 1].forEach(function(sx){ k.box(0.1, 3.4, 0.1, steel, bx + sx*0.9, PLINTH + 1.7, zc); });
+  k.box(2.1, 0.6, 0.16, body, bx, by, zc).name = "tramstop:board";
+  [-1, 1].forEach(function(sz){ k.box(1.9, 0.44, 0.02, lit, bx, by, zc + sz*0.09); });
+  k.note(tx, tz, 0.7, 0.45, STATION_H, STATION_H + 1.7, true);
+  [-1, 1].forEach(function(sx){ k.note(bx + sx*0.9, zc, 0.3, 0.3, STATION_H, STATION_H + 3.4, true); });
+  k.g = save;
+  k.door(0, Math.min(k.D/2 - 0.4, zc + 1.6) - DOOR_OUT, {kind: "tramstop", main: true, noMesh: true});
+}
 BUILD.tramstop = function(k){
+  if(k.site && k.site.w >= STATION_W && k.W >= 12) return tramStation(k);
   var len = Math.max(4, Math.min(k.W - 1, 8 + k.tier*2)), ph = 0.35;
   k.box(Math.min(k.W, len + 2), ph, k.D, k.m(0xa7adb3, {roughness: 0.9}), 0, ph/2, 0);
   k.box(Math.min(k.W, len + 2), 0.02, 0.4, k.m(0xffd34a, {roughness: 0.6}), 0, ph + 0.01, k.D/2 - 0.3);    // the tactile edge

@@ -1115,6 +1115,13 @@ HQV.hqWorlds.city3d = function(c, w){
     civicSites(W, tier, HQV.hqCivic.KINDS ? Object.keys(HQV.hqCivic.KINDS) : null).forEach(function(site){
       // the town hall's door is the Town Hall panel's (its tab, Live, is the page's home anyway)
       if(site.kind === "townhall") site = Object.assign({}, site, {view: null});
+      // [3.32] a tram station's platform (hqtramway.js's island) stands on the ground at its middle (a centre bed's top,
+      // the footpath): its shelter, ticket machine and board on the same
+      if(site.kind === "tramstop" && site.w >= 4000 && W){
+        var py = null;
+        try { py = WD.groundAt(W, (+site.x || 0)/100, (+site.z || 0)/100); } catch(e){ py = null; }
+        if(typeof py === "number" && isFinite(py)) site = Object.assign({}, site, {y: Math.round(py*100)});
+      }
       var B;
       try { B = HQV.hqCivic.build(c, site, {tier: tier, night: night}); } catch(e){ return; }
       civicG.add(B.g); civics.push(B);

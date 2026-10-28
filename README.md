@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.31.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.32.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,18 @@ and feature guide.
 
 ## Changelog
 
+- **3.32.0 — City Gen v4, phase 9: trams on their own roads.** The streets trams run on are now real tram roads, and
+  their stops are proper stations.
+  - **Tram roads:** on avenues and collectors the trams run on a raised, kerbed bed of setts down the middle that cars
+    never drive on. On narrower roads they share the inner lane. The road is widened for the tram, and lots give up
+    a strip of frontage. No HQ moves.
+  - **Stations:** where there's room, a station is a 40 m platform. It's an island between the tracks on a wide bed,
+    otherwise at the kerb, with a shelter, a ticket machine and a departure board. Stations sit on a straight run,
+    clear of junctions, about 300 m apart. Where side streets leave no room, the old kerb stop stays.
+  - **Track ends:** tracks run on to a junction instead of ending mid-block.
+  - **The boulevard:** trams keep off the City Line's boulevard.
+  - **Also:** a light's phases now follow the road a car or bus actually comes in on, so nobody runs a red where two
+    roads meet the junction at a shallow angle.
 - **3.31.0 — City Gen v4, phase 8: the City Line over its own boulevard.** On the Commons, the elevated City Line no
   longer runs over small streets on piers the browser spaced anywhere, some of them in traffic lanes or in lots. The
   world generator now cuts a 36.5 m boulevard under the line, from Central toward the airport, and stands the

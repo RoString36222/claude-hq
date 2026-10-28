@@ -111,7 +111,7 @@ mod junctions {
     fn road(id: u32, a: u32, b: u32, class: &'static str, name: &str, pts: [(i64, i64); 2]) -> Edge {
         Edge {
             id, a, b, class: if matches!(class, "avenue" | "boulevard") { "arterial" } else { "local" }, width: 1_200, walk: 250, lanes: 1, route: None, name: name.to_string(),
-            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None,
+            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
         }
         .classed(Some(class))
     }

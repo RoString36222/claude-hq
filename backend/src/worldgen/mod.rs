@@ -312,6 +312,12 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
         // City Gen v4 (phase 2): a tram runs down the middle of its street until phase 8
         // gives it its own bed, so a street a tram line runs on has no median yet
+        roads.untram_unused(&transit);
+        roads.tram_on(&transit);
+        // phase 9: the tram stations on their tracks
+        if p.v4 {
+            transit::stations(&roads, &mut transit, &mut city.sites, &base);
+        }
         roads.trams_in_the_middle(&transit);
         // phase 3: each junction's control, by the roads that meet there
         if p.v4 {

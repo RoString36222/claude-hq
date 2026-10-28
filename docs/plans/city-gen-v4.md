@@ -22,7 +22,7 @@ merges on its own and leaves the City playable:
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | **3.28.0** |
 | 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
-| 8 | Trams on any road class, with stations | |
+| 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
 | 9 | HQ spacing and movable garages | |
 | 10 | Graphics pass within 1,200 / 240 draw calls | |
 | S | Ambient volume slider and proximity sound (any time) | |
@@ -439,3 +439,52 @@ The plan's phase 7: an elevated line only along a boulevard, its piers in the me
 |---|---|---|
 | A boulevard under the City Line | yes: 7 pieces, 16 piers, no span over 60 m | 6 of 51 (the rest: an HQ's lot, a civic site or a graded road in the way) |
 | Cars in the traffic sim | 250 (292 before: the sim's rings re-split round the new junctions, none overfull) | |
+
+## Phase 9 (3.32.0): tram roads and stations
+
+The plan's phase 8, for the streets trams run on today (the two main streets with the most frontage; routes on
+desire lines are left for later).
+
+- **Generator:**
+  - **Tram roads (`organic/widen.rs`, `roads.rs`):** a tram street (two tram stops or more on it) is paved as its
+    class's tram version: the plan's added width, the lots giving up frontage as for any wider road, HQs on their
+    lots. Each class first tries its tram version, then the class as it is with the tram in its lanes, and only then
+    steps down a class.
+    - New edge fields: `tram` (`"centre-bed"`, `"shared-double"`, `"shared-single"`, ...).
+    - On a centre bed, `bed` (cm) is the class's median and the tram's width together, and `median` is absent, so an
+      older dashboard draws its trams down a flush middle, as before.
+    - A tram road no line runs on is paved back to its class.
+  - **Stations (`civic.rs`, `transit.rs`):** about 300 m apart along each tram street, half the plan's 600 m because
+    the Commons' tram streets are a kilometre or so.
+    - **Platforms:** each line's stations take the best set of 40 m by 3 m platforms on its track: straight to 1 m
+      over 40 m, clear of every junction's box (the widest crossing road and 3 m), 100 m apart at least, never on a
+      bridge. On an avenue's bed the platform is an island between the tracks. On a shared road it's a platform at
+      the kerb. There's none beside a collector's bed, too narrow for an island, where the tram would stop a car
+      lane away from the kerb.
+    - **No room:** a station with no room (side streets every 24 to 48 m) stays a kerb stop.
+  - **Track ends:** a line's track runs on past its end stations to the next junction (along its street, else the
+    main road or the side street it runs into, the tram in its lanes), so it never ends mid-block. There are no
+    there-and-back spurs.
+  - **The boulevard:** trams keep off the City Line's boulevard, crossing included. Where it cuts a tram street, each
+    side runs as its own line.
+- **Validator:**
+  - `class-width` knows the tram versions.
+  - `tram` (hard) fails: a tram line on a road that is no tram version, a station platform on a bend or in a
+    junction's box, and a track ending mid-block.
+  - `tram-station` lists the stops left at the kerb.
+- **Client:**
+  - `world.js` packs `tram`/`bed`. The bed is raised paving, never carriageway.
+  - `traffic.js`:
+    - Cars keep outside a centre bed. Trams run in it (track centres 3.025 m apart from the middle on an avenue's
+      9.2 m bed, room for the island; 2.025 m on a collector's) or in the inner lane on a shared road.
+    - A light's phase for a movement is that of the arm it comes in by.
+  - `worldgeom.js` draws the bed: raised setts, kerbs, marks.
+  - `hqtramway.js` makes a 40 m platform an island between the tracks or at the kerb, by where it stands. The poles
+    stand on the bed.
+  - `hqcivic.js` gives a station a shelter, a ticket machine and a departure board.
+
+| | Commons | 50 seeds + the Commons |
+|---|---|---|
+| Tram lines | 3, on 69 tram roads (35 centre bed, 34 in the lanes) | 95 |
+| Stations on a 40 m platform | 5 of 9 (the rest kerb stops: side streets every 24 to 48 m, collector beds too narrow for an island) | 151 of 278 |
+| Cars in the traffic sim | 292 (as before the corridor) | |

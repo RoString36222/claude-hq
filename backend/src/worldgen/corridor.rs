@@ -145,6 +145,12 @@ struct Stub {
     off: i64,
 }
 
+/// A road's width (cm) without its tram's (phase 9): a tram street paved as its class's tram version
+/// may be paved back when no line runs there, so the cut reaches it as its class.
+fn bare(e: &Edge) -> i64 {
+    e.v4.and_then(class).and_then(|c| c.tram).filter(|t| Some(t.layout.name()) == e.tram).map_or(e.width, |t| e.width - t.added_cm)
+}
+
 /// Cut the corridor. `wet`: whether the alignment is over water every `SAMPLE_CM` along it (the
 /// boulevard runs on each stretch of land long enough, the line bridging the water between).
 /// On Err (the reason) nothing is changed.
@@ -225,7 +231,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
     }
     for e in &roads.edges {
         let fast = is_graded(e.class) || matches!(e.v4, Some("expressway") | Some("ramp") | Some("flyover")) || e.under.is_some();
-        if fast && e.points.windows(2).any(|w| band.near((w[0][0], w[0][2]), (w[1][0], w[1][2]), half + e.width / 2)) {
+        if fast && e.points.windows(2).any(|w| band.near((w[0][0], w[0][2]), (w[1][0], w[1][2]), half + bare(e) / 2)) {
             return Err(format!("graded road {}", e.id));
         }
     }
@@ -241,7 +247,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
     let mut pieces: Vec<Edge> = Vec::new();
     let mut stubs: Vec<Stub> = Vec::new();
     for e in &roads.edges {
-        let reach = half + e.width / 2;
+        let reach = half + bare(e) / 2;
         if !e.points.windows(2).any(|w| band.near((w[0][0], w[0][2]), (w[1][0], w[1][2]), reach)) {
             kept.push(e.clone());
             continue;
@@ -411,7 +417,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 Edge {
                     id: 0, a: at[w], b: at[w + 1], class: "arterial", width: c.total_cm, walk: c.side_cm, lanes: 1, route: None,
                     name: format!("{name} Boulevard"), points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), min_tier: None,
-                    bridge: None, v4: None, median: None, oneway: None, under: None,
+                    bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
                 }
                 .classed(Some("boulevard")),
             );
@@ -423,7 +429,12 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 let st = &stubs[k];
                 let p = &st.proto;
                 let pts = resample(&[st.q, jq], STEP_CM);
-                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, ..p.clone() };
+                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, tram: None, bed: None, ..p.clone() };
+                // (a join is its street's class as it is, never its tram version: no tram crosses the
+                // boulevard)
+                if let Some(k) = p.tram.and(p.v4).and_then(class) {
+                    j = Edge { width: k.total_cm, walk: k.side_cm, median: None, ..j }.classed(Some(k.name));
+                }
                 // (a main road narrower than an avenue meets the boulevard as one: no bend of
                 // two roads more than a class apart)
                 if p.class == "arterial" && p.v4 != Some("avenue") {
@@ -464,6 +475,17 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
         (e.a, e.b) = (renum[e.a as usize], renum[e.b as usize]);
     }
     let junctions = ids.iter().map(|&i| renum[i as usize]).collect();
+    // (a pier must find room at least every crossing's span along the whole line, as railway.rs
+    // will look for it: else a join comes in too shallow, down the median, and the line keeps to
+    // its streets)
+    let cut = Roads { nodes: out, edges };
+    let lots: Vec<super::city::Lot> = city.lots.iter().filter(|l| !gone.contains(&l.id)).cloned().collect();
+    let sites: Vec<super::city::Site> = city.sites.iter().filter(|s| !stops_gone.contains(&s.id)).cloned().collect();
+    let ok: Vec<i64> = (0..=full.len() / SAMPLE_CM).map(|i| i * SAMPLE_CM).filter(|&s| super::railway::pier_ok(&cut, &lots, &sites, full.point(s))).collect();
+    if ok.windows(2).any(|w| w[1] - w[0] > super::railway::SPAN_LONG_CM) {
+        return Err("no room for the piers".into());
+    }
+    let Roads { nodes: out, edges } = cut;
     roads.nodes = out;
     roads.edges = edges;
     super::retire_lots(city, &gone);

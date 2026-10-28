@@ -67,6 +67,8 @@ function hqApi(){
                                                           style: typeof hqStyleDoc==="function" ? hqStyleDoc() : null}); },   // HQ Studio (ui/app/40-studio.js)
     // HQ Studio: open the panel (the lobby's kiosk)
     studio: function(tab){ if(typeof hqStudioOpen==="function") hqStudioOpen(tab); },
+    // [3.33] the MOVE plate by your car lift: place your garage on your lot (ui/app/40-studio.js)
+    garageMove: function(){ if(typeof hqGarageOpen==="function") hqGarageOpen(); },
     // HQ 3.17 the Grand Prix Circuit (games/hqgpvenue.js): Go opens the Valley's Grand Prix on that circuit and car
     grandPrix: function(o){ setView("valley"); valleyLoad().then(function(){ if(window.HQV && window.HQV.gpLaunch) window.HQV.gpLaunch(o || {}); }, function(){}); },
     startWorld: HQ_SMOKE ? "base" : (function(){ try { var w=localStorage.getItem("hq_world"); return w==="base"||w==="lobby"||w==="mission" ? w : "base"; } catch(e){ return "base"; } })(),

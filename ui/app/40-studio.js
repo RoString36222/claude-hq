@@ -38,11 +38,11 @@ function hqStudioSync(force){
 // never sends one, so this is also how you see your own local-only style)
 function hqStudioCity(list){
   var d=hqStyleDoc(), S=hqStudioS();
-  return (list||[]).map(function(h){
+  return hqGarageCity((list||[]).map(function(h){
     if(h && h.isYou && d) return Object.assign({}, h, {style:d});
     if(h && h.stylePreset && !h.style && S) return Object.assign({}, h, {style:S.preset(h.stylePreset)});   // ?hqsmoke=1&hqstyles=1 (tools)
     return h;
-  });
+  }));                                                                 // [3.33] and your garage where you moved it
 }
 function hqStudioApply(){
   if(typeof HQ3D==="undefined" || !HQ3D || !HQ3D.inst || HQ3D.visit) return;
@@ -184,6 +184,8 @@ function hqStudioRender(){
     var sg=hqsSection(body, "Sign, lights and grounds");
     ["font","flags","land"].forEach(function(k){ hqsChoices(sg, HQS_NAMES[k], X[k].enum, d.ext[k], function(v){ d.ext[k]=v; }, k); });
     ["signColor","night","flagColor"].forEach(function(k){ hqsColor(sg, HQS_NAMES[k], d.ext[k], function(v){ d.ext[k]=v; }, k); });
+    var gm=document.createElement("button"); gm.type="button"; gm.className="hbtn ghost"; gm.id="hqsGarageBtn"; gm.textContent="Move your garage…";   // [3.33]
+    gm.addEventListener("click", function(){ hqGarageOpen(); }); sg.appendChild(gm);
   } else if(tab==="lobby"){
     var L=S.SCHEMA.int.lobby;
     body.appendChild(hqsLiveHint("The Lobby behind this panel shows every change as you click."));
@@ -397,6 +399,207 @@ function hqStudioGrid(on, ok){
   var b=$("hqStudio"), open=on && b && b.classList.contains("open") && HQ_STUDIO.tab==="layout";
   if(open && ok===undefined) ok=hqStudioFit().ok;
   I.studioGrid(open ? {f:HQ_STUDIO.cur.f, x:HQ_STUDIO.cur.x, z:HQ_STUDIO.cur.z, k:HQ_STUDIO.sel, r:HQ_STUDIO.rot, ok:ok!==false} : null);
+}
+
+/* ================= [3.33] Move garage: your car-lift bay anywhere on your own lot, turned in quarter turns =================
+   Over the 3D City (games/hq3d.js garageView): your lot from above, a ghost bay with its apron and driveway on the lot's 0.5 m
+   grid, green where it fits (HQV.hqCity3d.garageFits: inside the lot, clear of the building and the walk to its door, its apron
+   and a way to the street clear), red with the reason where not. Click places it (the draft: your HQ shows it at once), R or a
+   right click turns it, Enter or Save keeps it, Esc or Cancel puts it back, Reset to default clears it. The keyboard path: the
+   placement cursor pad in the panel (the arrows move the ghost 0.5 m). Opened from the MOVE plate by your car lift, or from
+   HQ Studio's Exterior tab. Saved on the Arena (POST /api/arena/hq/garage {lot, x, z, r}, x and z in decimetres in the lot's
+   frame, lot its rank) where it has the "garage" capability, so everyone sees it; else (an older Arena, or none) in
+   localStorage hq_garage, shown on your own HQ only. Nothing in it comes from a transcript: four small numbers you placed. */
+var HQ_GARAGE={saved:undefined, draft:null, cur:{x:0, z:0, r:0}, start:null, lot:null, remote:null, note:"", why:null, synced:false, back:null};
+var HQG_FACING=[[0,"Street"],[1,"Right"],[2,"Back"],[3,"Left"]];
+var HQG_WHY={"outside the lot":"it would stand outside your lot", "on the building":"it would stand on your building or the walk to its door",
+  "apron blocked":"the 8 m in front of its door is blocked", "no way to the street":"there's no way from its door out to the street"};
+// a stored spot {lot, x, z, r} (lot: the HQ lot's rank; x, z: whole decimetres in the lot's frame; r: 0..3), else null
+function hqGarageClean(g){
+  if(!g || typeof g!=="object") return null;
+  function int(v, lo, hi){ return typeof v==="number" && isFinite(v) && v===Math.round(v) && v>=lo && v<=hi; }
+  if(!int(g.lot,0,100000) || !int(g.x,-1000,1000) || !int(g.z,-1000,1000) || !int(g.r,0,3)) return null;
+  return {lot:g.lot, x:g.x, z:g.z, r:g.r};
+}
+function hqGarageLocal(){ try { return hqGarageClean(JSON.parse(localStorage.getItem("hq_garage")||"null")); } catch(e){ return null; } }
+function hqGarageKeep(g){ try { if(g) localStorage.setItem("hq_garage", JSON.stringify(g)); else localStorage.removeItem("hq_garage"); } catch(e){} }
+function hqGarageCan(){ return !!(window.ARENA && ARENA.paired) && typeof hqNetCan==="function" && hqNetCan("garage"); }
+// pure helpers: the 0.5 m grid, a quarter turn, a key on the cursor, the spot in decimetres (and back)
+function hqGarageSnap(v){ v=Math.round(Math.max(-40, Math.min(40, +v||0))*2)/2; return v===0 ? 0 : v; }
+function hqGarageTurn(r, d){ return ((((r|0)+(d==null ? 1 : d|0))%4)+4)%4; }
+function hqGarageStep(c, k){
+  c=c||{}; var n={x:hqGarageSnap(c.x), z:hqGarageSnap(c.z), r:hqGarageTurn(c.r, 0)};
+  if(k==="left") n.x=hqGarageSnap(n.x-0.5); else if(k==="right") n.x=hqGarageSnap(n.x+0.5);
+  else if(k==="up") n.z=hqGarageSnap(n.z-0.5); else if(k==="down") n.z=hqGarageSnap(n.z+0.5);   // up: away from the street
+  else if(k==="rotate") n.r=hqGarageTurn(n.r, 1);
+  return n;
+}
+function hqGarageKeyOf(e){
+  var k=e && e.key;
+  return {ArrowLeft:"left", ArrowRight:"right", ArrowUp:"up", ArrowDown:"down", r:"rotate", R:"rotate", Enter:"save", " ":"place", Escape:"cancel"}[k] || null;
+}
+function hqGarageDm(sp, lot){ return {lot:lot|0, x:Math.round(hqGarageSnap(sp.x)*10), z:Math.round(hqGarageSnap(sp.z)*10), r:hqGarageTurn(sp.r, 0)}; }
+function hqGarageM(g){ return {x:hqGarageSnap(g.x/10), z:hqGarageSnap(g.z/10), r:hqGarageTurn(g.r, 0)}; }
+// the City's list with your own entry's garage: the draft while you place it, else what you saved or reset here, else (no
+// Arena that keeps it) this machine's copy; anyone else's is the Arena's (h.garage), as it sent it
+function hqGarageCity(list){
+  var g;
+  if(HQ_GARAGE.draft) g=HQ_GARAGE.draft;
+  else if(HQ_GARAGE.saved!==undefined) g=HQ_GARAGE.saved;                        // null: reset here (the default)
+  else if(!hqGarageCan() || HQ_GARAGE.remote===false){ g=hqGarageLocal(); if(!g) return list; }
+  else return list;
+  return (list||[]).map(function(h){ return h && h.isYou ? Object.assign({}, h, {garage:g}) : h; });
+}
+// the Arena's copy, once
+function hqGarageSync(){
+  if(HQ_GARAGE.synced || !hqGarageCan() || typeof hqArena!=="function") return;
+  HQ_GARAGE.synced=true;
+  hqArena("GET","/api/arena/hq/garage").then(function(res){
+    if(!res.ok){ if(res.code===404) HQ_GARAGE.remote=false; return; }
+    HQ_GARAGE.remote=true;
+    if(HQ_GARAGE.saved===undefined && !HQ_GARAGE.draft){ HQ_GARAGE.saved=hqGarageClean(res.j && res.j.garage); hqStudioApply(); }
+  }).catch(function(){});
+}
+function hqGarageOpen(){
+  var I=hqs3d(), L=I && I.garageLot ? I.garageLot() : null;
+  if(!L){ var t="Go out to your HQ in the City to move your garage."; if(typeof announce==="function") announce(t); if(typeof toast==="function") toast(t, "level"); return; }
+  var sb=$("hqStudio"); if(sb && sb.classList.contains("open")) hqStudioClose(false);
+  HQ_GARAGE.lot=L; HQ_GARAGE.draft=null; HQ_GARAGE.note=""; HQ_GARAGE.why=null;
+  var g=L.garage || L.def || {x:13, z:6.5, r:0};
+  HQ_GARAGE.cur={x:hqGarageSnap(g.x), z:hqGarageSnap(g.z), r:hqGarageTurn(g.r!=null ? g.r : (g.f===-1 ? 2 : 0), 0)};
+  HQ_GARAGE.start={x:HQ_GARAGE.cur.x, z:HQ_GARAGE.cur.z, r:HQ_GARAGE.cur.r};
+  HQ_GARAGE.back=document.activeElement;
+  var bk=$("hqGarage"); if(!bk){ bk=hqGarageBuild(); document.body.appendChild(bk); }
+  bk.classList.add("open");
+  var m=bk.querySelector(".hqs"), cv=document.querySelector("canvas.hq3d-canvas"), sh=0;   // the share of the 3D view the panel covers
+  if(m && cv && m.getBoundingClientRect){ var a=m.getBoundingClientRect(), b=cv.getBoundingClientRect(); if(b.width && a.left<b.right) sh=Math.max(0, Math.min(0.6, (b.right-Math.max(a.left,b.left))/b.width)); }
+  I.garageView({cb:HQG_PLACE, shift:sh});
+  hqGarageSync();
+  hqGarageRender(true);
+  var p=$("hqgPad"); if(p) p.focus();
+}
+function hqGarageClose(){
+  var bk=$("hqGarage"), I=hqs3d();
+  HQ_GARAGE.draft=null;
+  if(I && I.garageView) I.garageView(null);
+  if(bk) bk.classList.remove("open");
+  hqStudioApply();                                                   // your HQ with its saved garage again
+  if(HQ_GARAGE.back && HQ_GARAGE.back.focus && HQ_GARAGE.back!==document.body) HQ_GARAGE.back.focus();
+}
+function hqGarageNote(t){ HQ_GARAGE.note=t; var n=$("hqgNote"); if(n) n.textContent=t; if(typeof announce==="function") announce(t); }
+function hqGarageBuild(){
+  var bk=document.createElement("div"); bk.className="modalback hqs-back hqg-back"; bk.id="hqGarage";
+  var m=document.createElement("div"); m.className="modal hqs hqg"; m.setAttribute("role","dialog"); m.setAttribute("aria-modal","false"); m.setAttribute("aria-labelledby","hqgTitle");
+  var h=document.createElement("div"); h.className="modal-h";
+  var t=document.createElement("h3"); t.id="hqgTitle"; t.textContent="Move garage"; h.appendChild(t);
+  var x=document.createElement("button"); x.type="button"; x.className="hbtn icon ghost"; x.setAttribute("aria-label","Cancel: put the garage back"); x.textContent="✕";
+  x.addEventListener("click", function(){ hqGarageClose(); }); h.appendChild(x);
+  m.appendChild(h);
+  var body=document.createElement("div"); body.className="modal-b hqs-body"; body.id="hqgBody";
+  var how=document.createElement("p"); how.className="muted hqs-hint";
+  how.textContent="Point at your lot: the ghost shows where your car lift would go, green where it fits. Click places it, R or a right click turns it, drag pans, scroll zooms.";
+  body.appendChild(how);
+  var pad=document.createElement("div"); pad.className="hqs-pad"; pad.id="hqgPad"; pad.tabIndex=0;
+  pad.setAttribute("role","application"); pad.setAttribute("aria-roledescription","placement cursor");
+  pad.setAttribute("aria-label","Garage placement cursor on your lot. Arrow keys move the garage half a metre, R turns it, Space places it, Enter saves, Escape puts it back.");
+  var info=document.createElement("p"); info.className="hqs-padinfo"; info.id="hqgInfo"; info.setAttribute("aria-live","polite"); pad.appendChild(info);
+  pad.addEventListener("keydown", function(e){
+    var k=hqGarageKeyOf(e); if(!k || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault(); e.stopPropagation(); hqGarageKey(k);
+  });
+  body.appendChild(pad);
+  var face=document.createElement("div"); face.className="hqs-row";
+  var fl=document.createElement("span"); fl.className="hqs-l"; fl.textContent="Door faces"; face.appendChild(fl);
+  var fg=document.createElement("div"); fg.className="hqs-chips"; fg.id="hqgFacing"; fg.setAttribute("role","radiogroup"); fg.setAttribute("aria-label","Door faces");
+  HQG_FACING.forEach(function(o){
+    var b=document.createElement("button"); b.type="button"; b.className="hqs-chip"; b.setAttribute("role","radio"); b.textContent=o[1];
+    b.addEventListener("click", function(){ HQ_GARAGE.cur.r=o[0]; hqGarageRender(true); var nb=fg.children[o[0]]; if(nb) nb.focus(); });
+    b.addEventListener("keydown", function(e){
+      var d=e.key==="ArrowRight"||e.key==="ArrowDown" ? 1 : e.key==="ArrowLeft"||e.key==="ArrowUp" ? -1 : 0; if(!d) return; e.preventDefault(); e.stopPropagation();
+      HQ_GARAGE.cur.r=hqGarageTurn(HQ_GARAGE.cur.r, d); hqGarageRender(true); var nb=fg.children[HQ_GARAGE.cur.r]; if(nb) nb.focus();
+    });
+    fg.appendChild(b);
+  });
+  face.appendChild(fg); body.appendChild(face);
+  m.appendChild(body);
+  var foot=document.createElement("div"); foot.className="hqs-foot";
+  [["Turn (R)", function(){ hqGarageKey("rotate"); }, "ghost"], ["Reset to default", function(){ hqGarageReset(); }, "ghost"],
+   ["Cancel", function(){ hqGarageClose(); }, "ghost"], ["Save", function(){ hqGarageSave(); }, ""]].forEach(function(a){
+    var b=document.createElement("button"); b.type="button"; b.className="hbtn"+(a[2] ? " "+a[2] : ""); b.textContent=a[0]; b.addEventListener("click", a[1]); foot.appendChild(b);
+  });
+  var note=document.createElement("span"); note.className="muted hqs-note"; note.id="hqgNote"; note.setAttribute("aria-live","polite"); foot.appendChild(note);
+  m.appendChild(foot); bk.appendChild(m);
+  bk.addEventListener("keydown", function(e){ if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); hqGarageClose(); } });
+  return bk;
+}
+// the 3D view's pointer and keys (games/hq3d.js garageView)
+var HQG_PLACE={
+  hover:function(x, z){ var C=HQ_GARAGE.cur; x=hqGarageSnap(x); z=hqGarageSnap(z); if(C.x===x && C.z===z) return; C.x=x; C.z=z; hqGarageCursor(false); },
+  place:function(x, z){ HQ_GARAGE.cur.x=hqGarageSnap(x); HQ_GARAGE.cur.z=hqGarageSnap(z); hqGarageKey("place"); },
+  key:function(k){ hqGarageKey(k); }
+};
+function hqGarageKey(k){
+  if(k==="save"){ hqGarageSave(); return; }
+  if(k==="cancel"){ hqGarageClose(); return; }
+  if(k==="place"){ hqGaragePlace(); return; }
+  HQ_GARAGE.cur=hqGarageStep(HQ_GARAGE.cur, k);
+  hqGarageRender(false);
+}
+function hqGarageFit(sp){ var L=HQ_GARAGE.lot; return L && L.fits ? L.fits(sp || HQ_GARAGE.cur) : {ok:false, why:"outside the lot"}; }
+function hqGaragePlace(){
+  var L=HQ_GARAGE.lot, f=hqGarageFit(); if(!L) return;
+  if(!f.ok){ hqGarageNote("Can't put it there: "+(HQG_WHY[f.why] || f.why)+"."); return; }
+  HQ_GARAGE.draft=hqGarageDm(HQ_GARAGE.cur, L.rank);
+  hqStudioApply();                                                   // your HQ shows it there now
+  hqGarageNote("Placed. Save keeps it; Cancel puts it back.");
+  hqGarageCursor(true);
+}
+function hqGarageSave(){
+  var L=HQ_GARAGE.lot; if(!L) return;
+  var sp=HQ_GARAGE.draft ? hqGarageM(HQ_GARAGE.draft) : HQ_GARAGE.cur, f=hqGarageFit(sp);
+  if(!f.ok){ hqGarageNote("Not saved: "+(HQG_WHY[f.why] || f.why)+"."); return; }
+  var g=hqGarageDm(sp, L.rank);
+  HQ_GARAGE.saved=g; hqGarageKeep(g);
+  if(!hqGarageCan()) hqGarageNote(window.ARENA && ARENA.paired ? "Saved on this machine. This Arena doesn't keep garage spots yet, so others see it in its usual place." : "Saved on this machine. Pair with an Arena so others see it.");
+  else {
+    hqGarageNote("Saving…");
+    hqArena("POST","/api/arena/hq/garage",g).then(function(res){
+      if(res.ok){ HQ_GARAGE.remote=true; hqGarageNote("Saved. Everyone sees your garage there."); }
+      else if(res.code===404){ HQ_GARAGE.remote=false; hqGarageNote("Saved on this machine. This Arena doesn't keep garage spots yet."); }
+      else hqGarageNote("Saved here. "+((res.j && (res.j.error||res.j.detail))||"The Arena didn't answer."));
+    }).catch(function(){ hqGarageNote("Saved here. The Arena didn't answer."); });
+  }
+  hqGarageClose();
+}
+function hqGarageReset(){
+  var L=HQ_GARAGE.lot;
+  HQ_GARAGE.saved=null; HQ_GARAGE.draft=null; hqGarageKeep(null);
+  if(hqGarageCan()) hqArena("POST","/api/arena/hq/garage/reset",{}).then(function(res){
+    if(!res.ok && res.code!==404) hqGarageNote("Reset here. "+((res.j && (res.j.error||res.j.detail))||"The Arena didn't answer."));
+  }).catch(function(){});
+  if(L && L.def) HQ_GARAGE.cur={x:hqGarageSnap(L.def.x), z:hqGarageSnap(L.def.z), r:hqGarageTurn(L.def.r!=null ? L.def.r : (L.def.f===-1 ? 2 : 0), 0)};
+  hqStudioApply();
+  hqGarageNote("Your garage is back in its usual place.");
+  hqGarageRender(true);
+}
+// the panel's facing chips and note, then the ghost
+function hqGarageRender(quiet){
+  var fg=$("hqgFacing");
+  if(fg) Array.prototype.forEach.call(fg.children, function(b, i){ var on=i===HQ_GARAGE.cur.r; b.setAttribute("aria-checked", on?"true":"false"); b.tabIndex=on?0:-1; });
+  var n=$("hqgNote"); if(n) n.textContent=HQ_GARAGE.note;
+  hqGarageCursor(quiet);
+}
+// the cursor moved or turned: the ghost in 3D (green / red), the pad's words; a new reason it can't go there is announced
+// (quiet: not now, something else is being said)
+function hqGarageCursor(quiet){
+  var C=HQ_GARAGE.cur, f=hqGarageFit(), I=hqs3d(), info=$("hqgInfo");
+  var txt="Garage at "+C.x+", "+C.z+" m, door facing "+HQG_FACING[C.r][1].toLowerCase()+(f.ok ? ": it fits." : ": it can't go here, "+(HQG_WHY[f.why] || f.why)+".");
+  if(info) info.textContent=txt;
+  var p=$("hqgPad"); if(p){ p.classList.toggle("bad", !f.ok); p.classList.toggle("good", !!f.ok); }
+  if(I && I.garageGhost) I.garageGhost({x:C.x, z:C.z, r:C.r, ok:!!f.ok, way:f.way || []});
+  var why=f.ok ? "" : f.why;
+  if(why!==HQ_GARAGE.why && !quiet && why && typeof announce==="function") announce("Can't go here: "+(HQG_WHY[why] || why)+".");
+  HQ_GARAGE.why=why;
 }
 
 (function(){

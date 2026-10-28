@@ -156,17 +156,22 @@ function lamplit(gr){ gr.traverse(function(o){ var m = o.material; if(m && m.col
 // Built into g (the HQ's group, the lot's frame: the door faces +z, the road is at z 11) in the HQ's colours
 // col {paint, accent}, on the old garage's footprint (HQV.hqLotExtras.garage). rot is the lot's turn and
 // toWorld(lx, lz) -> {x, z} maps the lot's frame to the world. apronEnd: the lot-local z the apron runs to
-// (default 11). at: where the bay stands on a v2 lot {x, z, s}, else the legacy spot. mine: your own HQ (its
+// (default 11). at: where the bay stands on a v2 lot {x, z, s, f, r}, else the legacy spot ([3.33] r: its door's quarter
+// turns, 0 to the road .. 2 away; 1 and 3 sideways, with an 8 m apron out of the side door and the driveway from its end
+// to the road, at.way; a moved bay). mine: your own HQ (its
 // door goes down to "@basement"; anyone else's is a visit). The car, motorbike and bicycle moved down to the
 // basement's showcase (games/hqbasement.js): items is []. Returns {items, glows, car: null, garage: {top,
-// walls, on}, hits, doors, door, lift}: lift is HQV.hqCarLift.mesh's {update(state)} when that is loaded.
+// walls, on}, hits, doors, door, lift, move}: lift is HQV.hqCarLift.mesh's {update(state)} when that is loaded; move
+// [3.33] your own bay's "Move garage" plate (a hit with userData.garageMove; not a door), else null.
 function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at, mine){
   var THREE = c.THREE, PI = c.PI, mat = c.mat, emis = c.emis, box = c.box;
   var X = HQV.hqLotExtras, G = X.garage, glows = [], hits = [];
   var AE = apronEnd != null ? apronEnd : 11, sx = at && at.s === -1 ? -1 : 1, ox = at ? at.x - sx*G.x : 0, oz = at ? at.z - G.z : 0;
   var fz = at && at.f === -1 ? -1 : 1;     // the way its door faces: the road (+z), or away from the HQ (a bay behind it)
+  var rq = at && (at.r === 0 || at.r === 1 || at.r === 2 || at.r === 3) ? at.r : fz < 0 ? 2 : 0;   // [3.33] its quarter turns
+  if(rq === 0 || rq === 2) fz = rq === 2 ? -1 : 1;
   function lx(x){ return ox + sx*x; }
-  var gg = new THREE.Group(); gg.position.set(lx(G.x), 0, oz + G.z); if(fz < 0) gg.rotation.y = PI; g.add(gg);
+  var gg = new THREE.Group(); gg.position.set(lx(G.x), 0, oz + G.z); if(rq === 2) gg.rotation.y = PI; else if(rq) gg.rotation.y = rq*PI/2; g.add(gg);
   var walls = new THREE.Group(), top = new THREE.Group(); gg.add(walls); gg.add(top);
   var frameM = mat(0x2a3139, {metalness: 0.85, roughness: 0.3}), trimM = emis(col.accent, col.accent, 0.6);
   var glassM = mat(0x9fd6ee, {transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.2});
@@ -197,16 +202,43 @@ function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at, mine){
   var inside = c.glow(0xbfe9ff, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); glows.push(inside);
   // the apron from the bay to the road, with two guide lines in the accent
   // (facing away from the HQ: a short apron behind it, the lot's back)
-  var a0 = oz + G.z + fz*G.d/2, a1 = fz > 0 ? AE : a0 - 3.2;
-  var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, Math.abs(a1 - a0))), mat(0x323a43, {roughness: 0.9}));
-  apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (a0 + a1)/2); apron.receiveShadow = true; g.add(apron);
-  // the door: drive (or walk) onto the platform. Yours goes down; anyone else's is their HQ, as a visitor
-  var fp = toWorld(lx(G.x), oz + G.z + fz*0.4);
+  var apronM = mat(0x323a43, {roughness: 0.9}), fp;
+  if(rq % 2){
+    // [3.33] a side door: the 8 m apron out of it, then the driveway from its end along the lot to the road (at.way)
+    var ux = rq === 1 ? 1 : -1, bx = lx(G.x), bz = oz + G.z, s0 = bx + ux*G.d/2, s1 = s0 + ux*8;
+    var sa = new THREE.Mesh(new THREE.PlaneGeometry(8, G.w - 0.4), apronM);
+    sa.rotation.x = -PI/2; sa.position.set((s0 + s1)/2, 0.03, bz); sa.receiveShadow = true; g.add(sa);
+    fp = toWorld(bx + ux*0.4, bz);
+  } else {
+    var a0 = oz + G.z + fz*G.d/2, a1 = fz > 0 ? AE : a0 - 3.2;
+    var apron = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, Math.max(0.1, Math.abs(a1 - a0))), apronM);
+    apron.rotation.x = -PI/2; apron.position.set(lx(G.x), 0.03, (a0 + a1)/2); apron.receiveShadow = true; g.add(apron);
+    // the door: drive (or walk) onto the platform. Yours goes down; anyone else's is their HQ, as a visitor
+    fp = toWorld(lx(G.x), oz + G.z + fz*0.4);
+  }
+  // [3.33] a moved bay's driveway: each leg of at.way (lot frame) as a strip of paving 3.5 m wide
+  var way = at && Array.isArray(at.way) ? at.way : null;
+  if(way && way.length >= 2) for(var wi = 1; wi < way.length; wi++){
+    var wa = way[wi - 1], wb = way[wi], wl = Math.hypot(wb.x - wa.x, wb.z - wa.z);
+    if(!(wl > 0.1) || !isFinite(wl)) continue;
+    var strip = new THREE.Mesh(new THREE.PlaneGeometry(3.3, wl + 3.3), apronM);
+    strip.rotation.order = "YXZ"; strip.rotation.y = Math.atan2(wb.x - wa.x, wb.z - wa.z); strip.rotation.x = -PI/2;
+    strip.position.set((wa.x + wb.x)/2, 0.035, (wa.z + wb.z)/2); strip.receiveShadow = true; g.add(strip);
+  }
   var door = {view: mine ? "@basement" : "visit:" + uid, kind: "carlift", userId: uid, label: "Car lift",
               tip: mine ? "Car lift: down to your B1 basement garage (drive on, or walk on)" : "Their car lift: visit their HQ",
               front: new THREE.Vector3(fp.x, 0, fp.z)};
   [sg].forEach(function(o){ o.userData.door = door; hits.push(o); });
-  return {items: [], glows: glows, car: null, garage: {top: top, walls: walls, on: 0}, hits: hits, doors: [door], door: door, lift: lift};
+  // [3.33] your own bay: a "Move garage" plate on a post by its door (click: placement mode, games/hq3d.js garageView)
+  var move = null;
+  if(mine){
+    var mp = c.canvasTex(256, 96, function(gx){ gx.fillStyle = "#0a1016"; gx.fillRect(0, 0, 256, 96); gx.fillStyle = "#7fd6ff"; gx.font = "800 34px system-ui, sans-serif";
+      gx.textAlign = "center"; gx.fillText("MOVE \u21c4", 128, 44); gx.font = "600 22px system-ui, sans-serif"; gx.fillStyle = "#c9d3dc"; gx.fillText("GARAGE", 128, 78); });
+    box(0.08, 1.2, 0.08, frameM, -G.w/2 - 0.55, 0.6, G.d/2 + 0.25, gg);
+    move = c.screen(0.9, 0.34, mp.t); move.position.set(-G.w/2 - 0.55, 1.35, G.d/2 + 0.3); gg.add(move);
+    move.userData.garageMove = true; move.userData.tip = "Move your garage: place it anywhere on your lot";
+  }
+  return {items: [], glows: glows, car: null, garage: {top: top, walls: walls, on: 0}, hits: hits, doors: [door], door: door, lift: lift, move: move};
 }
 
 HQV.hqCityParts = {fountain: fountain, bikePark: bikePark, skatePark: skatePark, lotExtras: lotExtras, lamplit: lamplit, FOUNT_R: FOUNT_R};

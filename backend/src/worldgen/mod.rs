@@ -41,7 +41,9 @@
 //!
 //! City Gen v4 (HQ 3.24 on, docs/plans/city-gen-v4.md) upgrades @3 in place, a phase at
 //! a time, rather than adding a version: the live worlds move with it (the user's call),
-//! while every lot, and so every HQ, stays where it was. Phase 1: the Commons' airport
+//! every lot staying where it was until HQ spacing (organic/hq.rs: the HQ pool drawn by
+//! spacing once the roads and the City Line's boulevard are laid, HQs moved to new lots,
+//! a member keeping their rank). Phase 1: the Commons' airport
 //! claims its land (claims.rs) before the highways and the ring are routed, which keep off
 //! it (the ring alone may pass behind the terminal, in its corridor, until phase 6 takes it
 //! under; it stops either side where only the long way round would pass it); the dock,
@@ -304,6 +306,9 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
             if std::env::var("HQ_IX").is_ok() {
                 eprintln!("interchanges: {made} made, kept at grade: {kept:?}");
             }
+            // HQ spacing: the HQ pool, drawn by spacing on the lots and roads as they now are,
+            // the City Line's boulevard cut (organic/hq.rs)
+            organic::hq::draw(&p, &base, &roads, &mut city)?;
         }
         civic::outside(&p, &base, &roads, &mut city, river.as_ref());
         // a personal island's first bus loop keeps to its tier-2 town (20 m in from the ring)

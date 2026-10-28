@@ -188,7 +188,7 @@ function furniture(W){
   var out = FURN_CACHE && FURN_CACHE.get(W);
   if(out) return out;
   out = [];
-  var Q = WQ(), F = facts(W), U = landUse(W), nodes = {};
+  var Q = WQ(), F = facts(W), U = landUse(W), nodes = {}, RP = Q.railPiersOf ? Q.railPiersOf(W) : [];
   (W.nodes || []).forEach(function(n){ nodes[n.id] = {x: cm(n.x), z: cm(n.z)}; });
   var market = (W.sites || []).filter(function(s){ return s.kind === "market"; }).map(function(s){ return {x: cm(s.x), z: cm(s.z)}; });
   (W.edges || []).forEach(function(e){
@@ -200,6 +200,7 @@ function furniture(W){
       [1, -1].forEach(function(sg){
         var o = sg*(cw + 0.55), x = p.x + p.lx*o, z = p.z + p.lz*o;
         if(F.stopDist(x, z) < 8 || Q.surfaceAt(W, x, z) === "road") return;      // (another road's paving near a junction)
+        if(RP.some(function(q){ return Math.hypot(q.x - x, q.z - z) < q.r + 1.5; })) return;   // phase 8: clear of a City Line pier
         var bx = p.x + p.lx*sg*(cm(e.width)/2 + 3), bz = p.z + p.lz*sg*(cm(e.width)/2 + 3), lot = Q.lotAt(W, bx, bz);
         if(lot && lot.kind === "hq") return;
         var u = lot ? U[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name), h = hash01(W.hash + ":furn:" + e.id + ":" + Math.round(s) + ":" + sg);

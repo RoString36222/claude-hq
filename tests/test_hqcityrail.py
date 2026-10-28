@@ -108,6 +108,86 @@ out.left = scene.children.length;
 console.log(JSON.stringify(out));
 """
 
+# City Gen v4 phase 8: the Commons fixture's City Line with the generator's piers, and the same doc without them
+VIEW_PIERS = r"""
+import fs from 'fs'; import path from 'path'; import url from 'url'; import zlib from 'zlib';
+const R0 = process.argv[2];
+const THREE = await import(url.pathToFileURL(R0 + '/games/vendor/three-module.js').href);
+globalThis.window = {HQV: {}}; globalThis.self = globalThis.window;
+for (const f of ['world.js', 'hqride.js', 'hqcommute.js', 'hqrail.js', 'hqcityrail.js']) (new Function(fs.readFileSync(path.join(R0, 'games', f), 'utf8')))();
+const H = window.HQV, WD = H.world, out = {};
+const fx = path.join(R0, 'tests/fixtures/claude-hq@3.json.gz');
+if (!fs.existsSync(fx)) { console.log('{}'); process.exit(0); }
+function one(strip){
+  const doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(fx)));
+  const line = ((doc.layers.rail || {}).lines || []).filter(l => l.kind === 'city')[0];
+  if (!line) return null;
+  const docPiers = (line.piers || []).map(p => ({x: p.x/100, y: p.y/100, z: p.z/100, h: p.h/100}));
+  if (strip) delete line.piers;
+  const W = WD.pack(doc), scene = new THREE.Scene(), c = {THREE, scene, mat: (col, o) => new THREE.MeshStandardMaterial(Object.assign({color: col}, o || {}))};
+  const cl = H.hqCityRail.create(W, {seed: 's'}), vc = H.hqCityRail.view(c, cl, {W, ground: (x, z) => WD.groundAt(W, x, z), night: () => false});
+  const ms = 1.7e12, calls = [];
+  for (let t = 0; t < 600; t += 23) { vc.update(ms + t*1000, 0.016, {x: -300, z: -80}); calls.push(vc.drawCalls()); }
+  let tris = 0; scene.traverse(o => { if (o.isMesh && o.visible && o.geometry) { const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count)/3*(o.isInstancedMesh ? o.count : 1); } });
+  const R = cl.track(line.id), piers = vc.tools.piers();
+  const r = {doc: docPiers, drawn: piers, simPiers: cl.piers(line.id), calls: Math.max(...calls), tris,
+             len: R.len, railY: piers.map(p => H.hqRail.at(R, H.hqCityRail.project(R, p.x, p.z)).y)};
+  vc.dispose();
+  return r;
+}
+out.with = one(false); out.without = one(true);
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class CityLinePiersTest(unittest.TestCase):
+    """Phase 8: the doc's `piers` replace the view's own every 30 m; without them, today's piers."""
+
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "--input-type=module", "-e", VIEW_PIERS, "x", ROOT], capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            raise AssertionError(r.stderr)
+        cls.o = json.loads(r.stdout)
+        if not cls.o.get("with"):
+            raise unittest.SkipTest("no Commons fixture with a City Line")
+        if not cls.o["with"]["doc"]:
+            raise unittest.SkipTest("the Commons fixture's City Line has no piers yet")
+
+    def test_doc_piers_drawn_exactly(self):
+        w = self.o["with"]
+        self.assertEqual(len(w["drawn"]), len(w["doc"]))
+        self.assertEqual(len(w["simPiers"]), len(w["doc"]))
+        for d, p in zip(w["doc"], w["drawn"]):
+            self.assertAlmostEqual(p["x"], d["x"], places=3)
+            self.assertAlmostEqual(p["z"], d["z"], places=3)
+            self.assertAlmostEqual(p["y0"], d["y"], places=3, msg="from its foot")
+            self.assertAlmostEqual(p["y1"], d["y"] + d["h"] - 2.4, places=3, msg="up to the girder's soffit")
+
+    def test_doc_piers_under_the_line(self):
+        w = self.o["with"]
+        for p, y in zip(w["drawn"], w["railY"]):
+            self.assertAlmostEqual(p["y1"] + 2.4, y, delta=0.3, msg="the doc's rail level is the track's")
+
+    def test_budget_holds(self):
+        for k in ("with", "without"):
+            self.assertLessEqual(self.o[k]["calls"], 5, k)
+            self.assertLess(self.o[k]["tris"], 120000, k)
+
+    def test_fallback_without_the_field(self):
+        n = self.o["without"]
+        self.assertIsNone(n["simPiers"])
+        P = n["drawn"]
+        self.assertGreater(len(P), 5)
+        # today's loop: every 30 m along the track (60 m over a bridge), never from the doc
+        import math
+        gaps = [math.hypot(b["x"] - a["x"], b["z"] - a["z"]) for a, b in zip(P, P[1:])]
+        self.assertTrue(all(g >= 29 for g in gaps), gaps)
+        self.assertGreaterEqual(len(P), int((n["len"] - 12) // 31))
+        self.assertNotEqual([(round(p["x"], 2), round(p["z"], 2)) for p in P],
+                            [(round(p["x"], 2), round(p["z"], 2)) for p in self.o["with"]["drawn"]])
+
 
 @unittest.skipUnless(NODE, "node not installed")
 class CityLineTest(unittest.TestCase):

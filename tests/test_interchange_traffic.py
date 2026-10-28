@@ -72,7 +72,9 @@ class InterchangeTraffic(unittest.TestCase):
 
     def test_every_node_balances_and_the_sim_builds(self):
         self.assertEqual(self.o["errors"], [])
-        self.assertGreater(self.o["cars"], 150)
+        # ([3.32] 120: phase 9's tram avenues give their single-lane centre-bed collectors to the buses, and the car
+        # lanes that would turn back across a bed at such a collector are dropped, ~15 cars fewer in the Commons)
+        self.assertGreater(self.o["cars"], 120)
         self.assertEqual(self.o["simLanes"], [2, 1, 1, 1, 1, 1])
 
     def test_ramps_one_way_and_driven(self):

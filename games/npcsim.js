@@ -282,6 +282,7 @@ function roundRoute(pts, rbs){
 }
 function npcLane(c){ var n = Math.max(1, Math.min(3, Math.floor(c/3.3))); return Math.max(0.5, c*(2*n - 1)/(2*n)); }
 // [3.25] a City Gen v4 road: its own lanes each way, between its median (half width m) and the kerb, as traffic.js
+// ([3.32] a tram's centre bed counts as the median: no car drives on it)
 function npcLaneV4(c, lanes, med){ var n = Math.max(1, lanes|0); med = Math.max(0, +med || 0); return Math.max(0.5, c - (c - med)/(2*n)); }
 
 /* ---------- the sim ---------- */
@@ -337,7 +338,7 @@ function create(doc, opts){
             one: e.oneway === true,                         // [3.29] an interchange's ramp: driven a to b only
             walkable: cls !== "highway" && cls !== "ring" || walk > 0,
             off: walk > 0 ? half - walk/2 : Math.max(0.5, half - SIDE_IN),
-            lane: e.oneway === true ? 0 : e.v4 ? npcLaneV4((width - 2*walk)/2, e.lanes, (e.median | 0)/200) : npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
+            lane: e.oneway === true ? 0 : e.v4 ? npcLaneV4((width - 2*walk)/2, e.lanes, ((e.median | 0) || (e.bed | 0))/200) : npcLane((width - 2*walk)/2), fast: CAR_FAST[cls] || 1});
   });
 
   // [play-street] the widest road meeting each node (half width) and its degree: a crossing keeps this far out of the junction
@@ -943,7 +944,7 @@ function create(doc, opts){
         var q = fwd ? j : m - 1 - j;
         if(X.length && j === 0) continue;   // the shared junction point
         X.push(e.pts[3*q]/100); Y.push(e.pts[3*q + 1]/100); Z.push(e.pts[3*q + 2]/100);
-        LO.push((e.median || 0)/200); HI.push(Math.max(1.5, ((e.width | 0) - 2*(e.walk | 0))/200));
+        LO.push((e.median || e.bed || 0)/200); HI.push(Math.max(1.5, ((e.width | 0) - 2*(e.walk | 0))/200));
       }
       node = fwd ? e.b : e.a;
     });

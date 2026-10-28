@@ -550,6 +550,11 @@ class Streets(unittest.TestCase):
             l = self.r[w]["lanes"]
             self.assertGreater(l["tram"], 0, w)
             self.assertEqual(l["bad"], 0, "%s: lanes() equals the sim's lateral plan, with or without the sim" % w)
+            if w == "v3":
+                # [3.32] City Gen v4 phase 9: the @3 tram streets say how their track is laid: inside a centre bed (an
+                # avenue's 9.2 m, a collector's 7.2 m) or in the innermost lane of a shared avenue / collector
+                self.assertEqual(sorted(round(v, 3) for v in l["tramOffs"]), [1.75, 2.025, 2.75, 3.025], w)
+                continue
             self.assertEqual(len(l["tramOffs"]), 1, w)
             self.assertAlmostEqual(l["tramOffs"][0], 1.475, 9, "%s: a tram lane is 1.475 m off the centre line" % w)
 

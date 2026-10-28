@@ -875,6 +875,16 @@ function create(doc, opts){
         for(j = 0; j + 1 < m; j++){ var sl = C0[j + 1] - C0[j] || 1; NXs.push((Z0[j + 1] - Z0[j])/sl); NZs.push(-(X0[j + 1] - X0[j])/sl); }
         var walkM = (e.walk | 0)/100, half = (e.width | 0)/200;
         L.run = {x: X0, y: Y0, z: Z0, c: C0, nx: NXs, nz: NZs, len: C0[m - 1], off: (+s.side || 1)*(walkM > 0 ? half - walkM/2 : half + 0.8)};
+        // (it turns back 6 m short of each end, or further where a wider road's carriageway reaches along the footpath)
+        var R0 = L.run, runPt = function(at, d){
+          var i = 0; while(i < R0.c.length - 2 && R0.c[i + 1] < at) i++;
+          var l = R0.c[i + 1] - R0.c[i], f = l > 0 ? (at - R0.c[i])/l : 0;
+          return {x: R0.x[i] + (R0.x[i + 1] - R0.x[i])*f + R0.nx[i]*d, z: R0.z[i] + (R0.z[i + 1] - R0.z[i])*f + R0.nz[i]*d};
+        };
+        var onRoad = function(at){ return [0.7, -0.1].some(function(dd){ var q = runPt(at, R0.off + dd*(R0.off >= 0 ? 1 : -1)); return WQ.surfaceAt(LW, q.x, q.z) === "road"; }); };
+        R0.a = 6; R0.b = 6;
+        while(R0.a < R0.len/2 - 2 && onRoad(R0.a)) R0.a += 1;
+        while(R0.b < R0.len/2 - 2 && onRoad(R0.len - R0.b)) R0.b += 1;
       } else L.ring = {R: Math.max(4, (+s.r || 10)*0.7), y: WQ.groundAt(LW, s.x, s.z, true)};
     }
     X.lay = L;
@@ -888,7 +898,7 @@ function create(doc, opts){
       // runners, and every fourth a dog walker going the other way
       var dog = k % 4 === 3, v = dog ? 1.05 + 0.2*xh(id + ":v:" + k) : 2.3 + 0.9*xh(id + ":v:" + k), ts = (((t % DAY) + DAY) % DAY)/1000;
       if(L.run){
-        var R = L.run, span = Math.max(4, R.len - 12), pp = pingpong(xh(id + ":p:" + k)*2*span + (dog ? -1 : 1)*v*ts, span), at = 6 + pp.p;
+        var R = L.run, ra = R.a != null ? R.a : 6, span = Math.max(4, R.len - ra - (R.b != null ? R.b : 6)), pp = pingpong(xh(id + ":p:" + k)*2*span + (dog ? -1 : 1)*v*ts, span), at = ra + pp.p;
         var i = 0; while(i < R.c.length - 2 && R.c[i + 1] < at) i++;
         var l = R.c[i + 1] - R.c[i], f = l > 0 ? (at - R.c[i])/l : 0, ux = (R.x[i + 1] - R.x[i])/(l || 1), uz = (R.z[i + 1] - R.z[i])/(l || 1);
         var off = R.off + (dog ? -0.4 : 0.3)*(R.off >= 0 ? 1 : -1);

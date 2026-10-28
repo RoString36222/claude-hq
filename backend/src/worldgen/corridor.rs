@@ -33,6 +33,8 @@ const END_SNAP_CM: i64 = 1_500;
 pub const SAMPLE_CM: i64 = 200;
 /// The shortest piece (cm) of a cut street kept.
 const PIECE_CM: i64 = 400;
+/// Stubs closer (cm) than this are one junction's.
+const MERGE_CM: i64 = 600;
 /// How far (cm) back from the water a run of boulevard stops (the line bridges on).
 const BANK_CM: i64 = 1_500;
 
@@ -292,27 +294,62 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
 
     // a node the cut left at the end of one road, which ran on into the band (its next road
     // wholly in it, so nothing was cut at it), joins the boulevard as a cut street does
-    let mut was = vec![0u32; roads.nodes.len()];
-    for e in &roads.edges {
-        was[e.a as usize] += 1;
-        was[e.b as usize] += 1;
-    }
-    let mut now = vec![0u32; nodes.len()];
-    for e in kept.iter().chain(&pieces) {
-        now[e.a as usize] += 1;
-        now[e.b as usize] += 1;
-    }
-    for (n, &w) in was.iter().enumerate() {
-        if w >= 2 && now[n] == 1 {
+    // (and so does a main road left ending where side streets still meet it: the cars' network
+    // is the main roads')
+    let count = |es: &mut dyn Iterator<Item = &Edge>, main: bool, len: usize| {
+        let mut d = vec![0u32; len];
+        for e in es.filter(|e| !main || e.class == "arterial") {
+            d[e.a as usize] += 1;
+            d[e.b as usize] += 1;
+        }
+        d
+    };
+    for main in [true, false] {
+        let was = count(&mut roads.edges.iter(), main, roads.nodes.len());
+        let now = count(&mut kept.iter().chain(&pieces), main, nodes.len());
+        for (n, &w) in was.iter().enumerate() {
+            if w < 2 || now[n] != 1 || stubs.iter().any(|st| st.from == n as u32) {
+                continue;
+            }
             let q = (roads.nodes[n].x, roads.nodes[n].z);
             let (run, s, d2) = band.proj(q);
             let reach = half + 3_000;
             if d2 < reach * reach {
-                let proto = kept.iter().chain(&pieces).find(|e| e.a == n as u32 || e.b == n as u32).cloned().expect("a road at it");
+                let proto = kept.iter().chain(&pieces).filter(|e| !main || e.class == "arterial").find(|e| e.a == n as u32 || e.b == n as u32).cloned().expect("a road at it");
                 stubs.push(Stub { from: n as u32, proto, q, run, s, off: super::noise::isqrt(d2) });
             }
         }
     }
+
+    // two stubs a few metres apart (a side street that met the cut road just inside the band)
+    // are one place: the lesser's road is joined to the other's end, which alone meets the boulevard
+    let mut merged = vec![false; stubs.len()];
+    for i in 0..stubs.len() {
+        for j in 0..stubs.len() {
+            if i == j || merged[i] || merged[j] || dist(stubs[i].q, stubs[j].q) >= MERGE_CM {
+                continue;
+            }
+            let rank = |k: usize| (stubs[k].proto.class == "arterial", stubs[k].proto.width, std::cmp::Reverse(k));
+            if rank(i) < rank(j) {
+                continue;
+            }
+            // j onto i
+            let (from, to, q) = (stubs[j].from, stubs[i].from, stubs[i].q);
+            for e in kept.iter_mut().chain(pieces.iter_mut()) {
+                if e.a == from {
+                    e.a = to;
+                    e.points[0] = [q.0, 0, q.1];
+                }
+                if e.b == from {
+                    e.b = to;
+                    let n = e.points.len() - 1;
+                    e.points[n] = [q.0, 0, q.1];
+                }
+            }
+            merged[j] = true;
+        }
+    }
+    let stubs: Vec<Stub> = stubs.into_iter().zip(merged).filter(|x| !x.1).map(|x| x.0).collect();
 
     // per run of boulevard: its junctions (at most one every GAP_CM, none under a station, each
     // stub meeting it at 45 degrees or squarer, else ending where it was cut), then the

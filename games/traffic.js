@@ -128,6 +128,10 @@ var GAP = 2.6;                          // bumper to bumper, at the closest
 var V_STRAIGHT = 9, V_TURN = 6.5, V_UTURN = 3, V_CREEP = 2.5, CLEAR = 0.6, CLASH = 0.3, H_MIN = 6, H_MAX = 16, REPS = 3;
 var DWELL = 20, FARE = 2, LAYOVER = 30, XOVER = 30, BLOCK = 15, BAY = 2.9, RAMP = 12, BAY_BLOCK = 3, BAY_YAW = 0.15;
 var DENS = [0.3, 0.45, 0.6, 0.72, 0.85];  // share of a ring's slots with a car, per tier
+// [3.28] City Gen v4 phase 5: the NPC traffic level (Settings' slider, 0..1; o.traffic, sim.setLevel): LEVEL0 is today's
+// (the tier's DENS); 1 every slot the timetable has; 0 none. A ring never holds more than LOS_D cars a km of its lane at
+// the level (the plan's comfortable level of service D, 22 at 100%) nor one per CAR_M of it (the hard cap: classes.rs)
+var LEVEL0 = 0.85, LOS_D = 22, CAR_M = 7.5;
 var HEADWAY = {bus: 240, tram: 300};      // target seconds between vehicles on a line
 var INC_W = 240, INC_P = 0.3, INC_LOOK = 3, EV_DWELL = 40, EV_YIELD = 45, EV_NEAR = 120, EV_FAR = 1200, EV_HW = 1.25, EV_TRY = 90, EV_HOLD = 90;
 var EV_KINDS = ["fire", "ambulance", "police"];
@@ -373,6 +377,10 @@ function create(doc, o){
   var tier = clamp(num(o.tier, 1) | 0, 1, 5), grow = clamp(num(o.grow, 0), 0, 1000);
   var seed = typeof o.seed === "number" ? o.seed | 0 : hash32(o.seed != null ? o.seed : (doc.id || "city"));
   var dens = tier >= 5 ? DENS[4] : DENS[tier - 1] + (DENS[tier] - DENS[tier - 1])*grow/1000;
+  // [3.28] the slots are filled for the fullest level (densMax), the level then keeps its share of them (curDens: today's at LEVEL0)
+  var level = clamp(num(o.traffic, LEVEL0), 0, 1), densMax = Math.min(1, dens/LEVEL0);
+  function levelDens(){ return level === LEVEL0 ? dens : densMax*level; }
+  var curDens = levelDens();
   var fareHook = typeof o.onFare === "function" ? o.onFare : null;
   var tmpA = {}, tmpB = {}, tmpC = {};
 
@@ -1352,7 +1360,7 @@ function create(doc, o){
       if(sigOn && Math.floor(m/k) > 2 && queueOk(r, k, Pn, Math.floor(m/k) - 1)){ nMax = Math.floor(m/k) - 1; break; }
       k++;
     }
-    r.k = k; r.m = m; r.cars = []; r.leads = [];
+    r.k = k; r.m = m; r.cars = []; r.leads = []; r.all = [];
     if(r.pl.len < 2*G) return;
     for(var i = 0; i < m; i++){
       if((r.blocked >> (i % r.R)) & 1 || i - last < k || (cand.length && m + cand[0] - i < k) || cand.length >= nMax) continue;
@@ -1363,14 +1371,28 @@ function create(doc, o){
       var lead = null;
       for(var j = 0; j < Pn; j++){
         var fill = sigOn ? FILL[Math.min(j, FILL.length - 1)] : 1, hv = h01(seed, r.id*977 + 11 + 7*j, i);
-        if(hv >= dens*fill) continue;
+        if(hv >= densMax*fill) continue;
         var c = {id: "c" + r.id + "." + i + (j ? "." + j : ""), ring: r, kind: "car", shift: i*Hr, paint: Math.floor(h01(seed, r.id, i*31 + 5 + 7919*j)*PAINT.length),
                  slot: i, fol: j, fill: fill, hv: hv, ut: h01(seed, r.id*613 + 29 + 7*j, i)};
-        r.cars.push(c); cars.push(c);
-        if(!lead){ lead = c; r.leads.push(c); }
+        r.all.push(c);
       }
     });
+    // (their order by hash: the level keeps the first of them, as many as the ring's lane takes)
+    r.all.slice().sort(function(a, b){ return a.hv - b.hv || (a.id < b.id ? -1 : 1); }).forEach(function(c, n){ c.rank = n; });
   });
+  // [3.28] the cars there are at the level: under its share of the slots, and within the ring's cap (LOS_D a km at the
+  // level, one per CAR_M); each slot's first such car leads its platoon. Run again by setLevel (then lifeOf, below)
+  function capOf(r){ return Math.floor(Math.min(level*LOS_D*r.pl.len/1000, r.pl.len/CAR_M)); }
+  function applyLevel(){
+    curDens = levelDens(); cars = [];
+    rings.forEach(function(r){
+      var cap = capOf(r), lastSlot = null;
+      r.cars = r.all.filter(function(c){ return c.hv < curDens*c.fill && c.rank < cap; });
+      r.leads = [];
+      r.cars.forEach(function(c){ c.st = null; cars.push(c); if(c.slot !== lastSlot){ r.leads.push(c); lastSlot = c.slot; } });
+    });
+  }
+  applyLevel();
 
   // ---- [3.21] city life (games/citylife.js): how many of the slots' cars are out, what they are, closed streets ----
   // A car exists when its slot hash hv < dens (above, unchanged); it is out on a lap when hv < dens*demand(local hour
@@ -1409,7 +1431,10 @@ function create(doc, o){
       d = d || WQ.districtAt(LW, x, z);
       return d && d.k != null ? FA.group(d.k) : "home";
     };
-    rings.forEach(function(r){
+    rings.forEach(function(r){ lifeOf(r); });
+  }
+  function lifeOf(r){
+      if(!life) return;
       // its street kind: the commonest by length; its edges (for closures); whether it turns round anywhere
       var byKind = {}, best = null;
       r.edgeIds = {};
@@ -1433,7 +1458,6 @@ function create(doc, o){
         while(li < r.ranges.length - 1 && r.ranges[li][1] < sm) li++;
         c.grp = String(groupAt(p.x, p.z, p.yaw, r.lanes[li].e.c) || "home");
       });
-    });
   }
   function fitsType(c, type){
     var r = c.ring, L0 = SPEC[type].len;
@@ -1458,7 +1482,7 @@ function create(doc, o){
     if(c.st && c.st.k === k) return c.st;
     if(!life) return (c.st = {k: k, show: true, type: "car", hour: null});
     var t0 = r.prof.base + c.shift + k*r.prof.T, h = CL.hourOf ? CL.hourOf(localOf(t0*1000)) : mod(localOf(t0*1000)/36e5, 24);
-    var show = c.hv < dens*(c.fill || 1)*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
+    var show = c.hv < curDens*(c.fill || 1)*clamp(num(CL.demand(h, r.kindL), 1), 0, 1) && !closedOver(r, t0, t0 + r.prof.T);
     var type = CL.pick(CL.mix(c.grp || "home", r.kindL, h), c.ut);
     if(!SPEC[type] || TYPES.indexOf(type) < 0) type = "car";
     if(type === "lorry" && (!fitsType(c, "lorry") || (sigOn && c.fol > 0))) type = "van";
@@ -2076,6 +2100,9 @@ function create(doc, o){
     // [3.21] every car's lap state at timeMs (out or not, its type, the local hour its lap started), and what is closed
     cars: function(timeMs){ var t = num(timeMs, 0)/1000; return cars.map(function(c){ var q = carState(c, t); return {id: c.id, ring: c.ring.id, show: q.show, type: q.type, hour: q.hour, group: c.grp || null}; }); },
     closed: function(timeMs){ return closedFn ? closedAt(localOf(num(timeMs, 0))) : {}; },
+    // [3.28] the NPC traffic level (0..1, Settings' slider): which of the slots' cars there are, from now on
+    level: function(){ return level; },
+    setLevel: function(v){ var L2 = clamp(num(+v, LEVEL0), 0, 1); if(L2 === level) return level; level = L2; applyLevel(); rings.forEach(lifeOf); return level; },
     layout: layout, doc: doc, seed: seed,
     _: {rings: rings, lines: lines, nodeSlots: nodeSlots, atNode: atNode, edges: edges, ringPose: ringPose, lag: function(){ return lag; }, sigAt: sigAt,
         sites: sites, stopIndex: stopIndex, partPose: partPose, sections: sections, mod: mod,
@@ -2901,7 +2928,7 @@ function street(THREE, scene, W, o){
   return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose, arms: arms};
 }
 
-HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, INC_W: INC_W,
+HQV.traffic = {create: create, view: view, street: street, SIDE: SIDE, SPEC: SPEC, GAP: GAP, DWELL: DWELL, FARE: FARE, DENS: DENS, CAP: CAP, LEVEL0: LEVEL0, LOS_D: LOS_D, CAR_M: CAR_M, INC_W: INC_W,
                lanes: lanes, tramPaths: tramPaths, tramStops: tramStops, service: service, SEATS: SEATS, STANDS: STANDS, DOORS: DOORS, FLOOR: FLOOR,
                lineColor: lineColor, shortOf: shortOf, loadCurve: loadCurve, soundOf: soundOf,
                streetCars: streetCars, carLook: carLook, modelled: modelled, MODEL_N: MODEL_N, MODEL_NEAR: MODEL_NEAR,

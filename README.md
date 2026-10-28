@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.27.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.28.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,15 @@ and feature guide.
 
 ## Changelog
 
+- **3.28.0 — City Gen v4, phase 5: road capacity and an NPC traffic slider.** Settings has a new **NPC traffic**
+  slider for the 3D City, which changes the open City straight away:
+  - **85%** is the usual traffic.
+  - **100%** fills every road to the plan's comfortable level (at most 22 cars a km of lane).
+  - **0%** leaves the roads to the buses, trams and you.
+
+  Every road also has a hard limit of one car per 7.5 m of lane, which no road ever passes. Buses and trams keep their
+  timetables at any level. The setting is saved only in this browser, and everyone on the same setting sees the same
+  cars.
 - **3.27.0 — City Gen v4, phase 4: curved roads, and a few street changes.**
   - **Curved roads:**
     - The Ring Road and the highways now sweep in smooth curves instead of grid staircases (the Commons' kinks go

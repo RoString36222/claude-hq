@@ -19,7 +19,7 @@ merges on its own and leaves the City playable:
 | 2 | Real road classes: widths, lanes, markings, one-step changes | **3.25.0** |
 | 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | **3.26.0** |
 | 4 | Curved roads: arcs, minimum radii by design speed | **3.27.0** |
-| 5 | Capacity per segment and the 0–100 % NPC traffic slider | |
+| 5 | Capacity per segment and the 0–100 % NPC traffic slider | **3.28.0** |
 | 6 | Flyovers, underpasses and interchanges; road tunnels | |
 | 7 | Metro and rail corridors: piers only in boulevard medians | |
 | 8 | Trams on any road class, with stations | |
@@ -304,3 +304,37 @@ Commons' metro is unchanged.
     this client while you hold it.
   - Getting out parks it; 150 m away it goes back.
   - +0.5 heat when a police car sees it.
+
+## Phase 5 (3.28.0): capacity and the traffic slider
+
+- **`traffic.js`:** a traffic level from 0 to 1 (`o.traffic`, `sim.setLevel`).
+  - The sim fills every slot's candidate cars for the fullest level. The level keeps those
+    whose fixed hash is under its share of the slots.
+  - At 0.85 (`LEVEL0`) the share is today's, the tier's `DENS`. At 1 it's every slot the
+    timetable has; at 0, none.
+  - Each ring keeps at most `LOS_D` = 22 cars a km of its lane at the level (the plan's
+    comfortable level of service D at 100%) and never more than one per `CAR_M` = 7.5 m
+    (the hard cap). The cars kept are the ones with the lowest hash.
+  - Changing the level rebuilds each ring's cars, its platoon leaders, room and groups, so
+    it's exactly a sim made at that level.
+  - Buses and trams keep their timetables.
+- **Settings** (`index.html` `setTraffic`, `ui/app/16-settings.js`): an **NPC traffic**
+  slider, saved in localStorage `hq_traffic` (unset means 85%). It sets the open City's
+  level live through `HQV.cityTrafficLevel` (`games/hqcity3d.js`).
+
+### What limits traffic today
+
+On the Commons the light and junction timetables hold about 9 cars a km of loop even with
+every slot filled (196 cars). That's well under the plan's comfortable 22 a km and far under
+the hard cap of 133 a km. So the slider's top end is the timetable's room, and the 22 a km
+cap trims only one short, dense loop by the lights.
+
+| Level | Cars on the Commons | Out at 08:00 |
+|---|---|---|
+| 0 % | 0 | 0 |
+| 25 % | 41 | 40 |
+| 50 % | 98 | 90 |
+| 85 % (default) | 167 | — |
+| 100 % | 191 | 179 |
+
+Before this phase the Commons had 172 cars. The new cap trims one loop by 5.

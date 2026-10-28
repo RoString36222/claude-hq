@@ -518,15 +518,20 @@ function netRoom(world, isles){ return isles && worldOk(world) ? "city3d:" + wor
      horns      [{key, name, x, y, z}] a ship sailing this frame: its horn, once (horn)
      planes     [{id, x, y, z, voice: "jet" | "prop", phase}] the airliners, hoppers and seaplanes, and the scenic
                 airliners up high: their engines by flight phase (plane: through the Ambient sounds volume)
-     fountains  [{id, x, y, z}] a fountain's falling water (fountain)
-     helis      [{id, x, y, z, rpm}] the helicopter on an HQ's roof (games/hqtower.js B.sounds), its rotor (heli)
+     fountains  [{id, x, y, z}] a fountain's falling water (fountain: a pool, the kind's 2 voices)
+     works      [3.35] [{id, x, y, z}] games/cityevents3d.js sounds(): the roadworks on near you, a compressor and a breaker
+                (construction: a pool, 2 voices, through the Ambient sounds volume)
+     stops      [3.35] [{x, z}] the bus and tram stops near you (traffic.js stopsNear): a bus or tram that comes to rest
+                at one opens its doors (door-hiss, door), and pulls away with its bell (tram-bell, bell) or its doors
+                closing (door-hiss); each a one-shot in its kind's voice limit
+     helis     [{id, x, y, z, rpm}] the helicopter on an HQ's roof (games/hqtower.js B.sounds), its rotor (heli)
      bells      [{id, x, y, z, kind, seed}] games/hqcivic.js's belfries, struck on their hours by localMs, the local wall
                 clock (civicbell: one held voice per tower while it rings)
      bridges    games/hqbridges.js sounds(): the warning bell on each beat of the lamps (bell), the machinery while the
                 span moves (gondola: a pool, sharing the kind's 2 voices with the gondola's and the rides')
    NPC engines run in comfort mode (city driving: no overrun crackle). Nothing plays with src.under (below the street:
-   nothing up there is heard), without a listener or at sfx volume 0, and the aircraft, the hum and the fountains not
-   at Ambient sounds 0% either. Your own trip's door, sailing and arrival chimes (shipSfx) stay centred. */
+   nothing up there is heard), without a listener or at sfx volume 0, and the aircraft, the hum, the fountains and the
+   roadworks not at Ambient sounds 0% either. Your own trip's door, sailing and arrival chimes (shipSfx) stay centred. */
 var PLANE_PWR = {pushback: [1500, 0.05], taxi: [2600, 0.12], hold: [2300, 0.08], lineup: [3200, 0.25], takeoff: [7400, 1],
                  climb: [7100, 0.9], cruise: [6200, 0.6], descent: [3600, 0.2], approach: [4600, 0.35], flare: [3800, 0.25],
                  rollout: [6400, 0.75], exit: [2800, 0.15]};    // [game rpm, throttle] by hqair.js flight phase
@@ -555,9 +560,43 @@ function citySound(){
     motor: E.pool("gondola", {key: function(){ return "motor"; }, make: function(){ return E.noiseLoop ? E.noiseLoop(110, 0.8, "gondola") : null; },
                               play: function(h, s){ h.set(0.22, 0, s); }}),
     heli: E.pool("heli", {key: function(){ return "rotor"; }, make: function(){ return E.engineSound("rotor"); },
-                          play: function(h, s){ h.set(+s.rpm || 2800, {pos: s, sk: "heli"}); }})
+                          play: function(h, s){ h.set(+s.rpm || 2800, {pos: s, sk: "heli"}); }}),
+    fountain: E.pool("fountain", {key: function(){ return "fountain"; }, make: function(){ return loop("fountain"); },
+                                  play: function(h, s){ h.set(1, {pos: s}); }}),
+    works: E.pool("construction", {key: function(){ return "works"; }, make: function(){ return loop("works"); },
+                                   play: function(h, s){ h.set(1, {pos: s}); }})
   };
-  var hum = null, falls = {}, towers = {}, beats = {}, lastLocal = null;
+  var hum = null, towers = {}, beats = {}, lastLocal = null;
+  // [3.35] the buses and trams at rest: id -> {still: s at rest, open: its doors are open, n: the frame it was last seen}
+  var halts = {}, haltN = 0, haltMs = null, NONE = [];
+  function atStop(v, stops){
+    var r = v.kind === "tram" ? 16 : 10;
+    for(var i = 0; i < stops.length; i++){ var s = stops[i]; if(s && Math.abs(s.x - v.x) < r && Math.abs(s.z - v.z) < r && Math.hypot(s.x - v.x, s.z - v.z) < r) return true; }
+    return false;
+  }
+  function chime(r, name, v, kind){
+    if(r) r.R.sfx(r.A.ctx, name, {pos: v, kind: kind, key: name + ":" + v.id, dest: r.A.out});
+  }
+  // each bus and tram this frame: at rest at a stop for 0.8 s its doors open; moving off again its bell (a tram) or
+  // its doors closing (a bus). Nothing is heard without ears (r null) but the state still follows the vehicles
+  function halt(list, stops, ms, r){
+    var dt = haltMs != null && isFinite(ms) && ms > haltMs ? Math.min(0.5, (ms - haltMs)/1000) : 0, id, i;
+    haltMs = isFinite(ms) ? ms : null; haltN++;
+    for(i = 0; i < list.length; i++){
+      var v = list[i]; if(!v || (v.kind !== "bus" && v.kind !== "tram") || v.id == null || !isFinite(v.x) || !isFinite(v.z)) continue;
+      id = String(v.id);
+      var H = halts[id] || (halts[id] = {still: 0, open: false, n: 0}), sp = +v.speed || 0;
+      H.n = haltN;
+      if(sp < 0.3){
+        H.still += dt;
+        if(!H.open && H.still >= 0.8 && atStop(v, stops)){ H.open = true; chime(r, "door-hiss", v, "door"); }
+      } else if(sp > 0.6){
+        if(H.open){ H.open = false; chime(r, v.kind === "tram" ? "tram-bell" : "door-hiss", v, v.kind === "tram" ? "bell" : "door"); }
+        H.still = 0;
+      }
+    }
+    for(id in halts) if(halts[id].n !== haltN) delete halts[id];
+  }
   // a tram is 27 m long: heard from its section nearer the ears
   function nearer(v, L){
     var S = v.parts; if(!L || !S || !S.length) return v;
@@ -587,11 +626,9 @@ function citySound(){
     (up && r && Array.isArray(src.horns) ? src.horns : []).forEach(function(h){
       if(h && h.name) r.R.sfx(r.A.ctx, h.name, {pos: h, kind: "horn", key: h.key, dest: r.A.out});
     });
-    (amb && Array.isArray(src.fountains) ? src.fountains : []).forEach(function(f){
-      if(!f || !hears("fountain", f)) return;
-      var id = f.id != null ? String(f.id) : "fountain", h = falls[id] || (falls[id] = loop("fountain"));
-      if(h) h.set(1, {pos: f});
-    });
+    P.fountain.update(amb && Array.isArray(src.fountains) ? src.fountains : NONE);
+    P.works.update(amb && Array.isArray(src.works) ? src.works : NONE);
+    halt(list, Array.isArray(src.stops) ? src.stops : NONE, +src.localMs, r);
     bells(src, up);
     var spans = [];
     (Array.isArray(src.bridges) ? src.bridges : []).forEach(function(b){
@@ -630,9 +667,8 @@ function citySound(){
   function stop(){
     Object.keys(P).forEach(function(k){ try { P[k].stop(); } catch(e){} });
     if(hum){ hum.stop(); hum = null; }
-    Object.keys(falls).forEach(function(k){ if(falls[k]) falls[k].stop(); });
     Object.keys(towers).forEach(function(k){ if(towers[k].V) towers[k].V.end(0.1); });
-    falls = {}; towers = {}; beats = {}; lastLocal = null;
+    towers = {}; beats = {}; lastLocal = null; halts = {}; haltMs = null;
   }
   return {update: update, stop: stop};
 }
@@ -3863,6 +3899,15 @@ HQV.hqWorlds.city3d = function(c, w){
   /* ---------- [Sound PR B] this frame's sound sources, in scene metres, for citySound (above) ---------- */
   var snd = null, sndMs = 0;
   var APRON_V = {drive: 6, lead: 8, off: 8, "return": 3, push: 1, work: 0};     // m/s by phase: an apron vehicle's revs (parked: off)
+  // [3.35] the bus and tram stops round the ears, looked up once a second (or 40 m on): citySound's door and bell cues
+  var sndStops = [], sndStopsAt = {ms: -Infinity, x: 0, z: 0};
+  function stopsNow(ms, L){
+    if(!tsim || typeof tsim.stopsNear !== "function") return sndStops;
+    if(ms - sndStopsAt.ms < 1000 && Math.abs(L.x - sndStopsAt.x) + Math.abs(L.z - sndStopsAt.z) < 40) return sndStops;
+    sndStopsAt.ms = ms; sndStopsAt.x = L.x; sndStopsAt.z = L.z;
+    try { sndStops = tsim.stopsNear(L.x, L.z, 160) || []; } catch(e){ sndStops = []; }
+    return sndStops;
+  }
   function soundStep(){
     var E = HQV.engine, L = E && E.listenerAt ? E.listenerAt() : null;
     if(!L || (c.active && !c.active(w))) return;
@@ -3872,7 +3917,8 @@ HQV.hqWorlds.city3d = function(c, w){
     var src = {under: !!(transit && transit.under && transit.under()), localMs: now + 330*60000,   // [3.23] the City's clock (Koramangala, IST)
                traffic: (callTraffic || []).slice(), sirens: tsim && tsim.sirens ? tsim.sirens(now, L, 650) : callTraffic || [],
                ships: [], horns: [], planes: [], fountains: fount && fount.at ? [fount.at] : [], bells: [],
-               bridges: bridges && bridges.sounds ? bridges.sounds(L.x, L.z) : []};
+               bridges: bridges && bridges.sounds ? bridges.sounds(L.x, L.z) : [],
+               works: cev && cev.sounds ? cev.sounds() : [], stops: stopsNow(now, L)};
     cars.forEach(function(cr, i){ var p = cr.g.position; src.traffic.push({id: "street:" + i, kind: "car", x: p.x, y: p.y, z: p.z, speed: cr.turn > 0 ? 2 : cr.v}); });
     (apGround || []).forEach(function(q, i){
       if(!q || q.type === "cart" || !Object.prototype.hasOwnProperty.call(APRON_V, q.phase)) return;

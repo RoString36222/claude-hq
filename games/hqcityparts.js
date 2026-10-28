@@ -68,8 +68,9 @@ function fountain(c, parent, x, y, z){
     }
     jet.geometry.attributes.position.needsUpdate = true;
   }
-  // at: where its water falls, in the parent's frame ([Sound PR B] games/hqcity3d.js plays the fountain there)
-  return {g: g, step: step, R: FOUNT_R, at: {x: x, y: y + 1.6, z: z}};
+  // at: where its water falls, in the parent's frame ([Sound PR B] games/hqcity3d.js plays the fountain there; [3.35]
+  // its id is its place in the fountain kind's pool)
+  return {g: g, step: step, R: FOUNT_R, at: {id: "fountain", x: x, y: y + 1.6, z: z}};
 }
 
 /* ---------- the skatepark (games/hqskate.js is its shape and physics) ---------- */

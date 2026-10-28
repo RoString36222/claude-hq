@@ -357,7 +357,9 @@ function citySound(){ made++; return {update: function(src){ captured.push(src);
 var c = {active: function(x){ return ACTIVE && x === w; }}, w = {};
 var transit = {under: function(){ return UNDER; }};
 var callTraffic = [{id: "c1", kind: "car", x: 5, y: 0, z: 5, speed: 7}];
-var tsim = {sirens: function(now, L, r){ sirArgs.push([now, L.x, L.z, r]); return [{id: "e1", kind: "police", siren: true, wail: true}]; }};
+var tsim = {sirens: function(now, L, r){ sirArgs.push([now, L.x, L.z, r]); return [{id: "e1", kind: "police", siren: true, wail: true}]; },
+            stopsNear: function(x, z, r){ stopArgs.push([x, z, r]); return [{id: "s1", kind: "bus", x: 12, y: 0, z: 0, dist: 12}]; }};
+var stopArgs = [], WORKS = [{id: "works:w1", x: 40, y: 1, z: 40}], cev = {sounds: function(){ return WORKS; }};
 var fount = {at: {x: 3, y: 1.6, z: 4}}, bridges = {sounds: function(x, z){ bridgeArgs.push([x, z]); return [{id: "br"}]; }};
 var cars = [{g: {position: {x: 1, y: 0, z: 2}}, turn: 0, v: 6}, {g: {position: {x: 9, y: 0, z: 2}}, turn: 0.4, v: 6}];
 var apGround = [{type: "tug", id: "s1|tug|9", phase: "push", x: 50, y: 4, z: 60}, {type: "cart", id: "s1|tractor|1|c1", phase: "drive", x: 51, y: 4, z: 60},
@@ -395,6 +397,7 @@ var B = 120000*1000;
 function step(t){ NOW = t; soundStep(); return captured[captured.length - 1]; }
 var f0 = step(B + 239500), f1 = step(B + 240500), f2 = step(B + 240516);
 out.f1 = f1; out.f0horns = f0.horns.length; out.f2horns = f2.horns.length; out.madeOnce = made;
+out.works = f1.works === WORKS; out.stops = [f1.stops, f2.stops === f1.stops, stopArgs.slice()];
 out.localMs = f1.localMs - (B + 240500 + 330*60000);   // [3.23] the City's clock: Koramangala (IST)
 out.sirArgs = sirArgs[1]; out.bridgeArgs = bridgeArgs[1];
 // a hull along its keel: off the beam it is heard from abeam, ahead of the bow from the bow
@@ -685,13 +688,15 @@ class CitySound(unittest.TestCase):
 
     def test_nothing_below_the_street(self):
         u = self.o["under"]
-        self.assertEqual(u["pools"], {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": [], "gondola": [], "heli": []})
+        self.assertEqual(u["pools"], {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": [], "gondola": [], "heli": [],
+                                      "fountain": [], "construction": []})
         self.assertEqual(u["horns"], 1)
         self.assertEqual(u["dings"], 3)
         self.assertEqual(u["motors"], 1)
 
     def test_nothing_without_ears_or_volume(self):
-        empty = {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": [], "gondola": [], "heli": []}
+        empty = {"vehicle": [], "bus": [], "tram": [], "siren": [], "boat": [], "plane": [], "gondola": [], "heli": [],
+                 "fountain": [], "construction": []}
         self.assertEqual(self.o["noEars"], empty)
         self.assertEqual(self.o["noEarsSets"], 0, "no listener: no loop set, no horn, no bell (nothing would be placed)")
         self.assertEqual(self.o["mute"]["pools"], empty)
@@ -761,6 +766,11 @@ class Gather(unittest.TestCase):
         self.assertEqual(f["fountains"], [{"x": 3, "y": 1.6, "z": 4}])
         self.assertEqual([b["id"] for b in f["bells"]], ["townhall:1:bell"])
         self.assertEqual(f["bridges"], [{"id": "br"}])
+        self.assertTrue(self.o["works"], "[3.35] the roadworks near you, cityevents3d's own array")
+        stops, cached, args = self.o["stops"]
+        self.assertEqual([s["id"] for s in stops], ["s1"], "[3.35] the bus and tram stops round the ears")
+        self.assertTrue(cached, "looked up once a second, not every frame")
+        self.assertEqual(args, [[0, 0, 160], [0, 0, 160]], "160 m round the ears, at most once a second")
         self.assertFalse(f["under"])
         self.assertEqual(self.o["localMs"], 0, "the bells keep the City's wall clock (Koramangala, IST)")
         self.assertEqual(self.o["madeOnce"], 1, "one citySound, kept")

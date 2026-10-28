@@ -25,7 +25,7 @@ merges on its own and leaves the City playable:
 | 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
 | 9 | HQ spacing and movable garages | **3.33.0** (movable garages, as phase 10 here; HQ spacing left: HQs stay on their lots) |
 | 10 | Graphics pass within 1,200 / 240 draw calls | **3.34.0** (the graphics pass, as phase 11 here) |
-| S | Ambient volume slider and proximity sound (any time) | |
+| S | Ambient volume slider and proximity sound (any time) | **3.35.0** |
 
 ## Phase 1 (3.24.0)
 
@@ -648,3 +648,67 @@ for what comes next.
 | Spot | Calls before | Calls after | Triangles after |
 |---|---|---|---|
 | _TODO_ | | | |
+
+## Sound and settings (3.35.0)
+
+Most of this was already in place from Sound PR B (3.11.1 onward): the Settings slider, the spatial layer in
+`games/engine.js` and the City's voice pools in `games/hqcity3d.js` `citySound()`. This phase checks it against the
+plan, fills the gaps and pins it down with `tests/test_sound_settings_v4.py`.
+
+**Settings.** *Ambient sounds* is a 0–100 % slider (`#setAmbient`, step 5, `aria-valuetext` as a percentage, announced
+on change) in the place of the old on/off switch. It is saved in localStorage `hq_ambient` as 0..1. The old switch
+saved `"1"` for on and `"0"` for off, so it migrates without a step: on reads as 100 %, off as 0 %, and an unset or
+unreadable value as 100 %. The value is the gain of the ambient bus, which feeds the master (Game sounds) bus. A
+change glides the bus there at once, so it applies live. Thunder, rain, fireworks, jets, planes, water, fountains,
+roadworks, the civic bells and the city's hum go through it, and at 0 % none of them makes a voice at all. *NPC
+traffic* (3.28, `hq_traffic`, `HQV.cityTrafficLevel`) is unchanged.
+
+**Distance.** Each kind fades by the Web Audio "inverse" model, `ref / (ref + roll·(d − ref))`, with full volume
+inside `ref`. A taper `1 − ((d − ref)/(max − ref))²` takes it to exactly 0 at `max`, which "inverse" alone never
+reaches, and past `max` the source is not played. The engine computes this curve itself and feeds a gain and a
+`StereoPannerNode` rather than a `PannerNode`. A PannerNode never reaches 0, its listener orientation differs
+between browsers, and HRTF is costly per voice.
+
+**Panning.** The pan comes from the source's direction along the listener's right vector, scaled by `min(1, d/ref)`
+and by 0.85, so a sound is never in one ear only. The listener is set every frame from the camera's world matrix
+(or `{x, z, yaw}`).
+
+**Voice limits.** Only the nearest N of each kind play. A pool keeps the N nearest sources in fixed slots, with no
+sort and nothing made per source, and gives a playing voice a 15 % hold so voices don't flicker between two sources
+at similar distances. All pools of the same kind share its N. A one-shot over the cap steals the farthest voice, or
+is dropped if every playing voice is nearer. The caps add up to 67 voices across every kind, so a busy place costs
+the same as a quiet one. Nothing runs without a listener: the City sets none when it isn't open or is hidden.
+
+| Kind | Sources | ref (m) | max (m) | Voices | Bus |
+|---|---|---|---|---|---|
+| vehicle | NPC cars, vans, scooters, emergency runs, the cab coming to you | 5 | 120 | 6 | engine |
+| bus | NPC buses, the coach | 6 | 180 | 3 | engine |
+| tram | tram traction motors | 6 | 200 | 3 | engine |
+| train | City Line, Island Link | 12 | 400 | 2 | master |
+| metro | metro trains and stations | 10 | 250 | 2 | master |
+| boat | water buses, ferries, cruise and cargo ships | 12 | 400 | 3 | master |
+| heli | rooftop and called helicopters | 15 | 1500 | 2 | engine |
+| plane | airliners, hoppers, seaplanes, the airport stands | 40 | 2500 | 2 | ambient |
+| jet | the air base's jets | 60 | 1500 | 2 | ambient |
+| door | doors, gangways, validators, lifts; bus and tram doors at stops | 2 | 40 | 4 | master |
+| bell | tram bells, bridge warning bells, bike and lift bells | 5 | 250 | 3 | master |
+| gondola | gondola stations, bridge machinery | 6 | 120 | 2 | master |
+| construction | roadworks (new) | 10 | 200 | 2 | ambient |
+| fountain | the plaza and Base fountains | 4 | 70 | 2 | ambient |
+| water | lapping at piers, surf | 4 | 60 | 2 | ambient |
+| hum | the city's hum | 40 | 800 | 2 | ambient |
+| thunder / firework | storms, the spectacle | 100 / 40 | 1000 | 3 / 6 | ambient |
+
+**New in 3.35.0:**
+
+- **Roadworks** sound where they are. `cityevents3d.js` `sounds()` lists the roadworks that are on and built near
+  you, and the `works` loop (a compressor's thrum and a breaker's hammering) plays through a construction pool.
+- **Buses and trams at their stops.** A bus or tram that rests at a stop for 0.8 s opens its doors (`door-hiss`).
+  As it pulls away, a tram rings its bell (`tram-bell`) and a bus closes its doors. Stops are looked up once a
+  second within 160 m, and a vehicle held at a light, away from a stop, stays shut.
+- **Fountains** go through the fountain kind's pool, so its 2-voice cap holds in the City as well.
+- Construction moved to the ambient bus, since roadworks are background sound like fountains.
+
+Calm and reduced motion add nothing to this. The one exception was there before: Game sounds starts at 0 under them
+until you set a volume yourself. Master volume 0 (mute) silences everything, Ambient 0 % silences the ambient kinds,
+and UI sounds stay on the master bus.

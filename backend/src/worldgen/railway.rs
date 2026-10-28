@@ -68,6 +68,8 @@ pub struct Pier {
 /// crossing's single span).
 pub const PIER_R_CM: i64 = 100;
 pub const PIER_CLEAR_CM: i64 = 25;
+/// How far (cm) a pier keeps past the edge of any other road (a junction's turning traffic).
+pub const PIER_ROAD_CM: i64 = 300;
 const SPAN_CM: i64 = 2_750;
 const SPAN_MIN_CM: i64 = 2_500;
 const SPAN_MAX_CM: i64 = 3_000;
@@ -279,7 +281,8 @@ pub fn pier_ok(roads: &super::roads::Roads, lots: &[super::city::Lot], sites: &[
 }
 
 /// Some(true) for a pier at q in a boulevard's median, Some(false) clear of every road, lot
-/// and site, None where none may stand.
+/// and site (the transit hub's building excepted: the line leaves Central on its frame), None
+/// where none may stand.
 pub fn pier_at(roads: &super::roads::Roads, lots: &[super::city::Lot], sites: &[super::city::Site], q: P) -> Option<bool> {
     // (a boulevard's pieces are one road: the median is measured to the nearest of them)
     let mut boulevard: Option<(i64, i64)> = None;
@@ -290,7 +293,7 @@ pub fn pier_at(roads: &super::roads::Roads, lots: &[super::city::Lot], sites: &[
             if boulevard.is_none_or(|b| near < b.0) {
                 boulevard = Some((near, e.median.unwrap_or(0) / 2 - PIER_R_CM - PIER_CLEAR_CM));
             }
-        } else if near < room * room {
+        } else if near < (room + PIER_ROAD_CM) * (room + PIER_ROAD_CM) {
             return None;
         }
     }
@@ -304,7 +307,7 @@ pub fn pier_at(roads: &super::roads::Roads, lots: &[super::city::Lot], sites: &[
         let p: Vec<P> = poly.iter().map(|a| (a[0], a[1])).collect();
         !super::organic::geom::inside(q, &p) && (0..p.len()).all(|k| nearest_on(q, p[k], p[(k + 1) % p.len()]).1 >= PIER_R_CM * PIER_R_CM)
     };
-    (lots.iter().filter_map(|l| l.poly.as_deref()).all(off) && sites.iter().filter_map(|s| s.poly.as_deref()).all(off)).then_some(false)
+    (lots.iter().filter_map(|l| l.poly.as_deref()).all(off) && sites.iter().filter(|s| s.kind != "transit").filter_map(|s| s.poly.as_deref()).all(off)).then_some(false)
 }
 
 /// The City Line's piers along its track: one every `SPAN_CM` or so (`SPAN_MIN_CM` to

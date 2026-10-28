@@ -134,9 +134,10 @@ impl Band {
 /// Where a cut street ends at the boulevard's reach: its piece, which end, the point and the
 /// distance along the boulevard nearest it, and how far off the boulevard's centre it is.
 struct Stub {
-    piece: usize,
+    /// The node it ends at, and the road whose kind its join to the boulevard takes.
+    from: u32,
+    proto: Edge,
     run: usize,
-    at_b: bool,
     q: P,
     s: i64,
     off: i64,
@@ -277,16 +278,39 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                     }
                 }
                 p.push([q1.0, 0, q1.1]);
-                let k = pieces.len();
-                for (end, cutq) in [(false, (!from_a).then_some(q0)), (true, (!to_b).then_some(q1))] {
+                for (n, cutq) in [(a, (!from_a).then_some(q0)), (b, (!to_b).then_some(q1))] {
                     if let Some(q) = cutq {
                         let (run, s, d2) = band.proj(q);
-                        stubs.push(Stub { piece: k, at_b: end, q, run, s, off: super::noise::isqrt(d2) });
+                        stubs.push(Stub { from: n, proto: e.clone(), q, run, s, off: super::noise::isqrt(d2) });
                     }
                 }
                 pieces.push(Edge { id: 0, a, b, points: p, ..e.clone() });
             }
             i = j + 1;
+        }
+    }
+
+    // a node the cut left at the end of one road, which ran on into the band (its next road
+    // wholly in it, so nothing was cut at it), joins the boulevard as a cut street does
+    let mut was = vec![0u32; roads.nodes.len()];
+    for e in &roads.edges {
+        was[e.a as usize] += 1;
+        was[e.b as usize] += 1;
+    }
+    let mut now = vec![0u32; nodes.len()];
+    for e in kept.iter().chain(&pieces) {
+        now[e.a as usize] += 1;
+        now[e.b as usize] += 1;
+    }
+    for (n, &w) in was.iter().enumerate() {
+        if w >= 2 && now[n] == 1 {
+            let q = (roads.nodes[n].x, roads.nodes[n].z);
+            let (run, s, d2) = band.proj(q);
+            let reach = half + 3_000;
+            if d2 < reach * reach {
+                let proto = kept.iter().chain(&pieces).find(|e| e.a == n as u32 || e.b == n as u32).cloned().expect("a road at it");
+                stubs.push(Stub { from: n as u32, proto, q, run, s, off: super::noise::isqrt(d2) });
+            }
         }
     }
 
@@ -315,36 +339,30 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 s.clamp(0, total)
             }
         };
+        // the main roads' stubs first: each gets its junction, at any angle (the road runs on as
+        // the boulevard there), so the cars' network (traffic.js: arterials) stays whole; then the
+        // side streets', each joining a junction within GAP_CM at 45 degrees or squarer, or a new
+        // one GAP_CM clear of the rest, else ending where it was cut
+        let main = |k: usize| stubs[k].proto.class == "arterial";
         let mut order: Vec<usize> = (0..stubs.len()).filter(|&k| stubs[k].run == r).collect();
-        order.sort_by_key(|&k| (stubs[k].s, k));
-        let mut juncs: Vec<(i64, Vec<usize>)> = Vec::new();
+        order.sort_by_key(|&k| (!main(k), stubs[k].s, k));
+        let mut fixed: Vec<(i64, Vec<usize>)> = Vec::new();
         for k in order {
             let st = &stubs[k];
             let s = place(st.s);
             let square = |sj: i64| (sj - st.s).abs() <= st.off;
-            match juncs.last_mut() {
-                Some((sj, list)) if s - *sj < GAP_CM => {
-                    if square(*sj) {
-                        list.push(k);
-                    }
-                }
-                _ => {
-                    if square(s) {
-                        juncs.push((s, vec![k]));
-                    }
-                }
+            let near = fixed.iter().enumerate().filter(|(_, j)| (j.0 - s).abs() < GAP_CM).min_by_key(|(_, j)| (j.0 - s).abs()).map(|(i, _)| i);
+            match near {
+                Some(i) if main(k) || square(fixed[i].0) => fixed[i].1.push(k),
+                Some(_) => {}
+                None if main(k) || square(s) => fixed.push((s, vec![k])),
+                None => {}
             }
         }
-        // (a junction too near the next one once placed: its streets end short)
-        let mut fixed: Vec<(i64, Vec<usize>)> = Vec::new();
-        for j in juncs {
-            if fixed.last().is_none_or(|l| j.0 - l.0 >= GAP_CM) {
-                fixed.push(j);
-            }
-        }
-        // (at an end of the run one street alone would make a bend of two roads more than a
-        // class apart: it ends short instead)
-        fixed.retain(|j| (j.0 > 0 && j.0 < total) || j.1.len() >= 2);
+        fixed.sort_by_key(|j| j.0);
+        // (at an end of the run a side street alone would make a bend of two roads more than a
+        // class apart: it ends short instead; a main road meets it as an avenue)
+        fixed.retain(|j| (j.0 > 0 && j.0 < total) || j.1.len() >= 2 || j.1.iter().any(|&k| main(k)));
         let mut stops: Vec<i64> = vec![0];
         stops.extend(fixed.iter().map(|j| j.0).filter(|&s| s > 0 && s < total));
         stops.push(total);
@@ -366,10 +384,17 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
             let (jid, jq) = (at[i], line.point(stops[i]));
             for &k in list {
                 let st = &stubs[k];
-                let p = &pieces[st.piece];
-                let from = if st.at_b { p.b } else { p.a };
+                let p = &st.proto;
                 let pts = resample(&[st.q, jq], STEP_CM);
-                joins.push(Edge { id: 0, a: from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, ..p.clone() });
+                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, ..p.clone() };
+                // (a main road narrower than an avenue meets the boulevard as one: no bend of
+                // two roads more than a class apart)
+                if p.class == "arterial" && p.v4 != Some("avenue") {
+                    if let Some(av) = class("avenue") {
+                        j = Edge { width: av.total_cm, walk: av.side_cm, ..j }.classed(Some("avenue"));
+                    }
+                }
+                joins.push(j);
             }
         }
         ids.extend(at);

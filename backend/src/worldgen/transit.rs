@@ -272,10 +272,12 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>) 
         }
     }
 
-    // trams: the stops grouped by the street their doors are on
+    // trams: the stops grouped by the street their doors are on. (City Gen v4 phase 8: never a
+    // boulevard, whose median the City Line's piers stand in, until trams get their own beds)
+    let tram_street = |e: &Edge| e.class == "arterial" && e.v4 != Some("boulevard");
     let mut by_street: BTreeMap<&str, Vec<&Site>> = BTreeMap::new();
     for s in sites.iter().filter(|s| s.kind == "tramstop") {
-        if let Some(e) = net.nearest(door(s), |e| e.class == "arterial") {
+        if let Some(e) = net.nearest(door(s), tram_street) {
             by_street.entry(e.name.as_str()).or_default().push(s);
         }
     }
@@ -295,7 +297,7 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>) 
             order.push(left.remove(k));
         }
         let on_street = |e: &Edge| e.name == name;
-        let tram = |e: &Edge| (e.class == "arterial").then_some(if e.name == name { 1000 } else { 4000 });
+        let tram = |e: &Edge| tram_street(e).then_some(if e.name == name { 1000 } else { 4000 });
         let calls: Vec<Call> = order.iter().filter_map(|s| net.nearest(door(s), on_street)).map(|e| Call::Street(e.a, e.b)).collect();
         let via = net.via(&calls);
         lines.push(Line {

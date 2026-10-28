@@ -6085,7 +6085,20 @@ function mount(el, api){
     if(++S.frames < 30) return;
     // cam=map: the labels hud mounts and counts on later frames; on a slow CI box 30 frames can pass first
     // (the "drew no labels ({})" flake), so wait for a count, up to ~900 frames
-    if(S.cam === "map" && S.frames < 900){ var lc = hud && hud.labelCounts ? hud.labelCounts() : null; if(!lc || !(lc.roads > 0 && lc.hqs > 0 && lc.peers > 0)) return; }
+    if(S.cam === "map" && S.frames < 900){
+      var lc = hud && hud.labelCounts ? hud.labelCounts() : null;
+      if(!lc || !(lc.roads > 0 && lc.hqs > 0 && lc.peers > 0)){
+        // the friend's tag gives way to any HQ name or shield over it (City Gen v4 rings the plaza with
+        // HQs): with the other labels in and still no friend, move it out along a spiral and look again
+        if(lc && lc.roads > 0 && lc.hqs > 0 && S.frames % 20 === 0){
+          S.hop = (S.hop || 0) + 1;
+          var rr = 60 * Math.ceil(S.hop / 8), aa = S.hop * Math.PI / 4;
+          S.peer.x = Math.round((avatar.x + rr*Math.cos(aa))*100); S.peer.z = Math.round((avatar.z + rr*Math.sin(aa))*100);
+          inst.setPeers(lastPeers);
+        }
+        return;
+      }
+    }
     S.done = true;
     try { document.documentElement.dataset.hqSmoke = "ok " + JSON.stringify(smokeStats()); } catch(e){ smokeErr(e); }
   }

@@ -129,14 +129,19 @@ fn trams(l: &Layers, out: &mut Vec<Violation>) {
                 soft.push(Violation { rule: "tram-station", hard: false, what: format!("{}: {} is a stop at the kerb, no room for a platform", line.id, s.id), at: [c.0, c.1] });
                 continue;
             }
-            // straight: its track beside it within the bow of the platform's axis
-            let chord = super::lines::dist(ends.0, ends.1).max(1);
-            let near: Vec<P> = pts.iter().copied().filter(|&q| seg_dist2(q, q, ends.0, ends.1) < 1_500 * 1_500).collect();
-            let bent = near.iter().any(|&q| {
-                let cross = ((q.0 - ends.0 .0) as i128 * (ends.1 .1 - ends.0 .1) as i128 - (q.1 - ends.0 .1) as i128 * (ends.1 .0 - ends.0 .0) as i128).abs() / chord as i128;
-                let along = ((q.0 - ends.0 .0) as i128 * (ends.1 .0 - ends.0 .0) as i128 + (q.1 - ends.0 .1) as i128 * (ends.1 .1 - ends.0 .1) as i128) / chord as i128;
-                along > 0 && along < chord as i128 && (cross - near_off(&near, ends)).abs() > PLATFORM_BOW_CM as i128 + 50
-            });
+            // straight: the track along its 40 m (measured along the track from the point nearest
+            // the platform) within the bow of the chord
+            let mut at = vec![0i64; pts.len()];
+            for k in 1..pts.len() {
+                at[k] = at[k - 1] + super::lines::dist(pts[k - 1], pts[k]);
+            }
+            let mid = (0..pts.len()).min_by_key(|&k| super::lines::dist(pts[k], c)).map_or(0, |k| at[k]);
+            let span: Vec<P> = (0..pts.len()).filter(|&k| (at[k] - mid).abs() <= s.w / 2).map(|k| pts[k]).collect();
+            let bent = span.len() >= 3 && {
+                let (a, b) = (span[0], span[span.len() - 1]);
+                let chord = super::lines::dist(a, b).max(1) as i128;
+                span.iter().any(|&q| ((q.0 - a.0) as i128 * (b.1 - a.1) as i128 - (q.1 - a.1) as i128 * (b.0 - a.0) as i128).abs() / chord > PLATFORM_BOW_CM as i128 + 50)
+            };
             if bent {
                 put(format!("{} on a bend", s.id), c);
             }
@@ -156,18 +161,6 @@ fn trams(l: &Layers, out: &mut Vec<Violation>) {
         }
     }
     out.extend(soft);
-}
-
-/// The track's usual distance (cm) from a platform's axis (an island 0, a kerb's platform
-/// beside it), from the points near it: the median of their offsets.
-fn near_off(near: &[P], ends: (P, P)) -> i128 {
-    let chord = super::lines::dist(ends.0, ends.1).max(1) as i128;
-    let mut offs: Vec<i128> = near
-        .iter()
-        .map(|q| ((q.0 - ends.0 .0) as i128 * (ends.1 .1 - ends.0 .1) as i128 - (q.1 - ends.0 .1) as i128 * (ends.1 .0 - ends.0 .0) as i128).abs() / chord)
-        .collect();
-    offs.sort();
-    offs.get(offs.len() / 2).copied().unwrap_or(0)
 }
 
 /// Phase 8: the viaducts' piers, where they stand and how far apart.

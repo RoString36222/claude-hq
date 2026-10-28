@@ -348,8 +348,21 @@ const RUN_ON_CM: i64 = 100_000;
 /// Run a line's path on at each end along its own street (`own`) to the nearest junction within
 /// `RUN_ON_CM`, if there is one.
 fn run_on(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>, main: &impl Fn(&Edge) -> Option<i64>) {
+    // (no there-and-back spur: a tram reverses only at its ends)
+    let mut k = 1;
+    while k + 1 < path.len() {
+        if path[k - 1] == path[k + 1] {
+            path.drain(k..k + 2);
+            k = k.saturating_sub(1).max(1);
+        } else {
+            k += 1;
+        }
+    }
     run_on_by(net, path, own);
     run_on_by(net, path, main);
+    // (a main road that runs on as a side street: on along that, the tram in its lanes)
+    let town = |e: &Edge| (!is_graded(e.class) && e.v4.is_some() && e.under.is_none() && !matches!(e.v4, Some("boulevard") | Some("ramp") | Some("flyover") | Some("expressway"))).then_some(1000);
+    run_on_by(net, path, &town);
 }
 
 fn run_on_by(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>) {

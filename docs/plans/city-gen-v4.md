@@ -617,12 +617,6 @@ trees, so the phase adds no draw calls. A @1 or @2 doc builds byte-identically.
 - **The tunnel:** its ceiling lights are luminaires, and its walls are panelled over a drain. The cuttings get a
   plinth, panels, a kerb and drain at the foot, and wall lights that come on at night.
 
-
-- **Road markings:** _TODO_ (`worldgeom.js`)
-- **Median planting:** _TODO_ (`worldgeom.js`)
-- **Deck and viaduct detail:** _TODO_ (`worldgeom.js`, `hqcityrail.js`)
-- **Lighting:** _TODO_
-
 ### Results
 
 With the detail in, under SwiftShader:
@@ -644,10 +638,6 @@ With the detail in, under SwiftShader:
 The busiest frame uses 54 % of the surface budget and the metro 20 % of the one below the street: the room is
 for what comes next.
 
-
-| Spot | Calls before | Calls after | Triangles after |
-|---|---|---|---|
-| _TODO_ | | | |
 
 ## Sound and settings (3.35.0)
 

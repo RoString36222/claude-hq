@@ -111,7 +111,7 @@ mod junctions {
     fn road(id: u32, a: u32, b: u32, class: &'static str, name: &str, pts: [(i64, i64); 2]) -> Edge {
         Edge {
             id, a, b, class: if matches!(class, "avenue" | "boulevard") { "arterial" } else { "local" }, width: 1_200, walk: 250, lanes: 1, route: None, name: name.to_string(),
-            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None,
+            points: pts.iter().map(|p| [p.0, 0, p.1]).collect(), min_tier: None, bridge: None, v4: None, median: None, oneway: None,
         }
         .classed(Some(class))
     }
@@ -194,5 +194,89 @@ mod junctions {
         let mut r = star(["avenue", "collector", "local"], 6_000, three);
         r.junctions(&tram, &[]);
         assert_eq!(r.nodes[0].junction, Some("signals"));
+    }
+}
+
+/// Phase 6: a trumpet where each highway meets the ring and one fits (interchange.rs).
+mod interchanges {
+    use super::super::interchange::{sim_lanes, LIFT_CM, MAX_PM};
+    use super::super::roads::{deck_road, path_len, Edge};
+    use super::*;
+
+    fn at(r: &roads::Roads, n: u32) -> Vec<&Edge> {
+        r.edges.iter().filter(|e| e.a == n || e.b == n).collect()
+    }
+
+    #[test]
+    fn the_commons_ring_and_highways_are_expressways_with_trumpets() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        for e in r.edges.iter().filter(|e| roads::is_graded(e.class) && !deck_road(e)) {
+            assert_eq!((e.v4, e.width, e.walk, e.median), (Some("expressway"), 2_900, 0, Some(300)), "{} {}", e.id, e.name);
+        }
+        let stems: Vec<&Edge> = r.edges.iter().filter(|e| e.v4 == Some("flyover")).collect();
+        assert!(stems.len() >= 3, "{} trumpets", stems.len());
+        for s in stems {
+            // the flyover runs from its foot N (the highway and two slip roads) to T (the loop and the ramp round it)
+            let (foot, top) = if at(r, s.b).iter().all(|e| deck_road(e)) { (s.a, s.b) } else { (s.b, s.a) };
+            let (nf, nt) = (at(r, foot), at(r, top));
+            assert_eq!(nf.len(), 4, "N: the highway, the flyover, two slip roads");
+            assert_eq!(nf.iter().filter(|e| e.v4 == Some("expressway")).count(), 1);
+            assert_eq!(nt.len(), 3, "T: the flyover, the loop and the westbound ramp");
+            assert!(nt.iter().filter(|e| e.v4 == Some("ramp")).all(|e| e.oneway == Some(true)));
+            assert_eq!(s.oneway, None, "the flyover runs both ways");
+            for n in [foot, top] {
+                assert_eq!(r.nodes[n as usize].junction, Some("ramps"));
+            }
+            // its deck 7 m over the ring it crosses
+            let deck = r.nodes[top as usize].y;
+            let crossed = r.edges.iter().filter(|e| e.class == "ring").flat_map(|e| e.points.iter()).filter(|q| s.points.iter().any(|p| (p[0] - q[0]).pow(2) + (p[2] - q[2]).pow(2) < 1_500i64.pow(2)));
+            let ring_y = crossed.map(|q| q[1]).max().expect("the flyover crosses the ring");
+            assert!(deck - ring_y >= LIFT_CM, "{} m over the ring", (deck - ring_y) / 100);
+        }
+    }
+
+    #[test]
+    fn every_ramp_junction_has_as_many_lanes_in_as_out_and_no_ramp_is_steep() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        for n in r.nodes.iter().filter(|n| n.junction == Some("ramps")) {
+            let (mut i, mut o) = (0, 0);
+            for e in at(r, n.id) {
+                let k = sim_lanes(e);
+                let one = e.oneway == Some(true);
+                if e.b == n.id || !one {
+                    i += k;
+                }
+                if e.a == n.id || !one {
+                    o += k;
+                }
+            }
+            assert_eq!(i, o, "node {}", n.id);
+        }
+        for e in r.edges.iter().filter(|e| deck_road(e)) {
+            let rise = (e.points[0][1] - e.points[e.points.len() - 1][1]).abs();
+            assert!(rise * 1000 <= MAX_PM * path_len(&e.points), "{} {}", e.id, e.name);
+        }
+    }
+
+    #[test]
+    fn the_ring_between_a_trumpets_ramps_has_a_lane_fewer() {
+        let w = commons3();
+        let r = &w.layers.roads;
+        let ramps = |n: u32| r.nodes[n as usize].junction == Some("ramps");
+        // (one under each flyover; between two trumpets the ring keeps its three)
+        let mids: Vec<&Edge> = r.edges.iter().filter(|e| e.class == "ring" && e.lanes == 2).collect();
+        assert_eq!(mids.len(), r.edges.iter().filter(|e| e.v4 == Some("flyover")).count());
+        assert!(mids.iter().all(|e| ramps(e.a) && ramps(e.b)));
+        assert!(r.edges.iter().filter(|e| e.class == "ring" && e.lanes != 2).all(|e| e.lanes == 3));
+    }
+
+    #[test]
+    fn a_trumpet_is_the_same_on_every_run() {
+        let a = generate("v4seed9@3", &[]).unwrap();
+        let b = generate("v4seed9@3", &[]).unwrap();
+        assert_eq!(a.hashes.roads, b.hashes.roads);
+        assert!(a.layers.roads.edges.iter().any(|e| e.v4 == Some("flyover")) || a.layers.roads.edges.iter().all(|e| e.v4 != Some("ramp")));
     }
 }

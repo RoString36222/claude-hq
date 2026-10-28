@@ -29,8 +29,11 @@ var doc = JSON.parse(zlib.gunzipSync(fs.readFileSync(FIX + "claude-hq@3.json.gz"
 var widths = {};
 doc.layers.roads.edges.forEach(function(e){ if(e["class"] === "local" || e["class"] === "arterial") (widths[e["class"]] = widths[e["class"]] || {})[e.width] = 1; });
 var L = T.lanes(WD.pack(doc), 5), out = {widths: {local: Object.keys(widths.local).map(Number), arterial: Object.keys(widths.arterial).map(Number)}, two: 0, onLine: 0, cars: 0};
+// ([3.29] an expressway, ramp or flyover lays its lanes LANE_W out from its median: tests/test_interchange_traffic.py)
+var xway = {};
+doc.layers.roads.edges.forEach(function(e){ if(e.v4 === "expressway" || e.v4 === "ramp" || e.v4 === "flyover") xway[e.id] = 1; });
 L.forEach(function(e){
-  if(!e.cars || e.tram || e.bus[0] || e.bus[1]) return;
+  if(!e.cars || e.tram || e.bus[0] || e.bus[1] || xway[e.id]) return;
   out.cars++;
   var n = Math.max(1, Math.min(3, Math.floor(e.half/3.3)));
   if(n >= 2){ out.two++; for(var k = 1; k < n; k++) if(Math.abs(e.carOff - e.half*k/n) < 1.0) out.onLine++; }

@@ -279,6 +279,11 @@ impl River {
         self.bank.holds(q) || self.pools.iter().any(|z| z.1.holds(q))
     }
 
+    /// Is q on a lake's or the marina's water or bank (@3: the pools)?
+    pub fn pool_zone(&self, q: P) -> bool {
+        self.pools.iter().any(|z| z.1.holds(q))
+    }
+
     /// Is q on the water (from @3: any body's)?
     pub fn wet(&self, q: P) -> bool {
         self.water.holds(q) || self.in_pool(q)

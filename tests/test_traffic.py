@@ -415,7 +415,7 @@ class Traffic(unittest.TestCase):
         v = self.r["view"]
         self.assertTrue(v["instanced"])
         self.assertEqual(v["carCount"], min(v["cap"], v["n"]["car"]))
-        self.assertEqual(v["n"]["car"], 200, "up to 200 cars drawn")
+        self.assertEqual(v["n"]["car"], 320, "up to 320 cars drawn ([3.29] the expressways' lanes hold more)")
         self.assertLessEqual(v["calls"], 12, "a draw call per body kind, not per car")
         self.assertEqual(sum(v["n"][k] for k in ("fire", "ambulance", "police")), 1)
         self.assertEqual(v["n"]["beacon"], 2, "an emergency vehicle has its light bar")

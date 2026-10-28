@@ -31,7 +31,8 @@ function doc(p){ return JSON.parse(zlib.gunzipSync(fs.readFileSync(FIX + p)).toS
 // a v4-shaped world: v4's class names (and their tram versions) on @3's roads
 const V4 = {local: ["lane", "local street", "collector", "shared street", "service road", "local street + tram"],
             arterial: ["avenue", "boulevard", "boulevard + tram", "avenue_tram"], highway: ["highway", "expressway"], ring: ["expressway"]};
-function v4(d){ d.layers.roads.edges.forEach(function(e, i){ const o = V4[e["class"]]; if(o) e["class"] = o[i %% o.length]; }); return d; }
+// ([3.29] not the roads the generator already classes as expressways, ramps and flyovers: the interchanges keep theirs)
+function v4(d){ d.layers.roads.edges.forEach(function(e, i){ const o = V4[e["class"]]; if(o && !e.v4) e["class"] = o[i %% o.length]; }); return d; }
 const SRC = {commons: function(){ return doc("claude-hq@3.json.gz"); }, island: function(){ return doc("island@3.json.gz"); }, v4: function(){ return v4(doc("claude-hq@3.json.gz")); }};
 const FAST = {expressway: 1, ring: 1, ramp: 1, flyover: 1, underpass: 1};
 const DAY = Date.UTC(2026, 9, 27, 10), NIGHT = Date.UTC(2026, 9, 27, 3);
@@ -41,11 +42,13 @@ function boxes(list){
   const b = [];
   list.forEach(function(v){
     const S0 = T.SPEC[v.type] || T.SPEC[v.kind], S = S0 && S0.len < T.SPEC.car.len ? S0 : T.SPEC.car;
-    if(v.kind === "car") b.push({id: v.id, x: v.x, z: v.z, yaw: v.yaw, len: S.len, wid: S.wid});
+    if(v.kind === "car") b.push({id: v.id, x: v.x, y: v.y, z: v.z, yaw: v.yaw, len: S.len, wid: S.wid});
   });
   return b;
 }
 function overlap(a, b){
+  // ([3.29] a car on a flyover over one on the road it crosses: 7 m apart, not touching)
+  if(Math.abs((a.y || 0) - (b.y || 0)) > 3) return false;
   const ax = [Math.sin(a.yaw), Math.cos(a.yaw)], ay = [ax[1], -ax[0]], bx = [Math.sin(b.yaw), Math.cos(b.yaw)], by = [bx[1], -bx[0]];
   const d = [b.x - a.x, b.z - a.z], axes = [ax, ay, bx, by];
   function r(u, x, y, Ln, Wd){ return Math.abs(x[0]*u[0] + x[1]*u[1])*Ln/2 + Math.abs(y[0]*u[0] + y[1]*u[1])*Wd/2; }

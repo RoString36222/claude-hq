@@ -76,6 +76,10 @@ pub struct Edge {
     /// City Gen v4: the median between the two directions (cm), where it has one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub median: Option<i64>,
+    /// City Gen v4 (phase 6, @3): Some(true) on a road traffic drives one way, from a to b
+    /// (an interchange's ramps). `lanes` then counts its lanes that way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oneway: Option<bool>,
 }
 
 impl Edge {
@@ -158,7 +162,14 @@ impl Roads {
             if es.len() < 3 {
                 continue;
             }
-            if es.iter().any(|&k| self.edges[k].v4.is_none()) {
+            // (phase 6: where an interchange's ramps meet, they merge and diverge: no control)
+            if es.iter().any(|&k| deck_road(&self.edges[k])) {
+                out.insert(n, "ramps");
+                continue;
+            }
+            // (and no lights or roundabouts on an expressway: where one still meets a road at grade, a ring junction no
+            // trumpet fits or a highway's end in town, it is as before, no control)
+            if es.iter().any(|&k| self.edges[k].v4.is_none() || self.edges[k].v4 == Some("expressway")) {
                 continue;
             }
             // the roads that meet: a street running on through the junction is one road (its arms share a name),
@@ -339,10 +350,11 @@ pub fn fillet_bends(nodes: &mut [Node], edges: &mut [Edge]) {
 /// City Gen v4 (phase 4): a graded road's centre line, smoothed: the A* path's 45 degree
 /// steps eased by a moving average (three passes over 4 points each side, the window
 /// shrinking toward the ends, which stay put), then sampled every 4 m. Where a smoothed
-/// step is `bad` (meets what the road must keep off) and the path's own step there was not,
+/// step is `bad` (meets what the road must keep off: a bit per thing) and the path's own
+/// step there did not meet that thing,
 /// the path's points come back over 5 steps either side, until none is. None when there is
-/// nothing to smooth.
-pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> bool) -> Option<Vec<[i64; 3]>> {
+/// nothing to smooth, or the reverts never settle (16 rounds).
+pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> u8) -> Option<Vec<[i64; 3]>> {
     let n = points.len();
     if n < 5 {
         return None;
@@ -362,9 +374,9 @@ pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> 
             p[i] = (sx / c, sz / c);
         }
     }
-    let was: Vec<bool> = (0..n - 1).map(|i| bad(o[i], o[i + 1])).collect();
+    let was: Vec<u8> = (0..n - 1).map(|i| bad(o[i], o[i + 1])).collect();
     for _ in 0..16 {
-        let worse: Vec<usize> = (0..n - 1).filter(|&i| !was[i] && bad(p[i], p[i + 1])).collect();
+        let worse: Vec<usize> = (0..n - 1).filter(|&i| bad(p[i], p[i + 1]) & !was[i] != 0).collect();
         if worse.is_empty() {
             break;
         }
@@ -373,7 +385,8 @@ pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> 
             p[lo..=hi].copy_from_slice(&o[lo..=hi]);
         }
     }
-    if p == o {
+    // (a stretch the reverts could not settle keeps the path)
+    if p == o || (0..n - 1).any(|i| bad(p[i], p[i + 1]) & !was[i] != 0) {
         return None;
     }
     // every 4 m along it, the ends exact
@@ -400,6 +413,11 @@ pub fn smooth_path(points: &[[i64; 3]], bad: impl Fn((i64, i64), (i64, i64)) -> 
 /// The length (cm) of a centre line.
 pub fn path_len(points: &[[i64; 3]]) -> i64 {
     points.windows(2).map(|w| isqrt((w[1][0] - w[0][0]).pow(2) + (w[1][2] - w[0][2]).pow(2))).sum()
+}
+
+/// City Gen v4 (phase 6): an interchange's flyover or ramp, seated by interchange::seat.
+pub fn deck_road(e: &Edge) -> bool {
+    matches!(e.v4, Some("ramp") | Some("flyover"))
 }
 
 /// Highways and the ring are graded (cut and filled to `country_grade_pm`).
@@ -476,7 +494,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
@@ -623,16 +641,21 @@ pub fn graded<'a>(
     if p.v4 {
         for e in graded.iter_mut() {
             let ring = e.class == "ring";
+            // (one bit per thing kept off: a path's step near a block excuses no step into the claim)
             let bad = |a: (i64, i64), b: (i64, i64)| {
-                keep.rects.iter().any(|(r, _)| !clear_of(a, b, *r, keep.clear))
-                    || keep.claimed(a, b, ring)
-                    || river.is_some_and(|r| r.zone(a) || r.zone(b))
-                    || (ring && [a, b].iter().any(|q| q.0 * q.0 + q.1 * q.1 > out_r.saturating_mul(out_r)))
+                keep.rects.iter().any(|(r, _)| !clear_of(a, b, *r, keep.clear)) as u8
+                    | (keep.claimed(a, b, ring) as u8) << 1
+                    | (river.is_some_and(|r| r.zone(a) || r.zone(b)) as u8) << 2
+                    | ((ring && [a, b].iter().any(|q| q.0 * q.0 + q.1 * q.1 > out_r.saturating_mul(out_r))) as u8) << 3
             };
             if let Some(pts) = smooth_path(&e.points, bad) {
-                e.points = pts;
+                    e.points = pts;
             }
         }
+    }
+    // City Gen v4 (phase 6): the ring and the highways are expressways (the profile's 29 m)
+    if p.v4 {
+        graded = graded.into_iter().map(|e| e.classed(Some("expressway"))).collect();
     }
     edges.extend(match river {
         Some(r) => bridged(nodes, base, graded, r),
@@ -694,7 +717,7 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
-        min_tier: None, bridge: None, v4: None, median: None,
+        min_tier: None, bridge: None, v4: None, median: None, oneway: None,
     }
 }
 
@@ -932,10 +955,44 @@ impl Roads {
     /// A bridge is level, its deck a metre over the higher bank; a city street meeting
     /// one ramps up to it (`lift`).
     pub fn seat(&mut self, t: &Terrain, p: &Profile) -> Result<(), String> {
+        // (an interchange's flyover that would climb too steeply from its foot, where the ring
+        // under it is graded higher than the land: its foot is raised and the roads seated again)
+        let raise = self.seat_with(t, p, &[])?;
+        if !raise.is_empty() {
+            self.seat_with(t, p, &raise)?;
+        }
+        Ok(())
+    }
+
+    fn seat_with(&mut self, t: &Terrain, p: &Profile, raise: &[(u32, i64)]) -> Result<Vec<(u32, i64)>, String> {
         for n in &mut self.nodes {
             n.y = t.height_at(n.x, n.z);
         }
         self.lift();
+        super::interchange::raise_feet(self, t);
+        for &(n, y) in raise {
+            self.nodes[n as usize].y = self.nodes[n as usize].y.max(y);
+        }
+        // two junctions of graded roads too close for the grade between them (a short piece
+        // across a slope) meet each other halfway: their heights move together until the
+        // piece can climb the rest (9/10 of its grade, end to end). Never on a valid world's
+        // pieces, which already can
+        for _ in 0..8 {
+            let mut moved = false;
+            for e in self.edges.iter().filter(|e| is_graded(e.class) && e.bridge.is_none() && !deck_road(e)) {
+                let most = path_len(&e.points) * p.country_grade_pm / 1000 * 9 / 10;
+                let (ya, yb) = (self.nodes[e.a as usize].y, self.nodes[e.b as usize].y);
+                if (yb - ya).abs() > most {
+                    let half = ((yb - ya).abs() - most + 1) / 2 * (yb - ya).signum();
+                    self.nodes[e.a as usize].y += half;
+                    self.nodes[e.b as usize].y -= half;
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
         let mut degree = vec![0usize; self.nodes.len()];
         let mut deck = vec![false; self.nodes.len()];
         for e in &self.edges {
@@ -947,6 +1004,10 @@ impl Roads {
             }
         }
         for e in &mut self.edges {
+            // (an interchange's flyover and ramps: interchange::seat, once the ring is seated)
+            if deck_road(e) {
+                continue;
+            }
             let len = e.points.len();
             let (ya, yb) = (self.nodes[e.a as usize].y, self.nodes[e.b as usize].y);
             let raw: Vec<i64> = e.points.iter().map(|q| t.height_at(q[0], q[2])).collect();
@@ -989,9 +1050,9 @@ impl Roads {
                     climb
                 };
                 let mut climb = budget(fa, fb);
-                // a short piece between two junctions a river's bridges lifted apart climbs
-                // its whole length (no world without a bridge has one)
-                if (yb - ya).abs() > climb[len - 1] && deck.iter().any(|&d| d) {
+                // a short piece between two junctions a river's bridges (or a slope) lifted
+                // apart climbs its whole length
+                if (yb - ya).abs() > climb[len - 1] {
                     climb = budget(0, 0);
                 }
                 let (total, most) = (at[len - 1], climb[len - 1]);
@@ -1023,7 +1084,7 @@ impl Roads {
             e.points[0][1] = ya;
             e.points[len - 1][1] = yb;
         }
-        Ok(())
+        Ok(super::interchange::seat(self, t))
     }
 
     /// Bridges: each deck a metre over the higher of its banks (the ground at its ends),
@@ -1086,12 +1147,19 @@ impl Roads {
     /// height at the terrain's vertices, blending over a shoulder either side, so the
     /// ground under a road follows the road. The road's surface is still its centre
     /// line: between vertices the bilinear ground can differ from it. Never under a
-    /// bridge: the river runs on beneath it.
-    pub fn carve(&self, t: &mut Terrain) {
+    /// bridge: the river runs on beneath it; never on the water (`wet`: a 29 m expressway's
+    /// shoulder can reach past a lake's bank).
+    pub fn carve(&self, t: &mut Terrain, wet: impl Fn((i64, i64)) -> bool) {
+        // (each vertex's wetness asked once: 0 not yet, 1 dry, 2 wet)
+        let mut seen = vec![0u8; t.n * t.n];
         for e in self.edges.iter().filter(|e| e.bridge.is_none()) {
             let reach = e.width / 2 + SHOULDER_CM;
             for q in e.points.windows(2) {
                 let (a, b) = (q[0], q[1]);
+                // (nor under a flyover or ramp's deck: the land runs on beneath it)
+                if super::interchange::elevated(e, &a, t) || super::interchange::elevated(e, &b, t) {
+                    continue;
+                }
                 let (lo, hi) = (t.vertex_of(a[0].min(b[0]) - reach, a[2].min(b[2]) - reach), t.vertex_of(a[0].max(b[0]) + reach, a[2].max(b[2]) + reach));
                 let (dx, dz) = (b[0] - a[0], b[2] - a[2]);
                 let l2 = (dx * dx + dz * dz).max(1);
@@ -1108,6 +1176,12 @@ impl Roads {
                         let road_y = a[1] + (b[1] - a[1]) * f / ONE;
                         let w = if d <= e.width / 2 { ONE } else { smoothstep(ONE - (d - e.width / 2) * ONE / SHOULDER_CM) };
                         let k = iz * t.n + ix;
+                        if seen[k] == 0 {
+                            seen[k] = if wet((vx, vz)) { 2 } else { 1 };
+                        }
+                        if seen[k] == 2 {
+                            continue;
+                        }
                         let h = t.heights[k] as i64;
                         t.heights[k] = (h + (road_y - h) * w / ONE) as i32;
                     }
@@ -1315,7 +1389,11 @@ fn route(
             if inside {
                 step += len * 20;
             }
-            // across a river, not along it: every step on its water or bank is dear
+            // never into a lake or the marina, or on its bank (City Gen v4: an expressway's carving would reach
+            // its water); across a river, not along it: every step on its water or bank is dear
+            if p.v4 && river.is_some_and(|r| r.pool_zone((wx, wz))) {
+                continue;
+            }
             if river.is_some_and(|r| r.zone((wx, wz))) {
                 step += len * 30;
             }

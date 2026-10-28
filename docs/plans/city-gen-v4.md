@@ -20,7 +20,7 @@ merges on its own and leaves the City playable:
 | 3 | Junctions by road pair: give-way, roundabouts, signals as generator data | **3.26.0** |
 | 4 | Curved roads: arcs, minimum radii by design speed | **3.27.0** |
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | **3.28.0** |
-| 6 | Flyovers, underpasses and interchanges; road tunnels | |
+| 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges; tunnels next) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | |
 | 8 | Trams on any road class, with stations | |
 | 9 | HQ spacing and movable garages | |
@@ -338,3 +338,42 @@ cap trims only one short, dense loop by the lights.
 | 100 % | 191 | 179 |
 
 Before this phase the Commons had 172 cars. The new cap trims one loop by 5.
+
+## Phase 6 (3.29.0): expressways and trumpet interchanges
+
+- **Expressways:** the ring and the highways are `v4: "expressway"`: 29 m, three lanes each way, a 3 m barrier median
+  and 2.5 m shoulders. They are routed with that width (profile `ring_cm`/`highway_cm`) and never into a lake's or the
+  marina's bank (the carving of a 29 m road would reach the water).
+- **Trumpets (`backend/src/worldgen/interchange.rs`):** where a highway meets the ring and one fits, a trumpet
+  replaces the junction, laid on the base terrain in the ring's frame. Points sit along the ring's eased line and out
+  along its normal at the junction, so the stretches beside the ring follow its curve and the loop keeps its shape.
+  - **The flyover:** the highway's last stretch (`v4: "flyover"`, a lane each way) climbs at up to 5.5 % to a deck
+    7 m (5.5 m clear + 1.5 m deck) over the ring.
+  - **Four one-way ramps** (`v4: "ramp"`, `oneway: true`):
+    - two slip roads on the city side;
+    - a 30 m loop off the deck to the ring's outer kerb, passing under the flyover;
+    - a ramp round the loop, climbing to the flyover's top end T.
+  - **Lane balance:** every ramp junction (`junction: "ramps"`) has as many of the sim's lanes in as out. An
+    expressway's sim lanes are its lanes less the one by the median. The ring has a lane fewer each way between a
+    trumpet's two ramp junctions.
+  - **Heights:** come in `seat`, a second pass raising a flyover's foot on an embankment where the graded ring is higher
+    than the land. Land under a deck is not carved.
+  - **No trumpet** where the coast, a lake or the river, a block, the airport's claim, another road, a bridge or another
+    junction is in the way; where the ring is too curved; or where the highway is too short or meets at an angle.
+- **Validator:** `ramps`, `deck-grade` (6 %) and `clearance` (7 m under every deck) are hard rules; `road-overlap` lists
+  roads crossing at grade with no junction. Expressway junctions still at grade have no control (no lights on an
+  expressway).
+- **Client:**
+  - `world.js`: stacked surfaces. `groundAt`, `roadY`, `surfaceAt`, `nearestRoad` and `blockedAt` take the height of
+    whatever stands there; `decksOf` and `piersOf`. `hqcity3d.js` passes the avatar's height for points near it.
+  - `worldgeom.js`: decks, parapets, piers, retaining walls, expressway lane lines and barrier.
+  - `traffic.js`: several lanes a way, one-way ramps, lanes paired by where they end.
+  - `npcsim.js` and `hqnav.js`: route one way on the ramps.
+
+| | Commons | 50 seeds + the Commons |
+|---|---|---|
+| Trumpets | 3 of 6 junctions | 70 of 296 |
+| Cars at the usual setting | 292 (167 before) | — |
+
+Most junctions left at grade have a highway that is too short or meets the ring at an angle (91), or another junction
+or a bridge too close on the ring (63). A later layout phase (or tunnels) can take more of them.

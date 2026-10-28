@@ -20,6 +20,7 @@
  *             sea level in the mounted ocean's calm material (games/ocean.js riverMaterial()), else the plane's
  *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`);
  *             opts.gap leaves every bridge's pieces over the water out (games/hqbridges.js draws opening spans there)
+ *             (HQ 3.29: an interchange's decks, parapets, piers and the T's slab ride in the same mesh: 1 per tile they cross)
  *   water     (@3 docs with Layers.water) world-wide: every lake, canal and the marina as one mesh (worldgeom waterGeo) in
  *             the river's calm material (games/ocean.js riverMaterial(); the lakes in its calm lake variant: aLake = 1,
  *             smaller ripples and more of the sky), quays, the breakwater, lily pads and reeds as one vertex-coloured

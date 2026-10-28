@@ -42,6 +42,11 @@
  *                         flat roof gets its clutter (AC units, a stair housing, an antenna, a homes' water tank)
  *   props.furniture       HQV.cityLife.furniture on the ground: [{kind, x, y, z, yaw, c? (a stall's canopy, a cafe
  *                         table's parasol: rgb 0..1)}]
+ * HQ 3.29 (City Gen v4 phase 6) interchanges: a flyover's or ramp's elevated stretches are decks (deckTile: parapets, slab
+ *                       and fascias on HQV.world.piersOf's piers, or a solid body where low; the T's slab; all in `bridge`),
+ *                       no verge walls under them, terrain never raised to them (the ground there is HQV.world.groundAt's,
+ *                       never the deck), no prop on or under one; ramps marked one way, the flyover with a centre line,
+ *                       expressways with traffic.js's 3.5 m lanes and a crash barrier on the median; they are no route
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -208,6 +213,9 @@ function prep(W){
     if(e.bridge) o.bridge = true;
     // City Gen v4: its class, lanes each way, the median's half width (m)
     if(e.v4){ o.v4 = e.v4; o.lanes = Math.max(1, e.lanes|0); o.med = (e.median || 0)/200; }
+    // City Gen v4 phase 6: an interchange's flyover or ramp (decks where it is elevated), a one-way ramp
+    if(e.v4 === "flyover" || e.v4 === "ramp") o.deck = true;
+    if(e.oneway) o.oneway = true;
     E.push(o); byId[o.id] = o;
     (inc[e.a] = inc[e.a] || []).push({E: o, end: 0});
     (inc[e.b] = inc[e.b] || []).push({E: o, end: 1});
@@ -232,7 +240,8 @@ function prep(W){
     });
     arms.sort(function(p, q){ return p.yaw - q.yaw || p.E.id - q.E.id; });
   });
-  var cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, props: null, routes: null, segs: null};
+  var cache = {nodes: nodes, inc: inc, E: E, byId: byId, nodeIds: nodeIds, props: null, routes: null, segs: null,
+               deck: E.some(function(o){ return o.deck; })};
   CACHES.push({W: W, C: cache});
   return cache;
 }
@@ -292,21 +301,22 @@ function stations(E, s0, s1){
 function gY(W, x, z){ var Q = WQ(); return Q.streetAt ? Q.streetAt(W, x, z) : Q.groundAt(W, x, z); }
 // HQV.world.roadY at the vertex itself, moved onto the carriageway (walk false) or the sidewalk (walk true):
 // roadY adds 0.15 where the point is sidewalk, so only the kerb step is corrected
-function ySurf(W, x, z, walk){
-  var Q = WQ(), y = Q.roadY(W, x, z);
-  if(y == null){ var r = Q.nearestRoad(W, x, z, 12); return r ? r.y + (walk ? KERB : 0) : null; }
-  var side = Q.surfaceAt(W, x, z) === "sidewalk";
+// (yNow: the level asked for, HQV.world's stacked surfaces; an interchange's flyover and ramps pass their own y)
+function ySurf(W, x, z, walk, yNow){
+  var Q = WQ(), y = Q.roadY(W, x, z, yNow);
+  if(y == null){ var r = Q.nearestRoad(W, x, z, 12, yNow); return r ? r.y + (walk ? KERB : 0) : null; }
+  var side = Q.surfaceAt(W, x, z, yNow) === "sidewalk";
   return y + (walk && !side ? KERB : (!walk && side ? -KERB : 0));
 }
 // carriageway y at the station point offset o (m, + = left). Where roadY disagrees with this edge's own
 // surface (an inner-bend seam of a graded road, another road's overlap) the edge's own y keeps the ribbon whole.
 function yRoad(W, E, st, o){
-  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, false);
+  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, false, E.deck ? st.y : undefined);
   return y != null && Math.abs(y - st.y) <= SEAM ? y : st.y;
 }
 // sidewalk y at offset o
 function yWalk(W, E, st, o){
-  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, true);
+  var y = ySurf(W, st.x + st.lx*o, st.z + st.lz*o, true, E.deck ? st.y : undefined);
   return y != null && Math.abs(y - st.y - KERB) <= SEAM ? y : st.y + KERB;
 }
 function at(st, o, y){ return [st.x + st.lx*o, y, st.z + st.lz*o]; }
@@ -552,9 +562,25 @@ function markLines(E){
 // City Gen v4 (HQ 3.25): a road's lines by its class. A shared street and a lane have none (no kerb-to-kerb lanes to
 // keep to); a local street or a collector a dashed centre line; a road with a median white edge lines along it and
 // dashed lines between its lanes each way; with no median, a double yellow centre line and the lanes between.
+// Phase 6: a ramp is one way (white edge lines both sides, no centre line), a flyover gets a solid centre line and its
+// edge lines, an expressway its edge lines outside the lanes too (a crash barrier stands on its median: barrier)
 function v4Lines(E){
   var cw = E.cw, n = E.lanes || 1, m = E.med || 0, out = [];
   if(E.v4 === "shared" || E.v4 === "lane") return out;
+  var edges = [{o: -(cw - 1), w: 0.15, c: COL.white}, {o: cw - 1, w: 0.15, c: COL.white}];
+  if(E.v4 === "ramp" || E.oneway) return cw > 1.5 ? edges : out;
+  if(E.v4 === "flyover") return [{o: 0, w: 0.12, c: COL.white}].concat(cw > 1.5 ? edges : []);
+  if(E.v4 === "expressway" && m > 0){
+    // as games/traffic.js lays them: 3.5 m lanes out from the median (lane k centred at m + 3.5 k + 1.75), the
+    // shoulder outside the last: solid lines at the median and the outer edge, dashed between the lanes
+    var ex = [{o: -m, w: 0.12, c: COL.white}, {o: m, w: 0.12, c: COL.white}], k3;
+    for(k3 = 1; k3 <= n; k3++){
+      var o3 = m + 3.5*k3;
+      if(o3 > cw - 0.1) break;
+      ex.push({o: -o3, w: k3 < n ? 0.12 : 0.15, dash: k3 < n, c: COL.white}, {o: o3, w: k3 < n ? 0.12 : 0.15, dash: k3 < n, c: COL.white});
+    }
+    return ex;
+  }
   if(m > 0) out.push({o: -(m + 0.25), w: 0.12, c: COL.white}, {o: m + 0.25, w: 0.12, c: COL.white});
   else if(n > 1) out.push({o: -0.15, w: 0.1, c: COL.yellow}, {o: 0.15, w: 0.1, c: COL.yellow});
   else out.push({o: 0, w: 0.12, dash: true, c: COL.white});
@@ -651,9 +677,10 @@ function strip(g, W, E, st, o0, o1, lift, c, tx, tz, walkY){
 // a vertical strip at offset o: a kerb from road up to walk, else a verge from the ribbon edge down 0.5 m, or
 // further, to 0.3 m under the lowest terrain mesh (any lod) along that edge, so no gap opens under the ribbon
 function wallStrip(g, W, E, st, o, mode, c, tx, tz, outSign){
-  if(E.bridge && mode !== "kerb" && !st.dry){
-    // a bridge: the verge walls stand on the banks only (the deck's fascias close it over the water)
-    dryRuns(W, E, st[0].s, st[st.length - 1].s).forEach(function(r){
+  if((E.bridge || E.deck) && mode !== "kerb" && !st.dry){
+    // a bridge: the verge walls stand on the banks only (the deck's fascias close it over the water); an interchange's
+    // flyover or ramp: only where it is on the ground (its deck, deckTile, has its own sides where it is elevated)
+    (E.bridge ? dryRuns : groundRuns)(W, E, st[0].s, st[st.length - 1].s).forEach(function(r){
       var sub = stations(E, r[0], r[1]);
       sub.dry = true;
       wallStrip(g, W, E, sub, o, mode, c, tx, tz, outSign);
@@ -772,11 +799,166 @@ function bridgeTile(g, W, E, tx, tz, r0, r1){
   });
 }
 
+/* ---------- decks (City Gen v4 phase 6, @3: an interchange's flyover and ramps) ---------- */
+// Where a flyover or ramp is elevated (HQV.world.DECK.ELEV over the terrain) it is a deck: its asphalt ribbon at the
+// road's y with no verge walls, solid concrete parapets FLY_PARA_W wide and FLY_PARA_H high just outside its carriageway
+// on both sides, and under it either an open span (where its underside, FLY_D under the road, is PIER_CLEAR or more over
+// the ground: the slab's concrete underside and fascias, on HQV.world.piersOf's piers, each a PIER_SIDES-sided 2 m
+// column with a cap) or, lower, a solid body (retaining walls down into the ground). A trumpet's T (an elevated `ramps`
+// junction) is drawn at deck height on its own slab. All of it rides in the tile's `bridge` geo.
+var FLY_D = 1.5, FLY_PARA_W = 0.225, FLY_PARA_H = 0.9, PIER_SIDES = 8, CAP_H = 1.0, CAP_D = 2.2, CAP_IN = 0.5;
+// an expressway's crash barrier on its median: a New Jersey profile (half widths at heights, m)
+var BARRIER = [[0.3, 0], [0.18, 0.25], [0.08, 0.81]];
+COL.barrier = [0.74, 0.73, 0.70];
+function deckConst(){
+  var D = WQ().DECK || {};
+  return {elev: D.ELEV != null ? D.ELEV : 0.5, tall: (D.DEPTH || FLY_D) + (D.PIER_CLEAR || 2)};
+}
+// a deck edge's elevated runs [{a, b, parts: [[s0, s1, tall], ...]}] (m along E), sampled every WET_STEP m: `tall`
+// parts stand on piers, the rest on a solid body (cached on the edge, per W)
+function deckRuns(W, E){
+  if(E.el) return E.el;
+  var Q = WQ(), K = deckConst(), n = Math.max(1, Math.ceil(E.len/WET_STEP)), runs = [], run = null;
+  for(var k = 0; k <= n; k++){
+    var s = E.len*k/n, p = pointAt(E, s), h = Q.heightAt(W, p.x, p.z), tall = p.y - h >= K.tall;
+    if(p.y - h > K.elev){
+      if(!run){ run = {a: s, b: s, parts: [[s, s, tall]]}; runs.push(run); continue; }
+      var L = run.parts[run.parts.length - 1];
+      if(L[2] === tall) L[1] = s;
+      else { var m = (L[1] + s)/2; L[1] = m; run.parts.push([m, s, tall]); }
+      run.b = s;
+    } else run = null;
+  }
+  return (E.el = runs.filter(function(r){ return r.b - r.a >= 0.05; }));
+}
+// the rest of [a, b]: where a deck edge is on the ground (pieces under 5 cm dropped)
+function groundRuns(W, E, a, b){
+  var out = [], s = a;
+  deckRuns(W, E).forEach(function(r){
+    if(r.b <= s || r.a >= b) return;
+    if(r.a - s > 0.05) out.push([s, r.a]);
+    s = Math.max(s, r.b);
+  });
+  if(b - s > 0.05) out.push([s, b]);
+  return out;
+}
+// every edge's segments in a CELL m grid (boxes grown by its half), built once per W when it has decks
+function segGrid(C){
+  if(C.segGrid) return C.segGrid;
+  var grid = {};
+  C.E.forEach(function(E){
+    for(var j = 0; j + 1 < E.P.length; j++){
+      var a = E.P[j], b = E.P[j + 1], h = E.half;
+      for(var gz = Math.floor((Math.min(a.z, b.z) - h)/CELL); gz <= Math.floor((Math.max(a.z, b.z) + h)/CELL); gz++)
+        for(var gx = Math.floor((Math.min(a.x, b.x) - h)/CELL); gx <= Math.floor((Math.max(a.x, b.x) + h)/CELL); gx++)
+          (grid[gx + "," + gz] = grid[gx + "," + gz] || []).push(E, j);
+    }
+  });
+  return (C.segGrid = grid);
+}
+// is (x, z) on the carriageway of a road other than E whose surface there is within 1.2 m of y? (a ramp running into the
+// flyover: no parapet across it)
+function onOther(C, E, x, z, y){
+  var L = segGrid(C)[Math.floor(x/CELL) + "," + Math.floor(z/CELL)] || [];
+  for(var i = 0; i < L.length; i += 2){
+    var F = L[i];
+    if(F === E) continue;
+    var a = F.P[L[i+1]], b = F.P[L[i+1] + 1], dx = b.x - a.x, dz = b.z - a.z, L2 = dx*dx + dz*dz;
+    var t = L2 > 0 ? clamp(((x - a.x)*dx + (z - a.z)*dz)/L2, 0, 1) : 0;
+    if(hypot(x - a.x - dx*t, z - a.z - dz*t) <= F.cw - 0.1 && Math.abs(a.y + (b.y - a.y)*t - y) < 1.2) return true;
+  }
+  return false;
+}
+// a deck edge's structure in tile (tx, tz) over [s0, s1] (its ribbon): parapets, and under it a slab with fascias on
+// piers (tall parts) or retaining walls (the rest); where an open span meets a solid body or the ground (not the
+// junction patch a trim leads into), the body's end wall under the slab
+function deckTile(g, W, C, E, tx, tz, s0, s1){
+  var edge = E.walk > 0 ? E.half : E.cw, ho = edge + FLY_PARA_W, mid = edge + FLY_PARA_W/2;
+  function top(st, sg){ return yRoad(W, E, st, sg*edge) + LIFT; }
+  function under(st){ return Math.min(yRoad(W, E, st, -edge), yRoad(W, E, st, edge)) - FLY_D; }
+  function mine(A, B){ return inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz); }
+  deckRuns(W, E).forEach(function(run){
+    run.parts.forEach(function(pt){
+      var a = Math.max(pt[0], s0), b = Math.min(pt[1], s1);
+      if(b - a < 0.05) return;
+      var st = stations(E, a, b);
+      for(var k = 0; k + 1 < st.length; k++){
+        var A = st[k], B = st[k + 1];
+        if(!mine(A, B)) continue;
+        var lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
+        [-1, 1].forEach(function(sg){
+          var ya = top(A, sg), yb = top(B, sg);
+          var mx = (A.x + B.x)/2 + lx*sg*mid, mz = (A.z + B.z)/2 + lz*sg*mid;
+          if(!onOther(C, E, mx, mz, (ya + yb)/2 - LIFT)) bar(g, A, B, sg*edge, sg*ho, ya, yb, ya + FLY_PARA_H, yb + FLY_PARA_H, COL.deck, [k === 0, k + 2 === st.length]);
+          if(pt[2]) face(g, [at(A, sg*ho, under(A)), at(B, sg*ho, under(B)), at(B, sg*ho, yb), at(A, sg*ho, ya)], COL.deck, [lx*sg, 0, lz*sg]);
+          else {
+            var lo = meshMin(W, at(A, sg*ho, 0), at(B, sg*ho, 0)) - 0.3;
+            face(g, [at(A, sg*ho, Math.min(ya - 0.5, lo)), at(B, sg*ho, Math.min(yb - 0.5, lo)), at(B, sg*ho, yb), at(A, sg*ho, ya)], COL.concrete, [lx*sg, 0, lz*sg]);
+          }
+        });
+        if(pt[2]) face(g, [at(A, -ho, under(A)), at(B, -ho, under(B)), at(B, ho, under(B)), at(A, ho, under(A))], COL.deckUnder, [0, -1, 0]);
+      }
+      if(!pt[2]) return;
+      // the open span's ends that are not a trim into a junction patch: an end wall under the slab, facing the span
+      [[pt[0] >= s0 + 0.01 ? st[0] : null, 1], [pt[1] <= s1 - 0.01 ? st[st.length - 1] : null, -1]].forEach(function(e){
+        var S = e[0], d = e[1];
+        if(!S || !inTile(S.x, S.z, tx, tz)) return;
+        var u = under(S), lo = Math.min(u - 0.5, meshMin(W, at(S, -ho, 0), at(S, ho, 0)) - 0.3);
+        face(g, [at(S, -ho, lo), at(S, ho, lo), at(S, ho, u), at(S, -ho, u)], COL.concrete, [S.dx*d, 0, S.dz*d]);
+      });
+    });
+  });
+}
+// one pier (HQV.world.piersOf) under a deck of half width `half`: a PIER_SIDES-sided column (apothem p.r) from 0.5 m
+// in the ground up to its cap, and the cap (CAP_D along the deck, across it to CAP_IN inside its edges) under the slab
+function pierGeo(g, p, half){
+  var R = p.r/Math.cos(Math.PI/PIER_SIDES), capH = Math.min(CAP_H, Math.max(0.3, (p.y1 - p.y0)*0.3));
+  var yb = p.y0 - 0.5, yt = p.y1 - capH, k;
+  for(k = 0; k < PIER_SIDES; k++){
+    var t0 = 2*Math.PI*k/PIER_SIDES, t1 = 2*Math.PI*(k + 1)/PIER_SIDES, tm = (t0 + t1)/2;
+    var a = [p.x + R*Math.cos(t0), p.z + R*Math.sin(t0)], b = [p.x + R*Math.cos(t1), p.z + R*Math.sin(t1)];
+    face(g, [[a[0], yb, a[1]], [b[0], yb, b[1]], [b[0], yt, b[1]], [a[0], yt, a[1]]], COL.concrete, [Math.cos(tm), 0, Math.sin(tm)]);
+  }
+  var fx = Math.sin(p.yaw || 0), fz = Math.cos(p.yaw || 0), ux = fz, uz = -fx, hw = Math.max(1.2, half - CAP_IN), hd = CAP_D/2;
+  function c(sa, sb, y){ return [p.x + fx*hd*sa + ux*hw*sb, y, p.z + fz*hd*sa + uz*hw*sb]; }
+  var y0 = yt, y1 = p.y1;
+  face(g, [c(-1, -1, y1), c(1, -1, y1), c(1, 1, y1), c(-1, 1, y1)], COL.deckUnder, UP);
+  face(g, [c(-1, -1, y0), c(1, -1, y0), c(1, 1, y0), c(-1, 1, y0)], COL.deckUnder, [0, -1, 0]);
+  face(g, [c(1, -1, y0), c(1, 1, y0), c(1, 1, y1), c(1, -1, y1)], COL.concrete, [fx, 0, fz]);
+  face(g, [c(-1, -1, y0), c(-1, 1, y0), c(-1, 1, y1), c(-1, -1, y1)], COL.concrete, [-fx, 0, -fz]);
+  face(g, [c(-1, 1, y0), c(1, 1, y0), c(1, 1, y1), c(-1, 1, y1)], COL.concrete, [ux, 0, uz]);
+  face(g, [c(-1, -1, y0), c(1, -1, y0), c(1, -1, y1), c(-1, -1, y1)], COL.concrete, [-ux, 0, -uz]);
+}
+// an expressway's crash barrier along its median over the stations (pieces by the tile of their midpoint), capped at
+// both ends
+function barrier(g, W, E, st, tx, tz){
+  var prof = [], i;
+  for(i = 0; i < BARRIER.length; i++) prof.push([-BARRIER[i][0], BARRIER[i][1]]);
+  for(i = BARRIER.length - 1; i >= 0; i--) prof.push([BARRIER[i][0], BARRIER[i][1]]);
+  function base(S){ return yRoad(W, E, S, 0) + LIFT; }
+  for(var k = 0; k + 1 < st.length; k++){
+    var A = st[k], B = st[k + 1];
+    if(!inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz)) continue;
+    var ya = base(A), yb = base(B), lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
+    for(i = 0; i + 1 < prof.length; i++){
+      var p = prof[i], q = prof[i + 1], ox = (p[0] + q[0])/2, ny = Math.abs(q[0] - p[0]);
+      face(g, [at(A, p[0], ya + p[1]), at(B, p[0], yb + p[1]), at(B, q[0], yb + q[1]), at(A, q[0], ya + q[1])], COL.barrier,
+           [lx*(ox > 0 ? 1 : (ox < 0 ? -1 : 0)), ny > 0.15 ? 1 : 0.3, lz*(ox > 0 ? 1 : (ox < 0 ? -1 : 0))]);
+    }
+    [[k === 0, A, ya, -1], [k + 2 === st.length, B, yb, 1]].forEach(function(e){
+      if(!e[0]) return;
+      var S = e[1], y = e[2], n = prof.length, V = prof.map(function(p){ return at(S, p[0], y + p[1]); });
+      // (the profile is concave: one convex band per step up it)
+      for(var j = 0; j + 1 < n/2; j++) face(g, [V[j], V[j + 1], V[n - 2 - j], V[n - 1 - j]], COL.barrier, [S.dx*e[3], 0, S.dz*e[3]]);
+    });
+  }
+}
+
 // flat: only the upward asphalt / sidewalk pieces (what the terrain clamp needs; no walls, no marks, no bridges)
 // gap: leave out every bridge edge's pieces over the water (bridgeGaps: games/hqbridges.js draws its moving spans
 // there); the terrain clamp (flat) never gaps, so the terrain is the same either way
 function roadTile(W, tx, tz, flat, gap){
-  var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.E.some(function(E){ return E.bridge; }) ? geo() : null;
+  var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.deck || C.E.some(function(E){ return E.bridge; }) ? geo() : null;
   C.E.forEach(function(E){
     var e0 = E.tA, e1 = E.len - E.tB;
     if(e1 - e0 < 0.05) return;
@@ -834,6 +1016,7 @@ function roadTile(W, tx, tz, flat, gap){
     }
     if(flat) return;
     if(E.bridge && br) bridgeTile(br, W, E, tx, tz, s0, s1);
+    if(E.deck && br) deckTile(br, W, C, E, tx, tz, s0, s1);
     // markings, stopped short of junction patches and crossings
     var m0 = s0 + (endA && crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (endB && crossed(C, E, 1) ? 5.5 : 0.5);
     if(m1 - m0 > 0.5) (tramEdges(W)[E.id] ? tramLines(W, E) : markLines(E)).forEach(function(ln){
@@ -843,12 +1026,19 @@ function roadTile(W, tx, tz, flat, gap){
         if(b - a > 0.2) strip(marks, W, E, stations(E, a, b), ln.o - ln.w/2, ln.o + ln.w/2, MARK_LIFT, ln.c, tx, tz);
       }
     });
+    // phase 6: an expressway's median is a crash barrier
+    if(E.v4 === "expressway" && E.med > 0 && m1 - m0 > 0.5) barrier(kerb, W, E, stations(E, m0, m1), tx, tz);
   }
   // junction patches, corner sidewalks, zebra crossings: by the tile holding the node
   C.nodeIds.forEach(function(id){
     var arms = C.inc[id] || [], n = C.nodes[id];
     if(arms.length < 2 || !n || !inTile(n.x, n.z, tx, tz)) return;
-    junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk);
+    junction(W, C, n, arms, asph, flat ? geo() : marks, kerb, walk, flat ? null : br);
+  });
+  // phase 6: the decks' piers standing in this tile
+  if(!flat && br && C.deck) WQ().piersOf(W).forEach(function(p){
+    var E = C.byId[p.edge];
+    if(E && inTile(p.x, p.z, tx, tz)) pierGeo(br, p, E.cw);
   });
   // @3: a hole on a pavement or a carriageway (a metro entrance) is cut out of the road too
   var H = holeSet(W);
@@ -863,16 +1053,16 @@ function armStation(E, end, t){
   if(end){ S.dx = -S.dx; S.dz = -S.dz; S.lx = -S.lx; S.lz = -S.lz; }   // arm frame: d points away from the node
   return S;
 }
-function junction(W, C, n, arms, asph, marks, kerb, walk){
-  var Q = WQ(), ring = [];
+function junction(W, C, n, arms, asph, marks, kerb, walk, dk){
+  var Q = WQ(), ring = [], lvl = n.junction === "ramps" ? n.y : undefined;   // (an interchange's: at the node's level)
   arms.forEach(function(a){
     var S = armStation(a.E, a.end, a.t);
     a.S = S;
     ring.push(at(S, -a.E.cw, 0), at(S, a.E.cw, 0));
   });
   function yAt(p, up){
-    var y = Q.roadY(W, p[0], p[2]);
-    if(y == null){ var r = Q.nearestRoad(W, p[0], p[2], 20); y = r ? r.y : n.y; }
+    var y = Q.roadY(W, p[0], p[2], lvl);
+    if(y == null){ var r = Q.nearestRoad(W, p[0], p[2], 20, lvl); y = r ? r.y : n.y; }
     return y + (up || 0);
   }
   var cy = yAt([n.x, 0, n.z]) + LIFT;
@@ -897,7 +1087,30 @@ function junction(W, C, n, arms, asph, marks, kerb, walk){
   // [3.26] City Gen v4's junction control: a roundabout's paved circle and its island (a mini one's painted, a full
   // one's raised and planted), and give-way lines across the way in on every arm that gives way
   if(n.junction === "roundabout" || n.junction === "mini") roundabout(W, n, asph, marks, kerb, walk, yAt);
-  if(n.junction && n.junction !== "signals") giveWays(W, C, n, arms, marks);
+  if(n.junction && n.junction !== "signals" && n.junction !== "ramps") giveWays(W, C, n, arms, marks);
+  // phase 6: a trumpet's T (an elevated `ramps` junction) on its own slab: the patch's underside, and where no arm
+  // leaves it, a parapet over a fascia (an open span) or a retaining wall (low)
+  if(dk && n.junction === "ramps"){
+    var K = deckConst(), h0 = Q.heightAt(W, n.x, n.z);
+    if(n.y - h0 > K.elev){
+      var open = n.y - h0 >= K.tall, ul = function(p){ return p[1] - LIFT - FLY_D; }, m = ring.length;
+      if(open) for(k = 0; k < m; k++){
+        var p0 = ring[k], q0 = ring[(k + 1) % m];
+        face(dk, [[n.x, cy - LIFT - FLY_D, n.z], [p0[0], ul(p0), p0[2]], [q0[0], ul(q0), q0[2]]], COL.deckUnder, [0, -1, 0]);
+      }
+      for(k = 0; k < arms.length; k++){
+        var p = ring[2*k + 1], q = ring[(2*k + 2) % m], dx = q[0] - p[0], dz = q[2] - p[2], l = hypot(dx, dz);
+        if(l < 0.3) continue;
+        var ox = dz/l, oz = -dx/l;
+        if(((p[0] + q[0])/2 - n.x)*ox + ((p[2] + q[2])/2 - n.z)*oz < 0){ ox = -ox; oz = -oz; }
+        var A = {x: p[0], z: p[2], lx: ox, lz: oz, dx: dx/l, dz: dz/l}, B = {x: q[0], z: q[2], lx: ox, lz: oz, dx: dx/l, dz: dz/l};
+        bar(dk, A, B, 0, FLY_PARA_W, p[1], q[1], p[1] + FLY_PARA_H, q[1] + FLY_PARA_H, COL.deck, [true, true]);
+        var la = open ? ul(p) : Math.min(p[1] - 0.5, meshMin(W, at(A, FLY_PARA_W, 0), at(B, FLY_PARA_W, 0)) - 0.3), lb = open ? ul(q) : la;
+        face(dk, [at(A, FLY_PARA_W, la), at(B, FLY_PARA_W, lb), at(B, FLY_PARA_W, q[1]), at(A, FLY_PARA_W, p[1])], open ? COL.deck : COL.concrete, [ox, 0, oz]);
+        if(open) face(dk, [at(A, 0, la), at(B, 0, lb), at(B, FLY_PARA_W, lb), at(A, FLY_PARA_W, la)], COL.deckUnder, [0, -1, 0]);
+      }
+    }
+  }
   // zebra crossings on street/avenue arms of real junctions, 2 m back from the patch
   if(arms.length >= 3) arms.forEach(function(a){
     var E = a.E;
@@ -2025,7 +2238,7 @@ function routes(W){
   if(C.routes) return C.routes;
   var groups = {}, order = [];
   C.E.forEach(function(E){
-    if(!graded(E)) return;
+    if(!graded(E) || E.deck) return;   // (phase 6: an interchange's flyover and ramps are no route of their own)
     var key = E.cls + "|" + (E.ref != null ? E.ref : "~" + E.name);
     if(!groups[key]){ groups[key] = []; order.push(key); }
     groups[key].push(E);
@@ -2033,7 +2246,7 @@ function routes(W){
   // gates: graded dead ends, numbered in the generator's order (integer comparator, 3.1.2)
   var gates = [];
   C.E.forEach(function(E){
-    if(!graded(E)) return;
+    if(!graded(E) || E.deck) return;
     [E.a, E.b].forEach(function(id){ if(deg(C, id) === 1 && C.nodes[id] && gates.indexOf(id) < 0) gates.push(id); });
   });
   gates.sort(function(a, b){
@@ -2107,12 +2320,24 @@ function destOf(C, Rt, s, dir){
       var e = ns[dir > 0 ? k : n - 1 - k], ds = dir > 0 ? e.s - s : s - e.s;
       if(pass === 1 && Rt.loop) ds += Rt.len;
       if(ds <= 1) continue;
-      var hw = (C.inc[e.id] || []).filter(function(a){ return a.E.cls === "highway"; })[0];
+      var hw = (C.inc[e.id] || []).filter(function(a){ return a.E.cls === "highway" && !a.E.deck; })[0];
       if(hw) best = hw.E.ref != null ? hw.E.ref : hw.E.name;
+      else {
+        // phase 6: a trumpet's ramp off the ring leads to its highway (the flyover's ref, by the ramp's name)
+        var rp = (C.inc[e.id] || []).filter(function(a){ return a.E.deck; })[0];
+        if(rp) best = deckRef(C, rp.E);
+      }
     }
     if(!Rt.loop) break;
   }
   return best || "City";
+}
+// the highway an interchange's ramp or flyover belongs to: its ref, else the ref of the flyover named like it
+// ("<Way> Ramp" -> "<Way> Flyover"), else the way's name
+function deckRef(C, E){
+  if(E.ref != null) return E.ref;
+  var base = String(E.name || "").replace(/ (Ramp|Flyover)$/, ""), f = C.E.filter(function(F){ return F.deck && F.ref != null && F.name === base + " Flyover"; })[0];
+  return f ? f.ref : (base || null);
 }
 var GANTRY_POST = 6.3, GANTRY_SINK = 3;
 function gantryAt(W, C, Rt, s, dir, kind, frame){
@@ -2169,9 +2394,10 @@ function allProps(W){
   var C = prep(W);
   if(C.props) return C.props;
   var Q = WQ(), B = {}, hash = W.hash;
-  var HS = holeSet(W);
+  var HS = holeSet(W), PI = C.deck ? Q.piersOf(W) : null;
   function put(kind, o){
     if(HS && inHoles(HS, o.x, o.z)) return;   // @3: nothing stands in a terrain hole
+    if(PI && underDeck(W, PI, kind, o)) return;   // phase 6: nor on or under a deck, nor in a pier
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);
     var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: [], furniture: []});
     b[kind].push(o);
@@ -2239,6 +2465,16 @@ function allProps(W){
   });
   C.props = B;
   return B;
+}
+// a prop on or under an elevated deck's footprint (2 m round it; a gantry's frame anywhere along its span, 3 m round it)
+// or within 1.5 m of a pier
+function underDeck(W, PI, kind, o){
+  var Q = WQ(), i;
+  for(i = 0; i < PI.length; i++) if(hypot(o.x - PI[i].x, o.z - PI[i].z) < PI[i].r + 1.5) return true;
+  if(kind !== "gantries") return Q.deckOver(W, o.x, o.z, 2) != null;
+  var ux = Math.cos(o.yaw || 0), uz = -Math.sin(o.yaw || 0);
+  for(i = -2; i <= 2; i++) if(Q.deckOver(W, o.x + ux*GANTRY_POST*i/2, o.z + uz*GANTRY_POST*i/2, 3) != null) return true;
+  return false;
 }
 function props(W, tx, tz){
   var b = allProps(W)[tileKey(tx, tz)];

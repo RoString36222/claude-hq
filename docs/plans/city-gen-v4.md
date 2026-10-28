@@ -470,3 +470,19 @@ desire lines are left for later).
   - `tram` (hard) fails: a tram line on a road that is no tram version, a station platform on a bend or in a
     junction's box, and a track ending mid-block.
   - `tram-station` lists the stops left at the kerb.
+- **Client:**
+  - `world.js` packs `tram`/`bed`. The bed is raised paving, never carriageway.
+  - `traffic.js`:
+    - Cars keep outside a centre bed. Trams run in it (track centres 3.025 m apart from the middle on an avenue's
+      9.2 m bed, room for the island; 2.025 m on a collector's) or in the inner lane on a shared road.
+    - A light's phase for a movement is that of the arm it comes in by.
+  - `worldgeom.js` draws the bed: raised setts, kerbs, marks.
+  - `hqtramway.js` makes a 40 m platform an island between the tracks or at the kerb, by where it stands. The poles
+    stand on the bed.
+  - `hqcivic.js` gives a station a shelter, a ticket machine and a departure board.
+
+| | Commons | 50 seeds + the Commons |
+|---|---|---|
+| Tram lines | 3, on 69 tram roads (35 centre bed, 34 in the lanes) | 95 |
+| Stations on a 40 m platform | 6 of 9 (the rest kerb stops: side streets every 24 to 48 m) | about 2 in 3 |
+| Cars in the traffic sim | 292 (as before the corridor) | |

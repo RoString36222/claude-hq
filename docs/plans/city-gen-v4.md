@@ -24,7 +24,7 @@ merges on its own and leaves the City playable:
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
 | 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
 | 9 | HQ spacing and movable garages | **3.33.0** (movable garages, as phase 10 here; HQ spacing left: HQs stay on their lots) |
-| 10 | Graphics pass within 1,200 / 240 draw calls | **3.34.0** (phase 11 here; in progress) |
+| 10 | Graphics pass within 1,200 / 240 draw calls | **3.34.0** (the graphics pass, as phase 11 here) |
 | S | Ambient volume slider and proximity sound (any time) | |
 
 ## Phase 1 (3.24.0)
@@ -591,7 +591,32 @@ The calls move by a few percent from run to run (traffic, people and the clock).
 
 ### The detail
 
-<!-- TODO(phase 11): filled in at merge from the other branches of this phase. -->
+### The detail
+
+Everything goes into meshes the tiles already had (`marks`, `kerb`, `bridge`, `tunnel`) or the per-tile instanced
+trees, so the phase adds no draw calls. A @1 or @2 doc builds byte-identically.
+
+- **Road paint (`worldgeom.js`):**
+  - thin white edge lines inside the kerbs of avenues, collectors and boulevards;
+  - a solid stop line where a minor road meets one two classes above it at a priority junction (the give-way dashes
+    elsewhere; the lights' stop lines stay traffic.js's);
+  - lane arrows 15 to 25 m before the line on approaches of two lanes or more (`arrowPlan`; traffic keeps left);
+  - a yellow box at the lights where an avenue or boulevard meets;
+  - chevrons in a ramp's gore.
+- **Planted medians:**
+  - a boulevard's median gets trees every 12 m (under the City Line, kept 1.2 m under its girder) and clipped hedges;
+  - an avenue's gets low shrubs;
+  - all of it clear of junction noses, piers, holes and decks (`medianPlan`).
+- **Structures:**
+  - parapets with a coping, and a drip lip under the fascias;
+  - steel expansion joints at every pier line and each end of a span;
+  - every pier's cap on two bearings;
+  - lamp columns every 30 m a side on the decks;
+  - downlights under a deck where it crosses a road, and low abutment walls along that road (the underpass);
+  - the City Line's girder gets the same joints, bearings and lights.
+- **The tunnel:** its ceiling lights are luminaires, and its walls are panelled over a drain. The cuttings get a
+  plinth, panels, a kerb and drain at the foot, and wall lights that come on at night.
+
 
 - **Road markings:** _TODO_ (`worldgeom.js`)
 - **Median planting:** _TODO_ (`worldgeom.js`)
@@ -600,7 +625,25 @@ The calls move by a few percent from run to run (traffic, people and the clock).
 
 ### Results
 
-<!-- TODO(phase 11): the tour's numbers with the detail in, against the table above. -->
+With the detail in, under SwiftShader:
+
+| Spot | Calls | Triangles | Tile calls |
+|---|---|---|---|
+| trumpet | 388 | 538k | 106 |
+| flyover | 113 | 302k | 33 |
+| boulevard | 204 | 525k | 52 |
+| tram-bed | 178 | 455k | 59 |
+| tram-platform | 325 | 565k | 97 |
+| tunnel | 201 | 381k | 55 |
+| cutting | 246 | 392k | 54 |
+| signals | 521 | 585k | 91 |
+| plaza | 647 | 636k | 91 |
+| metro (below) | 48 | 158k | 21 |
+| hq-lot | 306 | 515k | 72 |
+
+The busiest frame uses 54 % of the surface budget and the metro 20 % of the one below the street: the room is
+for what comes next.
+
 
 | Spot | Calls before | Calls after | Triangles after |
 |---|---|---|---|

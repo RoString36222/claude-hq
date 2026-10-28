@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.30.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.31.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -415,6 +415,19 @@ and feature guide.
 
 ## Changelog
 
+- **3.31.0 — City Gen v4, phase 8: the City Line over its own boulevard.** On the Commons, the elevated City Line no
+  longer runs over small streets on piers the browser spaced anywhere, some of them in traffic lanes or in lots. The
+  world generator now cuts a 36.5 m boulevard under the line, from Central toward the airport, and stands the
+  viaduct's piers in its planted median.
+  - **The boulevard:** streets it crosses meet it at T junctions at least 50 m apart, and main roads always get
+    one. Side streets that can't join end in a cul-de-sac. The lots it crosses are retired, but never an HQ's.
+  - **The piers:** 2 m columns about every 27.5 m, with single spans of up to 60 m over the junctions. They are
+    solid, and nothing (trees, lamps, benches, parked cars) stands within 1.5 m of one.
+  - **Where it fits:** a world whose line would cross an HQ's lot, a civic building or a graded road keeps its line
+    as before. That's most test seeds and the personal islands for now.
+  - **Also:** trams keep off the boulevard. Where it cuts a tram street, the tram runs on each side as its own line.
+    You can wait for a bus at the stop itself, even when the bus pulls up a way along the kerb. Joggers no longer
+    turn round in a junction.
 - **3.30.0 — City Gen v4, phase 7: the Ring Road under the airport.** The Ring Road no longer runs past the back of the
   airport terminal. It drops into an open cutting, runs through a 300 m cut-and-cover tunnel 7 m under the airport,
   and climbs out the other side.

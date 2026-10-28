@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.32.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.33.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -421,6 +421,19 @@ and feature guide.
 
 ## Changelog
 
+- **3.33.0 — City Gen v4, phase 10: move your garage.** Your HQ's car-lift bay no longer has to stay where the city
+  put it.
+  - **Moving it:** click the MOVE plate on the bay, or use "Move your garage…" in HQ Studio. A ghost bay follows the
+    pointer on a half-metre grid over your lot: green where it fits, red with the reason where it doesn't. R turns
+    it a quarter, and Enter saves. The arrow keys and a "Door faces" choice do the same from the keyboard.
+  - **What fits:** the bay stays inside your lot and clear of your tower at its biggest, so levelling up never
+    breaks it. It needs 8 m clear in front of its door and a way out to the street. Cars leave a side- or
+    back-facing bay along its driveway.
+  - **Who sees it:** everyone. Your spot goes to the Arena with your HQ, four small numbers (lot, x, z, turn) about
+    your own lot, and other players see your garage there. On an older Arena it is kept on this machine, and only
+    you see it moved.
+  - **HQs stay put:** every HQ stays on its lot. Spacing the HQs out, the plan's other half of this phase, is left
+    for later.
 - **3.32.0 — City Gen v4, phase 9: trams on their own roads.** The streets trams run on are now real tram roads, and
   their stops are proper stations.
   - **Tram roads:** on avenues and collectors the trams run on a raised, kerbed bed of setts down the middle that cars

@@ -23,7 +23,7 @@ merges on its own and leaves the City playable:
 | 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
 | 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
-| 9 | HQ spacing and movable garages | |
+| 9 | HQ spacing and movable garages | **3.33.0** (movable garages, as phase 10 here; HQ spacing left: HQs stay on their lots) |
 | 10 | Graphics pass within 1,200 / 240 draw calls | |
 | S | Ambient volume slider and proximity sound (any time) | |
 
@@ -488,3 +488,29 @@ desire lines are left for later).
 | Tram lines | 3, on 69 tram roads (35 centre bed, 34 in the lanes) | 95 |
 | Stations on a 40 m platform | 5 of 9 (the rest kerb stops: side streets every 24 to 48 m, collector beds too narrow for an island) | 151 of 278 |
 | Cars in the traffic sim | 292 (as before the corridor) | |
+
+## Phase 10 (3.33.0): movable garages
+
+The plan's phase 9, its movable garages. HQ spacing would move members' HQs to other lots, so it waits.
+
+- **Arena (`backend/src/hqgarage.rs`, migration 0026):**
+  - `GET/PUT/DELETE /v1/hq/me/garage` stores `{lot, x, z, r}`: the HQ lot's rank, whole decimetres in the lot's frame
+    (|x| ≤ 400, |z| ≤ 300), and quarter turns.
+  - Validation is strict (422), rate-limited like HQ Studio.
+  - `garage` comes last in the HQ listing, absent when unset. The capability is `"garage"`.
+  - The server checks shape only. Whether a spot fits is the client's call, because the footprints live there.
+- **Local server (`dashboard-rs`):** `/api/arena/hq/garage` (GET, POST, POST reset) with an allowlisted body, CSRF
+  and same-site checks. Egress: those four integers about your own lot.
+- **Client:**
+  - `hqcity3d.js` `garageFits`: the 7 × 6.2 m bay inside the lot, clear of the tower at its largest (both wings) and
+    its walk, the 8 m apron in the lot or over its street edge, and a 3.5 m way to the street. A stored spot that
+    fails, or one for another lot, falls back to the default, so every client draws the same.
+  - Bays turn in quarters. Their walls, the car lift's door, apron and exit path, and the drawing all follow the
+    turn.
+  - Placement mode in `hq3d.js` and `ui/app/40-studio.js`. On an older Arena the spot is kept in localStorage
+    (your HQ only).
+
+| | Commons (64 HQ lots) |
+|---|---|
+| Default bay passes `garageFits` | 46 (the other 18 face back, their 8 m apron off the lot's back: they still stand where they always have) |
+| Legal spots per lot (0.5 m grid, 4 turns) | 165 on average, median 27; 11 lots have none (too tight beside their tower) |

@@ -418,7 +418,7 @@ var HQG_WHY={"outside the lot":"it would stand outside your lot", "on the buildi
 function hqGarageClean(g){
   if(!g || typeof g!=="object") return null;
   function int(v, lo, hi){ return typeof v==="number" && isFinite(v) && v===Math.round(v) && v>=lo && v<=hi; }
-  if(!int(g.lot,0,100000) || !int(g.x,-1000,1000) || !int(g.z,-1000,1000) || !int(g.r,0,3)) return null;
+  if(!int(g.lot,0,100000) || !int(g.x,-400,400) || !int(g.z,-300,300) || !int(g.r,0,3)) return null;
   return {lot:g.lot, x:g.x, z:g.z, r:g.r};
 }
 function hqGarageLocal(){ try { return hqGarageClean(JSON.parse(localStorage.getItem("hq_garage")||"null")); } catch(e){ return null; } }

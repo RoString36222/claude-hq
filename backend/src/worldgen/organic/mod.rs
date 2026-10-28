@@ -19,6 +19,7 @@
 
 pub mod blocks;
 pub mod geom;
+pub mod hq;
 pub mod graph;
 pub mod lots;
 pub mod streets;
@@ -229,7 +230,10 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     let routes = if p.v4 { trams::plan(p, &g, &zoning, &lots) } else { Vec::new() };
     // the civic sites take their lots before the HQ pool is drawn: never a member's
     let stations = super::civic::place(seed, p, base, &g, &mut blocks, &mut lots, &mut sites, &routes)?;
-    hq_pool(p, base, &mut lots)?;
+    // (City Gen v4 draws its HQ pool by spacing once the world's roads are laid: hq.rs)
+    if !p.v4 {
+        hq_pool(p, base, &mut lots)?;
+    }
     let mut by_core: Vec<(i64, usize)> = lots.iter().enumerate().map(|(k, l)| (l.x * l.x + l.z * l.z, k)).collect();
     by_core.sort();
     for (rank, &(_, k)) in by_core.iter().enumerate() {

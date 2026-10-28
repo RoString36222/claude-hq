@@ -39,7 +39,8 @@ fn no_highway_or_ring_runs_through_the_commons_airport() {
 #[test]
 fn every_lot_and_the_commons_airport_stay_where_they_were() {
     // the pins of v3_tests hold the airport; here: the forecourt, car park and tower keep
-    // roads off them too, and the HQ pool is untouched (v3_tests counts the 64 HQ lots)
+    // roads off them too (v3_tests counts the 64 HQ lots; HQ spacing moved them, see
+    // the_commons_hqs_are_spaced_garaged_and_near_transit)
     let a = commons_claim();
     assert_eq!(a.landside, 4);
     for e in &commons3().layers.roads.edges {
@@ -85,18 +86,51 @@ fn other_commons_seeds_keep_off_their_airport_too() {
     }
 }
 
-/// Every one of 50 Commons-profile seeds that generates passes the validator (one,
-/// v4seed7, has too few HQ lots, as before v4). Slow in a debug build: run it with
-/// `cargo test --release -- --ignored fifty`.
+/// Every one of 50 Commons-profile seeds generates and passes the validator, the HQ rules
+/// with the rest (HQ spacing: before it, v4seed7 had too few lots for its pool and did not
+/// generate; now it keeps the 30 HQs its small town has room for, and v4seed30 62, each listed
+/// as `hq-count`).
+/// Slow in a debug build: run it with `cargo test --release -- --ignored fifty`.
 #[test]
 #[ignore]
 fn fifty_seeds_break_no_hard_rule() {
     for i in 1..=50 {
         let id = format!("v4seed{i}@3");
-        let Ok(w) = generate(&id, &[]) else { continue };
-        let v = validate::hard(&w.layers);
-        assert!(v.is_empty(), "{id}:\n{}", validate::report(&v));
+        let w = generate(&id, &[]).unwrap_or_else(|e| panic!("{id}: {e}"));
+        let v = validate::check(&w.layers);
+        assert!(v.iter().all(|x| !x.hard), "{id}:\n{}", validate::report(&v));
+        let hq = w.layers.lots.iter().filter(|l| l.kind == "hq").count();
+        assert_eq!(v.iter().any(|x| x.rule == "hq-count"), hq < 64, "{id}: {hq} HQ lots");
+        assert!(hq >= 30, "{id}: {hq} HQ lots");
     }
+}
+
+/// HQ spacing (organic/hq.rs): the Commons' 64 HQ lots, ranked and tiered nearest the plaza
+/// first, the full 40 m apart, none fronting a main road, each with room for its tower, its
+/// garage, the apron and a driveway, and every one a short walk from a stop.
+#[test]
+fn the_commons_hqs_are_spaced_garaged_and_near_transit() {
+    let l = &commons3().layers;
+    let mut hq: Vec<&city::Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
+    hq.sort_by_key(|x| x.rank);
+    assert_eq!(hq.len(), 64);
+    let d2 = |x: &city::Lot| x.x * x.x + x.z * x.z;
+    for (k, x) in hq.iter().enumerate() {
+        assert_eq!((x.rank, x.tier), (Some(k as u32), Some(k as u32 / 16)));
+        assert!(organic::hq::fits(x), "HQ lot {} (rank {k}) has no room for its garage", x.id);
+        assert!(k == 0 || d2(hq[k - 1]) <= d2(x), "rank {k} is nearer the plaza than rank {}", k - 1);
+    }
+    let v = validate::check(l);
+    assert!(!v.iter().any(|x| x.rule.starts_with("hq-")), "{}", validate::report(&v));
+}
+
+#[test]
+fn a_personal_islands_hq_has_its_garage_too() {
+    let l = &island3().layers;
+    let hq: Vec<&city::Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
+    assert_eq!(hq.len(), 1);
+    assert!(organic::hq::fits(hq[0]));
+    assert!(!validate::check(l).iter().any(|x| x.rule.starts_with("hq-")));
 }
 
 /// Phase 3: a junction's control comes from the roads that meet there.

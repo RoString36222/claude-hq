@@ -62,6 +62,18 @@
 //!                  less than 7 m over it (5.5 m clear and its deck), or a road crossing
 //!                  another at grade with no junction (listed: `road-overlap`)
 //!
+//!   hq-spacing     (hard, HQ spacing: organic/hq.rs) two HQ lots closer than `MIN_GAP_CM`
+//!                  (30 m), an HQ lot fronting a main road (an avenue, boulevard or graded road:
+//!                  the first road straight out of its door), or one without room for the
+//!                  smallest tower, or for a garage, its 8 m apron and a driveway to the street
+//!                  beside the tower the client grows there (grandOf, garageFits: `hq::fits`)
+//!   hq-gap         two HQ lots closer than the pool's target gap, `GAP_CM` (40 m): a town the
+//!                  pool had to relax the gap in
+//!   hq-transit     an HQ whose door is over `WALK_CM` from a bus or tram stop, the transit
+//!                  hub, a metro entrance or a rail station
+//!   hq-count       fewer HQ lots than the profile's count (a town with no room for more
+//!                  under the hard rules)
+//!
 //! `cargo run --release --bin worldgen -- <id> --validate` prints the report.
 
 use std::collections::BTreeMap;
@@ -96,7 +108,53 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     tunnels(l, &mut out);
     piers(l, &mut out);
     trams(l, &mut out);
+    hqs(l, &mut out);
     out
+}
+
+/// City Gen v4 (HQ spacing, organic/hq.rs): on a v4 world, every HQ lot `GAP_CM` from the
+/// next, its door on no main road, room on it for the tower and a garage, and (listed) its
+/// door within a walk of a stop.
+fn hqs(l: &Layers, out: &mut Vec<Violation>) {
+    use super::organic::hq::{arterial, fits, stop, Streets, GAP_CM, MIN_GAP_CM, WALK_CM};
+    if !l.roads.edges.iter().any(|e| e.v4.is_some()) {
+        return;
+    }
+    let streets = Streets::new(&l.roads);
+    let hq: Vec<&super::city::Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
+    let mut put = |hard: bool, rule: &'static str, what: String, at: [i64; 2]| out.push(Violation { rule, hard, what, at });
+    // the profile's count: the Commons' (the world with the ring road), else a personal island's one
+    let commons = l.roads.edges.iter().any(|e| e.class == "ring");
+    let want = if commons { super::profile::commons().hq_lots } else { super::profile::island().hq_lots };
+    if (hq.len() as i64) < want {
+        put(false, "hq-count", format!("{} HQ lots, the profile's {want}: the town has no room for more", hq.len()), [0, 0]);
+    }
+    for (i, a) in hq.iter().enumerate() {
+        for b in &hq[i + 1..] {
+            let d2 = (a.x - b.x).pow(2) + (a.z - b.z).pow(2);
+            if d2 < MIN_GAP_CM * MIN_GAP_CM {
+                put(true, "hq-spacing", format!("HQ lots {} and {} {} m apart (at least {} m)", a.id, b.id, super::noise::isqrt(d2) / 100, MIN_GAP_CM / 100), [a.x, a.z]);
+            } else if d2 < GAP_CM * GAP_CM {
+                put(false, "hq-gap", format!("HQ lots {} and {} {} m apart (the gap is {} m)", a.id, b.id, super::noise::isqrt(d2) / 100, GAP_CM / 100), [a.x, a.z]);
+            }
+        }
+        let door = (a.door[0], a.door[2]);
+        // the road it fronts: the first straight out of its door
+        match a.front.and_then(|f| streets.fronted(door, f)) {
+            Some((_, id, class)) if arterial(class) => {
+                let name = l.roads.edges.iter().find(|e| e.id == id).map_or("", |e| e.name.as_str());
+                put(true, "hq-spacing", format!("HQ lot {} fronts {name} ({class})", a.id), [door.0, door.1]);
+            }
+            None => put(true, "hq-spacing", format!("HQ lot {} is on no road", a.id), [door.0, door.1]),
+            _ => {}
+        }
+        if !fits(a) {
+            put(true, "hq-spacing", format!("HQ lot {} has no room for the tower, its garage, apron and driveway", a.id), [a.x, a.z]);
+        }
+        if !l.sites.iter().any(|s| stop(s.kind) && (s.x - door.0).pow(2) + (s.z - door.1).pow(2) <= WALK_CM * WALK_CM) {
+            put(false, "hq-transit", format!("HQ lot {} (rank {}) over {} m from a stop", a.id, a.rank.unwrap_or(0), WALK_CM / 100), [door.0, door.1]);
+        }
+    }
 }
 
 /// Phase 9: the tram lines' roads, stations and ends.

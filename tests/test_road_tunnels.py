@@ -208,6 +208,8 @@ out.geo = {tiles: Object.keys(tunTiles).map(function(k){
   if(g.tunnel) tris(g.tunnel, function(x, y, z, n, col, A, lit){
     var c = {d: Infinity}; tun.pts.forEach(function(p, i){ var d = Math.hypot(p[0] - x, p[2] - z); if(d < c.d) c = {d: d, y: p[1]}; });
     if(c.d > 30) return;
+    // (lit 2: HQ 3.34's cutting wall lights, night only, not the tunnel's ceiling lights)
+    if(lit > 1.5) return;
     if(lit > 0.5){ r.glow++; if(y > c.y + K.CLEAR - 0.2 && y < c.y + K.CLEAR) r.glowOn++; return; }
     if(n[1] < -0.9 && Math.abs(y - (c.y + K.CLEAR)) < 0.05) r.ceil++;
     if(Math.abs(n[1]) < 0.05 && y > c.y && y < c.y + K.CLEAR) r.wall++;

@@ -21,9 +21,12 @@
  *   bridges   per tile, one mesh of deck slabs, fascias, abutments and railings (worldgeom roadTile's `bridge`);
  *             opts.gap leaves every bridge's pieces over the water out (games/hqbridges.js draws opening spans there)
  *             (HQ 3.29: an interchange's decks, parapets, piers and the T's slab ride in the same mesh: 1 per tile they cross)
+ *             (HQ 3.34: in a doc with decks its lit attribute lights the lamp heads and downlights at night, M.bridgeLit:
+ *             the same one mesh per tile, no new key)
  *   tunnels   (HQ 3.30) per tile a tunnel or cutting crosses, one mesh (`tunnel`) of their roads, marks, barrier,
  *             retaining walls, the tunnel's walls, ceiling, walkways, portals and ceiling lights (lit 1: emissive, always
- *             on), drawn before the sea and marking the stencil, so the sea is not drawn down a cutting or in the tunnel
+ *             on; HQ 3.34: a cutting's wall lights lit 2, at night only), drawn before the sea and marking the stencil, so
+ *             the sea is not drawn down a cutting or in the tunnel
  *   water     (@3 docs with Layers.water) world-wide: every lake, canal and the marina as one mesh (worldgeom waterGeo) in
  *             the river's calm material (games/ocean.js riverMaterial(); the lakes in its calm lake variant: aLake = 1,
  *             smaller ripples and more of the sky), quays, the breakwater, lily pads and reeds as one vertex-coloured
@@ -236,18 +239,26 @@ function create(c, W, opts){
     }
     m.frame = new THREE.MeshStandardMaterial({color: 0x8a9096, roughness: 0.5, metalness: 0.5});
     m.bridge = std({roughness: 0.8});
+    // [3.34] a doc with decks: the same, its lamp heads and downlights (lit 1) emissive at night
+    m.bridgeLit = patch(std({roughness: 0.8, emissive: new THREE.Color(0xffe2a8), emissiveIntensity: 1.6}), "bridgelit", function(sh){
+      sh.vertexShader = rep(sh.vertexShader, "common", "attribute float lit;\nvarying float vLit;");
+      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vLit = lit;");
+    }, function(sh){
+      sh.fragmentShader = rep(sh.fragmentShader, "common", "uniform float uNight;\nvarying float vLit;");
+      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit * uNight;");
+    });
     // [3.30] a tunnel's and its cuttings' roads and structure, and its ceiling lights (always on): drawn before the sea
     // (games/ocean.js, renderOrder -10), marking the stencil (1) wherever they draw so the sea skips those pixels, as
     // games/hqmetro.js's street works do: the Commons' sea plane lies 4 m down, over the cuttings' and the tunnel's road
-    // (its lights: lit = 1, emissive day and night)
+    // (its lights: lit = 1, emissive day and night; [3.34] a cutting's wall lights: lit = 2, emissive at night only)
     m.tunnel = stencilMark(patch(std({roughness: 0.85, emissive: new THREE.Color(0xfff1d6), emissiveIntensity: 1.3}), "tunnel", function(sh){
       sh.vertexShader = rep(sh.vertexShader, "common", "attribute float lit;\nvarying float vLit;");
       sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vLit = lit;");
     }, function(sh){
-      sh.fragmentShader = rep(sh.fragmentShader, "common", "varying float vLit;");
-      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit;");
+      sh.fragmentShader = rep(sh.fragmentShader, "common", "uniform float uNight;\nvarying float vLit;");
+      sh.fragmentShader = rep(sh.fragmentShader, "emissivemap_fragment", "totalEmissiveRadiance *= vLit > 1.5 ? uNight : vLit;");
     }));
-    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge", "works", "tunnel"].forEach(function(k){ settle(m[k]); });
+    ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge", "bridgeLit", "works", "tunnel"].forEach(function(k){ settle(m[k]); });
     return m;
   }
   function stencilMark(m){ m.stencilWrite = true; m.stencilRef = 1; m.stencilFunc = THREE.AlwaysStencilFunc; m.stencilZPass = THREE.ReplaceStencilOp; return m; }
@@ -491,7 +502,7 @@ function create(c, W, opts){
       set(T, "marks", mesh(m.roads.marks, M.marks, T));
       set(T, "kerbwalk", mesh(mergeGeo([m.roads.kerb, m.roads.walk]), M.walk, T));
       set(T, "roadfar", mesh(mergeGeo([m.roads.asphalt, lifted(m.roads.marks, FAR_MARK_LIFT)]), M.asphalt, T));
-      set(T, "bridge", mesh(m.roads.bridge, M.bridge, T));   // none in a doc without bridges
+      set(T, "bridge", mesh(m.roads.bridge, m.roads.bridge && m.roads.bridge.lit ? M.bridgeLit : M.bridge, T));   // none in a doc without bridges ([3.34] lit: a doc with decks)
       set(T, "tunnel", mesh(m.roads.tunnel, M.tunnel, T));   // [3.30] none in a doc without tunnels
       if(T.m.tunnel) T.m.tunnel.renderOrder = -20;          // (before the sea: the stencil)
     }

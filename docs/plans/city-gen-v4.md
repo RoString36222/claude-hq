@@ -24,7 +24,7 @@ merges on its own and leaves the City playable:
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
 | 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
 | 9 | HQ spacing and movable garages | **3.33.0** (movable garages, as phase 10 here; HQ spacing left: HQs stay on their lots) |
-| 10 | Graphics pass within 1,200 / 240 draw calls | |
+| 10 | Graphics pass within 1,200 / 240 draw calls | **3.34.0** (the graphics pass, as phase 11 here) |
 | S | Ambient volume slider and proximity sound (any time) | |
 
 ## Phase 1 (3.24.0)
@@ -514,3 +514,137 @@ The plan's phase 9, its movable garages. HQ spacing would move members' HQs to o
 |---|---|
 | Default bay passes `garageFits` | 46 (the other 18 face back, their 8 m apron off the lot's back: they still stand where they always have) |
 | Legal spots per lot (0.5 m grid, 4 turns) | 165 on average, median 27; 11 lots have none (too tight beside their tower) |
+
+## Phase 11 (3.34.0): the graphics pass
+
+The plan's phase 10. It adds detail to what phases 6 to 9 built, inside new frame budgets.
+
+### Budgets
+
+The plan sizes them for an M3 Pro and up. There is no GPU-tier detection: the only quality control stays the
+governor in `worldbuild.js` (pixel ratio and shadows).
+
+| | Before (3.15 to 3.33) | Phase 11 |
+|---|---|---|
+| Draw calls a frame, surface (the renderer's count, the shadow pass included) | < 700 | **≤ 1,200** |
+| Draw calls a frame, below the street | < 120 | **≤ 240** |
+| The world's tiles alone (`worldDrawCalls`) | < 400 | < 400 (unchanged) |
+| Triangles a frame | < 1.5 M | < 1.5 M (unchanged) |
+
+- **Where they are pinned:** `tools/ui_smoke.py` (`MAX_FRAME_CALLS`, `MAX_UNDER_CALLS`); `tools/transit_tour.py`
+  and `tools/graphics_tour.py` read them from there; the page states them in `HQ3D_DEBUG.stats().budget`
+  (`hq3d.js` `SMOKE_BUDGET`); `tests/test_graphics_budget.py` checks that all of them agree. The metro view's own
+  underground budget in `tests/test_hqmetro.py` is 240 calls as well (400k triangles, unchanged).
+- **Why the tiles' 400 and the triangles stay:** the plan only raises the frame's calls. The extra calls are for the
+  new pieces, which are their own groups (markings, planting, deck detail, lights), not more tile meshes. The world's
+  tiles batch to about 8 calls each and drew at most 106 at the tour's spots, so 400 still catches a tile-merging
+  regression. Triangles are not what limits an M3 Pro, and the busiest spot drew 0.64 M before this phase, so 1.5 M
+  leaves the new detail room while keeping the CI and software-rendering runs quick.
+- **The per-module budgets don't change** (tramway ≤ 10, City Line ≤ 5, traffic ≤ 16, the metro surface ≤ 8, ...):
+  they guard each module against regressions. The new room is for the new detail.
+
+### The gate: `tools/graphics_tour.py`
+
+`python3 tools/graphics_tour.py [claudehq] [OUT_DIR | --out OUT_DIR]` runs the HQ server, the fake Arena and headless
+Chrome from `tools/ui_smoke.py`. It loads the page once and goes through eleven spots on the @3 Commons, all derived
+from the fixture:
+
+| Spot | From |
+|---|---|
+| trumpet | a road node with `junction: "ramps"`, from above |
+| flyover | the middle of a `v4: "flyover"` edge, from the side |
+| boulevard | a `v4: "boulevard"` edge (the City Line over its median) |
+| tram-bed | an edge with `bed > 0` |
+| tram-platform | a `tramstop` site with `w == 4000` |
+| tunnel | the ring's tunnel, at its road's height (`HQV.world.tunnelsOf`, in the page) |
+| cutting | the ring's cutting (`tunnelsOf`) |
+| signals | the `junction: "signals"` node nearest the plaza |
+| plaza | in front of the fountain |
+| metro | the first metro station, below the street |
+| hq-lot | your HQ lot (rank 0, the fake Arena's assignment) |
+
+- **At each spot:** the avatar goes there so its tiles are built, a camera is held on the spot, and the tour waits
+  until the draw calls stop changing.
+- **It fails on:** more than 1,200 calls (240 below the street), 1.5 M triangles or more, or any page error.
+- **It writes:** `NN-spot.png` and `graphics_tour.json` (each spot's calls, triangles, world calls and camera).
+- **It runs in:** CI, after the UI smoke test (the shots are kept as the `graphics-tour` artifact), and in
+  `ops/release.sh check`, after the UI smoke test (`ARENA_SKIP_UI=1` skips both on a machine without Chrome).
+- **It takes:** about 2 minutes under SwiftShader on a Mac, 40 s of it the first page load.
+
+At the base of this phase (before its detail), under SwiftShader:
+
+| Spot | Calls | Triangles | Tile calls |
+|---|---|---|---|
+| trumpet | 381 | 573k | 106 |
+| flyover | 106 | 355k | 33 |
+| boulevard | 211 | 524k | 50 |
+| tram-bed | 176 | 460k | 59 |
+| tram-platform | 326 | 506k | 97 |
+| tunnel | 193 | 366k | 54 |
+| cutting | 248 | 408k | 53 |
+| signals | 520 | 599k | 90 |
+| plaza | 642 | 640k | 91 |
+| metro (below the street) | 48 | 154k | 20 |
+| hq-lot | 308 | 545k | 72 |
+
+The calls move by a few percent from run to run (traffic, people and the clock).
+
+### The detail
+
+### The detail
+
+Everything goes into meshes the tiles already had (`marks`, `kerb`, `bridge`, `tunnel`) or the per-tile instanced
+trees, so the phase adds no draw calls. A @1 or @2 doc builds byte-identically.
+
+- **Road paint (`worldgeom.js`):**
+  - thin white edge lines inside the kerbs of avenues, collectors and boulevards;
+  - a solid stop line where a minor road meets one two classes above it at a priority junction (the give-way dashes
+    elsewhere; the lights' stop lines stay traffic.js's);
+  - lane arrows 15 to 25 m before the line on approaches of two lanes or more (`arrowPlan`; traffic keeps left);
+  - a yellow box at the lights where an avenue or boulevard meets;
+  - chevrons in a ramp's gore.
+- **Planted medians:**
+  - a boulevard's median gets trees every 12 m (under the City Line, kept 1.2 m under its girder) and clipped hedges;
+  - an avenue's gets low shrubs;
+  - all of it clear of junction noses, piers, holes and decks (`medianPlan`).
+- **Structures:**
+  - parapets with a coping, and a drip lip under the fascias;
+  - steel expansion joints at every pier line and each end of a span;
+  - every pier's cap on two bearings;
+  - lamp columns every 30 m a side on the decks;
+  - downlights under a deck where it crosses a road, and low abutment walls along that road (the underpass);
+  - the City Line's girder gets the same joints, bearings and lights.
+- **The tunnel:** its ceiling lights are luminaires, and its walls are panelled over a drain. The cuttings get a
+  plinth, panels, a kerb and drain at the foot, and wall lights that come on at night.
+
+
+- **Road markings:** _TODO_ (`worldgeom.js`)
+- **Median planting:** _TODO_ (`worldgeom.js`)
+- **Deck and viaduct detail:** _TODO_ (`worldgeom.js`, `hqcityrail.js`)
+- **Lighting:** _TODO_
+
+### Results
+
+With the detail in, under SwiftShader:
+
+| Spot | Calls | Triangles | Tile calls |
+|---|---|---|---|
+| trumpet | 388 | 538k | 106 |
+| flyover | 113 | 302k | 33 |
+| boulevard | 204 | 525k | 52 |
+| tram-bed | 178 | 455k | 59 |
+| tram-platform | 325 | 565k | 97 |
+| tunnel | 201 | 381k | 55 |
+| cutting | 246 | 392k | 54 |
+| signals | 521 | 585k | 91 |
+| plaza | 647 | 636k | 91 |
+| metro (below) | 48 | 158k | 21 |
+| hq-lot | 306 | 515k | 72 |
+
+The busiest frame uses 54 % of the surface budget and the metro 20 % of the one below the street: the room is
+for what comes next.
+
+
+| Spot | Calls before | Calls after | Triangles after |
+|---|---|---|---|
+| _TODO_ | | | |

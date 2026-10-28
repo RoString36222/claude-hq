@@ -360,7 +360,7 @@ anyone can hail a Claude Cabs helicopter and owners can also call their own.
 - In-world boards are canvas textures; the same rows are real text in the phone's Departures app (a table).
 - Line badges carry text; colour is never the only signal.
 
-### 3.14 Performance budget (`tools/ui_smoke.py` limits stay: 400 world / 700 frame calls / 1.5 M triangles)
+### 3.14 Performance budget (`tools/ui_smoke.py` limits: 400 world / 1,200 frame calls / 1.5 M triangles; 700 frame calls before HQ 3.34)
 
 Surface (any camera):
 
@@ -378,8 +378,20 @@ Surface (any camera):
 | boards (shared atlas) | 2 | 1k |
 | **total** | **74** | **~640k** |
 
-Underground view: the surface groups are hidden, so the underground view has its own budget of **120 calls /
-400k triangles** (tunnel within 400 m, at most 3 station interiors, trains, commuters).
+Underground view: the surface groups are hidden, so the underground view has its own budget of **240 calls /
+400k triangles** (tunnel within 400 m, at most 3 station interiors, trains, commuters; 120 calls before HQ 3.34).
+
+City Gen v4 phase 11 (HQ 3.34, the graphics pass; docs/plans/city-gen-v4.md) raised the frame budgets to the plan's,
+sized for an M3 Pro and up:
+
+| view | draw calls a frame | triangles | world tiles alone |
+|---|---|---|---|
+| surface (the renderer's count, the shadow pass included) | ≤ 1,200 (was < 700) | < 1.5 M | < 400 |
+| below the street | ≤ 240 (was < 120) | < 400k (the metro's view) | — |
+
+The per-module rows above are unchanged: they guard each module against regressions, and the new room is for the
+graphics pass's own detail. `tools/graphics_tour.py` (in CI and `ops/release.sh check`) holds eleven spots on the
+@3 Commons to these numbers.
 
 Every module reports `drawCalls()`; the integrator adds them to `smokeStats`.
 

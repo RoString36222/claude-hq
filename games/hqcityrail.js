@@ -19,7 +19,9 @@
  *   none in the cabs or behind car 1's luggage stack) then its STAND spots at the doors.
  * Drawing (needs THREE via hq3d's ctx and HQV.hqRail.parts): view(c, sim, opts) -> V (plan 5.4): a steel box-girder
  *   viaduct on round piers (City Gen v4 phase 8: exactly the doc's `piers` where the line has them, sim.piers(lineId);
- *   else every 30 m, 60 m and a truss over water; V.tools.piers() lists those drawn), catenary masts every 50 m with wires over both tracks, elevated
+ *   else every 30 m, 60 m and a truss over water; V.tools.piers() lists those drawn; HQ 3.34 with the doc's piers: each cap
+ *   on two bearings, an expansion joint over every pier, lamps on the masts and downlights under each span, lit at night
+ *   in the static mesh by its aLit attribute, V.tools.lit()), catenary masts every 50 m with wires over both tracks, elevated
  *   station boxes (platforms, canopies, stairs and a lift to the pavement, departure boards), cream-and-green trains,
  *   commuters in their windows, and the focused train's seats, racks and luggage with a faint shell. Five draw calls
  *   (static, boards, two for the trains, commuters) and two more for a focused train. The trains run with
@@ -37,6 +39,10 @@ var STEP = 4;               // m between track points
 var PLAT_IN = 3.45, PLAT_OUT = 6.6;   // m from the path: a side platform's edge and back
 var PIER_EVERY = 30, BRIDGE_PIER = 60, MAST_EVERY = 50;
 var GIRDER_D = 2.4;         // m: the box girder's soffit under the rail head (GIRDER's lowest point)
+// HQ 3.34 (City Gen v4 phase 11), where the doc places the piers: each pier's cap sits BEAR_H under the soffit on two
+// bearings; an expansion joint over every pier (a steel plate across the deck, its gap down the parapets, the girder's
+// sides and soffit); lamps on the catenary masts and downlights under the soffit at each span's middle, lit at night
+var BEAR_H = 0.25, BEAR_X = 1.8, LIT_HEX = 0xfff1d6, JOINT_HEX = 0x34373c, BEAR_HEX = 0x7b7f84;
 var COLOR = "#2e8b57", NAME = "City Line";
 var LIVERY = {body: 0xf1e7cc, accent: 0x2e7d4f, door: 0x23663f, glass: 0x1b2620, glassNight: 0xffdca8};
 var KC = {viaduct: 3, bridge: 4, tunnel: 1, portal: 2, grade: 0};
@@ -250,7 +256,7 @@ function view(c, sim, opts){
   var K = PT.kit(THREE), at = H.at, PLAT_TOP = H.PLAT_TOP, W = opts.W || null, WD = HQV.world;
   var root2 = new THREE.Group(); root2.name = "cityline";
   var ground = typeof opts.ground === "function" ? opts.ground : function(x, z){ return W && WD && WD.groundAt ? WD.groundAt(W, x, z) : 0; };
-  var parts = [], boards = [], O = {x: 0, z: 0}, pierLog = [];
+  var parts = [], boards = [], O = {x: 0, z: 0}, pierLog = [], lit = [];   // (lit: [3.34] parts lit at night, merged last)
   var GIRDER = [[-4.3, -0.35], [4.3, -0.35], [4.3, -0.8], [2.7, -2.4], [-2.7, -2.4], [-4.3, -0.8]];
   var lines = sim.lines();
   lines.forEach(function(l){
@@ -266,12 +272,22 @@ function view(c, sim, opts){
     // piers: round, from the ground to the girder's soffit; wider apart (and a truss) where the line bridges water
     // (phase 8: where the doc places them, exactly those, each from its foot to the soffit GIRDER_D under its rail)
     var docPiers = sim.piers ? sim.piers(l.id) : null, last = -1e9;
+    var spans = [];
     if(docPiers) docPiers.forEach(function(dp){
       var top = dp.y + dp.h - GIRDER_D;
       if(!(top - dp.y >= 0.6)) return;
-      var yaw = at(R, project(R, dp.x, dp.z)).yaw;
-      parts.push(K.cyl(0.9, 1.0, top - dp.y, 12, dp.x, dp.y, dp.z, 0xa7abae));
-      parts.push(K.box(6.2, 0.8, 2.2, dp.x, top - 0.4, dp.z, 0xa7abae, yaw));
+      var ps = project(R, dp.x, dp.z), yaw = at(R, ps).yaw, cx = Math.cos(yaw), sx = Math.sin(yaw), ry = top + GIRDER_D, yc = top - BEAR_H;
+      parts.push(K.cyl(0.9, 1.0, Math.max(0.3, yc - dp.y), 12, dp.x, dp.y, dp.z, 0xa7abae));
+      parts.push(K.box(6.2, 0.8, 2.2, dp.x, yc - 0.4, dp.z, 0xa7abae, yaw));
+      // [3.34] the bearings, and the expansion joint over the pier
+      [-1, 1].forEach(function(sd){
+        parts.push(K.box(0.7, BEAR_H, 0.7, dp.x + cx*sd*BEAR_X, yc + BEAR_H/2, dp.z - sx*sd*BEAR_X, BEAR_HEX, yaw));
+        parts.push(K.box(0.22, 1.2, 0.08, dp.x + cx*sd*4.225, ry + 0.2, dp.z - sx*sd*4.225, JOINT_HEX, yaw));     // the parapet's gap
+        parts.push(K.box(0.06, 0.5, 0.08, dp.x + cx*sd*4.31, ry - 0.575, dp.z - sx*sd*4.31, JOINT_HEX, yaw));   // the girder's side
+      });
+      parts.push(K.box(8.3, 0.04, 0.25, dp.x, ry - 0.33, dp.z, JOINT_HEX, yaw));                                 // the plate on the deck
+      parts.push(K.box(5.3, 0.04, 0.08, dp.x, ry - GIRDER_D - 0.02, dp.z, JOINT_HEX, yaw));                      // across the soffit
+      spans.push(ps);
       pierLog.push({line: l.id, x: dp.x, z: dp.z, y0: dp.y, y1: top});
     });
     else for(var s = 6; s < R.len - 6; s += 2){
@@ -293,13 +309,22 @@ function view(c, sim, opts){
         if(b % 3 === 0) parts.push(K.strut([p0.x + c0, p0.y - 0.4, p0.z - s0], [p1.x + c1, p1.y + 3.2, p1.z - s1], 0.2, 0x3f5a5e));
       });
     }
-    // catenary masts every MAST_EVERY m both sides, an arm over each track
+    // catenary masts every MAST_EVERY m both sides, an arm over each track ([3.34] with the doc's piers: a lamp under it)
     for(var m = 12; m < R.len; m += MAST_EVERY){
       var q = at(R, m), cx = Math.cos(q.yaw), sx = Math.sin(q.yaw);
       [-1, 1].forEach(function(sd){
         parts.push(K.cyl(0.13, 0.15, 6.4, 8, q.x + cx*sd*4.0, q.y - 0.35, q.z - sx*sd*4.0, 0x3d5566));
         parts.push(K.box(2.6, 0.1, 0.1, q.x + cx*sd*2.7, q.y + 5.75, q.z - sx*sd*2.7, 0x3d5566, q.yaw));
+        if(docPiers) lit.push(K.box(0.5, 0.12, 0.28, q.x + cx*sd*3.55, q.y + 5.62, q.z - sx*sd*3.55, LIT_HEX, q.yaw));
       });
+    }
+    // [3.34] a pair of downlights under the soffit at each span's middle over the ground (not over water)
+    spans.sort(function(a, b){ return a - b; });
+    for(var sp = 0; sp + 1 < spans.length; sp++){
+      var sm = (spans[sp] + spans[sp + 1])/2, ki = R.k[Math.min(R.n - 1, Math.round(sm/STEP))];
+      if(ki !== KC.viaduct) continue;
+      var dq = at(R, sm), dcx = Math.cos(dq.yaw), dsx = Math.sin(dq.yaw);
+      [-1, 1].forEach(function(sd){ lit.push(K.box(0.9, 0.05, 0.5, dq.x + dcx*sd*1.3, dq.y - GIRDER_D - 0.03, dq.z - dsx*sd*1.3, LIT_HEX, dq.yaw)); });
     }
     // the stations: side platforms outside the tracks, canopies, glass ends, stairs and a lift to the doc's stair feet
     sim.stations(l.id).forEach(function(st){
@@ -330,8 +355,25 @@ function view(c, sim, opts){
       boards.push({st: st, R: R});
     });
   });
-  var mat = PT.vcMat(c, {roughness: 0.8, side: THREE.DoubleSide}), stat = null;
-  if(parts.length){ stat = new THREE.Mesh(K.merge(parts), mat); stat.castShadow = true; stat.receiveShadow = true; root2.add(stat); }
+  var mat = PT.vcMat(c, {roughness: 0.8, side: THREE.DoubleSide}), stat = null, litU = {value: 0};
+  mat.userData.litU = litU;
+  // [3.34] the lit parts ride in the same mesh: their vertices (the last ones) carry aLit = 1, emissive at night
+  var nPlain = 0; parts.forEach(function(g){ nPlain += g.attributes.position.count; });
+  if(lit.length && mat.emissive){
+    mat.emissive.setHex(0xffe2b0); mat.emissiveIntensity = 1.5;
+    mat.onBeforeCompile = function(sh){
+      sh.uniforms.uClNight = litU;
+      sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float aLit;\nvarying float vClLit;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvClLit = aLit;");
+      sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nuniform float uClNight;\nvarying float vClLit;").replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vClLit * uClNight;");
+    };
+    mat.customProgramCacheKey = function(){ return "hq-cl-lit"; };
+  }
+  var allParts = parts.concat(lit);
+  if(allParts.length){
+    var sgeo = K.merge(allParts);
+    if(lit.length){ var al = new Float32Array(sgeo.attributes.position.count); for(var li = nPlain; li < al.length; li++) al[li] = 1; sgeo.setAttribute("aLit", new THREE.BufferAttribute(al, 1)); }
+    stat = new THREE.Mesh(sgeo, mat); stat.castShadow = true; stat.receiveShadow = true; root2.add(stat);
+  }
   // departure boards: one plane a platform side under the canopy, on hqRide's shared atlas (one mesh)
   var RN = HQV.hqRide, B = [], boardMesh = null, bmat = null;
   if(RN && RN.boardTexture && boards.length){
@@ -367,7 +409,8 @@ function view(c, sim, opts){
     update: function(ms, dt, cam){
       lastMs = ms;
       var all = [], ride = [], fc = null, snd = [], ear = runP ? PT.earAt(cam) : null;
-      trains.night(typeof opts.night === "function" ? opts.night() : false);
+      var nightOn = typeof opts.night === "function" ? !!opts.night() : false;
+      trains.night(nightOn); litU.value = nightOn ? 1 : 0;
       sim.vehicles(ms).forEach(function(v){
         if(runP && +v.speed > 0.5 && hyp(v.x - ear.x, v.z - ear.z) < PT.SND_R){ var q = PT.nearOn(v.cars, ear, 1.5, H.CAR_L); if(q) snd.push({id: v.id, x: q.x, y: q.y, z: q.z, speed: +v.speed}); }
         if(v.id === focusId){ fc = v.cars; ride = ride.concat(PT.ridersOf("rail", v.id, v.cars, H.SEATS, ms, seed, opts.mySeat != null ? opts.mySeat : -1)); return; }
@@ -383,6 +426,8 @@ function view(c, sim, opts){
     tools: {
       // the piers drawn [{line, x, z, y0, y1}] (m: foot to the girder's soffit): the doc's, else the view's own every 30 m
       piers: function(){ return pierLog.map(function(q){ return {line: q.line, x: q.x, z: q.z, y0: q.y0, y1: q.y1}; }); },
+      // [3.34] the static mesh's lit vertices (aLit = 1) and the night switch's value
+      lit: function(){ var a = stat && stat.geometry.attributes.aLit, n = 0; if(a) for(var i = 0; i < a.count; i++) if(a.array[i] > 0.5) n++; return {verts: n, on: litU.value, plain: nPlain}; },
       shotCam: function(name){
       var l = lines[0], R = l && sim.track(l.id); if(!R) return null;
       var st = sim.stations(l.id);

@@ -23,6 +23,7 @@
 #   ARENA_GH_TOKEN=...      optional GitHub token (else GITHUB_TOKEN, else the gh CLI) to
 #                           read a failed job's log and name a known flaky check
 #   ARENA_SKIP_PULL=1       release the checkout as it is (used by the CI smoke test)
+#   ARENA_SKIP_UI=1         check: skip the headless-Chrome UI smoke test and graphics tour
 #   ARENA_KEEP=3            releases to keep
 #   ARENA_BUILD_CACHE=3gb   Docker build cache kept between deploys (the rest is pruned)
 #
@@ -165,6 +166,18 @@ cmd_check() {
   ( cd "$BACKEND" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "backend" || die "backend tests or clippy failed"
   say "HQ server tests + clippy"
   ( cd "$REPO/dashboard-rs" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "dashboard-rs" || die "HQ server tests or clippy failed"
+  # The page in headless Chrome (needs Chrome or Chromium; ARENA_SKIP_UI=1 skips it, on a host without one): the UI
+  # smoke test, then the graphics tour, which holds the City's spots to the frame budgets (City Gen v4 phase 11:
+  # 1,200 draw calls a frame, 240 below the street). Both as CI runs them, on a release build.
+  if [[ "${ARENA_SKIP_UI:-}" == 1 ]]; then
+    warn "UI smoke test and graphics tour skipped (ARENA_SKIP_UI=1)"
+  else
+    local hq="$REPO/dashboard-rs/target/release/claudehq"
+    say "UI smoke test + graphics tour (headless Chrome)"
+    ( cd "$REPO/dashboard-rs" && cargo build --release --locked -q ) || die "HQ server release build failed"
+    ( cd "$REPO" && python3 tools/ui_smoke.py "$hq" ) && ok "UI smoke test" || die "UI smoke test failed"
+    ( cd "$REPO" && python3 tools/graphics_tour.py "$hq" ) && ok "graphics tour within budget" || die "graphics tour failed"
+  fi
   ok "all green: safe to merge"
 }
 

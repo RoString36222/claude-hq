@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.33.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.34.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -421,6 +421,25 @@ and feature guide.
 
 ## Changelog
 
+- **3.34.0 — City Gen v4, phase 11: the graphics pass.** The streets and structures get their detail.
+  - **Roads:**
+    - edge lines along the main roads;
+    - lane arrows before junctions;
+    - solid stop lines where a side street meets a main road;
+    - yellow box hatching at signalled junctions;
+    - chevrons where ramps split off.
+  - **Medians:** the City Line's boulevard has trees and clipped hedges down its median, and avenues have low
+    shrubs.
+  - **Flyovers and the City Line viaduct:**
+    - parapets with coping;
+    - expansion joints at every pier;
+    - pier caps on bearings;
+    - lamps along the decks;
+    - downlights underneath where a deck crosses a road.
+  - **The tunnel:** proper light fittings and panelled walls. The cuttings light up at night.
+  - **Budgets:** new frame budgets of 1,200 draw calls above ground and 240 below, as the plan sets for an M3 Pro
+    and up. A headless tour of eleven places in the city now guards them, in CI and in the release check. The
+    busiest place draws 647.
 - **3.33.0 — City Gen v4, phase 10: move your garage.** Your HQ's car-lift bay no longer has to stay where the city
   put it.
   - **Moving it:** click the MOVE plate on the bay, or use "Move your garage…" in HQ Studio. A ghost bay follows the

@@ -6030,6 +6030,9 @@ function mount(el, api){
     var m = e && (e.message || (e.reason && (e.reason.message || String(e.reason)))) || String(e);
     try { document.documentElement.dataset.hqSmoke = "error " + m; } catch(x){}
   }
+  // [3.34] the frame budgets tools/ui_smoke.py and tools/graphics_tour.py hold the City to (City Gen v4 phase 11, sized
+  // for an M3 Pro and up): draw calls a frame on the surface and below the street, triangles a frame
+  var SMOKE_BUDGET = {frame: 1200, under: 240, triangles: 1500000};
   function smokeStats(){
     var w = cur || {}, s = w.stats ? w.stats() : w.wb && w.wb.stats ? w.wb.stats() : {}, ri = renderer && renderer.info.render;
     // drawCalls / triangles: the renderer's own counts of the last frame (shadow pass included), so the budgets see
@@ -6038,10 +6041,10 @@ function mount(el, api){
     s = Object.assign({}, s, {worldDrawCalls: s.drawCalls != null ? s.drawCalls : null, worldTriangles: s.triangles != null ? s.triangles : null});
     if(ri && ri.calls > 0){ s.drawCalls = ri.calls; s.triangles = ri.triangles; }
     // [3.15] every transport module's own drawCalls() (games/hqtransit.js), and whether you are below the street (the
-    // underground's own budget: 120 calls)
+    // underground's own budget: 240 calls since 3.34, see SMOKE_BUDGET)
     var TRs = null; try { TRs = cur && cur.transit ? cur.transit() : null; } catch(e){ TRs = null; }
     if(TRs){ try { s.transit = TRs.drawCallsBy(); s.transitDrawCalls = TRs.drawCalls(); s.underground = TRs.under(); } catch(e){} }
-    return Object.assign({}, s, {labels: hud && hud.labelCounts ? hud.labelCounts() : null, mode: rig ? rig.mode : "classic",
+    return Object.assign({}, s, {budget: SMOKE_BUDGET, labels: hud && hud.labelCounts ? hud.labelCounts() : null, mode: rig ? rig.mode : "classic",
       cache: HQV.world && typeof HQV.world.cacheMs === "function" ? HQV.world.cacheMs(w.world ? w.world() : undefined) : null,   // the world this City is on (3.15: @3)
       vehicle: ride ? {pitch: ride.pitch || 0, roll: ride.roll || 0} : null, world: w.net || w.name || null});
   }

@@ -22,7 +22,7 @@ merges on its own and leaves the City playable:
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | **3.28.0** |
 | 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
-| 8 | Trams on any road class, with stations | |
+| 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
 | 9 | HQ spacing and movable garages | |
 | 10 | Graphics pass within 1,200 / 240 draw calls | |
 | S | Ambient volume slider and proximity sound (any time) | |
@@ -439,3 +439,34 @@ The plan's phase 7: an elevated line only along a boulevard, its piers in the me
 |---|---|---|
 | A boulevard under the City Line | yes: 7 pieces, 16 piers, no span over 60 m | 6 of 51 (the rest: an HQ's lot, a civic site or a graded road in the way) |
 | Cars in the traffic sim | 250 (292 before: the sim's rings re-split round the new junctions, none overfull) | |
+
+## Phase 9 (3.32.0): tram roads and stations
+
+The plan's phase 8, for the streets trams run on today (the two main streets with the most frontage; routes on
+desire lines are left for later).
+
+- **Generator:**
+  - **Tram roads (`organic/widen.rs`, `roads.rs`):** a tram street (two tram stops or more on it) is paved as its
+    class's tram version: the plan's added width, the lots giving up frontage as for any wider road, HQs on their
+    lots. Each class first tries its tram version, then the class as it is with the tram in its lanes, and only then
+    steps down a class.
+    - New edge fields: `tram` (`"centre-bed"`, `"shared-double"`, `"shared-single"`, ...).
+    - On a centre bed, `bed` (cm) is the class's median and the tram's width together, and `median` is absent, so an
+      older dashboard draws its trams down a flush middle, as before.
+    - A tram road no line runs on is paved back to its class.
+  - **Stations (`civic.rs`, `transit.rs`):** about 300 m apart along each tram street, half the plan's 600 m because
+    the Commons' tram streets are a kilometre or so.
+    - **Platforms:** each line's stations take the best set of 40 m by 3 m platforms on its track: straight to 1 m
+      over 40 m, clear of every junction's box (the widest crossing road and 3 m), 100 m apart at least. On a bed
+      wide enough the platform is an island between the tracks, else a platform at the kerb.
+    - **No room:** a station with no room (side streets every 24 to 48 m) stays a kerb stop.
+  - **Track ends:** a line's track runs on past its end stations to the next junction (along its street, else the
+    main road or the side street it runs into, the tram in its lanes), so it never ends mid-block. There are no
+    there-and-back spurs.
+  - **The boulevard:** trams keep off the City Line's boulevard, crossing included. Where it cuts a tram street, each
+    side runs as its own line.
+- **Validator:**
+  - `class-width` knows the tram versions.
+  - `tram` (hard) fails: a tram line on a road that is no tram version, a station platform on a bend or in a
+    junction's box, and a track ending mid-block.
+  - `tram-station` lists the stops left at the kerb.

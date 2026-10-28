@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.31.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.32.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.

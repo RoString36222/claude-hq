@@ -42,7 +42,7 @@ fn plan(w: &WorldDoc) -> Planned {
         coast: l.island.as_ref().map(|i| i.coast.as_slice()),
     };
     let (m, mut claims) = metro::plan(&c).unwrap();
-    let (r, rc) = railway::plan(&c, &m).unwrap();
+    let (r, rc) = railway::plan(&c, &m, None).unwrap();
     claims.extend(rc);
     let (g, gc) = gondola::plan(&c, &claims).unwrap();
     claims.extend(gc);

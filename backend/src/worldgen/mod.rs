@@ -67,6 +67,7 @@ pub mod classes;
 pub mod civic;
 pub mod districts;
 pub mod gondola;
+pub mod corridor;
 pub mod interchange;
 pub mod island;
 pub mod lines;
@@ -254,6 +255,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         let water = plan.as_ref().map_or(Vec::new(), |w| w.outlines());
         organic::generate(seed, &p, &base, river.as_ref(), &water)?
     };
+    let mut corridor: Option<corridor::Corridor> = None;
     let (zones, transit, island) = if version == 1 {
         (None, None, None)
     } else {
@@ -268,6 +270,36 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
             let (made, kept) = interchange::build(&mut roads, &base, &keep);
             // phase 7: the ring under the airport, where it ran behind the terminal
             tunnels::build(&mut roads, claim.as_ref(), &base);
+            // phase 8: the City Line's corridor, a boulevard cut under its alignment
+            if version >= 3 {
+                let mut polys: Vec<Vec<[i64; 2]>> = plan.as_ref().map_or(Vec::new(), |w| w.outlines().iter().map(|b| b.iter().map(|q| [q.0, q.1]).collect()).collect());
+                if let Some(r) = river.as_ref() {
+                    polys.push(r.poly.clone());
+                }
+                let shore: Option<Vec<[i64; 2]>> = coast.as_ref().map(|c| c.poly.iter().map(|q| [q.0, q.1]).collect());
+                let (lots, sites) = (city.lots.clone(), city.sites.clone());
+                let c = lines::Ctx { seed, profile: &p, terrain: &base, roads: &roads, lots: &lots, sites: &sites, river: river.as_ref(), water: &polys, coast: shore.as_deref() };
+                // (the alignment, and whether it crosses water, on the streets as they are)
+                let found = railway::alignment(&c).map(|cl| {
+                    let land = lines::Land::new(&c);
+                    let wet: Vec<bool> = corridor::samples(&cl.path).into_iter().map(|q| land.wet(q)).collect();
+                    (cl, wet)
+                });
+                if let Some((cl, wet)) = found {
+                    let mut r2 = roads.clone();
+                    match corridor::cut(&mut r2, &mut city, &base, &cl, &wet, claim.as_ref()) {
+                        Ok(k) => {
+                            roads = r2;
+                            corridor = Some(k);
+                        }
+                        Err(why) => {
+                            if std::env::var("HQ_IX").is_ok() {
+                                eprintln!("corridor: none ({why})");
+                            }
+                        }
+                    }
+                }
+            }
             // (HQ_IX=1 worldgen <id>: what each junction became, for tuning)
             if std::env::var("HQ_IX").is_ok() {
                 eprintln!("interchanges: {made} made, kept at grade: {kept:?}");
@@ -300,7 +332,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         _ => None,
     };
     let (metro, rail, gondola) = if version >= 3 {
-        let (m, r, g) = lines(seed, &p, &terrain, &roads, &mut city, river.as_ref(), water.as_ref(), island.as_ref())?;
+        let (m, r, g) = lines(seed, &p, &terrain, &roads, &mut city, river.as_ref(), water.as_ref(), island.as_ref(), corridor.as_ref().map(|k| &k.cl))?;
         (Some(m), Some(r), Some(g))
     } else {
         (None, None, None)
@@ -344,6 +376,7 @@ fn lines(
     river: Option<&river::River>,
     water: Option<&water::Water>,
     island: Option<&island::Island>,
+    cl: Option<&railway::Cl>,
 ) -> Result<(metro::Metro, railway::Rail, gondola::Gondola), String> {
     let mut polys: Vec<Vec<[i64; 2]>> = water.map_or(Vec::new(), |w| w.bodies.iter().map(|b| b.poly.clone()).collect());
     if let Some(r) = river {
@@ -357,7 +390,7 @@ fn lines(
     claim(city, &taken)?;
     let (lots, sites) = ctx(city);
     let c = lines::Ctx { lots: &lots, sites: &sites, ..c };
-    let (rail, rc) = railway::plan(&c, &metro)?;
+    let (rail, rc) = railway::plan(&c, &metro, cl)?;
     claim(city, &rc)?;
     taken.extend(rc);
     let (lots, sites) = ctx(city);
@@ -405,6 +438,12 @@ fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
             tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None,
         });
     }
+    retire_lots(city, &gone);
+    Ok(())
+}
+
+/// Take lots `gone` out of the city, the rest numbered again (ids and growth ranks in order).
+fn retire_lots(city: &mut city::City, gone: &std::collections::BTreeSet<u32>) {
     if !gone.is_empty() {
         city.lots.retain(|l| !gone.contains(&l.id));
         let mut by_grow: Vec<(u32, usize)> = city.lots.iter().enumerate().map(|(k, l)| (l.grow.unwrap_or(u32::MAX), k)).collect();
@@ -418,5 +457,4 @@ fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
             l.id = k as u32;
         }
     }
-    Ok(())
 }

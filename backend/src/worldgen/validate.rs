@@ -42,7 +42,8 @@
 //!                  (its column 0.25 m inside it) nor on clear ground; one on clear ground
 //!                  away from its line's stations (the elevated line runs only along a
 //!                  boulevard, but where it leaves Central over the hub or reaches the
-//!                  airport over its landside); or a span longer than a crossing's 60 m
+//!                  airport over its landside); or a span longer than a crossing's 60 m (a
+//!                  bridge's over water, 150 m)
 //!   rail-corridor  (phase 8) a City Line with no boulevard under it (corridor.rs could not
 //!                  cut one: an HQ's lot, a civic site or a graded road in its way), its
 //!                  piers then the client's own
@@ -171,7 +172,7 @@ fn near_off(near: &[P], ends: (P, P)) -> i128 {
 
 /// Phase 8: the viaducts' piers, where they stand and how far apart.
 fn piers(l: &Layers, out: &mut Vec<Violation>) {
-    use super::railway::{pier_at, SPAN_LONG_CM};
+    use super::railway::{pier_at, SPAN_BRIDGE_CM, SPAN_LONG_CM};
     let Some(rail) = l.rail.as_ref() else { return };
     let wet = |q: P| {
         l.river.as_ref().is_some_and(|r| r.wet(q))
@@ -196,9 +197,12 @@ fn piers(l: &Layers, out: &mut Vec<Violation>) {
                 }
                 _ => {}
             }
+            // (a crossing's single span 60 m at most; a bridge's over water up to 150 m)
             if let Some(n) = line.piers.get(k + 1) {
-                if super::lines::dist(q, (n.x, n.z)) > SPAN_LONG_CM + 100 {
-                    out.push(Violation { rule: "rail-pier", hard: true, what: format!("{} span {k}: longer than 60 m", line.id), at });
+                let span = super::lines::dist(q, (n.x, n.z));
+                let over_water = (1..8).any(|i| wet((q.0 + (n.x - q.0) * i / 8, q.1 + (n.z - q.1) * i / 8)));
+                if span > if over_water { SPAN_BRIDGE_CM } else { SPAN_LONG_CM } + 100 {
+                    out.push(Violation { rule: "rail-pier", hard: true, what: format!("{} span {k}: {} m long", line.id, span / 100), at });
                 }
             }
         }

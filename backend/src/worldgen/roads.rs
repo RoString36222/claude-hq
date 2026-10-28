@@ -276,12 +276,35 @@ impl Roads {
         for e in &mut self.edges {
             if e.tram.is_some() && !on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
                 if let Some(c) = e.v4.and_then(super::classes::class) {
-                    // (a last resort narrower than its class keeps its width)
-                    e.width = e.width.min(c.total_cm);
+                    // (paved as its class's own tram version: the tram's width comes off; with the
+                    // tram in its lanes it was the class's width already)
+                    if let Some(t) = c.tram.filter(|t| Some(t.layout.name()) == e.tram) {
+                        e.width -= t.added_cm;
+                    }
                     e.median = (c.median_cm > 0).then_some(c.median_cm);
                 }
                 e.tram = None;
                 e.bed = None;
+            }
+        }
+    }
+
+    /// City Gen v4 (phase 9): a road a tram line runs on that is no tram version (where a line runs
+    /// on past its street's end to a junction) carries the tram in its lanes: its width as it is.
+    pub fn tram_on(&mut self, transit: &super::transit::Transit) {
+        if !self.edges.iter().any(|e| e.tram.is_some()) {
+            return;
+        }
+        let mut on = BTreeSet::new();
+        for l in transit.lines.iter().filter(|l| l.kind == "tram") {
+            for w in l.path.windows(2) {
+                on.insert((w[0].min(w[1]), w[0].max(w[1])));
+            }
+        }
+        for e in &mut self.edges {
+            if e.tram.is_none() && e.v4.is_some() && on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
+                let two = e.v4.and_then(super::classes::class).is_some_and(|c| c.lanes >= 2 || c.name == "local");
+                e.tram = Some(if two { super::classes::Layout::SharedDouble } else { super::classes::Layout::SharedSingle }.name());
             }
         }
     }

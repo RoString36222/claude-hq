@@ -74,6 +74,8 @@ const SPAN_CM: i64 = 2_750;
 const SPAN_MIN_CM: i64 = 2_500;
 const SPAN_MAX_CM: i64 = 3_000;
 pub const SPAN_LONG_CM: i64 = 6_000;
+/// A bridge's longest span (cm), over water.
+pub const SPAN_BRIDGE_CM: i64 = 15_000;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Station {
@@ -331,7 +333,16 @@ fn piers(c: &Ctx, land: &Land, path: &[P], ys: &[i64]) -> Vec<Pier> {
     let mut last = -SPAN_CM + 600;
     while last + SPAN_MIN_CM < total - 600 {
         let near: Vec<i64> = (0..=(SPAN_MAX_CM - SPAN_MIN_CM) / 100).map(|i| SPAN_CM + if i % 2 == 0 { i / 2 * 100 } else { -(i / 2 + 1) * 100 }).filter(|&d| (SPAN_MIN_CM..=SPAN_MAX_CM).contains(&d)).collect();
-        let next = near.iter().map(|&d| last + d).chain((SPAN_MAX_CM / 100 + 1..=SPAN_LONG_CM / 100).map(|i| last + i * 100)).find(|&s| s <= total - 600 && ok(s));
+        // (the nominal span; else the next place a crossing's span reaches, unless that leaves the
+        // one after too far: then a shorter span first, so the next can reach past what is in the way)
+        let longer = (SPAN_MAX_CM / 100 + 1..=SPAN_LONG_CM / 100).map(|i| last + i * 100).find(|&s| s <= total - 600 && ok(s));
+        let shorter = (8..SPAN_MIN_CM / 100).rev().map(|i| last + i * 100).find(|&s| ok(s));
+        let reach = |from: i64| (1..=SPAN_LONG_CM / 100).map(|i| from + i * 100).any(|s| s > total - 600 || ok(s));
+        let next = near.iter().map(|&d| last + d).find(|&s| s <= total - 600 && ok(s)).or(match (longer, shorter) {
+            (Some(l), Some(sh)) if !reach(l) && reach(sh) => Some(sh),
+            (Some(l), _) => Some(l),
+            (None, sh) => sh,
+        });
         let Some(s) = next else {
             last += SPAN_LONG_CM;
             continue;

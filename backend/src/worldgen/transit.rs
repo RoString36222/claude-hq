@@ -325,7 +325,10 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>) 
             // (City Gen v4 phase 9: the track runs on along its street past each end station to
             // the next junction, so it ends at one, never mid-block, with room for the platform)
             if cut || r.edges.iter().any(|e| e.tram.is_some()) {
-                run_on(&net, &mut path, &own);
+                // (along its own street, else on along the main road it runs into: roads.rs
+                // `tram_on` makes that a tram road, the tram in its lanes)
+                let main = |e: &Edge| (e.class == "arterial" && e.v4 != Some("boulevard")).then_some(1000);
+                run_on(&net, &mut path, &own, &main);
             }
             lines.push(Line {
                 id: format!("tram:{n}"), kind: "tram", tier: TRAM_TIER,
@@ -344,8 +347,15 @@ const RUN_ON_CM: i64 = 100_000;
 
 /// Run a line's path on at each end along its own street (`own`) to the nearest junction within
 /// `RUN_ON_CM`, if there is one.
-fn run_on(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>) {
-    let junction = |n: u32| net.adj[n as usize].len() >= 3;
+fn run_on(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>, main: &impl Fn(&Edge) -> Option<i64>) {
+    run_on_by(net, path, own);
+    run_on_by(net, path, main);
+}
+
+fn run_on_by(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>) {
+    // (every road meeting there counts, the graded ones too, as the validator counts them)
+    let deg = |n: u32| net.r.edges.iter().filter(|e| e.a == n || e.b == n).count();
+    let junction = |n: u32| deg(n) >= 3;
     for end in [true, false] {
         let (last, before) = if end { (path[path.len() - 1], path.get(path.len().wrapping_sub(2)).copied()) } else { (path[0], path.get(1).copied()) };
         if junction(last) {
@@ -353,7 +363,11 @@ fn run_on(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>) {
         }
         let (mut at, mut from, mut run, mut add) = (last, before, 0i64, Vec::new());
         loop {
-            let next = net.adj[at as usize].iter().map(|&e| &net.r.edges[e as usize]).find(|e| own(e).is_some() && Some(if e.a == at { e.b } else { e.a }) != from && !path.contains(&if e.a == at { e.b } else { e.a }));
+            // (onto a node the line already passes only where that is a junction: it meets itself there)
+            let next = net.adj[at as usize].iter().map(|&e| &net.r.edges[e as usize]).find(|e| {
+                let to = if e.a == at { e.b } else { e.a };
+                own(e).is_some() && Some(to) != from && (!path.contains(&to) || junction(to))
+            });
             let Some(e) = next else { break };
             let to = if e.a == at { e.b } else { e.a };
             run += isqrt(d2(net.pos(at), net.pos(to)));
@@ -367,7 +381,7 @@ fn run_on(net: &Net, path: &mut Vec<u32>, own: &impl Fn(&Edge) -> Option<i64>) {
             }
         }
         // (to a junction, or the street's own end: a terminus)
-        if !add.last().is_some_and(|&n| junction(n) || net.adj[n as usize].len() == 1) {
+        if !add.last().is_some_and(|&n| junction(n) || deg(n) == 1) {
             continue;
         }
         if end {

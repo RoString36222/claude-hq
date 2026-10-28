@@ -313,6 +313,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         // City Gen v4 (phase 2): a tram runs down the middle of its street until phase 8
         // gives it its own bed, so a street a tram line runs on has no median yet
         roads.untram_unused(&transit);
+        roads.tram_on(&transit);
         // phase 9: the tram stations on their tracks
         if p.v4 {
             transit::stations(&roads, &mut transit, &mut city.sites, &base);

@@ -464,6 +464,17 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
         (e.a, e.b) = (renum[e.a as usize], renum[e.b as usize]);
     }
     let junctions = ids.iter().map(|&i| renum[i as usize]).collect();
+    // (a pier must find room at least every crossing's span along the whole line, as railway.rs
+    // will look for it: else a join comes in too shallow, down the median, and the line keeps to
+    // its streets)
+    let cut = Roads { nodes: out, edges };
+    let lots: Vec<super::city::Lot> = city.lots.iter().filter(|l| !gone.contains(&l.id)).cloned().collect();
+    let sites: Vec<super::city::Site> = city.sites.iter().filter(|s| !stops_gone.contains(&s.id)).cloned().collect();
+    let ok: Vec<i64> = (0..=full.len() / SAMPLE_CM).map(|i| i * SAMPLE_CM).filter(|&s| super::railway::pier_ok(&cut, &lots, &sites, full.point(s))).collect();
+    if ok.windows(2).any(|w| w[1] - w[0] > super::railway::SPAN_LONG_CM) {
+        return Err("no room for the piers".into());
+    }
+    let Roads { nodes: out, edges } = cut;
     roads.nodes = out;
     roads.edges = edges;
     super::retire_lots(city, &gone);

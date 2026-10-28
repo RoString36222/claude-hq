@@ -86,10 +86,13 @@ pub fn build(roads: &mut Roads, claim: Option<&Airport>, t: &Terrain) -> usize {
         piece(ids[2], ids[3], s2, s3, Some("cutting")),
         piece(ids[3], e.b, s3, total, None),
     ];
-    roads.edges.remove(k);
-    roads.edges.extend(pieces);
-    for (n, x) in roads.edges.iter_mut().enumerate() {
-        x.id = n as u32;
+    // (the first piece keeps the edge's place and the rest go on the end, so no other road's id changes: the metro,
+    // the stops and the streets' names downstream all key on them)
+    let mut pieces = pieces.into_iter();
+    roads.edges[k] = Edge { id: k as u32, ..pieces.next().unwrap() };
+    for x in pieces {
+        let id = roads.edges.len() as u32;
+        roads.edges.push(Edge { id, ..x });
     }
     1
 }

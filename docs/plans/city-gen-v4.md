@@ -388,8 +388,9 @@ or a bridge too close on the ring (63). A later layout phase (or tunnels) can ta
   - **Each cutting:** at least 175 m long and long enough to come down at 4.5 % from the land at its outer end, kept
     60 m clear of the edge's junctions.
   - **Land:** nothing over the tunnel or the cuttings is carved; the client opens the cuttings as terrain holes.
-  - **Metro and Island Link:** the metro dives 11 m under a road tunnel or cutting it passes, at 3 %. The Island Link
-    skips a route that would come within 8 m of one.
+  - **Metro and Island Link:** the metro dives 11 m under a road tunnel or cutting it passes, at 3 %; a depot's ramp
+    keeps clear of one, and no station stands on one's nodes (so the metro lays out as it did before the tunnel). The
+    Island Link skips a route that would come within 8 m of one. Splitting the ring keeps every other road's id.
 - **Validator:** `tunnel` (hard): 6.5 m or more of land over the tunnel's road, cuttings no steeper than 6 %, no metro
   or rail track within 8 m of the road's level beside it. `clearance` now counts a road crossing a cutting.
 - **Client:**
@@ -399,4 +400,4 @@ or a bridge too close on the ring (63). A later layout phase (or tunnels) can ta
 
 | | Commons | 50 seeds + the Commons |
 |---|---|---|
-| A tunnel under the airport | yes, 303 m with two cuttings of 375 m and 368 m | 15 of 50 seeds (the rest pass the airport elsewhere) |
+| A tunnel under the airport | yes, 303 m with two cuttings of 375 m and 368 m | 13 of 50 seeds (the rest pass the airport elsewhere) |

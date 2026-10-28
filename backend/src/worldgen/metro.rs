@@ -171,7 +171,9 @@ pub fn plan(c: &Ctx) -> Result<(Metro, Vec<Claim>), String> {
         return Ok((m, claims));
     };
     let hq = door(hub);
-    let dry: Vec<bool> = (0..c.roads.nodes.len() as u32).map(|n| net.degree(n) > 0 && !land.wet(net.pos(n))).collect();
+    // (never a node of a road tunnel or cutting, phase 7: no station over one, and its nodes leave the layout as it was)
+    let below: std::collections::HashSet<u32> = c.roads.edges.iter().filter(|e| e.under.is_some()).flat_map(|e| [e.a, e.b]).collect();
+    let dry: Vec<bool> = (0..c.roads.nodes.len() as u32).map(|n| net.degree(n) > 0 && !below.contains(&n) && !land.wet(net.pos(n))).collect();
     let usable = |n: u32| dry[n as usize];
     let central = net
         .nearest(hq, |n| usable(n) && net.arterial_degree(n) >= 3 && dist(net.pos(n), hq) <= 20_000)
@@ -738,6 +740,16 @@ fn depot_link(land: &Land, open: &OpenMap, fits: &[(P, usize)], path: &[P], y0: 
         let lead = ahead(end, d0, STEP_CM);
         let Some(mut ln) = dubins(lead, d0, ahead(q, a0, -DEPOT_LEN_CM / 2), a0, 20_000) else { continue };
         ln.insert(0, lead);
+        // (phase 7: the ramp keeps clear of road tunnels and cuttings, under or over; the main line dives under them)
+        let near_under = |a: P, b: P| {
+            land.c.roads.edges.iter().filter(|e| e.under.is_some()).any(|e| {
+                let r = e.width / 2 + 800;
+                e.points.windows(2).any(|w| super::organic::geom::seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), a, b) < r * r)
+            })
+        };
+        if std::iter::once(end).chain(ln.iter().copied()).collect::<Vec<P>>().windows(2).any(|w| near_under(w[0], w[1])) {
+            continue;
+        }
         let d = a0;
         let mouth = *ln.last().unwrap();
         let depot = rect(ahead(mouth, d, DEPOT_LEN_CM / 2), d, DEPOT_LEN_CM, DEPOT_W_CM);

@@ -23,6 +23,7 @@ pub mod graph;
 pub mod lots;
 pub mod streets;
 pub mod tensor;
+pub mod trams;
 pub mod widen;
 pub mod zoning;
 
@@ -46,7 +47,8 @@ use zoning::{character, Zoning};
 
 /// Generate the city, its roads and the district map, round the river if it has one.
 /// `water`: the @3 water bodies laid before the streets (water.rs), kept off the airport's claim.
-pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, water: &[Vec<P>]) -> Result<(City, Roads, Districts), String> {
+/// Also each tram route's stations (City Gen v4, their site ids in order along it; none before v4).
+pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, water: &[Vec<P>]) -> Result<(City, Roads, Districts, Vec<Vec<String>>), String> {
     let zoning = Zoning::new(seed, p);
     let field = tensor::Field { terrain: base, grids: zoning.grids(), radial_r: p.city_r_cm * 6 / 10, coast_r: p.coast_r_cm };
     let ctx = Ctx { p, t: base, field, zoning: &zoning, river };
@@ -221,8 +223,12 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     }
 
     let mut sites = sites(p, base, &blocks, &mut lots)?;
+    // City Gen v4: the tram routes, on the main desire lines between the districts and the core,
+    // before the civic sites (their stations stand along them) and the paving (their roads are
+    // paved as their classes' tram versions)
+    let routes = if p.v4 { trams::plan(p, &g, &zoning, &lots) } else { Vec::new() };
     // the civic sites take their lots before the HQ pool is drawn: never a member's
-    super::civic::place(seed, p, base, &g, &mut blocks, &mut lots, &mut sites)?;
+    let stations = super::civic::place(seed, p, base, &g, &mut blocks, &mut lots, &mut sites, &routes)?;
     hq_pool(p, base, &mut lots)?;
     let mut by_core: Vec<(i64, usize)> = lots.iter().enumerate().map(|(k, l)| (l.x * l.x + l.z * l.z, k)).collect();
     by_core.sort();
@@ -234,9 +240,15 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     }
     // the layout is final: pave the roads wider into the strip of block and lot along them
     let roles = if p.v4 { v4_roles(&g, &zoning) } else { Vec::new() };
-    // City Gen v4 (phase 9): the tram streets (each arterial street two tram stops or more stand
-    // on, as transit.rs groups its lines) are paved as their classes' tram versions
-    let tram_streets = if p.v4 { tram_streets(&g, &sites) } else { Vec::new() };
+    // City Gen v4: the roads the tram routes follow are paved as their classes' tram versions,
+    // each carrying its routes' bits (transit.rs builds the lines from them)
+    let mut bits = vec![0u8; g.edges.len()];
+    for (k, r) in routes.iter().enumerate() {
+        for &e in &r.edges {
+            bits[e as usize] |= 1 << k;
+        }
+    }
+    let tram_streets: Vec<bool> = if p.v4 { bits.iter().map(|&b| b != 0).collect() } else { Vec::new() };
     let paving = widen::widen(p, seed, base, &g, &mut blocks, &mut lots, &mut sites, &roles, river, &tram_streets);
     // City Gen v4 (@3 Commons): the airport claims its land before the graded roads are
     // routed, so the highways and the ring go round it (claims.rs)
@@ -266,6 +278,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
                 id: 0, a: renum[e.a as usize], b: renum[e.b as usize], class, width, walk, lanes: 1, route: None,
                 name: name.clone(), points: roads::resample(g.nodes[e.a as usize], g.nodes[e.b as usize]), min_tier: None,
                 bridge: e.bridge.then_some(true), v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
+                lines: bits[k],
             }
             .classed(paving.class(k as u32))
             .trammed(paving.tram(k as u32))
@@ -279,27 +292,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     let roads = Roads { nodes, edges };
 
     let districts = district_map(seed, p, base, &ctx, &g, &blocks, claim.as_ref());
-    Ok((City { blocks, lots, sites }, roads, districts))
-}
-
-/// City Gen v4 (phase 9): per graph edge, is it on a tram street: an arterial street two tram
-/// stops or more stand on (each stop on the arterial street nearest its door, within 30 m).
-fn tram_streets(g: &Graph, sites: &[Site]) -> Vec<bool> {
-    let mut on: BTreeMap<u32, usize> = BTreeMap::new();
-    for s in sites.iter().filter(|s| s.kind == "tramstop") {
-        let f = s.front.unwrap_or([0, ONE]);
-        let door = (s.x + f[0] * (s.d / 2 + 100) / ONE, s.z + f[1] * (s.d / 2 + 100) / ONE);
-        let near = g
-            .edges_in((door.0 - 3_000, door.1 - 3_000), (door.0 + 3_000, door.1 + 3_000))
-            .into_iter()
-            .filter(|&e| g.edges[e as usize].alive && g.edges[e as usize].kind == Kind::Arterial)
-            .map(|e| (nearest_on(door, g.nodes[g.edges[e as usize].a as usize], g.nodes[g.edges[e as usize].b as usize]).1, e))
-            .min();
-        if let Some((_, e)) = near {
-            *on.entry(g.edges[e as usize].road).or_insert(0) += 1;
-        }
-    }
-    g.edges.iter().map(|e| e.alive && e.kind == Kind::Arterial && on.get(&e.road).is_some_and(|&n| n >= 2)).collect()
+    Ok((City { blocks, lots, sites }, roads, districts, stations))
 }
 
 /// City Gen v4 (phase 2): the class each graph edge's street starts its paving ladder at

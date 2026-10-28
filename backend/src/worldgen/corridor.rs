@@ -417,7 +417,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 Edge {
                     id: 0, a: at[w], b: at[w + 1], class: "arterial", width: c.total_cm, walk: c.side_cm, lanes: 1, route: None,
                     name: format!("{name} Boulevard"), points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), min_tier: None,
-                    bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
+                    bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None, lines: 0,
                 }
                 .classed(Some("boulevard")),
             );
@@ -429,7 +429,7 @@ pub fn cut(roads: &mut Roads, city: &mut City, t: &Terrain, cl: &Cl, wet: &[bool
                 let st = &stubs[k];
                 let p = &st.proto;
                 let pts = resample(&[st.q, jq], STEP_CM);
-                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, tram: None, bed: None, ..p.clone() };
+                let mut j = Edge { id: 0, a: st.from, b: jid, points: pts.iter().map(|q| [q.0, 0, q.1]).collect(), bridge: None, under: None, oneway: None, tram: None, bed: None, lines: 0, ..p.clone() };
                 // (a join is its street's class as it is, never its tram version: no tram crosses the
                 // boulevard)
                 if let Some(k) = p.tram.and(p.v4).and_then(class) {

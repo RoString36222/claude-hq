@@ -94,6 +94,10 @@ pub struct Edge {
     /// dashboard draws its trams down a flush middle, as before).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bed: Option<i64>,
+    /// City Gen v4 (trams on desire lines): the tram routes it carries, a bit each (organic/trams.rs);
+    /// the generator's own (transit.rs builds the lines from it), not in the doc.
+    #[serde(skip)]
+    pub lines: u8,
 }
 
 impl Edge {
@@ -277,9 +281,14 @@ impl Roads {
             if e.tram.is_some() && !on.contains(&(e.a.min(e.b), e.a.max(e.b))) {
                 if let Some(c) = e.v4.and_then(super::classes::class) {
                     // (paved as its class's own tram version: the tram's width comes off; with the
-                    // tram in its lanes it was the class's width already)
+                    // tram in its lanes it was the class's width already. A lane or local street's
+                    // tram version lays the track as it would in its lanes, so the width tells them
+                    // apart: a bed, or lanes the tram's width wider)
                     if let Some(t) = c.tram.filter(|t| Some(t.layout.name()) == e.tram) {
-                        e.width -= t.added_cm;
+                        let carriageway = e.width - 2 * e.walk - e.bed.unwrap_or(0) - e.median.unwrap_or(0);
+                        if e.bed.is_some() || carriageway == c.carriageway_cm() + t.added_cm {
+                            e.width -= t.added_cm;
+                        }
                     }
                     e.median = (c.median_cm > 0).then_some(c.median_cm);
                 }
@@ -379,6 +388,12 @@ pub fn fillet_bends(nodes: &mut [Node], edges: &mut [Edge]) {
         let t_max = l1.min(l2) * 2 / 5;
         if r * tan_d / ONE > t_max {
             r = t_max * ONE / tan_d;
+        }
+        // (a tram route's bend: the tram's curve, where it fits, moving further into the bend:
+        // transit.rs `tram_turn_ok`, as the routes were planned)
+        let tr = super::transit::TRAM_FILLET_CM;
+        if r < tr && es.iter().all(|&(k, _)| edges[k].lines != 0) && tr * tan_d / ONE <= t_max && tr * ONE / sin_h - tr <= super::transit::TRAM_BEND_SHIFT_CM {
+            r = tr;
         }
         let t = r * tan_d / ONE;
         if r <= 0 || t <= 10 {
@@ -568,7 +583,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, blocks: &[Block]) -> Res
         .map(|((a, b), (class, width, name))| {
             let (na, nb) = (&nodes[a as usize], &nodes[b as usize]);
             let walk = if class == "avenue" { p.avenue_walk_cm } else { p.street_walk_cm };
-            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None }
+            Edge { id: 0, a, b, class, width, walk, lanes: 1, route: None, name, points: resample((na.x, na.z), (nb.x, nb.z)), min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None, lines: 0 }
         })
         .collect();
     graded(&mut rng, p, base, blocks, &mut nodes, &mut edges, &mut it, None, None)?;
@@ -791,7 +806,7 @@ fn push_node(nodes: &mut Vec<Node>, t: &Terrain, (x, z): (i64, i64)) -> u32 {
 fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static str, width: i64) -> Edge {
     Edge {
         id: 0, a, b, class, width, walk: 0, lanes: 1, route: None, name: name.to_string(), points: path.iter().map(|&(x, z)| [x, 0, z]).collect(),
-        min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None,
+        min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None, tram: None, bed: None, lines: 0,
     }
 }
 

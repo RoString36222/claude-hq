@@ -45,6 +45,14 @@ fn main() {
         }
         let tag = if w.layers.roads.edges.iter().any(|e| e.v4.is_some()) { "roads by v4 class" } else { "roads as v4 classes (by width)" };
         println!("  {tag}: {by:?}");
+        // the tram lines, their track, and their stations (on a 40 m platform, else at the kerb)
+        let trams: Vec<_> = w.layers.transit.iter().flat_map(|t| &t.lines).filter(|l| l.kind == "tram").collect();
+        if !trams.is_empty() {
+            let km: i64 = trams.iter().map(|l| worldgen::lines::length(&worldgen::transit::track(&w.layers.roads, &l.path).0)).sum();
+            let stops: Vec<_> = w.layers.sites.iter().filter(|s| s.kind == "tramstop").collect();
+            let on = stops.iter().filter(|s| s.w == worldgen::transit::PLATFORM_LEN_CM && s.d == worldgen::transit::PLATFORM_W_CM).count();
+            println!("  trams: {} lines, {}.{:02} km of route, {} stations, {on} on platforms", trams.len(), km / 100_000, km % 100_000 / 1_000, stops.len());
+        }
         std::process::exit(if v.iter().any(|x| x.hard) { 1 } else { 0 });
     }
     if args.iter().any(|a| a == "--json") {

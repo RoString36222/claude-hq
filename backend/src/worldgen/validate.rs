@@ -52,6 +52,10 @@
 //!                  on a straight run of its track (within 1 m of the chord) clear of every
 //!                  junction's box (the widest road crossing it, and 3 m), or a line whose track
 //!                  ends mid-block: not at a junction, its street's end or one of its stations
+//!   tram-curve     (hard, trams on desire lines) a tram line whose track turns tighter than the
+//!                  plan's 25 m radius anywhere (classes.rs `TRAM_MIN_RADIUS_CM`), measured along it
+//!                  (transit.rs `track`, `tram_tight`: the circle through each point of it and the
+//!                  points 8 m or more back and ahead, `TRAM_CURVE_SPAN_CM`)
 //!   tram-station   (phase 9) a tram stop with no room on its line for a 40 m platform (side
 //!                  streets every 24 to 48 m), left at the kerb as before
 //!   clearance      (hard, phase 6) a flyover or ramp crossing a road it does not meet
@@ -119,6 +123,9 @@ fn trams(l: &Layers, out: &mut Vec<Violation>) {
             }
         }
         let (pts, _) = track(r, &line.path);
+        if let Some(k) = super::transit::tram_tight(&pts, super::classes::TRAM_MIN_RADIUS_CM) {
+            soft.push(Violation { rule: "tram-curve", hard: true, what: format!("{}: its track turns tighter than 25 m", line.id), at: [pts[k].0, pts[k].1] });
+        }
         let stations: Vec<&super::city::Site> = l.sites.iter().filter(|s| line.stops.contains(&s.id)).collect();
         for s in &stations {
             let c = (s.x, s.z);
@@ -398,7 +405,8 @@ fn classes(l: &Layers, out: &mut Vec<Violation>) {
             if let Some(layout) = e.tram {
                 let added = c.tram.map_or(0, |t| t.added_cm);
                 let carriageway = e.width - 2 * e.walk - e.bed.unwrap_or(0) - e.median.unwrap_or(0);
-                let lanes = e.lanes == c.lanes && e.walk >= c.side_cm;
+                // (a lane at its layout width excepted, its footpaths in proportion, as without a tram)
+                let lanes = e.lanes == c.lanes && (e.walk >= c.side_cm || (name == "lane" && e.width < c.total_cm + added));
                 return lanes
                     && if layout == "centre-bed" {
                         e.median.is_none() && e.bed == Some(c.median_cm + added) && carriageway == c.carriageway_cm()
@@ -568,7 +576,7 @@ fn airport(l: &Layers, a: &Airport, out: &mut Vec<Violation>) {
 }
 
 /// Do two polygons overlap (not just touch)?
-fn overlap(p: &[P], q: &[P]) -> bool {
+pub(super) fn overlap(p: &[P], q: &[P]) -> bool {
     let (n, m) = (p.len(), q.len());
     let crossing = (0..n).any(|i| (0..m).any(|j| crosses(p[i], p[(i + 1) % n], q[j], q[(j + 1) % m])));
     crossing || p.iter().any(|&a| inside(a, q) && !on_edge(a, q)) || q.iter().any(|&a| inside(a, p) && !on_edge(a, p))

@@ -54,6 +54,15 @@
  *                       (headwall, sign band), the tunnel's ceiling lights (lit 1) (only in a doc with tunnels). A
  *                       cutting's hole is cut from the terrain, ground and road tiles (its own road rides in `tunnel`); no
  *                       prop stands in one, no gantry over a tunnel or cutting (HQV.world.underOver)
+ * HQ 3.34 (City Gen v4 phase 11) the graphics pass (only in a doc with decks; every other doc builds as before): the
+ *                       `bridge` geo carries the lit attribute (1: emissive at night); a deck's and a river bridge's parapets
+ *                       wear a coping and their open spans' fascias a drip lip; steel expansion joints cross a deck at every
+ *                       pier line and each end of an open span (deckJoints); every pier's cap sits on two bearings; lamp
+ *                       columns stand on a deck's parapets every 30 m a side (deckLamps, lit heads); where a deck crosses a
+ *                       road (crossings) downlights (lit) hang under its slab (and under a T over one) and low abutment walls
+ *                       line that road where it runs at grade (underpasses); a tunnel's ceiling lights are luminaires (lit 1)
+ *                       and its walls panelled over a drain; a cutting's walls get a plinth, panels, a kerb and drain at the
+ *                       foot and wall lights (lit 2: night only) where they stand 3 m or more (tunnelFinish)
  * A @1 doc (no poly, front, min_tier or island) takes the original paths and builds byte-identically.
  * Geo = {pos, nrm, col (rgb 0..1), idx: Uint32Array, bid? (lot id per vertex), lit? (0|1 per vertex)}.
  * Every face is wound counter-clockwise seen from the side its normal points to.
@@ -759,11 +768,12 @@ function dryRuns(W, E, a, b){
 }
 // a box-section bar along stations A -> B between offsets o0, o1 (m, + = left), bottom y0a/y0b, top y1a/y1b; its four
 // long faces, and its end faces where caps[0] / caps[1]
-// (lit: the geo's lit attribute on its faces, phase 7's tunnel lights)
-function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps, lit){
+// (lit: the geo's lit attribute on its faces, phase 7's tunnel lights; [3.34] omit: 1 leaves out its top face, 2 its
+// bottom, where something sits on it or it sits on something)
+function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps, lit, omit){
   var sg = o1 > o0 ? 1 : -1, lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
-  face(g, [at(A, o0, y1a), at(B, o0, y1b), at(B, o1, y1b), at(A, o1, y1a)], c, UP, 0, lit);
-  face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o1, y0b), at(A, o1, y0a)], c, [0, -1, 0], 0, lit);
+  if(!(omit & 1)) face(g, [at(A, o0, y1a), at(B, o0, y1b), at(B, o1, y1b), at(A, o1, y1a)], c, UP, 0, lit);
+  if(!(omit & 2)) face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o1, y0b), at(A, o1, y0a)], c, [0, -1, 0], 0, lit);
   face(g, [at(A, o0, y0a), at(B, o0, y0b), at(B, o0, y1b), at(A, o0, y1a)], c, [-lx*sg, 0, -lz*sg], 0, lit);
   face(g, [at(A, o1, y0a), at(B, o1, y0b), at(B, o1, y1b), at(A, o1, y1a)], c, [lx*sg, 0, lz*sg], 0, lit);
   if(caps && caps[0]) face(g, [at(A, o0, y0a), at(A, o1, y0a), at(A, o1, y1a), at(A, o0, y1a)], c, [-A.dx, 0, -A.dz], 0, lit);
@@ -773,7 +783,9 @@ function bar(g, A, B, o0, o1, y0a, y0b, y1a, y1b, c, caps, lit){
 // carriageway with no walk) with a rail on posts; over the water (wetRuns) a deck slab DECK_T deep under the ribbons,
 // fascias down its sides, and at each end an abutment wall facing the water, from the slab down under the bank's
 // terrain mesh. Pieces belong to the tile of their midpoint, posts to their own.
-function bridgeTile(g, W, E, tx, tz, r0, r1){
+// v4 (HQ 3.34, a doc with decks only): the parapet wears a coping (COPE_D deep, COPE_OVER proud of both faces) and the
+// fascia over the water a drip lip along its foot
+function bridgeTile(g, W, E, tx, tz, r0, r1, v4){
   var s0 = r0 != null ? r0 : E.tA, s1 = r1 != null ? r1 : E.len - E.tB;
   if(s1 - s0 < 0.05) return;
   var edge = E.walk > 0 ? E.half : E.cw, ho = edge + PARA_W, mid = edge + PARA_W/2;
@@ -786,7 +798,8 @@ function bridgeTile(g, W, E, tx, tz, r0, r1){
     if(!mine(A, B)) continue;
     [-1, 1].forEach(function(sg){
       var ya = top(A, sg), yb = top(B, sg), caps = [k === 0, k + 2 === st.length];
-      bar(g, A, B, sg*edge, sg*ho, ya, yb, ya + PARA_H, yb + PARA_H, COL.deck, caps);
+      if(v4) parapet(g, A, B, sg, edge, ho, ya, yb, PARA_H, caps);
+      else bar(g, A, B, sg*edge, sg*ho, ya, yb, ya + PARA_H, yb + PARA_H, COL.deck, caps);
       bar(g, A, B, sg*(mid - RAIL_T/2), sg*(mid + RAIL_T/2), ya + RAIL_H - RAIL_T, yb + RAIL_H - RAIL_T, ya + RAIL_H, yb + RAIL_H, COL.rail, caps);
     });
   }
@@ -812,6 +825,7 @@ function bridgeTile(g, W, E, tx, tz, r0, r1){
       [-1, 1].forEach(function(sg){
         var lx = (A.lx + B.lx)/2*sg, lz = (A.lz + B.lz)/2*sg;
         face(g, [at(A, sg*ho, ua), at(B, sg*ho, ub), at(B, sg*ho, top(B, sg)), at(A, sg*ho, top(A, sg))], COL.deck, [lx, 0, lz]);
+        if(v4) drip(g, A, B, sg, ho, ua, ub, [k === 0, k + 2 === ws.length]);
       });
     }
     // the abutments: the water lies ahead (+d) of the run's start and behind (-d) its end
@@ -894,14 +908,158 @@ function onOther(C, E, x, z, y){
   }
   return false;
 }
+// HQ 3.34 (City Gen v4 phase 11) the graphics pass, structure details (all in the tile's `bridge` geo, which in a doc with
+// decks carries the lit attribute: 1 emissive at night): a parapet's coping COPE_D deep, COPE_OVER proud of both faces; a
+// fascia's drip lip (DRIP_H under the slab, DRIP_OUT proud of the fascia, DRIP_IN under it); steel expansion joints
+// JOINT_W wide across the deck, JOINT_UP over the asphalt, and their JOINT_GAP gap down the parapets and fascias; a pier's
+// two bearings BEAR_W square and BEAR_H high between its cap and the slab; a lamp column on a parapet every LAMP_STEP m
+// a side (staggered), LAMP_H high with a LAMP_ARM arm over the carriageway and a lit head; downlights (lit) under an open
+// span every DOWN_STEP m where it crosses another road, and beside that road, where it runs at grade, low abutment
+// walls (UP_WALL high, UP_WALL_T thick, UP_WALL_OUT outside its width) under the deck and UP_WALL_RUN m beyond it
+var COPE_D = 0.1, COPE_OVER = 0.05, DRIP_H = 0.12, DRIP_UP = 0.1, DRIP_OUT = 0.04, DRIP_IN = 0.15;
+var JOINT_W = 0.3, JOINT_UP = 0.03, JOINT_GAP = 0.06, BEAR_H = 0.2, BEAR_W = 0.7;
+var LAMP_STEP = 30, LAMP_H = 7.5, LAMP_ARM = 1.8, LAMP_POLE = 0.09, LAMP_HEAD = 0.7;
+var DOWN_STEP = 6, DOWN_W = 0.5, DOWN_L = 1.0, UP_WALL = 1.0, UP_WALL_T = 0.4, UP_WALL_OUT = 0.15, UP_WALL_RUN = 3, UP_WALL_MAX = 24, UP_PIECE = 2;
+COL.coping = [0.76, 0.75, 0.72]; COL.drip = [0.38, 0.38, 0.37]; COL.joint = [0.24, 0.25, 0.27]; COL.bearing = [0.48, 0.49, 0.51];
+COL.pole = [0.42, 0.44, 0.47];
+// a parapet h m high on side sg of a deck between offsets edge and ho (m, unsigned): its body, and its coping on top
+function parapet(g, A, B, sg, edge, ho, ya, yb, h, caps){
+  var yc = h - COPE_D;
+  bar(g, A, B, sg*edge, sg*ho, ya, yb, ya + yc, yb + yc, COL.deck, caps, 0, 3);
+  bar(g, A, B, sg*(edge - COPE_OVER), sg*(ho + COPE_OVER), ya + yc, yb + yc, ya + h, yb + h, COL.coping, caps);
+}
+// a fascia's drip lip along the slab's outer edge ho (m, unsigned) on side sg, the slab's underside ua / ub
+function drip(g, A, B, sg, ho, ua, ub, caps){
+  bar(g, A, B, sg*(ho - DRIP_IN), sg*(ho + DRIP_OUT), ua - DRIP_H, ub - DRIP_H, ua + DRIP_UP, ub + DRIP_UP, COL.drip, caps, 0, 1);
+}
+// the arc length (m) along an edge of its point nearest (x, z)
+function projS(E, x, z){
+  var P = E.P, S = E.S, best = Infinity, bs = 0;
+  for(var j = 0; j + 1 < P.length; j++){
+    var a = P[j], b = P[j + 1], dx = b.x - a.x, dz = b.z - a.z, L2 = dx*dx + dz*dz;
+    var t = L2 > 0 ? clamp(((x - a.x)*dx + (z - a.z)*dz)/L2, 0, 1) : 0, d = hypot(x - a.x - dx*t, z - a.z - dz*t);
+    if(d < best){ best = d; bs = S[j] + (S[j + 1] - S[j])*t; }
+  }
+  return bs;
+}
+// a deck edge's expansion joints (m along it, ascending): every pier line of its own (HQV.world.piersOf, not a T's node
+// pier) and both ends of every open span, inside its ribbon (cached on the edge, per W)
+function deckJoints(W, E){
+  if(E.jt) return E.jt;
+  var Q = WQ(), raw = [], out = [], a = E.tA + JOINT_W, b = E.len - E.tB - JOINT_W;
+  (Q.piersOf ? Q.piersOf(W) : []).forEach(function(p){ if(p.edge === E.id && p.node == null) raw.push(projS(E, p.x, p.z)); });
+  deckRuns(W, E).forEach(function(r){ r.parts.forEach(function(pt){ if(pt[2]) raw.push(pt[0], pt[1]); }); });
+  raw.sort(function(p, q){ return p - q; }).forEach(function(s){
+    if(s >= a && s <= b && !(out.length && s - out[out.length - 1] < 1)) out.push(s);
+  });
+  return (E.jt = out);
+}
+// a deck edge's lamp columns [[s (m along it), side]]: along every elevated run inside its ribbon, one every LAMP_STEP/2 m
+// on alternate sides (cached on the edge, per W)
+function deckLamps(W, E){
+  if(E.lm) return E.lm;
+  var out = [], a0 = E.tA + 2, b0 = E.len - E.tB - 2;
+  deckRuns(W, E).forEach(function(r){
+    var a = Math.max(r.a, a0), b = Math.min(r.b, b0);
+    if(b - a < 4) return;
+    var n = Math.max(1, Math.round((b - a)/(LAMP_STEP/2)));
+    for(var k = 0; k < n; k++) out.push([a + (b - a)*(k + 0.5)/n, k % 2 ? 1 : -1]);
+  });
+  return (E.lm = out);
+}
+// the road other than E (not a tunnel) whose full width covers (x, z) at a y under `y`, the highest | null
+function roadBelow(C, E, x, z, y){
+  var L = segGrid(C)[Math.floor(x/CELL) + "," + Math.floor(z/CELL)] || [], best = null, by = -Infinity;
+  for(var i = 0; i < L.length; i += 2){
+    var F = L[i];
+    if(F === E || F.under === "tunnel") continue;
+    var a = F.P[L[i+1]], b = F.P[L[i+1] + 1], dx = b.x - a.x, dz = b.z - a.z, L2 = dx*dx + dz*dz;
+    var t = L2 > 0 ? clamp(((x - a.x)*dx + (z - a.z)*dz)/L2, 0, 1) : 0, yy = a.y + (b.y - a.y)*t;
+    if(hypot(x - a.x - dx*t, z - a.z - dz*t) <= F.half && yy < y && yy > by){ best = F; by = yy; }
+  }
+  return best;
+}
+// where a deck's open span crosses over another road: [{E, F, a, b (m along E over F), f (m along F under the middle),
+// w (m along F either side of f its walls run), grade (F at grade there)}] (memoised per W)
+function crossings(W, C){
+  if(C.cross) return C.cross;
+  var Q = WQ(), out = [], elev = Q.DECK && Q.DECK.ELEV != null ? Q.DECK.ELEV : 0.5;
+  C.E.forEach(function(E){
+    if(!E.deck) return;
+    deckRuns(W, E).forEach(function(run){ run.parts.forEach(function(pt){
+      if(!pt[2]) return;
+      var a = Math.max(pt[0], E.tA), b = Math.min(pt[1], E.len - E.tB), cur = null, n = Math.ceil((b - a)/1);
+      for(var k = 0; k <= n && b > a; k++){
+        var s = a + (b - a)*k/n, P = pointAt(E, s), F = roadBelow(C, E, P.x, P.z, P.y - FLY_D - 1);
+        if(F && cur && cur.F === F){ cur.b = s; continue; }
+        if(cur) out.push(cur);
+        cur = F ? {E: E, F: F, a: s, b: s} : null;
+      }
+      if(cur) out.push(cur);
+    }); });
+  });
+  out.forEach(function(c){
+    var m = pointAt(c.E, (c.a + c.b)/2), f = projS(c.F, m.x, m.z), q = pointAt(c.F, f), sn = Math.abs(m.dx*q.dz - m.dz*q.dx);
+    c.f = f;
+    c.w = Math.min(UP_WALL_MAX, (c.E.half + FLY_PARA_W)/Math.max(0.25, sn) + UP_WALL_RUN);
+    c.grade = !c.F.deck || q.y - Q.heightAt(W, q.x, q.z) <= elev;
+  });
+  return (C.cross = out);
+}
+// the crossings' downlights and underpass walls in tile (tx, tz) (pieces by the tile of their midpoint)
+function underpasses(g, W, C, tx, tz){
+  var Q = WQ(), P = Q.piersOf ? Q.piersOf(W) : [];
+  crossings(W, C).forEach(function(c){
+    var E = c.E, edge = E.walk > 0 ? E.half : E.cw, n = Math.max(1, Math.round((c.b - c.a)/DOWN_STEP) + 1), k;
+    for(k = 0; k < n; k++){
+      var s = n > 1 ? c.a + (c.b - c.a)*k/(n - 1) : (c.a + c.b)/2, A = pointAt(E, s - DOWN_L/2), B = pointAt(E, s + DOWN_L/2);
+      if(!inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz)) continue;
+      var ua = Math.min(yRoad(W, E, A, -edge), yRoad(W, E, A, edge)) - FLY_D - 0.02, ub = Math.min(yRoad(W, E, B, -edge), yRoad(W, E, B, edge)) - FLY_D - 0.02;
+      [-0.5, 0.5].forEach(function(f){
+        var o = f*edge;
+        face(g, [at(A, o - DOWN_W/2, ua), at(B, o - DOWN_W/2, ub), at(B, o + DOWN_W/2, ub), at(A, o + DOWN_W/2, ua)], COL.light, [0, -1, 0], 0, 1);
+      });
+    }
+    if(!c.grade) return;
+    // the walls: short pieces along F, none across another road meeting it, into a pier, a hole or the water
+    var F = c.F, f0 = Math.max(F.tA, c.f - c.w), f1 = Math.min(F.len - F.tB, c.f + c.w);
+    if(f1 - f0 < 1) return;
+    var m = Math.max(1, Math.round((f1 - f0)/UP_PIECE));
+    [-1, 1].forEach(function(sg){
+      var o0 = sg*(F.half + UP_WALL_OUT), o1 = sg*(F.half + UP_WALL_OUT + UP_WALL_T), om = (o0 + o1)/2;
+      function base(S){ return (F.walk > 0 ? yWalk(W, F, S, sg*F.half) : yRoad(W, F, S, sg*F.cw)) + LIFT; }
+      var keep = [];
+      for(k = 0; k < m; k++){
+        var S = pointAt(F, f0 + (f1 - f0)*(k + 0.5)/m), x = S.x + S.lx*om, z = S.z + S.lz*om, y = base(S), ok = true;
+        if(onOther(C, F, x, z, y) || roadBelow(C, F, x, z, y + 1.2) || (Q.holeAt && Q.holeAt(W, x, z)) || (Q.riverAt && Q.riverAt(W, x, z))) ok = false;
+        for(var i = 0; ok && i < P.length; i++) if(hypot(P[i].x - x, P[i].z - z) < P[i].r + UP_WALL_T) ok = false;
+        keep.push(ok);
+      }
+      for(k = 0; k < m; k++){
+        if(!keep[k]) continue;
+        var A2 = pointAt(F, f0 + (f1 - f0)*k/m), B2 = pointAt(F, f0 + (f1 - f0)*(k + 1)/m);
+        if(!inTile((A2.x + B2.x)/2, (A2.z + B2.z)/2, tx, tz)) continue;
+        var ya = base(A2), yb = base(B2), caps = [k === 0 || !keep[k - 1], k === m - 1 || !keep[k + 1]];
+        bar(g, A2, B2, o0, o1, ya - 0.3, yb - 0.3, ya + UP_WALL - COPE_D, yb + UP_WALL - COPE_D, COL.concrete, caps);
+        bar(g, A2, B2, o0 - sg*COPE_OVER, o1 + sg*COPE_OVER, ya + UP_WALL - COPE_D, yb + UP_WALL - COPE_D, ya + UP_WALL, yb + UP_WALL, COL.coping, caps);
+      }
+    });
+  });
+}
 // a deck edge's structure in tile (tx, tz) over [s0, s1] (its ribbon): parapets, and under it a slab with fascias on
 // piers (tall parts) or retaining walls (the rest); where an open span meets a solid body or the ground (not the
-// junction patch a trim leads into), the body's end wall under the slab
+// junction patch a trim leads into), the body's end wall under the slab. HQ 3.34: the parapets' coping, the open span's
+// drip lips, its expansion joints (deckJoints) and the lamp columns on the parapets (deckLamps)
 function deckTile(g, W, C, E, tx, tz, s0, s1){
   var edge = E.walk > 0 ? E.half : E.cw, ho = edge + FLY_PARA_W, mid = edge + FLY_PARA_W/2;
   function top(st, sg){ return yRoad(W, E, st, sg*edge) + LIFT; }
   function under(st){ return Math.min(yRoad(W, E, st, -edge), yRoad(W, E, st, edge)) - FLY_D; }
   function mine(A, B){ return inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz); }
+  // no parapet on side sg where another road at this level runs into the deck (a ramp joining the flyover)
+  function bare(A, B, sg){
+    var lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
+    return onOther(C, E, (A.x + B.x)/2 + lx*sg*mid, (A.z + B.z)/2 + lz*sg*mid, (top(A, sg) + top(B, sg))/2 - LIFT);
+  }
   deckRuns(W, E).forEach(function(run){
     run.parts.forEach(function(pt){
       var a = Math.max(pt[0], s0), b = Math.min(pt[1], s1);
@@ -910,13 +1068,14 @@ function deckTile(g, W, C, E, tx, tz, s0, s1){
       for(var k = 0; k + 1 < st.length; k++){
         var A = st[k], B = st[k + 1];
         if(!mine(A, B)) continue;
-        var lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2;
+        var lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2, caps = [k === 0, k + 2 === st.length];
         [-1, 1].forEach(function(sg){
           var ya = top(A, sg), yb = top(B, sg);
-          var mx = (A.x + B.x)/2 + lx*sg*mid, mz = (A.z + B.z)/2 + lz*sg*mid;
-          if(!onOther(C, E, mx, mz, (ya + yb)/2 - LIFT)) bar(g, A, B, sg*edge, sg*ho, ya, yb, ya + FLY_PARA_H, yb + FLY_PARA_H, COL.deck, [k === 0, k + 2 === st.length]);
-          if(pt[2]) face(g, [at(A, sg*ho, under(A)), at(B, sg*ho, under(B)), at(B, sg*ho, yb), at(A, sg*ho, ya)], COL.deck, [lx*sg, 0, lz*sg]);
-          else {
+          if(!bare(A, B, sg)) parapet(g, A, B, sg, edge, ho, ya, yb, FLY_PARA_H, caps);
+          if(pt[2]){
+            face(g, [at(A, sg*ho, under(A)), at(B, sg*ho, under(B)), at(B, sg*ho, yb), at(A, sg*ho, ya)], COL.deck, [lx*sg, 0, lz*sg]);
+            drip(g, A, B, sg, ho, under(A), under(B), caps);
+          } else {
             var lo = meshMin(W, at(A, sg*ho, 0), at(B, sg*ho, 0)) - 0.3;
             face(g, [at(A, sg*ho, Math.min(ya - 0.5, lo)), at(B, sg*ho, Math.min(yb - 0.5, lo)), at(B, sg*ho, yb), at(A, sg*ho, ya)], COL.concrete, [lx*sg, 0, lz*sg]);
           }
@@ -933,12 +1092,37 @@ function deckTile(g, W, C, E, tx, tz, s0, s1){
       });
     });
   });
+  // the expansion joints: a steel plate across the carriageway, and the joint's gap down each parapet and fascia
+  deckJoints(W, E).forEach(function(s){
+    if(s < s0 + JOINT_W || s > s1 - JOINT_W) return;
+    var A = pointAt(E, s - JOINT_W/2), B = pointAt(E, s + JOINT_W/2);
+    if(!mine(A, B)) return;
+    face(g, [at(A, -edge, top(A, -1) + JOINT_UP), at(B, -edge, top(B, -1) + JOINT_UP), at(B, edge, top(B, 1) + JOINT_UP), at(A, edge, top(A, 1) + JOINT_UP)], COL.joint, UP);
+    var a = pointAt(E, s - JOINT_GAP/2), b = pointAt(E, s + JOINT_GAP/2);
+    [-1, 1].forEach(function(sg){
+      if(bare(a, b, sg)) return;
+      var o = sg*(ho + COPE_OVER + 0.01), lx = (a.lx + b.lx)/2*sg, lz = (a.lz + b.lz)/2*sg;
+      face(g, [at(a, o, under(a) - DRIP_H), at(b, o, under(b) - DRIP_H), at(b, o, top(b, sg) + FLY_PARA_H), at(a, o, top(a, sg) + FLY_PARA_H)], COL.joint, [lx, 0, lz]);
+    });
+  });
+  // the lamp columns: on the parapet's coping, the arm over the carriageway, the head lit at night
+  deckLamps(W, E).forEach(function(L){
+    var s = L[0], sg = L[1];
+    if(s < s0 + 1 || s > s1 - 1) return;
+    var A = pointAt(E, s - LAMP_POLE), B = pointAt(E, s + LAMP_POLE);
+    if(!mine(A, B) || bare(A, B, sg)) return;
+    var y0 = Math.max(top(A, sg), top(B, sg)) + FLY_PARA_H, y1 = y0 + LAMP_H, a = pointAt(E, s - LAMP_HEAD/2), b = pointAt(E, s + LAMP_HEAD/2);
+    bar(g, A, B, sg*(mid - LAMP_POLE), sg*(mid + LAMP_POLE), y0, y0, y1, y1, COL.pole, [true, true], 0, 3);
+    bar(g, A, B, sg*(mid + LAMP_POLE), sg*(mid - LAMP_ARM), y1 - 0.12, y1 - 0.12, y1, y1, COL.pole, [true, true]);
+    bar(g, a, b, sg*(mid - LAMP_ARM - 0.15), sg*(mid - LAMP_ARM + 0.45), y1 - 0.24, y1 - 0.24, y1 - 0.06, y1 - 0.06, COL.light, [true, true], 1);
+  });
 }
 // one pier (HQV.world.piersOf) under a deck of half width `half`: a PIER_SIDES-sided column (apothem p.r) from 0.5 m
-// in the ground up to its cap, and the cap (CAP_D along the deck, across it to CAP_IN inside its edges) under the slab
+// in the ground up to its cap, the cap (CAP_D along the deck, across it to CAP_IN inside its edges) and (HQ 3.34) two
+// bearings BEAR_H high on the cap, under the slab
 function pierGeo(g, p, half){
-  var R = p.r/Math.cos(Math.PI/PIER_SIDES), capH = Math.min(CAP_H, Math.max(0.3, (p.y1 - p.y0)*0.3));
-  var yb = p.y0 - 0.5, yt = p.y1 - capH, k;
+  var R = p.r/Math.cos(Math.PI/PIER_SIDES), capH = Math.min(CAP_H, Math.max(0.3, (p.y1 - p.y0)*0.3)), yc = p.y1 - BEAR_H;
+  var yb = p.y0 - 0.5, yt = yc - capH, k;
   for(k = 0; k < PIER_SIDES; k++){
     var t0 = 2*Math.PI*k/PIER_SIDES, t1 = 2*Math.PI*(k + 1)/PIER_SIDES, tm = (t0 + t1)/2;
     var a = [p.x + R*Math.cos(t0), p.z + R*Math.sin(t0)], b = [p.x + R*Math.cos(t1), p.z + R*Math.sin(t1)];
@@ -946,13 +1130,22 @@ function pierGeo(g, p, half){
   }
   var fx = Math.sin(p.yaw || 0), fz = Math.cos(p.yaw || 0), ux = fz, uz = -fx, hw = Math.max(1.2, half - CAP_IN), hd = CAP_D/2;
   function c(sa, sb, y){ return [p.x + fx*hd*sa + ux*hw*sb, y, p.z + fz*hd*sa + uz*hw*sb]; }
-  var y0 = yt, y1 = p.y1;
+  var y0 = yt, y1 = yc;
   face(g, [c(-1, -1, y1), c(1, -1, y1), c(1, 1, y1), c(-1, 1, y1)], COL.deckUnder, UP);
   face(g, [c(-1, -1, y0), c(1, -1, y0), c(1, 1, y0), c(-1, 1, y0)], COL.deckUnder, [0, -1, 0]);
   face(g, [c(1, -1, y0), c(1, 1, y0), c(1, 1, y1), c(1, -1, y1)], COL.concrete, [fx, 0, fz]);
   face(g, [c(-1, -1, y0), c(-1, 1, y0), c(-1, 1, y1), c(-1, -1, y1)], COL.concrete, [-fx, 0, -fz]);
   face(g, [c(-1, 1, y0), c(1, 1, y0), c(1, 1, y1), c(-1, 1, y1)], COL.concrete, [ux, 0, uz]);
   face(g, [c(-1, -1, y0), c(1, -1, y0), c(1, -1, y1), c(-1, -1, y1)], COL.concrete, [-ux, 0, -uz]);
+  // the bearings: two pads across the cap, from its top to the slab's underside (their top and foot are hidden)
+  [-1, 1].forEach(function(sb){
+    var bx = p.x + ux*hw*0.6*sb, bz = p.z + uz*hw*0.6*sb, w = BEAR_W/2;
+    function q(sa, sc, y){ return [bx + fx*w*sa + ux*w*sc, y, bz + fz*w*sa + uz*w*sc]; }
+    face(g, [q(1, -1, yc), q(1, 1, yc), q(1, 1, p.y1), q(1, -1, p.y1)], COL.bearing, [fx, 0, fz]);
+    face(g, [q(-1, -1, yc), q(-1, 1, yc), q(-1, 1, p.y1), q(-1, -1, p.y1)], COL.bearing, [-fx, 0, -fz]);
+    face(g, [q(-1, 1, yc), q(1, 1, yc), q(1, 1, p.y1), q(-1, 1, p.y1)], COL.bearing, [ux, 0, uz]);
+    face(g, [q(-1, -1, yc), q(1, -1, yc), q(1, -1, p.y1), q(-1, -1, p.y1)], COL.bearing, [-ux, 0, -uz]);
+  });
 }
 // an expressway's crash barrier along its median over the stations (pieces by the tile of their midpoint), capped at
 // both ends
@@ -1003,6 +1196,51 @@ function tunRec(W, E){
   for(var i = 0; i < L.length; i++) if(L[i].edge === E.id) return L[i];
   return null;
 }
+// [3.34] (phase 11) a tunnel's or cutting's finish along its walls, by arc length (pieces by the tile of their midpoint):
+// panels PANEL_L m long in two alternating tints PANEL_OUT proud of the wall's face (a tunnel's over its walkway up to
+// PANEL_HI over the road; a cutting's over a darker plinth band PLINTH high, up to under its coping), a drain channel
+// DRAIN_W wide on the road along the wall's foot (a tunnel's beside its walkway, a cutting's beside a kerb KERB_W wide),
+// and a cutting's wall lights every CUT_LIGHT m on alternate sides (lit 2: emissive at night only) where its wall stands
+// CUT_LIGHT_MIN m or more over the road. `top(S, sg)`: a cutting's wall top at station S on side sg
+var PANEL_L = 4, PANEL_OUT = 0.05, PANEL_HI = 3.6, PLINTH = 0.9, DRAIN_W = 0.35, KERB_W = 0.3, CUT_LIGHT = 12, CUT_LIGHT_MIN = 3, CUT_LIGHT_Y = 4.6;
+var FIT_STEP = 5, FIT_L = 3;
+COL.panel = [0.80, 0.80, 0.77]; COL.panel2 = [0.73, 0.74, 0.72]; COL.plinth = [0.50, 0.50, 0.49]; COL.drain = [0.13, 0.13, 0.14];
+COL.fitting = [0.30, 0.31, 0.33];
+function tunnelFinish(g, W, E, tx, tz, top){
+  var h = E.half, cut = E.under === "cutting", n = Math.max(1, Math.round(E.len/PANEL_L)), k;
+  for(k = 0; k < n; k++){
+    var A = pointAt(E, E.len*k/n), B = pointAt(E, E.len*(k + 1)/n);
+    if(!inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz)) continue;
+    var lx = (A.lx + B.lx)/2, lz = (A.lz + B.lz)/2, kk = k;
+    [-1, 1].forEach(function(sg){
+      var o = sg*(h - PANEL_OUT), hint = [-lx*sg, 0, -lz*sg], tint = (kk + (sg > 0 ? 1 : 0)) % 2 ? COL.panel : COL.panel2;
+      var foot = sg*(h - (cut ? KERB_W : TUN_WALK)), ya = A.y + LIFT + 0.006, yb = B.y + LIFT + 0.006;
+      face(g, [at(A, foot - sg*DRAIN_W, ya), at(B, foot - sg*DRAIN_W, yb), at(B, foot, yb), at(A, foot, ya)], COL.drain, UP);
+      if(!cut){
+        var w0 = LIFT + TUN_WALK_H + 0.05;
+        face(g, [at(A, o, A.y + w0), at(B, o, B.y + w0), at(B, o, B.y + PANEL_HI), at(A, o, A.y + PANEL_HI)], tint, hint);
+        return;
+      }
+      // a cutting: the kerb, the plinth band and (where the wall is tall enough) the panel over it
+      var ha = top(A, sg) - A.y, hb = top(B, sg) - B.y, pa = Math.min(PLINTH, ha - 0.05), pb = Math.min(PLINTH, hb - 0.05);
+      bar(g, A, B, foot, o, A.y + LIFT - 0.02, B.y + LIFT - 0.02, A.y + LIFT + 0.18, B.y + LIFT + 0.18, COL.kerb, [kk === 0, kk === n - 1], 0, 2);
+      if(pa > 0.2 && pb > 0.2) face(g, [at(A, o, A.y), at(B, o, B.y), at(B, o, B.y + pb), at(A, o, A.y + pa)], COL.plinth, hint);
+      if(ha - 0.3 > PLINTH + 0.5 && hb - 0.3 > PLINTH + 0.5)
+        face(g, [at(A, o, A.y + PLINTH), at(B, o, B.y + PLINTH), at(B, o, B.y + hb - 0.3), at(A, o, A.y + ha - 0.3)], tint, hint);
+    });
+  }
+  if(!cut) return;
+  var m = Math.max(1, Math.round(E.len/CUT_LIGHT));
+  for(k = 0; k < m; k++){
+    var s = E.len*(k + 0.5)/m, sg = k % 2 ? 1 : -1, P0 = pointAt(E, s - 0.6), P1 = pointAt(E, s + 0.6);
+    if(!inTile((P0.x + P1.x)/2, (P0.z + P1.z)/2, tx, tz)) continue;
+    var wall = Math.min(top(P0, sg) - P0.y, top(P1, sg) - P1.y);
+    if(wall < CUT_LIGHT_MIN) continue;
+    var y = Math.min(CUT_LIGHT_Y, wall - 0.8), i0 = sg*(h - PANEL_OUT), i1 = sg*(h - PANEL_OUT - 0.3);
+    bar(g, P0, P1, i1, i0, P0.y + y, P1.y + y, P0.y + y + 0.25, P1.y + y + 0.25, COL.fitting, [true, true]);
+    bar(g, P0, P1, i1 + sg*0.02, i0 - sg*0.02, P0.y + y - 0.05, P1.y + y - 0.05, P0.y + y, P1.y + y, COL.light, [true, true], 2, 1);
+  }
+}
 function tunnelTile(g, W, E, tx, tz){
   var Q = WQ(), K = tunConst(), h = E.half, wl = K.wall, st = stations(E, 0, E.len), k;
   function mine(A, B){ return inTile((A.x + B.x)/2, (A.z + B.z)/2, tx, tz); }
@@ -1030,6 +1268,7 @@ function tunnelTile(g, W, E, tx, tz){
         bar(g, P0, P1, mid - POST_W/2, mid + POST_W/2, y0, y1, y0 + RAIL_H - RAIL_T, y1 + RAIL_H - RAIL_T, COL.rail, [true, true]);
       });
     }
+    tunnelFinish(g, W, E, tx, tz, top);   // [3.34]
     return;
   }
   if(E.under !== "tunnel") return;
@@ -1044,11 +1283,21 @@ function tunnelTile(g, W, E, tx, tz){
       bar(g, A2, B2, sg*(h - TUN_WALK), sg*h, A2.y, B2.y, A2.y + LIFT + TUN_WALK_H, B2.y + LIFT + TUN_WALK_H, COL.concrete, [false, false]);
     });
     face(g, [at(A2, -h, ca), at(B2, -h, cb), at(B2, h, cb), at(A2, h, ca)], COL.ceiling, [0, -1, 0]);
+  }
+  // [3.34] the ceiling lights: on each line a luminaire FIT_L m long every FIT_STEP m, its housing and its lens (lit 1)
+  var nf = Math.max(1, Math.round(E.len/FIT_STEP));
+  for(k = 0; k < nf; k++){
+    var sf = E.len*(k + 0.5)/nf, F0 = pointAt(E, Math.max(0, sf - FIT_L/2)), F1 = pointAt(E, Math.min(E.len, sf + FIT_L/2));
+    if(!mine(F0, F1)) continue;
+    var c0 = F0.y + clear, c1 = F1.y + clear;
     lights.forEach(function(o){
       if(Math.abs(o) + LIGHT_W > h - TUN_WALK) return;
-      bar(g, A2, B2, o - LIGHT_W/2, o + LIGHT_W/2, ca - LIGHT_D, cb - LIGHT_D, ca - 0.01, cb - 0.01, COL.light, [false, false], 1);
+      bar(g, F0, F1, o - LIGHT_W/2, o + LIGHT_W/2, c0 - LIGHT_D + 0.02, c1 - LIGHT_D + 0.02, c0 - 0.01, c1 - 0.01, COL.fitting, [true, true], 0, 3);
+      face(g, [at(F0, o - LIGHT_W/2 + 0.04, c0 - LIGHT_D + 0.01), at(F1, o - LIGHT_W/2 + 0.04, c1 - LIGHT_D + 0.01),
+               at(F1, o + LIGHT_W/2 - 0.04, c1 - LIGHT_D + 0.01), at(F0, o + LIGHT_W/2 - 0.04, c0 - LIGHT_D + 0.01)], COL.light, [0, -1, 0], 0, 1);
     });
   }
+  tunnelFinish(g, W, E, tx, tz, null);
   // the portals: where a cutting meets an end, a headwall over the mouth facing out along the cutting
   var R = tunRec(W, E);
   [[0, R ? R.portal[0] : true], [1, R ? R.portal[1] : true]].forEach(function(pe){
@@ -1080,7 +1329,8 @@ function tunnelTile(g, W, E, tx, tz){
 // gap: leave out every bridge edge's pieces over the water (bridgeGaps: games/hqbridges.js draws its moving spans
 // there); the terrain clamp (flat) never gaps, so the terrain is the same either way
 function roadTile(W, tx, tz, flat, gap){
-  var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.deck || C.E.some(function(E){ return E.bridge; }) ? geo() : null;
+  // ([3.34] in a doc with decks the bridge geo carries the lit attribute: its lamp heads and downlights, lit at night)
+  var C = prep(W), asph = geo(), marks = geo(), kerb = geo(), walk = geo(), br = C.deck || C.E.some(function(E){ return E.bridge; }) ? geo(false, C.deck) : null;
   // phase 7: a tunnel's and cutting's ribbon, marks, barrier and structure (`tunnel`), its ceiling lights (`glow`)
   var tg = C.under && !flat ? geo(false, true) : null;
   C.E.forEach(function(E){
@@ -1149,7 +1399,7 @@ function roadTile(W, tx, tz, flat, gap){
       [-1, 1].forEach(function(sg){ wallStrip(walk, W, E, st, sg*cw, "verge", COL.verge, tx, tz, sg); });
     }
     if(flat) return;
-    if(E.bridge && br) bridgeTile(br, W, E, tx, tz, s0, s1);
+    if(E.bridge && br) bridgeTile(br, W, E, tx, tz, s0, s1, C.deck);
     if(E.deck && br) deckTile(br, W, C, E, tx, tz, s0, s1);
     // markings, stopped short of junction patches and crossings
     var m0 = s0 + (endA && crossed(C, E, 0) ? 5.5 : 0.5), m1 = s1 - (endB && crossed(C, E, 1) ? 5.5 : 0.5);
@@ -1177,6 +1427,8 @@ function roadTile(W, tx, tz, flat, gap){
     var E = C.byId[p.edge];
     if(E && inTile(p.x, p.z, tx, tz)) pierGeo(br, p, E.cw);
   });
+  // [3.34] under the decks where they cross a road: downlights, and the abutment walls beside it
+  if(!flat && br && C.deck) underpasses(br, W, C, tx, tz);
   // @3: a hole on a pavement or a carriageway (a metro entrance) is cut out of the road too (a cutting's road is in
   // `tunnel`, never cut)
   var H = holeSet(W);
@@ -1228,7 +1480,8 @@ function junction(W, C, n, arms, asph, marks, kerb, walk, dk){
   if(n.junction === "roundabout" || n.junction === "mini") roundabout(W, n, asph, marks, kerb, walk, yAt);
   if(n.junction && n.junction !== "signals" && n.junction !== "ramps") giveWays(W, C, n, arms, marks);
   // phase 6: a trumpet's T (an elevated `ramps` junction) on its own slab: the patch's underside, and where no arm
-  // leaves it, a parapet over a fascia (an open span) or a retaining wall (low)
+  // leaves it, a parapet over a fascia (an open span) or a retaining wall (low). [3.34] The parapet's coping, the open
+  // slab's drip lip, and over a road under it four downlights (lit)
   if(dk && n.junction === "ramps"){
     var K = deckConst(), h0 = Q.heightAt(W, n.x, n.z);
     if(n.y - h0 > K.elev){
@@ -1237,16 +1490,21 @@ function junction(W, C, n, arms, asph, marks, kerb, walk, dk){
         var p0 = ring[k], q0 = ring[(k + 1) % m];
         face(dk, [[n.x, cy - LIFT - FLY_D, n.z], [p0[0], ul(p0), p0[2]], [q0[0], ul(q0), q0[2]]], COL.deckUnder, [0, -1, 0]);
       }
+      if(open && roadBelow(C, null, n.x, n.z, cy - LIFT - FLY_D - 1)) [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function(d){
+        var x = n.x + d[0]*1.5, z = n.z + d[1]*1.5, y = cy - LIFT - FLY_D - 0.02, w = DOWN_W/2;
+        face(dk, [[x - w, y, z - w], [x + w, y, z - w], [x + w, y, z + w], [x - w, y, z + w]], COL.light, [0, -1, 0], 0, 1);
+      });
       for(k = 0; k < arms.length; k++){
         var p = ring[2*k + 1], q = ring[(2*k + 2) % m], dx = q[0] - p[0], dz = q[2] - p[2], l = hypot(dx, dz);
         if(l < 0.3) continue;
         var ox = dz/l, oz = -dx/l;
         if(((p[0] + q[0])/2 - n.x)*ox + ((p[2] + q[2])/2 - n.z)*oz < 0){ ox = -ox; oz = -oz; }
         var A = {x: p[0], z: p[2], lx: ox, lz: oz, dx: dx/l, dz: dz/l}, B = {x: q[0], z: q[2], lx: ox, lz: oz, dx: dx/l, dz: dz/l};
-        bar(dk, A, B, 0, FLY_PARA_W, p[1], q[1], p[1] + FLY_PARA_H, q[1] + FLY_PARA_H, COL.deck, [true, true]);
+        parapet(dk, A, B, 1, 0, FLY_PARA_W, p[1], q[1], FLY_PARA_H, [true, true]);
         var la = open ? ul(p) : Math.min(p[1] - 0.5, meshMin(W, at(A, FLY_PARA_W, 0), at(B, FLY_PARA_W, 0)) - 0.3), lb = open ? ul(q) : la;
         face(dk, [at(A, FLY_PARA_W, la), at(B, FLY_PARA_W, lb), at(B, FLY_PARA_W, q[1]), at(A, FLY_PARA_W, p[1])], open ? COL.deck : COL.concrete, [ox, 0, oz]);
         if(open) face(dk, [at(A, 0, la), at(B, 0, lb), at(B, FLY_PARA_W, lb), at(A, FLY_PARA_W, la)], COL.deckUnder, [0, -1, 0]);
+        if(open) drip(dk, A, B, 1, FLY_PARA_W, la, lb, [true, true]);
       }
     }
   }
@@ -2817,4 +3075,10 @@ HQV.worldgeom = {
   SEA_HIDE: SEA_HIDE, meshY: meshY,
   waterGeo: waterGeo, tramEdges: tramEdges, cutHoles: cutHoles, holeSet: holeSet, TRAM: {INNER: TRAM_INNER, W: TRAM_W, EDGE: TRAM_EDGE}
 };
+// [3.34] the structure details' measures and colours (tests/test_structures_v4.py)
+HQV.worldgeom.STRUCT = {COPE_D: COPE_D, COPE_OVER: COPE_OVER, JOINT_W: JOINT_W, JOINT_UP: JOINT_UP, BEAR_H: BEAR_H, BEAR_W: BEAR_W,
+  LAMP_STEP: LAMP_STEP, LAMP_H: LAMP_H, LAMP_ARM: LAMP_ARM, DOWN_STEP: DOWN_STEP, UP_WALL: UP_WALL, FLY_D: FLY_D,
+  FLY_PARA_W: FLY_PARA_W, FLY_PARA_H: FLY_PARA_H, CUT_LIGHT: CUT_LIGHT, FIT_STEP: FIT_STEP,
+  COL: {coping: COL.coping, joint: COL.joint, bearing: COL.bearing, drip: COL.drip, pole: COL.pole, light: COL.light, panel: COL.panel,
+        panel2: COL.panel2, plinth: COL.plinth, drain: COL.drain, fitting: COL.fitting, concrete: COL.concrete}};
 })();

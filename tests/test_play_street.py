@@ -86,11 +86,15 @@ var calls = 0;
 CL.signals = function(w){ var o = {}; (w.nodes || []).forEach(function(nd){ o[nd.id] = {id: nd.id, x: nd.x/100, z: nd.z/100, r: 7, axes: [0, 1.5708], arms: []}; }); return o; };
 CL.walkAt = function(sig, ms, heading){ calls++; return Math.floor(ms/30000) % 2 === 0; };
 var sg = S.create(doc, {tier: 5, grow: 0, seed: "street", world: W}), sig = {crossInRed: 0, crossing: 0, waiting: 0, frames: 0, clear: 0};
+// (how long a crossing of its street takes: one across the City Line's 36.5 m boulevard, started as the walk phase
+// ended, is still under way 25 s into the red; it started on walk)
+var widthOf = {}; W.edges.forEach(function(e){ widthOf["edge:" + e.id] = e.width/100; });
+function crossS(r){ return (widthOf[r.spot] || 0)/Math.max(0.5, r.speed || 1.2); }
 for(var s = 0; s < 240; s += 5){
   var t = Math.floor(NOON/60000)*60000 + s*1000, red = Math.floor(t/30000) % 2 === 1, intoRed = (t % 30000)/1000;
   var rows = sg.passers(t, ALL, BIG); sig.frames++;
   rows.forEach(function(r){
-    if(r.cross){ sig.crossing++; if(red && intoRed >= 25) sig.crossInRed++; }
+    if(r.cross){ sig.crossing++; if(red && intoRed >= Math.max(25, crossS(r) + 1)) sig.crossInRed++; }
     if(r.anim === "idle" && red) sig.waiting++;
   });
 }

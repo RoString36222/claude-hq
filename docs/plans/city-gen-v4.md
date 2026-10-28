@@ -648,3 +648,54 @@ for what comes next.
 | Spot | Calls before | Calls after | Triangles after |
 |---|---|---|---|
 | _TODO_ | | | |
+
+## Trams on desire lines
+
+The rest of the plan's phase 8: routes on the main desire lines, stations about 600 m apart, curves of 25 m at least.
+
+- **Routes (`organic/trams.rs`):** planned on the street graph before the civic sites and the paving, so the roads
+  they follow are paved as their classes' tram versions and the stations stand along them.
+  - **Places:** each district (a zoning seed's patch of six lots or more) at the middle of its doors, weighed by its
+    floors, and the core (the plaza) at twice the mean district.
+  - **Pairs:** every two places 300 m apart or more, strongest first by gravity (the weights' product over the
+    distance). A pair whose two places a route already passes within 250 m of is skipped.
+  - **A route:** the cheapest path from a junction within 200 m of one place to a junction within 200 m of the other.
+    A side street costs 1.3 times a main road, a road no lot fronts 3 times, a road another route has 4 times, and
+    every turn costs by its angle. Any class may carry it (the narrow ones share the lane). It never visits a node
+    twice, goes at most 1.5 times the straight line, then runs on up to 250 m past each end to the last junction
+    (through the district, not to its middle). It is kept if 300 m or longer.
+  - **Only turns a tram can take** (`transit::tram_turn_ok`): at a bend, a 26 m arc whose tangents fit in 0.4 of
+    either arm and whose middle moves at most 2 m into the corner (`fillet_bends` then curves it so); at a junction
+    or a bridge's end the arms stay straight (the cars' turns and a bed's trims are drawn from them), so the corner
+    must already be gentle (the circle through the node and the arms' points 8 m out at least 26 m wide).
+  - **How many:** up to 3 on the Commons, 1 on a personal island.
+- **Stations (`civic.rs`):** `TRAM_STATIONS_CM` is 60 000. A route has one 30 m in from each end and the rest evenly
+  between, round(length / 600 m) gaps. Each takes the nearest free lot whose door is on the route (or at its kerb on a
+  corner) within 60 m, up to 150 m along, a lot the HQ pool could draw last.
+- **Lines (`transit.rs`):** each edge carries its routes' bits (`Edge::lines`, not in the doc). A route's roads run
+  as one line, or one each side where the City Line's boulevard cut them (trams keep off it, as before). A line also
+  splits where its finished track turns tighter than 25 m after all. Its ends are at a junction or a street's end:
+  where the cut left one mid-block it runs on to the next junction if the tram can make the turn, else back to the
+  last junction. A side with too few stations gets the rest as platforms on its track (`route_stations`).
+- **Room for platforms (`close_mouths`):** where a station has no platform and a straight 40 m within its reach is
+  blocked only by the boxes of one or two lanes or local streets meeting the line at a T, those side streets end 1 m
+  past the tram road's edge (a cul-de-sac), and the lines are drawn again. Never a collector or a main road, one a
+  tram runs on, the only way to the streets behind it, one a door opens onto in the closed piece, or where the tram
+  road would bend two classes apart. Platforms (3.32's placement) now also keep off every lot: a kerb platform beside a
+  2 m footpath would stand on the lots.
+- **Fixes on the way:** a lane or local street paved as it is with the tram in its lanes, then left without a tram,
+  kept its width (`untram_unused`); a trammed lane at its layout width passes `class-width` as an untrammed one does.
+- **Validator:** `tram-curve` (hard) fails a line whose track turns tighter than 25 m: the circle through each point
+  and the points 8 m or more back and ahead along it. `tram-station` lists the kerb stops, as before.
+
+| | Commons | 50 seeds + the Commons (seed 7 has no world: its HQ pool) |
+|---|---|---|
+| Tram lines | 2 (3 before) | 124 (95 before) |
+| Route length | 1.62 km (1.68) | 62.5 km (48.0) |
+| Stations | 5 (9) | 255 (278) |
+| On a 40 m platform | 5 of 5 (5 of 9) | 170 of 255, 67 % (151 of 278, 54 %); 136 before side streets closed |
+| Side streets closed | 0 | 39, for 34 platforms |
+
+On the Commons the strongest desire lines (the two heaviest districts, either side of the core) cross arterials that
+kink 40 to 55 degrees on 12 to 18 m arms, where no 25 m curve fits, so its two lines run on the arterials round the
+outer districts. A third route is planned, but no side of it keeps two stations once the City Line's corridor cuts it.

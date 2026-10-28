@@ -492,12 +492,13 @@ Object.keys(worlds).forEach(function(name){
       if(prev){ var jump = Math.hypot(p.x - prev.x, p.z - prev.z); if(jump > spec.vmax*0.1 + 0.05) bigJump++; }
       prev = p;
       if((tm - trip.arrive) %% 3000 !== 0) continue;
-      var v = vehById(tm), parts = kind === "tram" ? v.parts.map(function(q){ return {x: q.x, z: q.z, yaw: q.yaw, len: spec.sec}; }) : [{x: p.x, z: p.z, yaw: p.yaw, len: spec.len}];
+      var v = vehById(tm), parts = kind === "tram" ? v.parts.map(function(q){ return {x: q.x, y: q.y, z: q.z, yaw: q.yaw, len: spec.sec}; }) : [{x: p.x, y: p.y, z: p.z, yaw: p.yaw, len: spec.len}];
       if(Math.hypot(v.x - p.x, v.z - p.z) > 0.01) bigJump += 1000;
       for(var i = 0; i < trip.seats + trip.standing; i++){
-        var sp = trip.seat(i, tm), inside = parts.some(function(q){ var lc = local(q, sp.x, sp.z); return Math.abs(lc.x) < spec.wid/2 - 0.05 && Math.abs(lc.z) < q.len/2 + (kind === "tram" ? 0.55 : 0); });
-        // ([3.32] give or take a raised bed's 0.15 m: a tram straddling its end has its sections at two heights)
-        checked++; if(!inside || Math.abs(sp.y - p.y - 0.45) > 0.46 + 0.15) outSeat++;
+        var sp = trip.seat(i, tm), host = parts.filter(function(q){ var lc = local(q, sp.x, sp.z); return Math.abs(lc.x) < spec.wid/2 - 0.05 && Math.abs(lc.z) < q.len/2 + (kind === "tram" ? 0.55 : 0); })[0];
+        // ([3.32] give or take a raised bed's 0.15 m: a tram straddling its end has its sections at two heights; trams on
+        // desire lines climb steeper streets, so a seat's height is its own section's, not the middle of the tram's)
+        checked++; if(!host || Math.abs(sp.y - (host.y != null ? host.y : p.y) - 0.45) > 0.46 + 0.15) outSeat++;
       }
       var dr = trip.door(tm), dl = Math.min.apply(null, parts.map(function(q){ var lc = local(q, dr.x, dr.z); return Math.abs(Math.abs(lc.x) - spec.wid/2) + Math.max(0, Math.abs(lc.z) - q.len/2); }));
       if(dl > 0.5) doorFar++;

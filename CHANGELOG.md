@@ -13,14 +13,14 @@ recent releases.
     - Roadworks now have their own sound.
     - Bus and tram doors hiss open at their stops, and a tram rings its bell as it pulls away.
   - **HQ spacing:**
-    - HQs are spread out by a minimum gap of TODO(3.35 numbers).
-    - An HQ fronts a local street or a collector only, and sits near a stop (within TODO(3.35 numbers)).
+    - HQs are spread out by a minimum gap of 40 m (30 m at the least, in the few towns too small for 40).
+    - An HQ fronts a local street or a collector only, and sits near a stop (within 250 m).
     - Each HQ lot holds the tower, its garage, an apron and a driveway.
     - **HQs move to new lots after this update.**
   - **Trams:**
     - Routes follow the main desire lines between districts.
     - Stations are about 600 m apart.
-    - Most stations now get a 40 m platform (TODO(3.35 numbers) of TODO(3.35 numbers)).
+    - Most stations now get a 40 m platform (177 of 261 across the 51 test worlds; all 5 on the Commons).
 - **3.34.0 — City Gen v4, phase 11: the graphics pass.** The streets and structures get their detail.
   - **Roads:**
     - edge lines along the main roads;

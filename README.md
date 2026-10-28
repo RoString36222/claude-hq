@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.34.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.35.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 <img src="docs/screenshots/mission.png" alt="Mission Control: every live session is a crew member at a console around the holo-table" width="100%">
 
@@ -619,7 +619,7 @@ change.
 
 The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
 
-- **3.35.0** (next) — City Gen v4 final: the ambient slider and positional sound, HQ spacing, desire-line tram routes.
+- **3.35.0** — City Gen v4 final: the ambient slider and positional sound, HQ spacing, desire-line tram routes.
 - **3.34.0** — The graphics pass: road markings, planted medians, deck and tunnel detail, 1,200 / 240 draw-call budgets.
 - **3.33.0** — Move your garage's car-lift bay on your lot; others see it there.
 - **3.32.0** — Trams on their own raised tram roads, with 40 m station platforms.

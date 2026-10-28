@@ -23,7 +23,7 @@ merges on its own and leaves the City playable:
 | 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
 | 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
-| 9 | HQ spacing and movable garages | **3.33.0** (movable garages, as phase 10 here; HQ spacing left: HQs stay on their lots) |
+| 9 | HQ spacing and movable garages | **3.33.0** (movable garages) and **3.35.0** (HQ spacing: HQs moved to spaced, garage-sized lots) |
 | 10 | Graphics pass within 1,200 / 240 draw calls | **3.34.0** (the graphics pass, as phase 11 here) |
 | S | Ambient volume slider and proximity sound (any time) | **3.35.0** |
 

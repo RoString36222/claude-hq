@@ -41,7 +41,9 @@
 //!
 //! City Gen v4 (HQ 3.24 on, docs/plans/city-gen-v4.md) upgrades @3 in place, a phase at
 //! a time, rather than adding a version: the live worlds move with it (the user's call),
-//! while every lot, and so every HQ, stays where it was. Phase 1: the Commons' airport
+//! every lot staying where it was until HQ spacing (organic/hq.rs: the HQ pool drawn by
+//! spacing once the roads and the City Line's boulevard are laid, HQs moved to new lots,
+//! a member keeping their rank). Phase 1: the Commons' airport
 //! claims its land (claims.rs) before the highways and the ring are routed, which keep off
 //! it (the ring alone may pass behind the terminal, in its corridor, until phase 6 takes it
 //! under; it stops either side where only the long way round would pass it); the dock,
@@ -246,11 +248,11 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     if let Some(plan) = plan.as_mut() {
         plan.shape(&mut base);
     }
-    let (mut city, mut roads, districts) = if version == 1 {
+    let (mut city, mut roads, districts, mut tram_routes) = if version == 1 {
         let city = city::generate(seed, &p, &base)?;
         let roads = roads::generate(seed, &p, &base, &city.blocks)?;
         let districts = districts::generate(seed, &p, &base, &city.blocks);
-        (city, roads, districts)
+        (city, roads, districts, Vec::new())
     } else {
         let water = plan.as_ref().map_or(Vec::new(), |w| w.outlines());
         organic::generate(seed, &p, &base, river.as_ref(), &water)?
@@ -304,11 +306,25 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
             if std::env::var("HQ_IX").is_ok() {
                 eprintln!("interchanges: {made} made, kept at grade: {kept:?}");
             }
+            // HQ spacing: the HQ pool, drawn by spacing on the lots and roads as they now are,
+            // the City Line's boulevard cut (organic/hq.rs)
+            organic::hq::draw(&p, &base, &roads, &mut city)?;
         }
         civic::outside(&p, &base, &roads, &mut city, river.as_ref());
         // a personal island's first bus loop keeps to its tier-2 town (20 m in from the ring)
         let inner = (p.name == "island").then(|| island::RADII_CM[1] - 2_000);
-        let mut transit = transit::generate(&roads, &city.sites, &city.lots, inner);
+        // City Gen v4: a side of a route the City Line's boulevard cut with too few stations gets the
+        // rest on platforms
+        if p.v4 {
+            transit::route_stations(&roads, &mut city.sites, &city.lots, &mut tram_routes);
+        }
+        let mut transit = transit::generate(&roads, &city.sites, &city.lots, inner, &tram_routes);
+        // City Gen v4: where a station's best stretch is cut by a side street meeting its tram road at a
+        // T, that side street ends short of it (a cul-de-sac), and the lines are drawn again
+        if p.v4 && transit::close_mouths(&mut roads, &transit, &city.sites, &city.lots) > 0 {
+            transit::route_stations(&roads, &mut city.sites, &city.lots, &mut tram_routes);
+            transit = transit::generate(&roads, &city.sites, &city.lots, inner, &tram_routes);
+        }
         let island = coast.map(|c| island::grow(&p, &c, &mut roads, &mut city, &mut transit));
         // City Gen v4 (phase 2): a tram runs down the middle of its street until phase 8
         // gives it its own bed, so a street a tram line runs on has no median yet
@@ -316,7 +332,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         roads.tram_on(&transit);
         // phase 9: the tram stations on their tracks
         if p.v4 {
-            transit::stations(&roads, &mut transit, &mut city.sites, &base);
+            transit::stations(&roads, &mut transit, &mut city.sites, &city.lots, &base);
         }
         roads.trams_in_the_middle(&transit);
         // phase 3: each junction's control, by the roads that meet there

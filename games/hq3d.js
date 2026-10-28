@@ -6078,14 +6078,35 @@ function mount(el, api){
         if(S.ride) smokeRide(S.ride);
         smokeCam(S.cam);
         if(rig && S.span) HQV.camrig.flyMap(rig, avatar.x, avatar.z, S.span);
-        S.peer = {u: "smoke-friend", n: "Friend", w: cur.net || cur.name, x: Math.round((avatar.x + 20)*100), z: Math.round(avatar.z*100), r: 0, a: 0};
+        // the friend starts 20 m east of you, or (City Gen v4 rings the plaza with HQs, whose names outrank its tag)
+        // at the nearest spot round you at least 150 m from every HQ; smokeFrame moves it on if its tag is still hidden
+        var fx = avatar.x + 20, fz = avatar.z, hs = (cur.mapInfo && cur.mapInfo().hqs) || [];
+        var clear = function(x, z){ return hs.every(function(h){ return Math.hypot(h.x - x, h.z - z) >= 150; }); };
+        for(var rr = 150; rr <= 600 && !clear(fx, fz); rr += 50){
+          for(var aa = 0; aa < 16; aa++){ var tx = avatar.x + rr*Math.cos(aa*Math.PI/8), tz = avatar.z + rr*Math.sin(aa*Math.PI/8); if(clear(tx, tz)){ fx = tx; fz = tz; break; } }
+        }
+        S.peer = {u: "smoke-friend", n: "Friend", w: cur.net || cur.name, x: Math.round(fx*100), z: Math.round(fz*100), r: 0, a: 0};
         inst.setPeers(lastPeers);
       } catch(e){ smokeErr(e); S.done = true; return; }
     }
     if(++S.frames < 30) return;
     // cam=map: the labels hud mounts and counts on later frames; on a slow CI box 30 frames can pass first
     // (the "drew no labels ({})" flake), so wait for a count, up to ~900 frames
-    if(S.cam === "map" && S.frames < 900){ var lc = hud && hud.labelCounts ? hud.labelCounts() : null; if(!lc || !(lc.roads > 0 && lc.hqs > 0 && lc.peers > 0)) return; }
+    if(S.cam === "map" && S.frames < 900){
+      var lc = hud && hud.labelCounts ? hud.labelCounts() : null;
+      if(!lc || !(lc.roads > 0 && lc.hqs > 0 && lc.peers > 0)){
+        // the friend's tag gives way to any HQ name or shield over it (City Gen v4 rings the plaza with
+        // HQs): with the other labels in and still no friend, move it out along a spiral and look again
+        // (every 6 frames: a CI box under SwiftShader draws a few a second)
+        if(lc && lc.roads > 0 && lc.hqs > 0 && S.frames % 6 === 0){
+          S.hop = (S.hop || 0) + 1;
+          var rr = 150 + 60 * Math.ceil(S.hop / 8), aa = S.hop * Math.PI / 4;
+          S.peer.x = Math.round((avatar.x + rr*Math.cos(aa))*100); S.peer.z = Math.round((avatar.z + rr*Math.sin(aa))*100);
+          inst.setPeers(lastPeers);
+        }
+        return;
+      }
+    }
     S.done = true;
     try { document.documentElement.dataset.hqSmoke = "ok " + JSON.stringify(smokeStats()); } catch(e){ smokeErr(e); }
   }

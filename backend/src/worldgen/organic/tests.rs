@@ -161,7 +161,7 @@ fn wider_roads_move_no_lot() {
             let base = terrain::generate_with(seed, p, river.as_ref());
             super::generate(seed, p, &base, river.as_ref(), &[]).unwrap()
         };
-        let ((was, r0, _), (now, r1, _)) = (run(&laid), run(&p));
+        let ((was, r0, _, _), (now, r1, _, _)) = (run(&laid), run(&p));
         assert_eq!(was.lots.len(), now.lots.len(), "{id}: lots");
         for (a, b) in was.lots.iter().zip(&now.lots) {
             assert_eq!(

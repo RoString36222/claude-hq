@@ -23,9 +23,9 @@ merges on its own and leaves the City playable:
 | 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
 | 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
 | 8 | Trams on any road class, with stations | **3.32.0** (today's tram streets as tram roads, as phase 9 here) |
-| 9 | HQ spacing and movable garages | **3.33.0** (movable garages, as phase 10 here; HQ spacing left: HQs stay on their lots) |
+| 9 | HQ spacing and movable garages | **3.33.0** (movable garages) and **3.35.0** (HQ spacing: HQs moved to spaced, garage-sized lots) |
 | 10 | Graphics pass within 1,200 / 240 draw calls | **3.34.0** (the graphics pass, as phase 11 here) |
-| S | Ambient volume slider and proximity sound (any time) | |
+| S | Ambient volume slider and proximity sound (any time) | **3.35.0** |
 
 ## Phase 1 (3.24.0)
 
@@ -617,12 +617,6 @@ trees, so the phase adds no draw calls. A @1 or @2 doc builds byte-identically.
 - **The tunnel:** its ceiling lights are luminaires, and its walls are panelled over a drain. The cuttings get a
   plinth, panels, a kerb and drain at the foot, and wall lights that come on at night.
 
-
-- **Road markings:** _TODO_ (`worldgeom.js`)
-- **Median planting:** _TODO_ (`worldgeom.js`)
-- **Deck and viaduct detail:** _TODO_ (`worldgeom.js`, `hqcityrail.js`)
-- **Lighting:** _TODO_
-
 ### Results
 
 With the detail in, under SwiftShader:
@@ -645,6 +639,117 @@ The busiest frame uses 54 % of the surface budget and the metro 20 % of the one 
 for what comes next.
 
 
-| Spot | Calls before | Calls after | Triangles after |
-|---|---|---|---|
-| _TODO_ | | | |
+## Sound and settings (3.35.0)
+
+Most of this was already in place from Sound PR B (3.11.1 onward): the Settings slider, the spatial layer in
+`games/engine.js` and the City's voice pools in `games/hqcity3d.js` `citySound()`. This phase checks it against the
+plan, fills the gaps and pins it down with `tests/test_sound_settings_v4.py`.
+
+**Settings.** *Ambient sounds* is a 0–100 % slider (`#setAmbient`, step 5, `aria-valuetext` as a percentage, announced
+on change) in the place of the old on/off switch. It is saved in localStorage `hq_ambient` as 0..1. The old switch
+saved `"1"` for on and `"0"` for off, so it migrates without a step: on reads as 100 %, off as 0 %, and an unset or
+unreadable value as 100 %. The value is the gain of the ambient bus, which feeds the master (Game sounds) bus. A
+change glides the bus there at once, so it applies live. Thunder, rain, fireworks, jets, planes, water, fountains,
+roadworks, the civic bells and the city's hum go through it, and at 0 % none of them makes a voice at all. *NPC
+traffic* (3.28, `hq_traffic`, `HQV.cityTrafficLevel`) is unchanged.
+
+**Distance.** Each kind fades by the Web Audio "inverse" model, `ref / (ref + roll·(d − ref))`, with full volume
+inside `ref`. A taper `1 − ((d − ref)/(max − ref))²` takes it to exactly 0 at `max`, which "inverse" alone never
+reaches, and past `max` the source is not played. The engine computes this curve itself and feeds a gain and a
+`StereoPannerNode` rather than a `PannerNode`. A PannerNode never reaches 0, its listener orientation differs
+between browsers, and HRTF is costly per voice.
+
+**Panning.** The pan comes from the source's direction along the listener's right vector, scaled by `min(1, d/ref)`
+and by 0.85, so a sound is never in one ear only. The listener is set every frame from the camera's world matrix
+(or `{x, z, yaw}`).
+
+**Voice limits.** Only the nearest N of each kind play. A pool keeps the N nearest sources in fixed slots, with no
+sort and nothing made per source, and gives a playing voice a 15 % hold so voices don't flicker between two sources
+at similar distances. All pools of the same kind share its N. A one-shot over the cap steals the farthest voice, or
+is dropped if every playing voice is nearer. The caps add up to 67 voices across every kind, so a busy place costs
+the same as a quiet one. Nothing runs without a listener: the City sets none when it isn't open or is hidden.
+
+| Kind | Sources | ref (m) | max (m) | Voices | Bus |
+|---|---|---|---|---|---|
+| vehicle | NPC cars, vans, scooters, emergency runs, the cab coming to you | 5 | 120 | 6 | engine |
+| bus | NPC buses, the coach | 6 | 180 | 3 | engine |
+| tram | tram traction motors | 6 | 200 | 3 | engine |
+| train | City Line, Island Link | 12 | 400 | 2 | master |
+| metro | metro trains and stations | 10 | 250 | 2 | master |
+| boat | water buses, ferries, cruise and cargo ships | 12 | 400 | 3 | master |
+| heli | rooftop and called helicopters | 15 | 1500 | 2 | engine |
+| plane | airliners, hoppers, seaplanes, the airport stands | 40 | 2500 | 2 | ambient |
+| jet | the air base's jets | 60 | 1500 | 2 | ambient |
+| door | doors, gangways, validators, lifts; bus and tram doors at stops | 2 | 40 | 4 | master |
+| bell | tram bells, bridge warning bells, bike and lift bells | 5 | 250 | 3 | master |
+| gondola | gondola stations, bridge machinery | 6 | 120 | 2 | master |
+| construction | roadworks (new) | 10 | 200 | 2 | ambient |
+| fountain | the plaza and Base fountains | 4 | 70 | 2 | ambient |
+| water | lapping at piers, surf | 4 | 60 | 2 | ambient |
+| hum | the city's hum | 40 | 800 | 2 | ambient |
+| thunder / firework | storms, the spectacle | 100 / 40 | 1000 | 3 / 6 | ambient |
+
+**New in 3.35.0:**
+
+- **Roadworks** sound where they are. `cityevents3d.js` `sounds()` lists the roadworks that are on and built near
+  you, and the `works` loop (a compressor's thrum and a breaker's hammering) plays through a construction pool.
+- **Buses and trams at their stops.** A bus or tram that rests at a stop for 0.8 s opens its doors (`door-hiss`).
+  As it pulls away, a tram rings its bell (`tram-bell`) and a bus closes its doors. Stops are looked up once a
+  second within 160 m, and a vehicle held at a light, away from a stop, stays shut.
+- **Fountains** go through the fountain kind's pool, so its 2-voice cap holds in the City as well.
+- Construction moved to the ambient bus, since roadworks are background sound like fountains.
+
+Calm and reduced motion add nothing to this. The one exception was there before: Game sounds starts at 0 under them
+until you set a volume yourself. Master volume 0 (mute) silences everything, Ambient 0 % silences the ambient kinds,
+and UI sounds stay on the master bus.
+
+## Trams on desire lines
+
+The rest of the plan's phase 8: routes on the main desire lines, stations about 600 m apart, curves of 25 m at least.
+
+- **Routes (`organic/trams.rs`):** planned on the street graph before the civic sites and the paving, so the roads
+  they follow are paved as their classes' tram versions and the stations stand along them.
+  - **Places:** each district (a zoning seed's patch of six lots or more) at the middle of its doors, weighed by its
+    floors, and the core (the plaza) at twice the mean district.
+  - **Pairs:** every two places 300 m apart or more, strongest first by gravity (the weights' product over the
+    distance). A pair whose two places a route already passes within 250 m of is skipped.
+  - **A route:** the cheapest path from a junction within 200 m of one place to a junction within 200 m of the other.
+    A side street costs 1.3 times a main road, a road no lot fronts 3 times, a road another route has 4 times, and
+    every turn costs by its angle. Any class may carry it (the narrow ones share the lane). It never visits a node
+    twice, goes at most 1.5 times the straight line, then runs on up to 250 m past each end to the last junction
+    (through the district, not to its middle). It is kept if 300 m or longer.
+  - **Only turns a tram can take** (`transit::tram_turn_ok`): at a bend, a 26 m arc whose tangents fit in 0.4 of
+    either arm and whose middle moves at most 2 m into the corner (`fillet_bends` then curves it so); at a junction
+    or a bridge's end the arms stay straight (the cars' turns and a bed's trims are drawn from them), so the corner
+    must already be gentle (the circle through the node and the arms' points 8 m out at least 26 m wide).
+  - **How many:** up to 3 on the Commons, 1 on a personal island.
+- **Stations (`civic.rs`):** `TRAM_STATIONS_CM` is 60 000. A route has one 30 m in from each end and the rest evenly
+  between, round(length / 600 m) gaps. Each takes the nearest free lot whose door is on the route (or at its kerb on a
+  corner) within 60 m, up to 150 m along, a lot the HQ pool could draw last.
+- **Lines (`transit.rs`):** each edge carries its routes' bits (`Edge::lines`, not in the doc). A route's roads run
+  as one line, or one each side where the City Line's boulevard cut them (trams keep off it, as before). A line also
+  splits where its finished track turns tighter than 25 m after all. Its ends are at a junction or a street's end:
+  where the cut left one mid-block it runs on to the next junction if the tram can make the turn, else back to the
+  last junction. A side with too few stations gets the rest as platforms on its track (`route_stations`).
+- **Room for platforms (`close_mouths`):** where a station has no platform and a straight 40 m within its reach is
+  blocked only by the boxes of one or two lanes or local streets meeting the line at a T, those side streets end 1 m
+  past the tram road's edge (a cul-de-sac), and the lines are drawn again. Never a collector or a main road, one a
+  tram runs on, the only way to the streets behind it, one a door opens onto in the closed piece, or where the tram
+  road would bend two classes apart. Platforms (3.32's placement) now also keep off every lot: a kerb platform beside a
+  2 m footpath would stand on the lots.
+- **Fixes on the way:** a lane or local street paved as it is with the tram in its lanes, then left without a tram,
+  kept its width (`untram_unused`); a trammed lane at its layout width passes `class-width` as an untrammed one does.
+- **Validator:** `tram-curve` (hard) fails a line whose track turns tighter than 25 m: the circle through each point
+  and the points 8 m or more back and ahead along it. `tram-station` lists the kerb stops, as before.
+
+| | Commons | 50 seeds + the Commons (seed 7 has no world: its HQ pool) |
+|---|---|---|
+| Tram lines | 2 (3 before) | 124 (95 before) |
+| Route length | 1.62 km (1.68) | 62.5 km (48.0) |
+| Stations | 5 (9) | 255 (278) |
+| On a 40 m platform | 5 of 5 (5 of 9) | 170 of 255, 67 % (151 of 278, 54 %); 136 before side streets closed |
+| Side streets closed | 0 | 39, for 34 platforms |
+
+On the Commons the strongest desire lines (the two heaviest districts, either side of the core) cross arterials that
+kink 40 to 55 degrees on 12 to 18 m arms, where no 25 m curve fits, so its two lines run on the arterials round the
+outer districts. A third route is planned, but no side of it keeps two stations once the City Line's corridor cuts it.

@@ -15,7 +15,8 @@
  *     parade     crowd barriers along both kerbs (a gap every few to let people through) and bunting across the
  *                road between poles on every edge of the route
  *   create(THREE, scene, W, opts) -> {group, update(localMs, cam), blocked(x, z), knockAt(x, z), unknock(key), info(),
- *                            drawCalls(), dispose()}   ([play-street] knockAt: city play knocks a market stall over)
+ *                            drawCalls(), sounds(), dispose()}   ([play-street] knockAt: city play knocks a market stall
+ *                            over; [3.35] sounds: the roadworks near you, for the City's construction sound)
  *                            an event is built (one merged, vertex-coloured mesh; the roadworks' plates a second, with
  *                            the sign texture) while it is on and the camera is within NEAR m of it, dropped past FAR
  * Draw calls: one per event near you, two for roadworks (at most a market and three roadworks at once: 7).
@@ -398,12 +399,29 @@ function create(THREE, scene, W, opts){
     return o;
   }
   function drawCalls(){ var n = 0; for(var id in built) n += built[id].meshes.length; return group.visible ? n : 0; }
+  // [3.35] the roadworks that are on and built near you, as sound sources [{id, x, y, z}] (the pit, where the breaker
+  // works, a metre up): the construction kind's pool in the City's sound. Remade only when what is built changes (the
+  // same array otherwise: nothing made per frame); none below the street.
+  var works = [], worksKey = "";
+  function sounds(){
+    if(!group.visible) return [];
+    var key = "";
+    for(var id in built) if(built[id].ev.kind === "roadworks") key += id + ";";
+    if(key === worksKey) return works;
+    worksKey = key; works = [];
+    for(var id2 in built){
+      var B = built[id2]; if(B.ev.kind !== "roadworks") continue;
+      var pit = null; B.P.plant.forEach(function(p){ if(p.kind === "pit") pit = p; });
+      if(pit) works.push({id: "works:" + id2, x: pit.x, y: (+pit.y || 0) + 1, z: pit.z});
+    }
+    return works;
+  }
   function dispose(){
     Object.keys(built).forEach(drop);
     mat.dispose(); signMat.dispose();
     if(group.parent) group.parent.remove(group);
   }
-  return {group: group, update: update, blocked: blocked, knockAt: knockAt, unknock: unknock, info: info, drawCalls: drawCalls, dispose: dispose};
+  return {group: group, update: update, blocked: blocked, knockAt: knockAt, unknock: unknock, info: info, drawCalls: drawCalls, sounds: sounds, dispose: dispose};
 }
 
 HQV.cityEvents3d = {pieces: pieces, create: create, NEAR: NEAR, FAR: FAR};

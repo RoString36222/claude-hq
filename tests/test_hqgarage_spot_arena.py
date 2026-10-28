@@ -70,7 +70,8 @@ class LocalProxy(unittest.TestCase):
     def test_the_egress_is_documented(self):
         self.assertIn("/api/arena/hq/garage", read("AGENTS.md"))
         readme = read("README.md")
-        privacy = readme[readme.index("## 🔒 Privacy & security"):readme.index("## 🗂️ Files")]
+        start = readme.index("## 🔒 Privacy & security")
+        privacy = readme[start:readme.index("\n## ", start + 1)]
         self.assertIn("`{lot, x, z, r}`", privacy)
         arena = read("dashboard-rs", "src", "arena.rs")
         self.assertIn("Egress: exactly four small integers about your own", arena)

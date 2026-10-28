@@ -165,7 +165,7 @@ class SharedFileHooks(unittest.TestCase):
         v2 = _re.search(r'APP_VERSION: &str = "([0-9.]+)"', read("dashboard-rs/src/app.rs")).group(1)
         v3 = _re.search(r"\*\*Version ([0-9.]+)\*\*", read("README.md")).group(1)
         self.assertEqual(len({v1, v2, v3}), 1, (v1, v2, v3))
-        self.assertIn("Basement Garage.**", read("README.md"))
+        self.assertIn("Basement Garage.**", read("CHANGELOG.md"))
 
 
 @unittest.skipUnless(NODE, "node not installed")

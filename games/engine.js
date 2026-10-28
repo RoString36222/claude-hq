@@ -127,7 +127,7 @@ function glide(G, v){
   try { var t = SND.ctx.currentTime; G.gain.cancelScheduledValues(t); G.gain.setTargetAtTime(v, t, 0.03); } catch(e){ G.gain.value = v; }
 }
 function sfxSetVolume(v){ try { localStorage.setItem("hq_sfx", String(clamp(+v || 0, 0, 1))); } catch(e){} glide(SND.master, sfxVolume()); }
-// Ambient sounds (thunder, rain, fireworks, jets, planes, water, fountains, the city's hum, civic bells): their own
+// Ambient sounds (thunder, rain, fireworks, jets, planes, water, fountains, the city's hum, civic bells, roadworks): their own
 // volume, localStorage hq_ambient as a number 0..1 (Sound PR B; 3.11.1 stored "0" for off and "1" for on, so the old
 // Off reads as 0% and On as 100% with no migration step; unset or garbage is 100%, today's loudness). It feeds
 // SND.amb, a gain into the master: every ambient sound is ambient x sfx volume, so Calm and mute silence it too.
@@ -691,7 +691,9 @@ function bandLoop(freq, q, sk, ambient){
  * pan (a multiplier: "own" 0.25, beds 0). Nothing plays while the sfx volume is 0 (Calm's default, mute).
  * A source may bring its own reference distance past its kind's (hear's opt.ref; for "own" the listener's own): full
  * volume within it, then the kind's fade, its max moved out by as much.
- *   falloff(spec, d)   1 within ref, 0 at max and past it, else ref/(ref + roll*(d - ref)) * (1 - ((d - ref)/(max - ref))^2)
+ *   falloff(spec, d)   1 within ref, 0 at max and past it, else ref/(ref + roll*(d - ref)) * (1 - ((d - ref)/(max - ref))^2):
+ *                      the Web Audio PannerNode "inverse" model (refDistance ref, rolloffFactor roll) with a taper that
+ *                      takes it to silence at maxDistance, which "inverse" alone never reaches
  *   panOf(L, pos, ref) -1 (left) .. 1 (right): the source's share along the listener's right, * min(1, d/ref) * 0.85
  *                      (never one ear only; a source at the ears is centred; one overhead is centred too)
  * Nodes per voice: [its sources] -> gain (falloff x level) -> StereoPannerNode -> the kind's bus, values pushed with
@@ -712,7 +714,7 @@ function bandLoop(freq, q, sk, ambient){
  *   engineSound(..).set(rpm, {pos, sk})   sk: the engine's kind (default "own": your own vehicle, the listener's own reach)
  *   noiseLoop(freq, q, sk) / ambientLoop(freq, q, sk) -> {set(gain, fq, pos), stop()}
  *   loop(name, sk) -> {set(level 0..1, {pos, speed, rate, fq}), stop(), alive()}: a named loop (LOOPS: siren, rain,
- *                                  hum, fountain, water, tram-run, train-run, jet-roar), silent HOLD s after its last
+ *                                  hum, fountain, water, tram-run, train-run, works, jet-roar), silent HOLD s after its last
  *                                  set() and stopped soon after (it can never leak); the next set() starts it again
  *   pool(kind, o) -> {update(sources), stop()}: the nearest o.voices (default the kind's) of sources [{id, x, y, z}]
  *                                  within max play; a playing one keeps its voice unless another is 15% nearer, ties
@@ -747,7 +749,7 @@ var KINDS = {
   bell:         {ref: 5,   max: 250,  roll: 1,   voices: 3, bus: "master"},                // tram, lift and bike bells
   civicbell:    {ref: 30,  max: 900,  roll: 0.6, voices: 2, bus: "ambient"},               // clock and bell towers
   gondola:      {ref: 6,   max: 120,  roll: 1,   voices: 2, bus: "master"},
-  construction: {ref: 10,  max: 200,  roll: 1,   voices: 2, bus: "master"},
+  construction: {ref: 10,  max: 200,  roll: 1,   voices: 2, bus: "ambient"},               // roadworks (3.35: an ambient bed)
   fountain:     {ref: 4,   max: 70,   roll: 1,   voices: 2, bus: "ambient"},
   water:        {ref: 4,   max: 60,   roll: 1,   voices: 2, bus: "ambient"},               // lapping at piers, surf
   rain:         {ref: 1,   max: Infinity, roll: 0, voices: 2, bus: "ambient", pan: 0},      // a bed round the camera
@@ -983,6 +985,16 @@ var LOOPS = {
       post(r.g.gain, 0.2 + 0.8*Math.min(1, v/25), t, 0.3); post(w.frequency, 0.5 + v*0.12, t, 0.3);
       post(m.o.frequency, (45 + v*0.8)*rateOf(opt), t, 0.3, 0.003);
     }};
+  }},
+  // [3.35] roadworks: the compressor's diesel thrum and a breaker's hammering (a burst ~11 times a second, in spells
+  // a few seconds long: a slow wobble on its level), all fixed: the same site sounds the same every time
+  works: {sk: "construction", gain: 0.1, make: function(a, out){
+    var s = noiseSrc(a), m = losc(a, "sawtooth", 46, 0.12, out), h = lband(a, s, "bandpass", 1300, 0.9, 0.35, out);
+    lband(a, s, "lowpass", 160, 0.7, 0.5, out);
+    var o = a.createOscillator(), d = a.createGain(); o.type = "square"; o.frequency.value = 11; d.gain.value = 0.3;
+    o.connect(d); d.connect(h.g.gain); o.start();
+    var w = lwob(a, 0.13, 0.2, h.g);
+    return {nodes: [s, m.o, o, w]};
   }},
   // a jet's roar: brighter the nearer it is (or opt.fq), its hiss on top
   "jet-roar": {sk: "jet", gain: 0.3, make: function(a, out){

@@ -52,11 +52,27 @@
 //!                  on a straight run of its track (within 1 m of the chord) clear of every
 //!                  junction's box (the widest road crossing it, and 3 m), or a line whose track
 //!                  ends mid-block: not at a junction, its street's end or one of its stations
+//!   tram-curve     (hard, trams on desire lines) a tram line whose track turns tighter than the
+//!                  plan's 25 m radius anywhere (classes.rs `TRAM_MIN_RADIUS_CM`), measured along it
+//!                  (transit.rs `track`, `tram_tight`: the circle through each point of it and the
+//!                  points 8 m or more back and ahead, `TRAM_CURVE_SPAN_CM`)
 //!   tram-station   (phase 9) a tram stop with no room on its line for a 40 m platform (side
 //!                  streets every 24 to 48 m), left at the kerb as before
 //!   clearance      (hard, phase 6) a flyover or ramp crossing a road it does not meet
 //!                  less than 7 m over it (5.5 m clear and its deck), or a road crossing
 //!                  another at grade with no junction (listed: `road-overlap`)
+//!
+//!   hq-spacing     (hard, HQ spacing: organic/hq.rs) two HQ lots closer than `MIN_GAP_CM`
+//!                  (30 m), an HQ lot fronting a main road (an avenue, boulevard or graded road:
+//!                  the first road straight out of its door), or one without room for the
+//!                  smallest tower, or for a garage, its 8 m apron and a driveway to the street
+//!                  beside the tower the client grows there (grandOf, garageFits: `hq::fits`)
+//!   hq-gap         two HQ lots closer than the pool's target gap, `GAP_CM` (40 m): a town the
+//!                  pool had to relax the gap in
+//!   hq-transit     an HQ whose door is over `WALK_CM` from a bus or tram stop, the transit
+//!                  hub, a metro entrance or a rail station
+//!   hq-count       fewer HQ lots than the profile's count (a town with no room for more
+//!                  under the hard rules)
 //!
 //! `cargo run --release --bin worldgen -- <id> --validate` prints the report.
 
@@ -92,7 +108,53 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     tunnels(l, &mut out);
     piers(l, &mut out);
     trams(l, &mut out);
+    hqs(l, &mut out);
     out
+}
+
+/// City Gen v4 (HQ spacing, organic/hq.rs): on a v4 world, every HQ lot `GAP_CM` from the
+/// next, its door on no main road, room on it for the tower and a garage, and (listed) its
+/// door within a walk of a stop.
+fn hqs(l: &Layers, out: &mut Vec<Violation>) {
+    use super::organic::hq::{arterial, fits, stop, Streets, GAP_CM, MIN_GAP_CM, WALK_CM};
+    if !l.roads.edges.iter().any(|e| e.v4.is_some()) {
+        return;
+    }
+    let streets = Streets::new(&l.roads);
+    let hq: Vec<&super::city::Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
+    let mut put = |hard: bool, rule: &'static str, what: String, at: [i64; 2]| out.push(Violation { rule, hard, what, at });
+    // the profile's count: the Commons' (the world with the ring road), else a personal island's one
+    let commons = l.roads.edges.iter().any(|e| e.class == "ring");
+    let want = if commons { super::profile::commons().hq_lots } else { super::profile::island().hq_lots };
+    if (hq.len() as i64) < want {
+        put(false, "hq-count", format!("{} HQ lots, the profile's {want}: the town has no room for more", hq.len()), [0, 0]);
+    }
+    for (i, a) in hq.iter().enumerate() {
+        for b in &hq[i + 1..] {
+            let d2 = (a.x - b.x).pow(2) + (a.z - b.z).pow(2);
+            if d2 < MIN_GAP_CM * MIN_GAP_CM {
+                put(true, "hq-spacing", format!("HQ lots {} and {} {} m apart (at least {} m)", a.id, b.id, super::noise::isqrt(d2) / 100, MIN_GAP_CM / 100), [a.x, a.z]);
+            } else if d2 < GAP_CM * GAP_CM {
+                put(false, "hq-gap", format!("HQ lots {} and {} {} m apart (the gap is {} m)", a.id, b.id, super::noise::isqrt(d2) / 100, GAP_CM / 100), [a.x, a.z]);
+            }
+        }
+        let door = (a.door[0], a.door[2]);
+        // the road it fronts: the first straight out of its door
+        match a.front.and_then(|f| streets.fronted(door, f)) {
+            Some((_, id, class)) if arterial(class) => {
+                let name = l.roads.edges.iter().find(|e| e.id == id).map_or("", |e| e.name.as_str());
+                put(true, "hq-spacing", format!("HQ lot {} fronts {name} ({class})", a.id), [door.0, door.1]);
+            }
+            None => put(true, "hq-spacing", format!("HQ lot {} is on no road", a.id), [door.0, door.1]),
+            _ => {}
+        }
+        if !fits(a) {
+            put(true, "hq-spacing", format!("HQ lot {} has no room for the tower, its garage, apron and driveway", a.id), [a.x, a.z]);
+        }
+        if !l.sites.iter().any(|s| stop(s.kind) && (s.x - door.0).pow(2) + (s.z - door.1).pow(2) <= WALK_CM * WALK_CM) {
+            put(false, "hq-transit", format!("HQ lot {} (rank {}) over {} m from a stop", a.id, a.rank.unwrap_or(0), WALK_CM / 100), [door.0, door.1]);
+        }
+    }
 }
 
 /// Phase 9: the tram lines' roads, stations and ends.
@@ -119,6 +181,9 @@ fn trams(l: &Layers, out: &mut Vec<Violation>) {
             }
         }
         let (pts, _) = track(r, &line.path);
+        if let Some(k) = super::transit::tram_tight(&pts, super::classes::TRAM_MIN_RADIUS_CM) {
+            soft.push(Violation { rule: "tram-curve", hard: true, what: format!("{}: its track turns tighter than 25 m", line.id), at: [pts[k].0, pts[k].1] });
+        }
         let stations: Vec<&super::city::Site> = l.sites.iter().filter(|s| line.stops.contains(&s.id)).collect();
         for s in &stations {
             let c = (s.x, s.z);
@@ -398,7 +463,8 @@ fn classes(l: &Layers, out: &mut Vec<Violation>) {
             if let Some(layout) = e.tram {
                 let added = c.tram.map_or(0, |t| t.added_cm);
                 let carriageway = e.width - 2 * e.walk - e.bed.unwrap_or(0) - e.median.unwrap_or(0);
-                let lanes = e.lanes == c.lanes && e.walk >= c.side_cm;
+                // (a lane at its layout width excepted, its footpaths in proportion, as without a tram)
+                let lanes = e.lanes == c.lanes && (e.walk >= c.side_cm || (name == "lane" && e.width < c.total_cm + added));
                 return lanes
                     && if layout == "centre-bed" {
                         e.median.is_none() && e.bed == Some(c.median_cm + added) && carriageway == c.carriageway_cm()
@@ -568,7 +634,7 @@ fn airport(l: &Layers, a: &Airport, out: &mut Vec<Violation>) {
 }
 
 /// Do two polygons overlap (not just touch)?
-fn overlap(p: &[P], q: &[P]) -> bool {
+pub(super) fn overlap(p: &[P], q: &[P]) -> bool {
     let (n, m) = (p.len(), q.len());
     let crossing = (0..n).any(|i| (0..m).any(|j| crosses(p[i], p[(i + 1) % n], q[j], q[(j + 1) % m])));
     crossing || p.iter().any(|&a| inside(a, q) && !on_edge(a, q)) || q.iter().any(|&a| inside(a, p) && !on_edge(a, p))

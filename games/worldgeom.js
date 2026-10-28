@@ -2526,10 +2526,12 @@ function allProps(W){
   if(C.props) return C.props;
   var Q = WQ(), B = {}, hash = W.hash;
   var HS = holeSet(W), PI = C.deck ? Q.piersOf(W) : null, TU = C.under && Q.underOver;
+  var RP = Q.railPiersOf ? Q.railPiersOf(W) : [];   // phase 8: the City Line's doc piers ([] without)
   function put(kind, o){
     if(HS && inHoles(HS, o.x, o.z)) return;   // @3: nothing stands in a terrain hole
     if(PI && underDeck(W, PI, kind, o)) return;   // phase 6: nor on or under a deck, nor in a pier
     if(TU && kind === "gantries" && overTunnel(W, o)) return;   // phase 7: no gantry over a tunnel or cutting
+    if(RP.length && nearRailPier(RP, kind, o)) return;   // phase 8: nor in (or within 1.5 m of) a City Line pier
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);
     var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: [], furniture: []});
     b[kind].push(o);
@@ -2606,6 +2608,15 @@ function underDeck(W, PI, kind, o){
   if(kind !== "gantries") return Q.deckOver(W, o.x, o.z, 2) != null;
   var ux = Math.cos(o.yaw || 0), uz = -Math.sin(o.yaw || 0);
   for(i = -2; i <= 2; i++) if(Q.deckOver(W, o.x + ux*GANTRY_POST*i/2, o.z + uz*GANTRY_POST*i/2, 3) != null) return true;
+  return false;
+}
+// a prop within 1.5 m of a City Line pier (RP: HQV.world.railPiersOf); a gantry's frame anywhere along its span
+function nearRailPier(RP, kind, o){
+  var n = kind === "gantries" ? 2 : 0, ux = Math.cos(o.yaw || 0), uz = -Math.sin(o.yaw || 0);
+  for(var k = -n; k <= n; k++){
+    var x = o.x + ux*GANTRY_POST*k/2, z = o.z + uz*GANTRY_POST*k/2;
+    for(var i = 0; i < RP.length; i++) if(hypot(x - RP[i].x, z - RP[i].z) < RP[i].r + 1.5) return true;
+  }
   return false;
 }
 // a gantry's frame (its span, 3 m round it) over a tunnel's or cutting's footprint

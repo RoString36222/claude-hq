@@ -35,6 +35,15 @@
 //!                  cutting steeper than 6 %, or a metro or rail track within 4 m of either
 //!                  (in plan, past the road's half width) and 8 m of its level (a bored
 //!                  tunnel's crown 5 m over the rails, its slab 1 m under the road: 2 m between)
+//!   rail-pier      (hard, phase 8) a viaduct's pier (railway.rs `piers`) on a carriageway, a
+//!                  footpath, a lot, a site or the water, i.e. not in a boulevard's median
+//!                  (its column 0.25 m inside it) nor on clear ground; one on clear ground
+//!                  away from its line's stations (the elevated line runs only along a
+//!                  boulevard, but where it leaves Central over the hub or reaches the
+//!                  airport over its landside); or a span longer than a crossing's 60 m
+//!   rail-corridor  (phase 8) a City Line with no boulevard under it (corridor.rs could not
+//!                  cut one: an HQ's lot, a civic site or a graded road in its way), its
+//!                  piers then the client's own
 //!   clearance      (hard, phase 6) a flyover or ramp crossing a road it does not meet
 //!                  less than 7 m over it (5.5 m clear and its deck), or a road crossing
 //!                  another at grade with no junction (listed: `road-overlap`)
@@ -71,7 +80,44 @@ pub fn check(l: &Layers) -> Vec<Violation> {
     curves(l, &mut out);
     decks(l, &mut out);
     tunnels(l, &mut out);
+    piers(l, &mut out);
     out
+}
+
+/// Phase 8: the viaducts' piers, where they stand and how far apart.
+fn piers(l: &Layers, out: &mut Vec<Violation>) {
+    use super::railway::{pier_at, SPAN_LONG_CM};
+    let Some(rail) = l.rail.as_ref() else { return };
+    let wet = |q: P| {
+        l.river.as_ref().is_some_and(|r| r.wet(q))
+            || l.water.as_ref().is_some_and(|w| w.bodies.iter().any(|b| inside(q, &b.poly.iter().map(|a| (a[0], a[1])).collect::<Vec<P>>())))
+    };
+    for line in rail.lines.iter().filter(|x| x.kind == "city" && x.piers.is_empty()) {
+        let at = line.path.first().map_or([0, 0], |q| [q[0], q[2]]);
+        out.push(Violation { rule: "rail-corridor", hard: false, what: format!("{}: no boulevard under it", line.id), at });
+    }
+    for line in rail.lines.iter().filter(|x| !x.piers.is_empty()) {
+        let stations: Vec<&super::railway::Station> = rail.stations.iter().filter(|s| line.stations.contains(&s.id)).collect();
+        for (k, p) in line.piers.iter().enumerate() {
+            let q = (p.x, p.z);
+            let at = [p.x, p.z];
+            // (off the boulevard only by a station, or bridging water: within 40 m of it)
+            const DIRS: [(i64, i64); 8] = [(10, 0), (7, 7), (0, 10), (-7, 7), (-10, 0), (-7, -7), (0, -10), (7, -7)];
+            let by_water = wet(q) || (1..=4).any(|r: i64| DIRS.iter().any(|d| wet((q.0 + d.0 * r * 1_000 / 10, q.1 + d.1 * r * 1_000 / 10))));
+            match pier_at(&l.roads, &l.lots, &l.sites, q) {
+                None => out.push(Violation { rule: "rail-pier", hard: true, what: format!("{} pier {k}: on a road, lot or site", line.id), at }),
+                Some(false) if !by_water && !stations.iter().any(|s| super::lines::dist((s.x, s.z), q) <= s.len / 2 + 3_000) => {
+                    out.push(Violation { rule: "rail-pier", hard: true, what: format!("{} pier {k}: off the boulevard, away from a station", line.id), at })
+                }
+                _ => {}
+            }
+            if let Some(n) = line.piers.get(k + 1) {
+                if super::lines::dist(q, (n.x, n.z)) > SPAN_LONG_CM + 100 {
+                    out.push(Violation { rule: "rail-pier", hard: true, what: format!("{} span {k}: longer than 60 m", line.id), at });
+                }
+            }
+        }
+    }
 }
 
 /// Phase 7: the road tunnels' depth, their cuttings' grade, and the metro and rail kept off them.

@@ -542,6 +542,9 @@ impl OpenMap {
 pub struct Net<'a> {
     pub r: &'a Roads,
     pub adj: Vec<Vec<u32>>,
+    /// Per edge, what `path` makes its length cost (per mille of its class's cost): 1000 but
+    /// where a planner keeps a line away (railway.rs `alignment`, round an HQ's lot).
+    pub pen: Vec<i64>,
 }
 
 impl<'a> Net<'a> {
@@ -551,7 +554,7 @@ impl<'a> Net<'a> {
             adj[e.a as usize].push(e.id);
             adj[e.b as usize].push(e.id);
         }
-        Net { r, adj }
+        Net { r, adj, pen: vec![1_000; r.edges.len()] }
     }
 
     pub fn pos(&self, n: u32) -> P {
@@ -632,7 +635,7 @@ impl<'a> Net<'a> {
                 let edge = &self.r.edges[e as usize];
                 let v = if edge.a == u { edge.b } else { edge.a };
                 let l: i64 = edge.points.windows(2).map(|w| dist((w[0][0], w[0][2]), (w[1][0], w[1][2]))).sum();
-                let nd = dn + l * cost(edge.class) / 1000;
+                let nd = dn + l * cost(edge.class) / 1000 * self.pen[e as usize] / 1000;
                 if nd < d[v as usize] || (nd == d[v as usize] && u < prev[v as usize]) {
                     d[v as usize] = nd;
                     prev[v as usize] = u;

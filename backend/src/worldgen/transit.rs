@@ -272,10 +272,13 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>) 
         }
     }
 
-    // trams: the stops grouped by the street their doors are on
+    // trams: the stops grouped by the street their doors are on. (City Gen v4 phase 8: never a
+    // boulevard, whose median the City Line's piers stand in, until trams get their own beds)
+    let tram_street = |e: &Edge| e.class == "arterial" && e.v4 != Some("boulevard");
+    let cut = r.edges.iter().any(|e| e.v4 == Some("boulevard"));
     let mut by_street: BTreeMap<&str, Vec<&Site>> = BTreeMap::new();
     for s in sites.iter().filter(|s| s.kind == "tramstop") {
-        if let Some(e) = net.nearest(door(s), |e| e.class == "arterial") {
+        if let Some(e) = net.nearest(door(s), tram_street) {
             by_street.entry(e.name.as_str()).or_default().push(s);
         }
     }
@@ -295,15 +298,34 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>) 
             order.push(left.remove(k));
         }
         let on_street = |e: &Edge| e.name == name;
-        let tram = |e: &Edge| (e.class == "arterial").then_some(if e.name == name { 1000 } else { 4000 });
-        let calls: Vec<Call> = order.iter().filter_map(|s| net.nearest(door(s), on_street)).map(|e| Call::Street(e.a, e.b)).collect();
-        let via = net.via(&calls);
-        lines.push(Line {
-            id: format!("tram:{n}"), kind: "tram", tier: TRAM_TIER,
-            stops: order.iter().map(|s| s.id.clone()).collect(),
-            path: net.through(&via, &tram),
-        });
-        n += 1;
+        let tram = |e: &Edge| tram_street(e).then_some(if e.name == name { 1000 } else { 4000 });
+        let called: Vec<(&Site, Call)> = order.iter().filter_map(|s| net.nearest(door(s), on_street).map(|e| (*s, Call::Street(e.a, e.b)))).collect();
+        // (City Gen v4 phase 8: where the City Line's boulevard cut its street, a line each side
+        // of the cut, each keeping to its own street, the stops of a side alone none)
+        let own = |e: &Edge| (on_street(e) && tram_street(e)).then_some(1000);
+        let mut parts: Vec<Vec<(&Site, Call)>> = vec![Vec::new()];
+        for (k, c) in called.into_iter().enumerate() {
+            if k > 0 && cut {
+                let joined = match (&parts.last().unwrap().last().unwrap().1, &c.1) {
+                    (Call::Street(a, _), Call::Street(b, _)) => net.path(*a, *b, &own).is_some(),
+                    _ => true,
+                };
+                if !joined {
+                    parts.push(Vec::new());
+                }
+            }
+            parts.last_mut().unwrap().push(c);
+        }
+        for part in parts.into_iter().filter(|p| p.len() >= 2) {
+            let calls: Vec<Call> = part.iter().map(|x| match x.1 { Call::Street(a, b) => Call::Street(a, b), Call::Node(m) => Call::Node(m) }).collect();
+            let via = net.via(&calls);
+            lines.push(Line {
+                id: format!("tram:{n}"), kind: "tram", tier: TRAM_TIER,
+                stops: part.iter().map(|x| x.0.id.clone()).collect(),
+                path: net.through(&via, &tram),
+            });
+            n += 1;
+        }
     }
     Transit { lines }
 }

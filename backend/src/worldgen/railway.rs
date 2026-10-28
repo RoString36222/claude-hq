@@ -47,7 +47,33 @@ pub struct Line {
     /// Per path segment: "viaduct", "bridge", "tunnel", "portal" or "grade".
     pub kinds: Vec<&'static str>,
     pub tier: u8,
+    /// City Gen v4 (phase 8, @3): the viaduct's piers, placed here (none: the client spaces
+    /// its own, as before). On the City Line's boulevard each stands in its median; anywhere
+    /// else clear of every road, lot, site and the water.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub piers: Vec<Pier>,
 }
+
+/// A pier: its foot on the ground [x, y, z] cm and how high (cm) the rail runs over it.
+#[derive(Serialize, Clone, Copy, Debug)]
+pub struct Pier {
+    pub x: i64,
+    pub y: i64,
+    pub z: i64,
+    pub h: i64,
+}
+
+/// A pier's column radius (cm, the plan's 2.0 m column), the room (cm) it keeps to a crash
+/// barrier, and its spans (cm): nominal, the least and most, and the longest anywhere (a
+/// crossing's single span).
+pub const PIER_R_CM: i64 = 100;
+pub const PIER_CLEAR_CM: i64 = 25;
+/// How far (cm) a pier keeps past the edge of any other road (a junction's turning traffic).
+pub const PIER_ROAD_CM: i64 = 300;
+const SPAN_CM: i64 = 2_750;
+const SPAN_MIN_CM: i64 = 2_500;
+const SPAN_MAX_CM: i64 = 3_000;
+pub const SPAN_LONG_CM: i64 = 6_000;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct Station {
@@ -103,7 +129,55 @@ fn cost(class: &str) -> i64 {
     }
 }
 
-pub fn plan(c: &Ctx, m: &Metro) -> Result<(Rail, Vec<Claim>), String> {
+/// The City Line's alignment: its track, each stop's index on it, and the stops.
+#[derive(Clone)]
+pub struct Cl {
+    pub path: Vec<P>,
+    pub at: Vec<usize>,
+    pub stops: Vec<Stop>,
+}
+
+/// City Gen v4 (phase 8): the City Line's alignment on the streets as they are, planned
+/// before the line itself so corridor.rs can lay its boulevard under it. None where the
+/// world has no City Line.
+pub fn alignment(c: &Ctx) -> Option<Cl> {
+    let land = Land::new(c);
+    let mut net = Net::new(c.roads);
+    let hub = c.sites.iter().find(|s| s.kind == "transit")?;
+    let dry: Vec<bool> = (0..c.roads.nodes.len() as u32).map(|n| net.degree(n) > 0 && !land.wet(net.pos(n))).collect();
+    let central = net.nearest(door(hub), |n| dry[n as usize] && net.arterial_degree(n) >= 1).or_else(|| net.nearest(door(hub), |n| dry[n as usize]))?;
+    let targets: Vec<P> = ["port", "airport"].iter().filter_map(|k| c.sites.iter().find(|s| s.kind == *k)).map(door).collect();
+    // the boulevard under it may take no HQ's lot: where it would, the streets beside that lot
+    // cost `HQ_PEN` times as much and the line is planned again
+    let half = super::classes::class("boulevard").map_or(0, |k| k.total_cm / 2);
+    let hqs: Vec<Vec<P>> = c.lots.iter().filter(|l| l.kind == "hq").filter_map(|l| l.poly.as_deref()).map(pts).collect();
+    let mut last = None;
+    for _ in 0..HQ_TRIES {
+        let (path, at, stops) = city_line(&land, &net, central, &targets, &dry)?;
+        let near = |poly: &Vec<P>, r: i64| path.windows(2).any(|w| (0..poly.len()).any(|k| super::organic::geom::seg_dist2(w[0], w[1], poly[k], poly[(k + 1) % poly.len()]) < r * r));
+        let hit: Vec<&Vec<P>> = hqs.iter().filter(|p| near(p, half)).collect();
+        if hit.is_empty() {
+            return Some(Cl { path, at, stops });
+        }
+        for e in &c.roads.edges {
+            let r = half + e.width / 2;
+            if hit.iter().any(|poly| e.points.windows(2).any(|w| (0..poly.len()).any(|k| super::organic::geom::seg_dist2((w[0][0], w[0][2]), (w[1][0], w[1][2]), poly[k], poly[(k + 1) % poly.len()]) < r * r))) {
+                net.pen[e.id as usize] = HQ_PEN;
+            }
+        }
+        last = Some(Cl { path, at, stops });
+    }
+    last
+}
+
+/// How many times the City Line is planned again round HQs' lots, and what the streets
+/// beside one then cost (per mille).
+const HQ_TRIES: usize = 8;
+const HQ_PEN: i64 = 20_000;
+
+/// `fixed`: the City Line's alignment where corridor.rs laid a boulevard under it (phase 8),
+/// so the line keeps to it; else it is planned here on the streets.
+pub fn plan(c: &Ctx, m: &Metro, fixed: Option<&Cl>) -> Result<(Rail, Vec<Claim>), String> {
     let mut land = Land::new(c);
     // what the metro holds: its depots, trenches and entrances
     for d in &m.depots {
@@ -132,7 +206,7 @@ pub fn plan(c: &Ctx, m: &Metro) -> Result<(Rail, Vec<Claim>), String> {
     // the City Line
     let targets: Vec<P> = ["port", "airport"].iter().filter_map(|k| c.sites.iter().find(|s| s.kind == *k)).map(door).collect();
     if !targets.is_empty() {
-        if let Some(cl) = city_line(&land, &net, central, &targets, &dry) {
+        if let Some(cl) = fixed.map(|f| (f.path.clone(), f.at.clone(), f.stops.clone())).or_else(|| city_line(&land, &net, central, &targets, &dry)) {
             let (path, at, stops) = cl;
             let ys = viaduct_levels(&land, &path);
             let kinds: Vec<&'static str> = path.windows(2).map(|w| if land.wet(mid(w[0], w[1])) { "bridge" } else { "viaduct" }).collect();
@@ -154,7 +228,8 @@ pub fn plan(c: &Ctx, m: &Metro) -> Result<(Rail, Vec<Claim>), String> {
                 });
                 ids.push(id);
             }
-            r.lines.push(Line { id: "CL".into(), kind: "city", stations: ids, path: path.iter().zip(&ys).map(|(q, &y)| [q.0, y, q.1]).collect(), kinds, tier: CL_TIER });
+            let piers = if fixed.is_some() { piers(c, &land, &path, &ys) } else { Vec::new() };
+            r.lines.push(Line { id: "CL".into(), kind: "city", stations: ids, path: path.iter().zip(&ys).map(|(q, &y)| [q.0, y, q.1]).collect(), kinds, tier: CL_TIER, piers });
         }
     }
 
@@ -187,6 +262,7 @@ pub fn plan(c: &Ctx, m: &Metro) -> Result<(Rail, Vec<Claim>), String> {
                 path: il.path.iter().zip(&il.ys).map(|(q, &y)| [q.0, y, q.1]).collect(),
                 kinds: il.kinds,
                 tier: IL_TIER,
+                piers: Vec::new(),
             });
         }
     }
@@ -195,6 +271,78 @@ pub fn plan(c: &Ctx, m: &Metro) -> Result<(Rail, Vec<Claim>), String> {
         cl.id = format!("rail:{}", n + k);
     }
     Ok((r, claims))
+}
+
+/// Where a pier may stand: in a boulevard's median (its column and `PIER_CLEAR_CM` inside
+/// it), else off every road, lot and site (on clear ground, or in a river or lake where the
+/// line bridges it). The validator holds the same.
+pub fn pier_ok(roads: &super::roads::Roads, lots: &[super::city::Lot], sites: &[super::city::Site], q: P) -> bool {
+    pier_at(roads, lots, sites, q).is_some()
+}
+
+/// Some(true) for a pier at q in a boulevard's median, Some(false) clear of every road, lot
+/// and site (the transit hub's building excepted: the line leaves Central on its frame), None
+/// where none may stand.
+pub fn pier_at(roads: &super::roads::Roads, lots: &[super::city::Lot], sites: &[super::city::Site], q: P) -> Option<bool> {
+    // (a boulevard's pieces are one road: the median is measured to the nearest of them)
+    let mut boulevard: Option<(i64, i64)> = None;
+    for e in &roads.edges {
+        let near = e.points.windows(2).map(|w| nearest_on(q, (w[0][0], w[0][2]), (w[1][0], w[1][2])).1).min().unwrap_or(i64::MAX);
+        let room = e.width / 2 + PIER_R_CM;
+        if e.v4 == Some("boulevard") && e.median.is_some() {
+            if boulevard.is_none_or(|b| near < b.0) {
+                boulevard = Some((near, e.median.unwrap_or(0) / 2 - PIER_R_CM - PIER_CLEAR_CM));
+            }
+        } else if near < (room + PIER_ROAD_CM) * (room + PIER_ROAD_CM) {
+            return None;
+        }
+    }
+    if let Some((near, m)) = boulevard {
+        let room = roads.edges.iter().find(|e| e.v4 == Some("boulevard")).map_or(0, |e| e.width / 2 + PIER_R_CM);
+        if near < room * room {
+            return (m > 0 && near <= m * m).then_some(true);
+        }
+    }
+    let off = |poly: &[[i64; 2]]| {
+        let p: Vec<P> = poly.iter().map(|a| (a[0], a[1])).collect();
+        !super::organic::geom::inside(q, &p) && (0..p.len()).all(|k| nearest_on(q, p[k], p[(k + 1) % p.len()]).1 >= PIER_R_CM * PIER_R_CM)
+    };
+    (lots.iter().filter_map(|l| l.poly.as_deref()).all(off) && sites.iter().filter(|s| s.kind != "transit").filter_map(|s| s.poly.as_deref()).all(off)).then_some(false)
+}
+
+/// The City Line's piers along its track: one every `SPAN_CM` or so (`SPAN_MIN_CM` to
+/// `SPAN_MAX_CM`), else the nearest further on where one may stand (`pier_ok`), up to a
+/// crossing's `SPAN_LONG_CM`.
+fn piers(c: &Ctx, land: &Land, path: &[P], ys: &[i64]) -> Vec<Pier> {
+    let mut at = vec![0i64; path.len()];
+    for k in 1..path.len() {
+        at[k] = at[k - 1] + dist(path[k - 1], path[k]);
+    }
+    let total = at[at.len() - 1];
+    let pos = |s: i64| -> (P, i64) {
+        let k = at.partition_point(|&a| a <= s).clamp(1, path.len() - 1);
+        let l = (at[k] - at[k - 1]).max(1);
+        let f = (s - at[k - 1]).clamp(0, l);
+        let (a, b) = (path[k - 1], path[k]);
+        ((a.0 + (b.0 - a.0) * f / l, a.1 + (b.1 - a.1) * f / l), ys[k - 1] + (ys[k] - ys[k - 1]) * f / l)
+    };
+    let ok = |s: i64| pier_ok(c.roads, c.lots, c.sites, pos(s).0);
+    let mut out = Vec::new();
+    let mut last = -SPAN_CM + 600;
+    while last + SPAN_MIN_CM < total - 600 {
+        let near: Vec<i64> = (0..=(SPAN_MAX_CM - SPAN_MIN_CM) / 100).map(|i| SPAN_CM + if i % 2 == 0 { i / 2 * 100 } else { -(i / 2 + 1) * 100 }).filter(|&d| (SPAN_MIN_CM..=SPAN_MAX_CM).contains(&d)).collect();
+        let next = near.iter().map(|&d| last + d).chain((SPAN_MAX_CM / 100 + 1..=SPAN_LONG_CM / 100).map(|i| last + i * 100)).find(|&s| s <= total - 600 && ok(s));
+        let Some(s) = next else {
+            last += SPAN_LONG_CM;
+            continue;
+        };
+        let (q, y) = pos(s);
+        // (in the water, from its bed)
+        let g = land.height(q);
+        out.push(Pier { x: q.0, y: g, z: q.1, h: y - g });
+        last = s;
+    }
+    out
 }
 
 fn mid(a: P, b: P) -> P {

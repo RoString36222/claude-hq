@@ -21,7 +21,7 @@ merges on its own and leaves the City playable:
 | 4 | Curved roads: arcs, minimum radii by design speed | **3.27.0** |
 | 5 | Capacity per segment and the 0–100 % NPC traffic slider | **3.28.0** |
 | 6 | Flyovers, underpasses and interchanges; road tunnels | **3.29.0** (interchanges), **3.30.0** (the ring's tunnel under the airport) |
-| 7 | Metro and rail corridors: piers only in boulevard medians | |
+| 7 | Metro and rail corridors: piers only in boulevard medians | **3.31.0** (the City Line's boulevard, as phase 8 here) |
 | 8 | Trams on any road class, with stations | |
 | 9 | HQ spacing and movable garages | |
 | 10 | Graphics pass within 1,200 / 240 draw calls | |
@@ -401,3 +401,41 @@ or a bridge too close on the ring (63). A later layout phase (or tunnels) can ta
 | | Commons | 50 seeds + the Commons |
 |---|---|---|
 | A tunnel under the airport | yes, 303 m with two cuttings of 375 m and 368 m | 13 of 50 seeds (the rest pass the airport elsewhere) |
+
+## Phase 8 (3.31.0): the City Line's boulevard
+
+The plan's phase 7: an elevated line only along a boulevard, its piers in the median, placed by the generator.
+
+- **Generator (`backend/src/worldgen/corridor.rs`):**
+  - **When it runs:** after the interchanges and the tunnel.
+  - **Alignment:** `railway::alignment` plans the City Line on the streets as they are. Where the boulevard under it
+    would take an HQ's lot, the streets beside that lot cost 20 times as much and it plans again, up to 8 times.
+  - **The cut:** a 36.5 m boulevard (`v4: "boulevard"`, the 7.5 m `median`) along each stretch of land the line
+    crosses.
+    - **Where it starts and stops:** it starts where its reach clears Central's station building, and stops short of
+      the airport's land and 15 m back from water. There the line stands on the station's frame, the landside or a
+      bridge.
+    - **What it takes:** every street within its reach goes. Each cut street meets the boulevard at a T, at least 50 m
+      apart and never under a station. A main road always gets its junction (a collector meets it as an avenue), so
+      the cars' network stays whole. Stubs a few metres apart merge. Side streets that can't join end short.
+    - **Lots and stops:** lots in its way are retired as the lines' claims retire them, and kerb stops in it go.
+    - **When there's no corridor:** an HQ's lot, a civic site or a graded road in the way means no corridor, and the
+      line stays as it was.
+  - **Piers (`railway::piers`):** about every 27.5 m (25 to 30 m), else the next place one may stand, up to a 60 m
+    span. Each stands in the median (its 2 m column 0.25 m inside it, 3 m past any other road), or on clear ground
+    near a station, in the water, or on Central's building. `rail.lines[].piers: [{x, y, z, h}]` (the doc only gains
+    the field).
+  - **Transit:** trams keep off boulevards. Where the cut splits a tram's street, it runs as one line each side.
+- **Validator:** `rail-pier` (hard) fails a pier on a carriageway, footpath, lot or site, one off the boulevard away
+  from a station or the water, and any span over 60 m. `rail-corridor` lists a City Line with no boulevard.
+- **Client:**
+  - `world.js` / `hqrail.js` pass `piers` through. `hqcityrail.js` draws them, in the same mesh, else spaces its own
+    as before.
+  - `blockedAt` makes them solid, and props, trees and furniture keep 1.5 m off them.
+  - `hqride.js`: waiting at the stop's own place counts.
+  - `npcsim.js`: a jogger turns back before a wider road's carriageway.
+
+| | Commons | 50 seeds + the Commons |
+|---|---|---|
+| A boulevard under the City Line | yes: 7 pieces, 16 piers, no span over 60 m | 6 of 51 (the rest: an HQ's lot, a civic site or a graded road in the way) |
+| Cars in the traffic sim | 250 (292 before: the sim's rings re-split round the new junctions, none overfull) | |

@@ -309,6 +309,8 @@ function session(o){
   for(i = stops.length - 1; i > fromIdx; i--) if(stops[i] && stops[i].id === trip.to){ endIdx = i; break; }
   endAt = num(trip.reach, 0);
   var at = o.at || o.stop || call(trip, "door", num(trip.arrive, 0)) || call(trip, "pose", num(trip.arrive, 0)) || {x: 0, z: 0};
+  // the stop's own place (o.stopAt): waiting there is waiting for it, wherever along the kerb the vehicle pulls up
+  var waitAt = o.stopAt && isFinite(+o.stopAt.x) && isFinite(+o.stopAt.z) ? {x: +o.stopAt.x, z: +o.stopAt.z} : null;
   var label = (trip.short || trip.line || "") + "";
   var modeWord = {bus: "Bus", tram: "Tram", metro: "Train", rail: "Train", link: "Island Link", ferry: "Water bus", gondola: "Cabin"}[trip.mode] || "Service";
   function sfx(n, so){ try { sfxf(n, so); } catch(e){} }           // so.pos + so.kind: where it is (the validator, the stop bell: centred)
@@ -373,12 +375,12 @@ function session(o){
     if(S.phase === "walk" || S.phase === "wait"){
       if(ms > num(trip.depart, 0)){ say("You missed the " + modeWord.toLowerCase() + " " + label + "."); end("missed"); return S.phase; }
       if(S.phase === "walk"){
-        if(!me || d2(me, at) <= (trip.mode === "bus" || trip.mode === "tram" ? AT_STOP_ROAD : AT_STOP)){
+        if(!me || d2(me, at) <= (trip.mode === "bus" || trip.mode === "tram" ? AT_STOP_ROAD : AT_STOP) || (waitAt && d2(me, waitAt) <= AT_STOP)){
           S.phase = "wait";
           var mins = Math.max(0, Math.round((num(trip.arrive, ms) - ms)/MIN));
           say(modeWord + " " + label + " to " + (trip.toName || trip.to) + (mins > 0 ? " comes in " + mins + " min." : " is due."));
         }
-      } else if(me && d2(me, at) > LEFT_STOP){ say("You left the stop."); end("left"); return S.phase; }
+      } else if(me && d2(me, at) > LEFT_STOP && !(waitAt && d2(me, waitAt) <= LEFT_STOP)){ say("You left the stop."); end("left"); return S.phase; }
       if(S.phase === "wait" && ms >= num(trip.arrive, 0)){
         p = poseAt(ms);
         if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open."); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime", mine(ms)); }

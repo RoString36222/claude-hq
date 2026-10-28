@@ -457,8 +457,10 @@ desire lines are left for later).
   - **Stations (`civic.rs`, `transit.rs`):** about 300 m apart along each tram street, half the plan's 600 m because
     the Commons' tram streets are a kilometre or so.
     - **Platforms:** each line's stations take the best set of 40 m by 3 m platforms on its track: straight to 1 m
-      over 40 m, clear of every junction's box (the widest crossing road and 3 m), 100 m apart at least. On a bed
-      wide enough the platform is an island between the tracks, else a platform at the kerb.
+      over 40 m, clear of every junction's box (the widest crossing road and 3 m), 100 m apart at least, never on a
+      bridge. On an avenue's bed the platform is an island between the tracks. On a shared road it's a platform at
+      the kerb. There's none beside a collector's bed, too narrow for an island, where the tram would stop a car
+      lane away from the kerb.
     - **No room:** a station with no room (side streets every 24 to 48 m) stays a kerb stop.
   - **Track ends:** a line's track runs on past its end stations to the next junction (along its street, else the
     main road or the side street it runs into, the tram in its lanes), so it never ends mid-block. There are no
@@ -484,5 +486,5 @@ desire lines are left for later).
 | | Commons | 50 seeds + the Commons |
 |---|---|---|
 | Tram lines | 3, on 69 tram roads (35 centre bed, 34 in the lanes) | 95 |
-| Stations on a 40 m platform | 6 of 9 (the rest kerb stops: side streets every 24 to 48 m) | about 2 in 3 |
+| Stations on a 40 m platform | 5 of 9 (the rest kerb stops: side streets every 24 to 48 m, collector beds too narrow for an island) | 151 of 278 |
 | Cars in the traffic sim | 292 (as before the corridor) | |

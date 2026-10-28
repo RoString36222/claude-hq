@@ -18,7 +18,8 @@
  *   is the floor centre (PLAT_TOP over the rail). Seats: hqRail's SEATS (2+2 transverse in facing bays, 104 a train,
  *   none in the cabs or behind car 1's luggage stack) then its STAND spots at the doors.
  * Drawing (needs THREE via hq3d's ctx and HQV.hqRail.parts): view(c, sim, opts) -> V (plan 5.4): a steel box-girder
- *   viaduct on round piers (a truss over water), catenary masts every 50 m with wires over both tracks, elevated
+ *   viaduct on round piers (City Gen v4 phase 8: exactly the doc's `piers` where the line has them, sim.piers(lineId);
+ *   else every 30 m, 60 m and a truss over water; V.tools.piers() lists those drawn), catenary masts every 50 m with wires over both tracks, elevated
  *   station boxes (platforms, canopies, stairs and a lift to the pavement, departure boards), cream-and-green trains,
  *   commuters in their windows, and the focused train's seats, racks and luggage with a faint shell. Five draw calls
  *   (static, boards, two for the trains, commuters) and two more for a focused train. The trains run with
@@ -35,6 +36,7 @@ var TRACK = 2.0;            // m: each track's centre to the right of the path
 var STEP = 4;               // m between track points
 var PLAT_IN = 3.45, PLAT_OUT = 6.6;   // m from the path: a side platform's edge and back
 var PIER_EVERY = 30, BRIDGE_PIER = 60, MAST_EVERY = 50;
+var GIRDER_D = 2.4;         // m: the box girder's soffit under the rail head (GIRDER's lowest point)
 var COLOR = "#2e8b57", NAME = "City Line";
 var LIVERY = {body: 0xf1e7cc, accent: 0x2e7d4f, door: 0x23663f, glass: 0x1b2620, glassNight: 0xffdca8};
 var KC = {viaduct: 3, bridge: 4, tunnel: 1, portal: 2, grade: 0};
@@ -118,7 +120,8 @@ function create(W, o){
       return {stops: order, s: order.map(function(i){ return S[i]; }), a: a, d: d, T: a[a.length - 1]};
     }
     var fw = S.map(function(_, i){ return i; });
-    LINES.push({id: l.id, R: R, stops: ids, S: S, runs: {out: run(fw), back: run(fw.slice().reverse())}, kinds: l.kinds});
+    LINES.push({id: l.id, R: R, stops: ids, S: S, runs: {out: run(fw), back: run(fw.slice().reverse())}, kinds: l.kinds,
+                piers: Array.isArray(l.piers) ? l.piers : null});
   });
   function lineById(id){ return LINES.filter(function(L){ return L.id === id; })[0] || null; }
   function off(L, dir){ return (hash32(seed + ":CL:" + L.id + ":" + dir) % (HEADWAY*1000)); }
@@ -220,6 +223,9 @@ function create(W, o){
     trackAt: function(lineId, s){ var L = lineById(lineId); return L ? at(L.R, clamp(fin(s, 0), 0, L.R.len)) : null; },
     runs: function(lineId){ var L = lineById(lineId); return L ? L.runs : null; },
     stations: function(lineId){ var L = lineById(lineId); return L ? L.stops.map(function(id){ return byStop[id]; }) : []; },
+    // City Gen v4 phase 8: the generator's piers for the line [{x, y, z, h}] (m: foot, ground, rail over it), or null
+    // when the doc places none (the view then spaces its own)
+    piers: function(lineId){ var L = lineById(lineId); return L && L.piers ? L.piers.map(function(p){ return {x: p.x, y: p.y, z: p.z, h: p.h}; }) : null; },
     carsAt: function(v){ var L = v && lineById(v.line); return L ? cars(L, v.s, v.sgn) : null; },
     // the rail head over the ground on the elevated spans (viaduct, not over water and not at the stations)
     clearance: function(lineId, groundAt){
@@ -244,7 +250,7 @@ function view(c, sim, opts){
   var K = PT.kit(THREE), at = H.at, PLAT_TOP = H.PLAT_TOP, W = opts.W || null, WD = HQV.world;
   var root2 = new THREE.Group(); root2.name = "cityline";
   var ground = typeof opts.ground === "function" ? opts.ground : function(x, z){ return W && WD && WD.groundAt ? WD.groundAt(W, x, z) : 0; };
-  var parts = [], boards = [], O = {x: 0, z: 0};
+  var parts = [], boards = [], O = {x: 0, z: 0}, pierLog = [];
   var GIRDER = [[-4.3, -0.35], [4.3, -0.35], [4.3, -0.8], [2.7, -2.4], [-2.7, -2.4], [-4.3, -0.8]];
   var lines = sim.lines();
   lines.forEach(function(l){
@@ -258,8 +264,17 @@ function view(c, sim, opts){
       parts.push(K.extrude(S, [[tc - 0.02, 5.6], [tc + 0.02, 5.6], [tc + 0.02, 5.55], [tc - 0.02, 5.55]], true, 0x2b2f33));   // contact wire
     });
     // piers: round, from the ground to the girder's soffit; wider apart (and a truss) where the line bridges water
-    var last = -1e9;
-    for(var s = 6; s < R.len - 6; s += 2){
+    // (phase 8: where the doc places them, exactly those, each from its foot to the soffit GIRDER_D under its rail)
+    var docPiers = sim.piers ? sim.piers(l.id) : null, last = -1e9;
+    if(docPiers) docPiers.forEach(function(dp){
+      var top = dp.y + dp.h - GIRDER_D;
+      if(!(top - dp.y >= 0.6)) return;
+      var yaw = at(R, project(R, dp.x, dp.z)).yaw;
+      parts.push(K.cyl(0.9, 1.0, top - dp.y, 12, dp.x, dp.y, dp.z, 0xa7abae));
+      parts.push(K.box(6.2, 0.8, 2.2, dp.x, top - 0.4, dp.z, 0xa7abae, yaw));
+      pierLog.push({line: l.id, x: dp.x, z: dp.z, y0: dp.y, y1: top});
+    });
+    else for(var s = 6; s < R.len - 6; s += 2){
       var i = Math.min(R.n - 1, Math.round(s/STEP)), kk = R.k[i], every = kk === KC.bridge ? BRIDGE_PIER : PIER_EVERY;
       if(s - last < every) continue;
       last = s;
@@ -267,6 +282,7 @@ function view(c, sim, opts){
       if(p.y - 2.4 - g < 0.6) continue;
       parts.push(K.cyl(0.9, 1.1, p.y - 2.4 - g, 12, p.x, g, p.z, 0xa7abae));
       parts.push(K.box(6.2, 0.8, 2.2, p.x, p.y - 2.8, p.z, 0xa7abae, p.yaw));
+      pierLog.push({line: l.id, x: p.x, z: p.z, y0: g, y1: p.y - 2.4});
     }
     for(var b = 0; b < R.n - 1; b++){                                     // the bridge truss: chords and diagonals every 10 m
       if(R.k[b] !== KC.bridge) continue;
@@ -364,7 +380,10 @@ function view(c, sim, opts){
     },
     focus: function(id){ focusId = id || null; if(!focusId) inside.set(null); },
     drawCalls: function(){ return (stat ? 1 : 0) + (boardMesh ? 1 : 0) + trains.drawCalls() + inside.drawCalls() + riders.drawCalls(); },
-    tools: {shotCam: function(name){
+    tools: {
+      // the piers drawn [{line, x, z, y0, y1}] (m: foot to the girder's soffit): the doc's, else the view's own every 30 m
+      piers: function(){ return pierLog.map(function(q){ return {line: q.line, x: q.x, z: q.z, y0: q.y0, y1: q.y1}; }); },
+      shotCam: function(name){
       var l = lines[0], R = l && sim.track(l.id); if(!R) return null;
       var st = sim.stations(l.id);
       if(name === "cityline-viaduct"){

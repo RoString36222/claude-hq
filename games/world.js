@@ -41,7 +41,10 @@
  *                polyline you walk along within BREAKWATER_HALF m, its crown walk BREAKWATER_UP m over the sea.
  *   deckAt(W, x, z)   the y of the pier deck or breakwater crown at (x, z) | null; groundAt is that deck there
  *   metroOf(W), railOf(W), gondolaOf(W): the layers in metres, every Q16 front/along also as a unit [fx, fz] and a
- *                yaw (yaw 0 faces +z, increasing yaw turns left: yaw = atan2(fx, fz))
+ *                yaw (yaw 0 faces +z, increasing yaw turns left: yaw = atan2(fx, fz)). Phase 8 (HQ 3.31): a rail line
+ *                whose doc has `piers` keeps them ([{x, y, z, h}], m); railPiersOf(W) lists them as solid columns
+ *                {x, z, r: 1, y0, y1 (the girder's soffit, RAIL_PIER.GIRDER under the rail)} and blockedAt stops at them
+ *                ([] and nothing new without the field)
  *   waterAt(W, x, z)  the body (from waterOf) whose water (x, z) is on: inside its outline, not on one of its
  *                islands, a pier or the breakwater (a bounding box first) | null
  *   holeAt(W, x, z)   inside a terrain hole (metro entrances and portals, the Island Link portal): every ring of
@@ -114,6 +117,7 @@ var RIVER_LIFT = 0.3, BREAKWATER_HALF = 4, BREAKWATER_UP = 2.5, HOLE_DEPTH = 6;
 // deck's centre line every PIER_MIN..PIER_MAX m, PIER_ROAD m clear of any other road's full width, only where the
 // underside is PIER_CLEAR m or more over the ground (lower, the deck sits on a solid body)
 var ELEV = 0.5, LEVEL_GAP = 2, STEP_UP = 1.0, DECK_D = 1.5, PARAPET = 0.3, PARA_REACH = 3;
+var RAIL_PIER_R = 1, RAIL_GIRDER = 2.4;   // phase 8: a City Line pier's radius (m, railway.rs PIER_R_CM) and the girder under its rail
 var PIER_R = 1, PIER_MIN = 25, PIER_MAX = 30, PIER_NOM = 27.5, PIER_ROAD = 0.5, PIER_CLEAR = 2, PIER_STEP = 0.5;
 // City Gen v4 phase 7 (@3, HQ 3.30) road tunnels (backend/src/worldgen/tunnels.rs): TUN_CLEAR m clear over a tunnel's road
 // under a TUN_ROOF m roof; walls (and a cutting's retaining walls) TUN_WALL m thick outside its half; a cutting's coping
@@ -773,7 +777,9 @@ function railOf(W){
   var L = W.rail, sea = L.sea, su = sea ? q16(sea.front) : null;
   M.rail = {
     lines: (L.lines || []).filter(Boolean).map(function(l){
-      return {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: strs(l.stations), path: pathM(l.path), kinds: strs(l.kinds), tier: (l.tier|0) || 1};
+      var o = {id: String(l.id), kind: l.kind === "island" ? "island" : "city", stations: strs(l.stations), path: pathM(l.path), kinds: strs(l.kinds), tier: (l.tier|0) || 1};
+      if(Array.isArray(l.piers)) o.piers = railPiersM(l.piers);   // phase 8: the generator's viaduct piers (only when the doc has them)
+      return o;
     }),
     stations: (L.stations || []).filter(Boolean).map(function(s){
       var u = q16(s.along);
@@ -784,6 +790,46 @@ function railOf(W){
     holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; })
   };
   return M.rail;
+}
+// City Gen v4 phase 8: a rail line's piers [{x, y, z, h}] (cm: the foot at (x, z), the ground there y, the rail h over
+// it) in metres; any without a finite x, z dropped
+function railPiersM(P){
+  return (P || []).filter(function(p){ return p && isFinite(+p.x) && isFinite(+p.z); })
+    .map(function(p){ return {x: cm(p.x), y: cm(p.y), z: cm(p.z), h: Math.max(0, cm(p.h))}; });
+}
+// every rail line's doc piers as solid columns [{x, z, r, y0, y1, line}] (m): RAIL_PIER_R round (railway.rs PIER_R_CM),
+// from the foot y0 up to the girder's soffit y1 (RAIL_GIRDER under the rail); [] when no line has piers (memoised)
+function railPiersOf(W){
+  if(!W || !W.rail) return [];
+  var M = memoOf(W);
+  if(M.railPiers !== undefined) return M.railPiers;
+  var R = railOf(W), out = [], grid = {};
+  (R ? R.lines : []).forEach(function(l){
+    (l.piers || []).forEach(function(p){
+      out.push({x: p.x, z: p.z, r: RAIL_PIER_R, y0: p.y, y1: p.y + Math.max(0, p.h - RAIL_GIRDER), line: l.id});
+    });
+  });
+  out.forEach(function(p){
+    for(var j = Math.floor((p.z - p.r)/DECK_CELL); j <= Math.floor((p.z + p.r)/DECK_CELL); j++)
+      for(var i = Math.floor((p.x - p.r)/DECK_CELL); i <= Math.floor((p.x + p.r)/DECK_CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(p);
+  });
+  M.railPierIx = grid;
+  M.railPiers = out;
+  return out;
+}
+// a rail pier at (x, z), for something at yNow (m; omitted: at ground level) under the viaduct's girder
+function railPierHit(W, x, z, yNow){
+  if(!W || !W.rail) return false;
+  var M = memoOf(W);
+  if(M.railPiers === undefined) railPiersOf(W);
+  if(!M.railPiers.length) return false;
+  var L = M.railPierIx[Math.floor(x/DECK_CELL) + "," + Math.floor(z/DECK_CELL)];
+  if(!L) return false;
+  for(var i = 0; i < L.length; i++){
+    var p = L[i], dx = x - p.x, dz = z - p.z;
+    if(dx*dx + dz*dz < p.r*p.r && (yNow == null || !isFinite(+yNow) || +yNow < p.y1)) return true;
+  }
+  return false;
 }
 function gondolaOf(W){
   if(!W || !W.gondola) return null;
@@ -1269,6 +1315,8 @@ function blockedAt(W, x, z, yNow){
   if(W.water && waterAt(W, x, z) && !roadUnder(W, x, z)) return true;
   // City Gen v4 phase 6: the decks' piers and parapets
   if(I.deck && (pierHit(W, x, z, yNow) || parapetHit(W, x, z, yNow))) return true;
+  // phase 8: the City Line's piers, where the doc places them
+  if(W.rail && railPierHit(W, x, z, yNow)) return true;
   return false;
 }
 
@@ -1533,7 +1581,8 @@ var api = HQV.world = {
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
   nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
-  blockedAt: blockedAt, trees: trees, decksOf: decksOf, piersOf: piersOf, deckOver: deckOver, STEP_UP: STEP_UP,
+  blockedAt: blockedAt, trees: trees, decksOf: decksOf, piersOf: piersOf, railPiersOf: railPiersOf, railPierHit: railPierHit,
+  RAIL_PIER: {R: RAIL_PIER_R, GIRDER: RAIL_GIRDER}, deckOver: deckOver, STEP_UP: STEP_UP,
   tunnelsOf: tunnelsOf, tunnelAt: tunnelAt, underOver: underOver,
   TUN: {CLEAR: TUN_CLEAR, ROOF: TUN_ROOF, WALL: TUN_WALL, RAIL: TUN_RAIL, REACH: TUN_REACH, LOW: TUN_LOW},
   DECK: {ELEV: ELEV, LEVEL_GAP: LEVEL_GAP, DEPTH: DECK_D, PARAPET: PARAPET, PIER_R: PIER_R, PIER_MIN: PIER_MIN, PIER_MAX: PIER_MAX,

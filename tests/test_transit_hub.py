@@ -94,23 +94,24 @@ if(T){
   /* ---------- the metro: E at an entrance, below the street, the platform's way out ---------- */
   (function(){
     var M = WD.metroOf(wc.doc()); if(!M || !M.entrances.length){ out.metro = null; return; }
-    var e = M.entrances.filter(q => q.kind !== "lift")[0] || M.entrances[0];
+    var e = M.entrances.filter(q => q.kind === "lift")[0] || M.entrances[0];   // [3.36] E rides a lift (stairs are walked)
     var hidden0 = wc.scene.children.filter(g => !g.visible).length;
     if(T.session()) T.session().cancel(true);
-    avatar = {x: e.x, z: e.z, hy: WD.streetAt(wc.doc(), e.x, e.z)};      // at the top of the stairs
-    out.metro = {prompt: wc.prompt({x: e.x, z: e.z}), used: wc.use({x: e.x, z: e.z})};
-    for(var i = 0; i < 6; i++){ NOW += 150; frame(wc, avatar.x, avatar.z); }
-    var tp = calls.teleport[calls.teleport.length - 1] || null;
+    avatar = {x: e.x, z: e.z, hy: WD.streetAt(wc.doc(), e.x, e.z)};      // at the lift's door
+    out.metro = {noVeh: [T.noVehicle(e.x, e.z), T.noVehicle(e.x + 60, e.z + 60)], prompt: wc.prompt({x: e.x, z: e.z}), used: wc.use({x: e.x, z: e.z})};
+    for(var i = 0; i < 80; i++){ NOW += 150; frame(wc, avatar.x, avatar.z); }
+    var tp = calls.teleport[calls.teleport.length - 1] || null, foot = Object.assign({}, avatar);
     out.metro.under = HQV.hqUnderground.under(); out.metro.teleport = tp;
     var scene = wc.scene, hidden = 0, shown = 0;
     scene.children.forEach(function(g){ if(g.visible) shown++; else hidden++; });
     out.metro.hidden = hidden; out.metro.fogDark = !!(scene.fog && scene.fog.color && scene.fog.color.getHex() === 0x0b0d10);
     var st = M.stations.filter(s => s.id === e.station)[0];
     out.metro.groundBelow = st ? wc.groundY(st.x, st.z) < WD.streetAt(wc.doc(), st.x, st.z) - 3 : null;
-    // on the platform: E offers the departures and the way out
+    // on the platform: E offers the departures (no way out: you walk to the stairs or the lift)
     if(st){ avatar = {x: st.x, z: st.z, hy: st.y + 1.1}; wc.use({x: st.x, z: st.z}); var it = menuItems().map(b => b.textContent);
-      out.metro.platformMenu = it; var wo = menuItems().filter(b => /Way out/.test(b.textContent))[0];
-      if(wo){ wo.click(); for(var j = 0; j < 6; j++){ NOW += 150; frame(wc, avatar.x, avatar.z); } }
+      out.metro.platformMenu = it;
+      avatar = foot; wc.use({x: foot.x, z: foot.z}); out.metro.liftUp = wc.use({x: foot.x, z: foot.z});   // E closes the board, E again rides the lift up
+      for(var j = 0; j < 80; j++){ NOW += 150; frame(wc, avatar.x, avatar.z); }
       out.metro.upAgain = !HQV.hqUnderground.under(); }
     out.metro.surfaceBack = scene.children.filter(g => !g.visible).length - hidden0;
   })();
@@ -204,15 +205,16 @@ class TransitHub(unittest.TestCase):
         m = self.out["metro"]
         self.assertIsNotNone(m)
         self.assertRegex(m["prompt"] or "", r"Metro")
+        self.assertEqual(m["noVeh"], [True, False], "no vehicle at a metro entrance, elsewhere as before")
         self.assertTrue(m["used"])
-        self.assertTrue(m["under"], "E at an entrance takes you down")
-        self.assertIsNotNone(m["teleport"], "to the foot of its stairs")
+        self.assertTrue(m["under"], "E at a lift rides it down")
+        self.assertIsNotNone(m["teleport"], "held in the car, then off at the foot")
         self.assertEqual(len(m["teleport"]), 3)
         self.assertGreater(m["hidden"], 3, "the surface is hidden")
         self.assertTrue(m["fogDark"])
         self.assertTrue(m["groundBelow"], "the ground is the metro's floor, below the street")
-        self.assertTrue(any("Way out" in t for t in m["platformMenu"]), m["platformMenu"])
-        self.assertTrue(m["upAgain"], "the way out brings you back up")
+        self.assertFalse(any("Way out" in t for t in m["platformMenu"]), "no teleport out")
+        self.assertTrue(m["upAgain"], "the lift brings you back up")
         self.assertEqual(m["surfaceBack"], 0, "and the surface comes back")
 
     def test_destroy_and_fallback(self):

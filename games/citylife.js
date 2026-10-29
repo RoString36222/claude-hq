@@ -171,7 +171,8 @@ var LIT_GLSL = [
 /* ---------- footpaths ---------- */
 // The kerb-side strip (0.55 m in from the kerb) of every footpath at least 1.7 m wide, clear of junctions (12 m), of
 // stops (8 m) and of the lamps (which stand at the lot side). A slot every 16 m; what stands there follows the lot
-// behind it. Kinds: bench, bin, bikerack, newsstand, stall, table (a cafe's: tables and chairs, faces the road).
+// behind it. Kinds: bin, bikerack, newsstand, stall, table (a cafe's: tables and chairs, faces the road). HQ 3.36: no
+// benches at the kerb any more (the pavement stays clear).
 var FURN_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
 function edgePts(e){ var p = e.pts || [], o = []; for(var i = 0; i + 2 < p.length; i += 3) o.push({x: p[i]/100, y: p[i + 1]/100, z: p[i + 2]/100}); return o; }
 function walkAlong(P, step, from, to, fn){
@@ -207,10 +208,10 @@ function furniture(W){
         var kind = null;
         if(u && u.ground === "cafe" && h < 0.75) kind = "table";
         else if(market.some(function(m){ return Math.hypot(m.x - x, m.z - z) < 70; }) && h < 0.6) kind = "stall";
-        else if(g === "centre" || (u && u.ground === "shop")) kind = h < 0.3 ? "bench" : h < 0.55 ? "bin" : h < 0.72 ? "bikerack" : h < 0.8 ? "newsstand" : h < 0.86 ? "stall" : null;
-        else if(g === "work") kind = h < 0.25 ? "bench" : h < 0.5 ? "bin" : h < 0.62 ? "bikerack" : null;
-        else if(g === "home" || g === "civic") kind = h < 0.18 ? "bench" : h < 0.3 ? "bin" : null;
-        else if(g === "green") kind = h < 0.4 ? "bench" : h < 0.5 ? "bin" : null;
+        else if(g === "centre" || (u && u.ground === "shop")) kind = h < 0.3 ? null : h < 0.55 ? "bin" : h < 0.72 ? "bikerack" : h < 0.8 ? "newsstand" : h < 0.86 ? "stall" : null;
+        else if(g === "work") kind = h < 0.25 ? null : h < 0.5 ? "bin" : h < 0.62 ? "bikerack" : null;
+        else if(g === "home" || g === "civic") kind = h < 0.18 ? null : h < 0.3 ? "bin" : null;
+        else if(g === "green") kind = h < 0.4 ? null : h < 0.5 ? "bin" : null;
         if(!kind) return;
         out.push({kind: kind, x: x, z: z, yaw: Math.atan2(-sg*p.lx, -sg*p.lz), edge: e.id, side: sg, lot: lot ? lot.id : null});
       });

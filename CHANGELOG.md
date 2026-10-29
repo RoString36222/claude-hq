@@ -3,6 +3,26 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.36.0 — The city rebuilt: the Metro, the skyline and the parks.**
+  - **Metro:**
+    - No more teleports at stations: walk down the stairs, or ride the lift between the street and the hall.
+    - Underground, the camera stays under the ceiling and inside the walls, so you see the station, not its roof.
+    - Vehicles can't drive onto station entrances.
+  - **Roads:** the road tunnel and its cuttings have a 2 m footway each side, so you can walk through.
+  - **Island Link:** the sea viaduct swings out to sea before turning, so its piers no longer stand on the
+    island or its airport.
+  - **Buildings:**
+    - Commercial towers of 7+ floors stand on a podium, and the tallest step in again near the top.
+    - About half the towers are dark-glass curtain walls; other offices get stone, brick and sandstone.
+    - New worlds rise toward downtown's core, up to 40+ floors (office and finance districts rise a third as much).
+    - Worlds from before v4 look as they did.
+  - **Parks and streets:**
+    - Every v4 city reserves 70 x 100 m of ground for the amusement park; where no park block is free the park
+      is built there.
+    - No kerb benches.
+    - Trees in the suburbs, campuses, civic and old-town land, and on the open ground between roads.
+  - **Travel:** fast travel is gone from the travel menu. Every trip crosses the sea.
+  - The new worlds (the park ground, tunnel footways and the skyline) need the Arena redeployed.
 - **3.35.0 — City Gen v4 final: sound and settings, HQ spacing and tram desire lines.**
   - **Sound and settings:**
     - The **Ambient sounds** slider in Settings runs from 0 to 100% (0% is off). It scales thunder, rain,

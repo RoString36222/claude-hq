@@ -51,6 +51,7 @@ out.dec = {
   keyLift: d(false, {x: lift.x, y: lift.y, z: lift.z, key: "E"}),
   walkLift: d(false, {x: lift.x + Math.sin(lift.yaw)*1.2, y: lift.y, z: lift.z + Math.cos(lift.yaw)*1.2}),
   keyPlat: d(true, {x: plat.r.cx, y: plat.y0, z: plat.r.cz, key: "E"}),
+  keyLiftUp: d(true, {x: lift.foot.x, y: lift.foot.y, z: lift.foot.z, key: "E"}),
   platNoKey: d(true, {x: plat.r.cx, y: plat.y0, z: plat.r.cz}),
   rideIn: d(false, {x: 0, y: -10, z: 0, riding: {under: true, line: "M1", to: "Central"}}),
   rideOut: d(true, {x: 0, y: 2, z: 0, riding: {under: false, line: "M1"}}),
@@ -74,8 +75,10 @@ out.fade = run(false, [[0, down], [100, down], [299, down], [300, down], [450, d
 out.calm = run(true, [[0, down], [10, down], [20, {x: top.x, y: rampY(E, 0.3), z: top.z}]]);
 out.ride = run(false, [[0, {x: 0, y: -10, z: 0, riding: {under: true, line: "M1", to: "Central"}}], [5, {x: 0, y: 2, z: 0, riding: {under: false, line: "M1"}}]]);
 const cent = L.byId["metro:1"];
-out.key = run(true, [[0, {x: C.x, y: C.y, z: C.z}, true], [10, {x: cent.plats[0].r.cx, y: cent.plats[0].y0, z: cent.plats[0].r.cz}, true], [20, {x: 4000, y: 2, z: 4000}, true]]);
-out.keyFoot = {x: C.foot.x, z: C.foot.z};
+out.key = run(true, [[0, {x: C.x, y: C.y, z: C.z}, true], [10, {x: cent.plats[0].r.cx, y: cent.plats[0].y0, z: cent.plats[0].r.cz}, true]]);
+const lt = {x: lift.x, y: lift.y, z: lift.z}, lf = {x: lift.foot.x, y: lift.foot.y, z: lift.foot.z};
+out.lift = run(false, [[0, lt, true], [500, lt], [1000, lt], [60000, lf], [60100, lf]]);
+out.liftFoot = {x: lift.foot.x, z: lift.foot.z};
 out.force = (() => { const log = []; const ctl = U.create({sim, set: (on, w) => log.push([on, w]), announce: t => log.push(t)}); ctl.force(true, "tour"); ctl.force(true, "tour"); ctl.force(false); return {log, under: ctl.under()}; })();
 console.log(JSON.stringify(out));
 """
@@ -95,7 +98,7 @@ class Underground(unittest.TestCase):
     def test_walking_down_and_up_the_stairs(self):
         self.assertIsNone(self.d["atTop"], "standing at the top of the stairs is still the street")
         w = self.d["walkDown"]
-        self.assertEqual((w["go"], w["reason"], w["cut"], w["station"]), ("down", "walk", False, "metro:0"))
+        self.assertEqual((w["go"], w["reason"], w["cut"], w["station"]), ("down", "walk", True, "metro:0"))
         self.assertNotIn("teleport", w, "walking keeps you where you are")
         u = self.d["walkUp"]
         self.assertEqual((u["go"], u["reason"]), ("up", "walk"))
@@ -104,22 +107,19 @@ class Underground(unittest.TestCase):
         self.assertIsNone(self.d["midDown"], "1.3 m down is not yet underground")
         self.assertIsNone(self.d["midUp"], "and from below, 1.3 m down is not yet the street")
 
-    def test_e_at_an_entrance_takes_you_down(self):
-        k = self.d["keyEnt"]
-        self.assertEqual((k["go"], k["reason"]), ("down", "key"))
-        foot = self.o["street"]["E"]["foot"]
-        self.assertAlmostEqual(k["teleport"]["x"], foot["x"], places=6)
-        self.assertAlmostEqual(k["teleport"]["y"], foot["y"], places=6)
+    def test_no_teleports_stairs_are_walked_lifts_ridden(self):
+        self.assertIsNone(self.d["keyEnt"], "E at the stairs does nothing: you walk down")
         self.assertIsNone(self.d["keyFar"])
-        self.assertEqual(self.d["keyLift"]["go"], "down", "a lift is E only")
-        self.assertIsNone(self.d["walkLift"], "you do not walk down a lift")
-
-    def test_e_in_a_station_takes_you_up(self):
-        k = self.d["keyPlat"]
-        self.assertEqual((k["go"], k["reason"], k["station"]), ("up", "key", "metro:0"))
-        self.assertAlmostEqual(k["teleport"]["x"], self.o["exit"]["x"], places=6)
-        self.assertAlmostEqual(k["teleport"]["y"], self.o["exit"]["y"], places=6)
+        self.assertIsNone(self.d["keyPlat"], "E on a platform does nothing: you walk up")
         self.assertIsNone(self.d["platNoKey"], "standing on the platform stays underground")
+        k = self.d["keyLift"]
+        self.assertEqual((k["go"], k["reason"]), ("down", "lift"), "a lift is E only")
+        self.assertNotIn("teleport", k)
+        self.assertGreater(k["lift"]["y0"] - k["lift"]["y1"], 3, "the car goes down to the hall")
+        self.assertIsNone(self.d["walkLift"], "you do not walk down a lift")
+        u = self.d["keyLiftUp"]
+        self.assertEqual((u["go"], u["reason"]), ("up", "lift"))
+        self.assertGreater(u["lift"]["y1"] - u["lift"]["y0"], 3, "and back up to the street")
 
     def test_riding_past_a_portal_mouth(self):
         i, o = self.d["rideIn"], self.d["rideOut"]
@@ -139,16 +139,13 @@ class Underground(unittest.TestCase):
         self.assertEqual(t["ride"], "Underground: M1 to Central")
         self.assertEqual(t["up"], "Back at street level")
 
-    def test_fade_switches_at_the_midpoint(self):
+    def test_walking_switches_without_a_fade(self):
         log, st = self.o["fade"]["log"], self.o["fade"]["states"]
-        self.assertEqual(log[0], ["fade", 600])
+        self.assertNotIn("fade", [e[0] for e in log], "you walked there: nothing fades or jumps")
+        self.assertNotIn("tp", [e[0] for e in log])
         sets = [e for e in log if e[0] == "set"]
         self.assertEqual(sets[0], ["set", True, "walk"])
-        self.assertEqual(st[0]["phase"], "out"); self.assertFalse(st[0]["under"])
-        self.assertFalse(st[2]["under"], "not yet at 299 ms")
-        self.assertTrue(st[3]["under"], "switched at 300 ms")
-        self.assertEqual(st[4]["phase"], "in")
-        self.assertEqual(st[5]["phase"], "idle")
+        self.assertTrue(st[0]["under"]); self.assertEqual(st[0]["phase"], "idle")
         says = [e[1] for e in log if e[0] == "say"]
         self.assertTrue(says[0].startswith("Underground: ") and says[0].endswith(" station, M1"), says)
         self.assertEqual(len([e for e in sets if e[1] is True]), 1, "one switch while the fade runs")
@@ -172,15 +169,24 @@ class Underground(unittest.TestCase):
         says = [e[1] for e in log if e[0] == "say"]
         self.assertEqual(says, ["Underground: M1 to Central", "Back at street level"])
 
-    def test_use_and_teleport(self):
+    def test_e_at_stairs_is_not_a_teleport(self):
         st, log = self.o["key"]["states"], self.o["key"]["log"]
-        self.assertEqual([s["used"] for s in st], [True, True, False])
+        self.assertEqual([s["used"] for s in st], [False, False])
+        self.assertEqual(log, [])
+
+    def test_lift_ride(self):
+        st, log = self.o["lift"]["states"], self.o["lift"]["log"]
+        self.assertTrue(st[0]["used"])
+        self.assertEqual(st[1]["st"]["phase"], "lift")
+        self.assertFalse(st[1]["st"]["under"], "the view switches halfway down")
+        self.assertTrue(st[3]["st"]["under"])
+        self.assertEqual(st[3]["st"]["phase"], "idle")
         tps = [e for e in log if e[0] == "tp"]
-        self.assertEqual(len(tps), 2)
-        self.assertAlmostEqual(tps[0][1], round(self.o["keyFoot"]["x"], 2), places=2)
-        says = [e[1] for e in log if e[0] == "say"]
-        self.assertEqual(says[0], "Underground: Central station, M1 and M2")
-        self.assertEqual(says[1], "Back at street level")
+        self.assertGreaterEqual(len(tps), 4, "held in the car every step")
+        self.assertAlmostEqual(tps[-1][1], round(self.o["liftFoot"]["x"], 2), places=2)
+        self.assertEqual([e for e in log if e[0] == "set"], [["set", True, "lift"]])
+        self.assertNotIn("fade", [e[0] for e in log])
+        self.assertTrue(st[4]["st"]["under"], "stepping off in the hall stays underground")
 
     def test_force(self):
         f = self.o["force"]

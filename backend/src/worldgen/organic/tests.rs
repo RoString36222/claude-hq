@@ -398,7 +398,7 @@ fn check(w: &WorldDoc) {
     for (k, s) in l.sites.iter().enumerate() {
         let poly = pts(s.poly.as_ref().unwrap());
         let block = pts(l.blocks[s.block as usize].poly.as_ref().unwrap());
-        let off = matches!(s.kind, "dock" | "port" | "airport" | "stadium");
+        let off = matches!(s.kind, "dock" | "port" | "airport" | "stadium" | "funfair");
         assert!(off || poly.iter().all(|&q| inside(q, &block)), "{id}: {} leaves its block", s.id);
         assert!(s.tier.is_some_and(|t| (1..=5).contains(&t)), "{id}: {} has tier {:?}", s.id, s.tier);
         assert!(off || rise(&base, &poly) <= p.site_flat_cm, "{id}: {} is on a slope", s.id);

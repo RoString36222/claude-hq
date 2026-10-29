@@ -76,8 +76,9 @@ class CityLife(unittest.TestCase):
             w = self.o[name]
             self.assertGreater(sum(w["furn"].values()), 100, name)
             self.assertEqual(w["furnOnRoad"], 0, name + ": furniture on a carriageway")
-            for k in ("bench", "bin", "table"):
+            for k in ("bin", "table"):
                 self.assertIn(k, w["furn"], name)
+            self.assertNotIn("bench", w["furn"], name + ": no benches at the kerb")
             for k in ("terrace", "wait", "gate", "market"):
                 self.assertIn(k, w["spots"], name)
 

@@ -1189,6 +1189,19 @@ HQV.hqWorlds.city3d = function(c, w){
     return y0 != null && WD.tunnelAt(W, x, z, y0) ? {y0: y0} : null;
   }
   // the avatar's height when it is in a tunnel or cutting (the camera's floor and its ray then stay down there), else undefined
+  // [3.36] below the street: how far along from -> to the camera may go (0..1) before the ceiling over your floor
+  // (UNDER_HEAD m up: the halls are 3.6 m, the platforms 4.5) or a wall (no walkable floor a step from yours)
+  var UNDER_HEAD = 3.3;
+  function underHit(from, to){
+    var f0 = transit.ground(from.x, from.z); if(f0 == null || !isFinite(f0)) return 1;
+    var t = 1, cy = f0 + UNDER_HEAD;
+    if(to.y > cy && from.y < cy) t = (cy - from.y)/(to.y - from.y);
+    for(var i = 1; i <= 12; i++){
+      var u = i/12*t, x = from.x + (to.x - from.x)*u, z = from.z + (to.z - from.z)*u, f = transit.ground(x, z);
+      if(f == null || !isFinite(f) || Math.abs(f - f0) > 2.5) return Math.max(0, (i - 1)/12*t);
+    }
+    return t;
+  }
   function tunnelLevel(){
     var a = W && WD.tunnelAt && c.avatar && c.avatar();
     return a && a.hy != null && isFinite(a.hy) && WD.tunnelAt(W, a.x, a.z, a.hy) ? a.hy : undefined;
@@ -1600,7 +1613,7 @@ HQV.hqWorlds.city3d = function(c, w){
       var from = here(), items = [];
       travelPlaces(a, worldId, me).forEach(function(to){
         HQV.hqTravel.options(from, to, Date.now()).forEach(function(o){
-          if(o.self) return;
+          if(o.self || o.mode === "fast") return;                                       // HQ 3.36: no teleports; every trip crosses the sea
           if(o.mode === "plane" && airOn()) return;                                       // AIR: the real flights (airMenu)
           if(o.self || (o.mode === "rail" && rail && rail.has(to.world))) return;     // rail: the real train instead
           if(o.mode === "link"){                                                          // [3.15] the Island Link: free, on its timetable
@@ -2793,7 +2806,8 @@ HQV.hqWorlds.city3d = function(c, w){
         addPlane(q.kind, q.x, ly, q.z, q.yaw, null, null, "plane:" + q.kind + ":" + (ap ? ap.id : "airfield"), null);
       });
     } else if(ap && AIR){
-      var end = AIR.airportEnd(ap, 0, 0, airRunwayY(W, ap)), u = end.dir, thr = end.thr, ry = Math.atan2(u[0], u[1]);
+      // (HQ 3.36: the runway's top is the site's ground; this called an airRunwayY that never existed)
+      var end = AIR.airportEnd(ap, 0, 0, (+ap.y || 0)/100), u = end.dir, thr = end.thr, ry = Math.atan2(u[0], u[1]);
       runways.push({thr: thr, dir: u, len: end.len, y: end.y, a0: -20, a1: end.len + 25, hw: 15});
       // its stand: beside the runway's deck by the threshold, clear of the airliners' stand (on the centreline 25 m
       // back, 36 m of wing) and of their takeoff roll: flat ground on whichever side has it, else the deck's edge
@@ -3731,6 +3745,7 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   w.onRoof = function(){ return !!roofHere(); };
   w.blocked = function(x, z){
+    if(transit && transit.noVehicle && transit.noVehicle(x, z)){ var mo = c.motion ? c.motion() : null; if(mo && mo.ride) return true; }   // [3.36] no vehicle down a metro entrance
     var ub = transit ? transit.blocked(x, z) : null; if(ub != null) return ub;           // [3.15] below the street: the metro's floors
     var R = roofHere(); return R ? !HQV.hqRoof.onDeck(R, x, z) : blocked(x, z); };
   w.groundY = function(x, z){
@@ -3798,6 +3813,7 @@ HQV.hqWorlds.city3d = function(c, w){
       z0 = Math.min(from.z, from.z + (to.z - from.z)*u); z1 = Math.max(from.z, from.z + (to.z - from.z)*u); }
     buildingsIn(x0, x1, z0, z1).concat(placedIn(x0, x1, z0, z1)).forEach(function(b){ var h = segBox(from, to, b); if(h < t) t = h; });
     if(cp){ var ch = HQV.hqCarpark.camHit(cp.site, from, to); if(ch < t) t = ch; }   // carpark: the floor above you
+    if(transit && transit.under() && transit.ground){ var uh = underHit(from, to); if(uh < t) t = uh; }   // [3.36] a station's ceiling and walls
     return t;
   };
   w.occluderItems = function(x, y, z){

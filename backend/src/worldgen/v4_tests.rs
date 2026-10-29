@@ -11,6 +11,23 @@ fn commons_claim() -> Airport {
     Airport::of(&commons3().layers.sites).expect("the Commons has an airport")
 }
 
+/// HQ 3.36: downtown rises to a skyline at its middle (organic/mod.rs `Skyline`).
+#[test]
+fn downtown_rises_to_a_skyline() {
+    let w = commons3();
+    let dt: Vec<&city::Lot> = w.layers.lots.iter().filter(|l| l.district == district::DOWNTOWN && l.kind == "building").collect();
+    assert!(dt.len() >= 10, "{} downtown lots", dt.len());
+    let n = dt.len() as i64;
+    let mid = (dt.iter().map(|l| l.x).sum::<i64>() / n, dt.iter().map(|l| l.z).sum::<i64>() / n);
+    let mut by: Vec<(i64, i64)> = dt.iter().map(|l| ((l.x - mid.0).pow(2) + (l.z - mid.1).pow(2), l.floors)).collect();
+    by.sort();
+    let q = by.len() / 4;
+    let avg = |s: &[(i64, i64)]| s.iter().map(|x| x.1).sum::<i64>() * 10 / s.len().max(1) as i64;
+    let (core, edge) = (avg(&by[..q.max(1)]), avg(&by[by.len() - q.max(1)..]));
+    assert!(core > edge + 50, "core {core} vs edge {edge} (tenths of a floor)");
+    assert!(by.iter().map(|x| x.1).max().unwrap() >= 25, "a tower of 25 floors or more");
+}
+
 #[test]
 fn the_commons_breaks_no_hard_rule() {
     let v = validate::hard(&commons3().layers);
@@ -246,7 +263,8 @@ mod interchanges {
         let w = commons3();
         let r = &w.layers.roads;
         for e in r.edges.iter().filter(|e| roads::is_graded(e.class) && !deck_road(e)) {
-            assert_eq!((e.v4, e.width, e.walk, e.median), (Some("expressway"), 2_900, 0, Some(300)), "{} {}", e.id, e.name);
+            let walk = if e.under.is_some() { super::super::tunnels::WALK_CM } else { 0 };   // [3.36] a tunnel's footways
+            assert_eq!((e.v4, e.width, e.walk, e.median), (Some("expressway"), 2_900 + 2 * walk, walk, Some(300)), "{} {}", e.id, e.name);
         }
         let stems: Vec<&Edge> = r.edges.iter().filter(|e| e.v4 == Some("flyover")).collect();
         assert!(stems.len() >= 3, "{} trumpets", stems.len());

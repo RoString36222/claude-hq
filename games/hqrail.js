@@ -412,6 +412,19 @@ function coastR(W){
   for(var i = 0; i < c.length; i++) m = Math.max(m, hyp(c[i][0], c[i][1])/100);
   return m;
 }
+// [3.36] the waypoints [[x, z], ...] that take a sea viaduct from abutment e (archipelago m) round its island (centre
+// cx, cz; coast radius r m) offshore until it faces (tx, tz): first SWING_OUT m straight out along its front f, then an
+// arc at that radius; none when the abutment already faces within 60 degrees
+var SWING_OUT = 300;
+function swingRound(cx, cz, e, f, tx, tz, r){
+  var e0 = [e[0] + f[0]*SWING_OUT, e[2] + f[1]*SWING_OUT], ox = e0[0] - cx, oz = e0[1] - cz, a0 = Math.atan2(oz, ox), d = Math.atan2(tz, tx) - a0;
+  while(d > Math.PI) d -= 2*Math.PI;
+  while(d < -Math.PI) d += 2*Math.PI;
+  if(Math.abs(d) < Math.PI/3) return [];
+  var rr = Math.max((r || 0) + 150, hyp(ox, oz)), n = Math.ceil(Math.abs(d)/(Math.PI/8)), out = [e0];
+  for(var i = 1; i <= n; i++){ var a = a0 + d*i/n; out.push([cx + Math.cos(a)*rr, cz + Math.sin(a)*rr]); }
+  return out;
+}
 function inside(P, x, z){
   if(!P || P.length < 3) return false;
   var ins = false;
@@ -641,10 +654,25 @@ function linkRoute(I, C, o){
   // the sea crossing: a cubic leaving the abutment along its front and arriving along the junction's
   var fa = a.sea && a.sea.front ? a.sea.front : [dx, dz], fb = b.sea && b.sea.front ? b.sea.front : [-dx, -dz];
   var D = hyp(eb[0] - ea[0], eb[2] - ea[2]), kk = Math.min(600, D/3), n = Math.max(2, Math.ceil(D/STEP));
-  var p1 = [ea[0] + fa[0]*kk, ea[2] + fa[1]*kk], p2 = [eb[0] + fb[0]*kk, eb[2] + fb[1]*kk];
-  for(i = 1; i < n; i++){
-    var t = i/n, u = 1 - t, w0 = u*u*u, w1 = 3*u*u*t, w2 = 3*u*t*t, w3 = t*t*t;
-    V.push([w0*ea[0] + w1*p1[0] + w2*p2[0] + w3*eb[0], NaN, w0*ea[2] + w1*p1[1] + w2*p2[1] + w3*eb[2]]); KK.push(K_SEA);
+  // [3.36] an abutment facing away from the other end: the viaduct swings round its island offshore (past the coast's
+  // furthest point) instead of curving back over the land and what stands on it (the airport)
+  var wA = swingRound(Ix, Iz, ea, fa, Cx - Ix, Cz - Iz, coastR(I.W)), wB = swingRound(Cx, Cz, eb, fb, Ix - Cx, Iz - Cz, coastR(C.W)).reverse();
+  if(wA.length || wB.length){
+    var CP = [[ea[0] - fa[0]*kk, ea[2] - fa[1]*kk], [ea[0], ea[2]]].concat(wA, wB, [[eb[0], eb[2]], [eb[0] - fb[0]*kk, eb[2] - fb[1]*kk]]);
+    for(var sg = 1; sg + 2 < CP.length; sg++){
+      var q0 = CP[sg - 1], q1 = CP[sg], q2 = CP[sg + 1], q3 = CP[sg + 2], ns = Math.max(1, Math.ceil(hyp(q2[0] - q1[0], q2[1] - q1[1])/STEP));
+      for(var si = (sg === 1 ? 1 : 0); si < ns; si++){
+        var tt = si/ns, t2 = tt*tt, t3 = t2*tt;   // Catmull-Rom through the waypoints
+        V.push([0.5*(2*q1[0] + (q2[0] - q0[0])*tt + (2*q0[0] - 5*q1[0] + 4*q2[0] - q3[0])*t2 + (3*q1[0] - q0[0] - 3*q2[0] + q3[0])*t3), NaN,
+                0.5*(2*q1[1] + (q2[1] - q0[1])*tt + (2*q0[1] - 5*q1[1] + 4*q2[1] - q3[1])*t2 + (3*q1[1] - q0[1] - 3*q2[1] + q3[1])*t3)]); KK.push(K_SEA);
+      }
+    }
+  } else {
+    var p1 = [ea[0] + fa[0]*kk, ea[2] + fa[1]*kk], p2 = [eb[0] + fb[0]*kk, eb[2] + fb[1]*kk];
+    for(i = 1; i < n; i++){
+      var t = i/n, u = 1 - t, w0 = u*u*u, w1 = 3*u*u*t, w2 = 3*u*t*t, w3 = t*t*t;
+      V.push([w0*ea[0] + w1*p1[0] + w2*p2[0] + w3*eb[0], NaN, w0*ea[2] + w1*p1[1] + w2*p2[1] + w3*eb[2]]); KK.push(K_SEA);
+    }
   }
   var iB = V.length;
   for(var j = b.P.length - 1; j >= 0; j--){ var q = b.P[j]; V.push([q[0] + Cx, q[1], q[2] + Cz]); KK.push(j > 0 ? b.K[Math.min(j - 1, b.K.length - 1)] : K_GRADE); }

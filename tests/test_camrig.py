@@ -143,6 +143,11 @@ out.dive = {chase: diveRun("chase"), near: diveRun("near"), far: diveRun("far"),
   var lo = 1e9, hi = -1e9; for(var k = 0; k < 8; k++){ var a1 = d(run(s3, t, 0.15)), a2 = d(run(s3, t, 0.15, wall));
     lo = Math.min(lo, a1, a2); hi = Math.max(hi, a1, a2); }
   out.collide.pump = hi - lo;
+  // [3.36] under a ceiling 3 m over your feet (lower than a metro platform's): the camera keeps (nearly) its distance, below the
+  // ceiling, not pressed over your head
+  var low = {ground: FLAT.ground, hit: function(){ return 1; }, ceil: function(){ return 3.0; }};
+  var s4 = C.create({mode: "chase"}), open = run(s4, t, 2), s5 = C.create({mode: "chase"}), under = run(s5, t, 2, low);
+  out.ceil = {openD: d(open), underD: d(under), underY: under.pos.y, openY: open.pos.y};
   var slope = {ground: function(x, z){ return 0.6*x + 0.3*z; }, hit: function(){ return 1; }}, worst = 1e9;
   ["far", "chase", "near"].forEach(function(m){
     [0, 1.5, 3, 4.5].forEach(function(yaw){
@@ -455,6 +460,12 @@ class CamRig(unittest.TestCase):
         back, up, side = m["back"] * v["backMul"], m["up"] * v["upMul"], m["side"] * v["sideMul"]
         x, z = rot((-side, -back), yaw)
         return [x, up, z]
+
+    def test_a_ceiling_lowers_the_chase_camera_instead_of_pulling_it_in(self):
+        c = self.o["ceil"]
+        self.assertGreater(c["openY"], 3.0, "the open-air chase camera is higher than the test ceiling")
+        self.assertLessEqual(c["underY"], 3.0 - 0.45 + 1e-6)
+        self.assertGreater(c["underD"], c["openD"]*0.8)
 
     def test_spring_is_frame_rate_independent(self):
         s = self.o["spring"]

@@ -5,6 +5,7 @@
 //! arterials between their centres, the buildings round them, the metro.
 pub mod airport;
 pub mod align;
+pub mod doc;
 pub mod land;
 pub mod landuse;
 pub mod metro;

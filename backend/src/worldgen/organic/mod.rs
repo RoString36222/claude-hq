@@ -506,7 +506,7 @@ fn sites(p: &Profile, t: &Terrain, blocks: &[Block], lots: &mut Vec<Lot>) -> Res
             out.push(Site {
                 id: format!("{}:{n}", s.kind), kind: s.kind, block, x: c.0, y: t.height_at(c.0, c.1), z: c.1, w: s.w_cm, d: s.d_cm,
                 facing: if front.1 >= 0 { Facing::North } else { Facing::South },
-                tier: Some(1), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([front.0, front.1]), view: None,
+                tier: Some(1), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([front.0, front.1]), view: None, runway: None,
             });
         }
     }

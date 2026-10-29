@@ -894,7 +894,7 @@ impl Finish<'_> {
             city.sites.push(Site {
                 id: "harbour:0".to_string(), kind: "harbour", block, x: c.0, y: 0, z: c.1, w: 1_200, d: 900,
                 facing: if front.1 >= 0 { Facing::North } else { Facing::South },
-                tier: Some(1), poly: Some(pts(&poly)), front: Some([front.0, front.1]), view: None,
+                tier: Some(1), poly: Some(pts(&poly)), front: Some([front.0, front.1]), view: None, runway: None,
             });
             return Some("harbour:0".to_string());
         }

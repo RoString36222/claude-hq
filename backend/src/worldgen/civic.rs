@@ -312,7 +312,7 @@ impl Civ<'_> {
         self.sites.push(Site {
             id: format!("{kind}:{n}"), kind, block: l.block, x: c.0, y: self.t.height_at(c.0, c.1), z: c.1, w, d,
             facing: if f[1] >= 0 { Facing::North } else { Facing::South },
-            tier: Some(tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some(f), view: None,
+            tier: Some(tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some(f), view: None, runway: None,
         });
         self.doors.insert(self.sites.len() - 1, self.at[k].unwrap());
         self.taken[k] = true;
@@ -635,7 +635,7 @@ impl Civ<'_> {
                         self.sites.push(Site {
                             id: format!("{}:{n}", c.kind), kind: c.kind, block: b.id, x: mid.0, y: self.t.height_at(mid.0, mid.1), z: mid.1, w, d,
                             facing: if f.1 >= 0 { Facing::North } else { Facing::South },
-                            tier: Some(c.tier), poly: Some(r.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
+                            tier: Some(c.tier), poly: Some(r.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None, runway: None,
                         });
                         return;
                     }
@@ -810,7 +810,7 @@ pub fn airport_v5(p: &Profile, t: &Terrain, river: Option<&River>) -> Option<Sit
     let mut site = Site {
         id: "airport:0".to_string(), kind: row.kind, block: 0, x: c.0, y: 0, z: c.1, w: row.w_cm, d: row.d_cm,
         facing: if f.1 >= 0 { Facing::North } else { Facing::South },
-        tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
+        tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None, runway: None,
     };
     let foot = site.foot();
     site.y = t.height_at(foot.0, foot.1);
@@ -826,7 +826,7 @@ fn outside_site(t: &Terrain, city: &City, row: &Civic, c: P, f: P) -> Site {
     let mut site = Site {
         id: format!("{}:{n}", row.kind), kind: row.kind, block, x: c.0, y: 0, z: c.1, w: row.w_cm, d: row.d_cm,
         facing: if f.1 >= 0 { Facing::North } else { Facing::South },
-        tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
+        tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None, runway: None,
     };
     let foot = site.foot();
     site.y = t.height_at(foot.0, foot.1);

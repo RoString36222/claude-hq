@@ -99,6 +99,19 @@ pub struct Site {
     /// Organic worlds (@2): the HQ tab its door opens ("store", "analytics", ...).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view: Option<&'static str>,
+    /// City Gen v5 (@4): the airport's runway, as planned (its footprint is `poly`; the client lays the airfield to it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runway: Option<Runway>,
+}
+
+/// A runway: its middle (cm), its direction (Q16 unit), its length (cm), and the side of it the apron is on (+1: left).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Runway {
+    pub x: i64,
+    pub z: i64,
+    pub dir: [i64; 2],
+    pub len: i64,
+    pub side: i64,
 }
 
 /// The grid's line positions: line `i` runs between block columns i and i+1.
@@ -284,7 +297,7 @@ fn sites(p: &Profile, t: &Terrain, blocks: &[Block]) -> Result<Vec<Site>, String
             };
             out.push(Site {
                 id: format!("{}:{n}", s.kind), kind: s.kind, block: b.id,
-                x, y: t.height_at(x, z), z, w: s.w_cm, d: s.d_cm, facing: Facing::North, tier: None, poly: None, front: None, view: None,
+                x, y: t.height_at(x, z), z, w: s.w_cm, d: s.d_cm, facing: Facing::North, tier: None, poly: None, front: None, view: None, runway: None,
             });
         }
     }

@@ -337,7 +337,7 @@ mod tests {
         assert_eq!(serve_world(&p, "elsewhere@1".into(), &h).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(serve_world(&p, format!("user:{U}@1"), &h).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(serve_world(&p, "user:not-a-uuid@1".into(), &h).await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(serve_world(&p, format!("user:{U}@4"), &h).await.status(), StatusCode::BAD_REQUEST, "no such generator");
+        assert_eq!(serve_world(&p, format!("user:{U}@5"), &h).await.status(), StatusCode::BAD_REQUEST, "no such generator");
     }
 
     #[tokio::test]

@@ -353,6 +353,11 @@ function create(c, o){
     var f = tryf(function(){ return MV.walkable(x, y, z); }, null);
     return f && isFinite(+f.y) ? +f.y : (under ? y : null);
   };
+  // [3.36] the levels below the street, asked at a height (the deck you are on, not the first floor found): the floor at
+  // (x, z) on the level at y -> {y, kind, station} | null (on the track, in a wall, outside), and whether (x, y, z) is
+  // inside a station's box at all (over the track is inside, with no floor)
+  T.floorAt = function(x, z, y){ return MV && MV.walkable && y != null && isFinite(y) ? tryf(function(){ return MV.walkable(x, y, z); }, null) : null; };
+  T.inside = function(x, y, z){ return !!(MV && MV.isUnder && tryf(function(){ return MV.isUnder(x, y, z); }, false)); };
   T.blocked = function(x, z){
     if(!MV || !MV.walkable || !belowStreet(x, z)) return null;
     var h = feet(x, z), y = h != null ? h : street(x, z);

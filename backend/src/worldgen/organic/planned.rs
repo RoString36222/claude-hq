@@ -22,6 +22,7 @@ use super::graph::{Fit, Graph, Kind};
 use super::streets::{Ctx, Street, MIN_CM, SNAP_CM};
 use super::super::noise::ONE;
 use super::super::profile::district;
+use super::super::claims::Airport;
 use super::super::rng::Rng;
 
 /// Downtown's block (cm): along the axis, across it.
@@ -36,7 +37,9 @@ const GAP_CM: i64 = 1_200;
 
 /// Lays the planned network into `g` (empty but for the river's and pools' walls) and returns
 /// the arterial chains (node lists): the plaza's octagon first, then the avenues, then the ring.
-pub fn network(g: &mut Graph, c: &Ctx, rng: &mut Rng, streets: &mut Vec<Street>, art: &[&str], local: &[&str]) -> Result<Vec<Vec<u32>>, String> {
+pub fn network(g: &mut Graph, c: &Ctx, rng: &mut Rng, streets: &mut Vec<Street>, art: &[&str], local: &[&str], keep: Option<&Airport>) -> Result<Vec<Vec<u32>>, String> {
+    // the ground placed before the streets (the airport's claim): no street on it
+    let free = |q: P| c.open(q) && !keep.is_some_and(|a| a.contains(q));
     let p = c.p;
     let mut art = art.iter();
     let mut named = |streets: &mut Vec<Street>, suffix: &str, kind: Kind| {
@@ -71,7 +74,7 @@ pub fn network(g: &mut Graph, c: &Ctx, rng: &mut Rng, streets: &mut Vec<Street>,
         let road = named(streets, "Avenue", Kind::Arterial);
         let pts: Vec<P> = (1..).map(|i| add(g.nodes[at as usize], (dir.0 * STEP_CM * i / ONE, dir.1 * STEP_CM * i / ONE)))
             .take_while(|&q| len(q) <= p.city_r_cm * 97 / 100).collect();
-        chains.push(lay(g, c, at, &pts, Kind::Arterial, road));
+        chains.push(lay(g, c, &free, at, &pts, Kind::Arterial, road));
     }
 
     // 3. the ring: 36 points, 10 degrees apart, laid from the first open one round to it again
@@ -79,17 +82,17 @@ pub fn network(g: &mut Graph, c: &Ctx, rng: &mut Rng, streets: &mut Vec<Street>,
     if rr > p.plaza_cm * 2 {
         let road = named(streets, "Boulevard", Kind::Arterial);
         let ring: Vec<P> = (0..36).map(|k| { let d = turn((ONE, 0), k * 10); (d.0 * rr / ONE, d.1 * rr / ONE) }).collect();
-        if let Some(s) = (0..36).find(|&k| c.open(ring[k])) {
+        if let Some(s) = (0..36).find(|&k| free(ring[k])) {
             let start = start_at(g, ring[s]);
             let pts: Vec<P> = (1..=36).map(|i| ring[(s + i) % 36]).collect();
-            chains.push(lay(g, c, start, &pts, Kind::Arterial, road));
+            chains.push(lay(g, c, &free, start, &pts, Kind::Arterial, road));
         }
     }
 
     // 4. downtown: one grid inside the ring
     let axis = turn((ONE, 0), rng.range(0, 89));
     let inner = if rr > p.plaza_cm * 2 { rr - 1_500 } else { p.city_r_cm * 34 / 100 };
-    grid(g, c, streets, &mut named, (0, 0), axis, DT_U, DT_V, &|q: P| len(q) > p.plaza_cm + 1_500 && len(q) < inner, "Street");
+    grid(g, c, &free, streets, &mut named, (0, 0), axis, DT_U, DT_V, &|q: P| len(q) > p.plaza_cm + 1_500 && len(q) < inner, "Street");
 
     // 5. the sectors between the avenues, each square to its middle
     let mut order: Vec<(i64, P)> = spokes.iter().map(|&d| (angle_pm(d), d)).collect();
@@ -110,7 +113,7 @@ pub fn network(g: &mut Graph, c: &Ctx, rng: &mut Rng, streets: &mut Vec<Street>,
             let (x0, x1) = (cross(d0, q), cross(q, d1));
             len(q) >= rr + 1_500 && (if a1 - a0 < 3_142 { x0 > 0 && x1 > 0 } else { x0 > 0 || x1 > 0 })
         };
-        grid(g, c, streets, &mut named, (0, 0), mid, su, sv, &within, "Road");
+        grid(g, c, &free, streets, &mut named, (0, 0), mid, su, sv, &within, "Road");
     }
     Ok(chains)
 }
@@ -136,13 +139,13 @@ fn start_at(g: &mut Graph, q: P) -> u32 {
 }
 
 /// Lays a street from node `from` through `pts`, each segment fitted to what is there; a point
-/// that is not open (water, past the city, the river's zone) or too steep to reach ends the
-/// street there. -> the nodes it passed through.
-fn lay(g: &mut Graph, c: &Ctx, from: u32, pts: &[P], kind: Kind, road: u32) -> Vec<u32> {
+/// that is not free (water, past the city, the river's zone, ground placed before the streets) or
+/// too steep to reach ends the street there. -> the nodes it passed through.
+fn lay(g: &mut Graph, c: &Ctx, free: &dyn Fn(P) -> bool, from: u32, pts: &[P], kind: Kind, road: u32) -> Vec<u32> {
     let mut chain = vec![from];
     let mut at = from;
     for &q in pts {
-        if !c.open(q) || !c.gentle(g.nodes[at as usize], q) {
+        if !free(q) || !c.gentle(g.nodes[at as usize], q) {
             break;
         }
         match g.fit(at, q, kind, road, SNAP_CM, MIN_CM, GAP_CM) {
@@ -163,7 +166,7 @@ fn lay(g: &mut Graph, c: &Ctx, from: u32, pts: &[P], kind: Kind, road: u32) -> V
 /// four sides is its superblock's inside). Each grid line is laid as runs of consecutive
 /// points, one local street per run.
 #[allow(clippy::too_many_arguments)] // the grid's place, axis, cells and where it runs
-fn grid(g: &mut Graph, c: &Ctx, streets: &mut Vec<Street>, named: &mut impl FnMut(&mut Vec<Street>, &str, Kind) -> u32,
+fn grid(g: &mut Graph, c: &Ctx, free: &dyn Fn(P) -> bool, streets: &mut Vec<Street>, named: &mut impl FnMut(&mut Vec<Street>, &str, Kind) -> u32,
         o: P, u: P, su: i64, sv: i64, within: &dyn Fn(P) -> bool, suffix: &str) {
     let v = (-u.1, u.0);
     let r = c.p.city_r_cm;
@@ -171,10 +174,10 @@ fn grid(g: &mut Graph, c: &Ctx, streets: &mut Vec<Street>, named: &mut impl FnMu
     let at = |i: i64, j: i64| (o.0 + (u.0 * su * i + v.0 * sv * j) / ONE, o.1 + (u.1 * su * i + v.1 * sv * j) / ONE);
     let park = |q: P| c.zoning.at(q).is_some_and(|z| z.district == district::PARK);
     // a step over the grid's edge: onto open ground, never into the plaza
-    let over = |q: P| c.open(q) && len(q) > c.p.plaza_cm + 1_500;
+    let over = |q: P| free(q) && len(q) > c.p.plaza_cm + 1_500;
     let ok = |i: i64, j: i64| {
         let q = at(i, j);
-        if !within(q) || !c.open(q) {
+        if !within(q) || !free(q) {
             return false;
         }
         // inside a park: no street (its edge keeps one, so the park is one block)
@@ -206,7 +209,7 @@ fn grid(g: &mut Graph, c: &Ctx, streets: &mut Vec<Street>, named: &mut impl FnMu
                 if run.len() >= 2 {
                     let road = named(streets, suffix, Kind::Local);
                     let s = start_at(g, run[0]);
-                    lay(g, c, s, &run[1..], Kind::Local, road);
+                    lay(g, c, free, s, &run[1..], Kind::Local, road);
                 }
                 run.clear();
             }

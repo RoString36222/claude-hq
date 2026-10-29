@@ -103,7 +103,10 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
         }
     }
     // City Gen v5 (generator version 4): the planned network (planned.rs) instead of the grown one
-    let mut chains = if p.v5 { planned::network(&mut g, &ctx, &mut grow, &mut streets, art_names, local_names)? } else { streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)? };
+    // City Gen v5: the airport first (its claim keeps every street off its land), then the planned network
+    let pre_airport = if p.v5 && p.water && p.gates > 0 { super::civic::airport_v5(p, base, river) } else { None };
+    let keep = pre_airport.as_ref().and_then(|s| super::claims::Airport::of(std::slice::from_ref(s)));
+    let mut chains = if p.v5 { planned::network(&mut g, &ctx, &mut grow, &mut streets, art_names, local_names, keep.as_ref())? } else { streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)? };
     // the dock's quay: a street to the bank behind the dock from the nearest arterial,
     // else (once the local streets have grown) from the nearest street; none if a street
     // already ends on the bank there (within 15 m)
@@ -262,7 +265,16 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     // City Gen v4 (@3 Commons): the airport claims its land before the graded roads are
     // routed, so the highways and the ring go round it (claims.rs)
     let mut city = City { blocks, lots, sites };
-    let claim = if p.water && p.gates > 0 { super::civic::airport_first(p, base, &mut city, river, water) } else { None };
+    let claim = match pre_airport {
+        // v5: the airport placed before the streets, in the nearest block's name
+        Some(mut s) => {
+            s.block = city.blocks.iter().min_by_key(|b| (dist2((b.x, b.z), (s.x, s.z)), b.id)).map_or(0, |b| b.id);
+            city.sites.push(s);
+            keep
+        }
+        None if p.water && p.gates > 0 && !p.v5 => super::civic::airport_first(p, base, &mut city, river, water),
+        None => None,
+    };
     let City { blocks, lots, sites } = city;
 
     // the road graph as the world's roads (live nodes only), then the graded roads

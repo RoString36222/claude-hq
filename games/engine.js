@@ -434,6 +434,19 @@ function engineSound(kind, ex, real){
   if(v.ac){ last = v.ac.currentTime; arm(W); }
   return {set: W.set, stop: W.stop};
 }
+// [3.36] the clean sub's level: after the shaper the voice peaks at 1, so a deep exhaust's extra sub sits under it
+var SUB_CLEAN = 0.5;
+// [3.36] a voice's gain staging into the shaper (pure; tests/test_enginesound.py): the second oscillator's level o2, the
+// sub that goes through the shaper (subIn: no more than the engine's own) and the rest of it (subClean, round it), and
+// the drive: P's grit, scaled down so the peak into the shaper (drive x (1 + o2 + subIn)) is never above the plain
+// engine's (ENGINES[kind] as it is: the 3.5.7 voice). -> {o2, subIn, subClean, drive, peak, peak0}
+function shaperDrive(kind, P){
+  var P0 = ENGINES[kind] || ENGINES.v8; P = P || P0;
+  var o2 = P.r2 ? 0.25 : 0.7, subIn = Math.min(P.sub || 0, P0.sub || 0), subClean = Math.max(0, (P.sub || 0) - subIn);
+  var peak0 = (P0.grit || 1)*(1 + (P0.r2 ? 0.25 : 0.7) + (P0.sub || 0)), lvl = (P.grit || 1)*(1 + o2 + subIn);
+  var drive = (P.grit || 1)*Math.min(1, peak0/lvl);
+  return {o2: o2, subIn: subIn, subClean: subClean, drive: drive, peak: drive*(1 + o2 + subIn), peak0: peak0};
+}
 function engineVoice(kind, ex, real){
   var P = engineProfile(kind, ex, real);
   var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}, ac: null};
@@ -442,15 +455,20 @@ function engineVoice(kind, ex, real){
   // [main + twin + sub] -> drive -> grit -> low-pass -> amp (lope, shift cut) -> out -> pan -> bus
   var g = a.createGain(), amp = a.createGain(), cut = a.createGain(), drv = a.createGain(), f = a.createBiquadFilter();
   var pn = a.createStereoPanner ? a.createStereoPanner() : null;     // left/right from where it is (set(.., {pos}))
-  g.gain.value = 0; amp.gain.value = 1; cut.gain.value = 1; drv.gain.value = P.grit || 1;
+  // [3.36] the level into the shaper is never more than the engine's own (ENGINES[kind], the 3.5.7 voice): a real tone's
+  // rasp or an exhaust shapes the grit (the curve) and the cut-off, it no longer drives the shaper harder; and sub beyond
+  // the engine's own bypasses the shaper (clean under it): deep, not torn
+  var SD = shaperDrive(kind, P), o2l = SD.o2, subIn = SD.subIn, subClean = SD.subClean;
+  g.gain.value = 0; amp.gain.value = 1; cut.gain.value = 1; drv.gain.value = SD.drive;
   f.type = "lowpass"; f.frequency.value = P.cut[0]; f.Q.value = Math.min(P.q, P.cyl && P.cyl <= 4 ? 0.9 : 1.4);   // no resonant peak to ring as a buzz
   var o = a.createOscillator(), o2 = a.createOscillator(), os = a.createOscillator(), sg = a.createGain();
   var wave = engineWave(a, B, kind, P);
   if(wave){ o.setPeriodicWave(wave); o2.setPeriodicWave(wave); } else { o.type = P.h ? "sawtooth" : "sine"; o2.type = P.h ? "sawtooth" : "triangle"; }
-  os.type = "triangle"; sg.gain.value = P.sub || 0;
+  os.type = "triangle"; sg.gain.value = subIn;
   if(o2.detune) o2.detune.value = P.det || 0;
-  var o2g = a.createGain(); o2g.gain.value = P.r2 ? 0.25 : 0.7;
+  var o2g = a.createGain(); o2g.gain.value = o2l;
   o.connect(drv); o2.connect(o2g); o2g.connect(drv); os.connect(sg); sg.connect(drv);
+  if(subClean > 0){ var sc = a.createGain(); sc.gain.value = SUB_CLEAN*subClean; os.connect(sc); sc.connect(f); }
   var sh = a.createWaveShaper ? a.createWaveShaper() : null;
   if(sh){ sh.curve = engineCurve(B, P.grit || 1); drv.connect(sh); sh.connect(f); } else drv.connect(f);
   f.connect(amp); amp.connect(cut); cut.connect(g); if(pn){ g.connect(pn); pn.connect(B.out); } else g.connect(B.out);
@@ -567,7 +585,7 @@ function engineVoice(kind, ex, real){
           var idle = (1 - u)*(1 - u);
           if(FIRE) S.jw = (rnd() - 0.5)*2*(0.006 + 0.012*idle);
           if(o.detune && P.rough) tgt(o.detune, (rnd() - 0.5)*2*P.rough*45*idle, 0.03);
-          if(P.rough) tgt(sg.gain, (P.sub || 0)*(0.7 + 0.6*rnd()*idle), 0.04);
+          if(P.rough) tgt(sg.gain, subIn*(0.7 + 0.6*rnd()*idle), 0.04);
           if(fpd) tgt(fpd.gain, FIRE*(1 - 0.45*u)*(0.7 + 0.6*rnd()), 0.02);
         }
         var hzw = hz*(1 + (S.jw || 0));
@@ -1186,7 +1204,7 @@ function watchBar(stage, opts){
 HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, say: say, tokens: tokens, myClock: myClock,
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
-              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
+              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, shaperDrive: shaperDrive, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
               noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
               ambientVolume: ambientVolume, ambientSetVolume: ambientSetVolume, ambientPreview: ambientPreview,
               // spatial sound (above): the listener, positional one-shots, loops and pools, and the test seam

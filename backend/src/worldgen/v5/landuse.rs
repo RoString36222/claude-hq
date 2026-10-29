@@ -28,6 +28,8 @@ pub const IND_OUT_PM: i64 = 450;
 pub const GAP_CM: i64 = 15_000;
 pub const NOISE_CM: i64 = 8_000;
 pub const SPACING_CM: i64 = 2_000;
+/// How far (cm) a building stands back from a road already laid (its pavement).
+pub const ROAD_SETBACK_CM: i64 = 500;
 /// The plaza round the hub (cm): no building in it.
 pub const PLAZA_CM: i64 = 6_000;
 /// The shares of the city's cells (per mille): industry, offices; homes take the rest that is not gap or noise.
@@ -111,6 +113,13 @@ pub fn centre(land: &Land, ap: &Airport) -> (P, Option<(P, P)>) {
 
 /// Steps 3 and 4: the land use and its buildings, round the centre and the lines already in the volume.
 pub fn plan(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>, space: &mut Space) -> LandUse {
+    let cells = zone(land, ap, hub, port);
+    let buildings = build(land, hub, &cells, space);
+    LandUse { hub, port, cells, buildings }
+}
+
+/// Step 3: every cell's use.
+pub fn zone(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>) -> Vec<(P, Use)> {
     let r = land.p.city_r_cm;
     let dry = dry_cells(land, ap);
     let port_at = port.map(|p| p.0);
@@ -147,8 +156,12 @@ pub fn plan(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>, space: &mut
             *u = Some(Use::Home);
         }
     }
-    let cells: Vec<(P, Use)> = dry.iter().copied().zip(uses.into_iter().map(|u| u.unwrap_or(Use::Park))).collect();
+    dry.iter().copied().zip(uses.into_iter().map(|u| u.unwrap_or(Use::Park))).collect()
+}
 
+/// Step 4: the buildings on the cells, round what is already in the volume (the lines, the arterials).
+pub fn build(land: &Land, hub: P, cells: &[(P, Use)], space: &mut Space) -> Vec<Building> {
+    let r = land.p.city_r_cm;
     // 4. the buildings: a plot lattice square to the hub (one axis toward it), per use its plot and building
     let mut rng = Rng::new(sub(land.seed, "v5-buildings", 0, 0));
     let mut buildings = Vec::new();
@@ -185,13 +198,17 @@ pub fn plan(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>, space: &mut
                     Use::Home => rng.range(1_200, 2_600),
                     _ => rng.range(800, 1_400),
                 };
-                if let Ok(solid) = space.carve("building", "landuse", poly.clone(), y + GROUND.0, y + h, SPACING_CM) {
+                // SPACING_CM from every other solid (room for a street between two buildings), ROAD_SETBACK_CM from a road
+                // already laid (its pavement: a building fronts its road)
+                let (y0, y1) = (y + GROUND.0, y + h);
+                if space.blocker_but(&poly, y0, y1, SPACING_CM, &["road"]).is_none() && space.blocker(&poly, y0, y1, ROAD_SETBACK_CM).is_none() {
+                    let solid = space.put("building", "landuse", poly.clone(), y0, y1);
                     buildings.push(Building { id: buildings.len() as u32, use_: u, poly, c: q, y, h, solid });
                 }
             }
         }
     }
-    LandUse { hub, port, cells, buildings }
+    buildings
 }
 
 #[cfg(test)]

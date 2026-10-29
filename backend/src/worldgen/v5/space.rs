@@ -76,6 +76,21 @@ impl Space {
         })
     }
 
+    /// As `blocker`, passing over solids of the kinds in `ignore` (roads meet roads: a junction is no collision).
+    pub fn blocker_but(&self, poly: &[P], y0: i64, y1: i64, gap: i64, ignore: &[&str]) -> Option<u32> {
+        let b = bbox(poly);
+        let mut seen: Vec<u32> = Space::cells_of(b, gap).flat_map(|c| self.cells.get(&c).into_iter().flatten().copied()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.into_iter().find(|&id| {
+            let s = &self.solids[id as usize];
+            !ignore.contains(&s.kind)
+                && s.y0 < y1 && y0 < s.y1
+                && s.bbox.0 - gap <= b.1 && b.0 <= s.bbox.1 + gap && s.bbox.2 - gap <= b.3 && b.2 <= s.bbox.3 + gap
+                && near(&s.poly, poly, gap)
+        })
+    }
+
     /// Carves the box as a solid. -> its id, or Err(the solid within `gap` of it).
     pub fn carve(&mut self, kind: &'static str, owner: &str, poly: Vec<P>, y0: i64, y1: i64, gap: i64) -> Result<u32, u32> {
         if let Some(b) = self.blocker(&poly, y0, y1, gap) {

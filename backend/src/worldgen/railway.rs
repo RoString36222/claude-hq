@@ -34,6 +34,13 @@ pub struct Rail {
     pub sea: Option<Sea>,
     /// Terrain holes (the Island Link's portal trench), cut like `layers.metro.holes`.
     pub holes: Vec<Vec<[i64; 2]>>,
+    /// HQ 3.36 (v4): the ground no line may cross above it, [x, z] cm polygons: the airport's
+    /// claim (claims.rs: the site, the whole airside, past each runway end the object-free
+    /// area and the protection zone) and its inner approach surfaces, where they are lower
+    /// than a viaduct and a train. The client routes the Island Link's sea crossing round
+    /// them (hqrail.js linkRoute); the generator keeps the abutment's way out to sea off them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub keep_out: Vec<Vec<[i64; 2]>>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -122,6 +129,12 @@ const MID_STOP_CM: i64 = 100_000;
 const TWO_STOPS_CM: i64 = 180_000;
 /// The airport's keep-out for the Island Link's portal (cm).
 const AIRPORT_CLEAR_CM: i64 = 45_000;
+/// HQ 3.36 (v4): the Island Link's way out to sea, straight on from the abutment along its
+/// front: this long (cm), and this far (cm) clear of the airport's claim and its inner approach
+/// surfaces (`keep_out`) either side. A viaduct
+/// leaves a coast square to it and only then turns; it never runs along an airfield.
+const SEA_LANE_CM: i64 = 150_000;
+const SEA_LANE_CLEAR_CM: i64 = 20_000;
 
 fn cost(class: &str) -> i64 {
     match class {
@@ -276,6 +289,11 @@ pub fn plan(c: &Ctx, m: &Metro, fixed: Option<&Cl>) -> Result<(Rail, Vec<Claim>)
                 tier: IL_TIER,
                 piers: Vec::new(),
             });
+        }
+    }
+    if c.profile.v4 && r.sea.is_some() {
+        if let Some(a) = super::claims::Airport::of(c.sites) {
+            r.keep_out = a.polys.iter().chain(&a.approach).map(|p| p.iter().map(|q| [q.0, q.1]).collect()).collect();
         }
     }
     let n = r.stations.len();
@@ -513,6 +531,9 @@ fn island_link(c: &Ctx, land: &Land, centre: P, coast: &[[i64; 2]], rng: &mut Rn
         // the abutment: on the coast, a step in so it stands on the land's edge
         let v = ahead(v0, dir, -300);
         if airport.is_some_and(|a| dist(a, v) < AIRPORT_CLEAR_CM) {
+            continue;
+        }
+        if c.profile.v4 && claim.as_ref().is_some_and(|a| a.meets_keep_out(v, ahead(v, dir, SEA_LANE_CM), SEA_LANE_CLEAR_CM)) {
             continue;
         }
         let start = ahead(centre, dir, -IL_PLATFORM_CM / 2);

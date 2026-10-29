@@ -46,6 +46,14 @@ const RPZ_HW0: i64 = 7_600;
 const RPZ_HW1: i64 = 15_400;
 const OFA_HW: i64 = 12_200;
 const OFA_LEN: i64 = 30_500;
+/// HQ 3.36: the inner approach surface past each end (ICAO Annex 14 for a precision runway):
+/// from 60 m past the threshold, 300 m wide there, widening 15 % each side, rising 2 %. A line
+/// may only pass under it where the surface clears its deck and a train, 13 m and 5 m over
+/// the sea (hqrail.js SEA_UP) with 2 m to spare: 60 m + 20 m / 2 % = 1060 m past the end.
+const APP_START: i64 = 6_000;
+const APP_LEN: i64 = 100_000;
+const APP_HW0: i64 = 15_000;
+const APP_SPREAD_PM: i64 = 150;
 /// The landside the client draws round the terminal (hqairfield.js `landside`), in the
 /// frame (m): the forecourt, the terminal with its canopy and the skybridge behind it,
 /// the car park, the control tower; each grown by `LANDSIDE_CLEAR`. Its access road on
@@ -66,6 +74,10 @@ pub struct Airport {
     pub landside: usize,
     /// Their bounding box, (x0, x1, z0, z1).
     pub bbox: (i64, i64, i64, i64),
+    /// HQ 3.36: the inner approach surface past each runway end where it is lower than a
+    /// viaduct and a train (`APP_*`): no line crosses there above the ground. Not part of
+    /// the claim (roads and lots may stand under it), only of the rail layer's keep-out.
+    pub approach: Vec<Vec<P>>,
 }
 
 impl Airport {
@@ -94,7 +106,15 @@ impl Airport {
         }
         let all = polys.iter().flatten();
         let bbox = all.fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
-        Airport { site: id.to_string(), polys, corridor, landside: LANDSIDE.len(), bbox }
+        let hw1 = APP_HW0 + APP_LEN * APP_SPREAD_PM / 1000;
+        let approach = [1, -1]
+            .iter()
+            .map(|&s| {
+                let (e1, e2) = (s * (RWY_HALF + APP_START), s * (RWY_HALF + APP_START + APP_LEN));
+                vec![at(RU_MIN - APP_HW0, e1), at(RU_MAX + APP_HW0, e1), at(RU_MAX + hw1, e2), at(RU_MIN - hw1, e2)]
+            })
+            .collect();
+        Airport { site: id.to_string(), polys, corridor, landside: LANDSIDE.len(), bbox, approach }
     }
 
     /// The runway positions the client may settle on with the ring in its corridor,
@@ -149,6 +169,13 @@ impl Airport {
         self.polys.iter().any(|p| {
             inside(a, p) || inside(b, p) || (0..p.len()).any(|k| seg_dist2(a, b, p[k], p[(k + 1) % p.len()]) < clear * clear)
         })
+    }
+
+    /// HQ 3.36: does segment a-b come within `clear` cm of the claim or an inner approach
+    /// surface (what no line may cross above)?
+    pub fn meets_keep_out(&self, a: P, b: P, clear: i64) -> bool {
+        self.meets_seg(a, b, clear)
+            || self.approach.iter().any(|p| inside(a, p) || inside(b, p) || (0..p.len()).any(|k| seg_dist2(a, b, p[k], p[(k + 1) % p.len()]) < clear * clear))
     }
 
     /// Does polygon `poly` overlap the claim (or come within `clear` cm of it)?

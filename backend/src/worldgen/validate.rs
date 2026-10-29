@@ -474,7 +474,15 @@ fn classes(l: &Layers, out: &mut Vec<Violation>) {
             }
             let carriageway = e.width - 2 * e.walk - median.unwrap_or(0);
             // (a class with no footpaths has shoulders: its whole width, no walk)
-            let width = if c.walk { (carriageway == c.carriageway_cm() && e.walk >= c.side_cm) || (name == "lane" && e.width < c.total_cm) } else { e.width == c.total_cm && e.walk == 0 };
+            // (HQ 3.36: below the land a class with no footpaths gets tunnels::WALK_CM of footway each side, its
+            // shoulders' width as before inside them)
+            let width = if c.walk {
+                (carriageway == c.carriageway_cm() && e.walk >= c.side_cm) || (name == "lane" && e.width < c.total_cm)
+            } else if e.under.is_some() {
+                e.walk == super::tunnels::WALK_CM && e.width == c.total_cm + 2 * e.walk
+            } else {
+                e.width == c.total_cm && e.walk == 0
+            };
             // (phase 6: an expressway between an interchange's two ramp junctions has a lane fewer each way, the
             // lane its exit took and its entrance gives back)
             let ramps = |n: u32| l.roads.nodes.get(n as usize).is_some_and(|q| q.junction == Some("ramps"));

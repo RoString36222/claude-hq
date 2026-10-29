@@ -15,6 +15,8 @@
 //!   power, water    industrial lots farthest out (tier 3)
 //!   stadium         in the park nearest downtown, else downtown's biggest lot (then any
 //!                   district's), else open land past the city's edge nearest downtown (tier 5)
+//!   funfair         HQ 3.36: the amusement park's ground, placed as the stadium is (tier 2);
+//!                   left open (the client draws no building on it yet)
 //!   zone buildings  on their industry's lots, at its tier (zones.rs)
 //!   dock, port      on the river (tier 1 and 3): the dock on the bank of its bay near the
 //!                   plaza, the port on the harbour basin's, each out over the water; with
@@ -92,6 +94,10 @@ const fn civic(kind: &'static str, tier: u8, count: i64, w_cm: i64, d_cm: i64, a
     Civic { kind, tier, count, w_cm, d_cm, apart_cm, place }
 }
 
+/// HQ 3.36: the amusement park's reserved ground (70 x 100 m, its long side going in from the road),
+/// kept clear of buildings; games/hqspectacle.js draws the park on it.
+pub const FUNFAIR: &str = "funfair";
+
 /// The multi-storey garage's kind (games/hqcarpark.js draws it).
 pub const CARPARK: &str = "carpark";
 
@@ -128,6 +134,7 @@ pub const CIVIC: &[Civic] = &[
     civic("power", 3, 1, 3_000, 2_400, 0, on(INDUSTRIAL, false, false, true)),
     civic("water", 3, 1, 2_400, 2_400, 0, on(INDUSTRIAL, false, false, true)),
     civic("tramstop", 4, 0, 600, 250, 0, Place::Along { every_cm: 20_000, tram: true }),
+    civic(FUNFAIR, 2, 1, 7_000, 10_000, 0, Place::Park),
     civic("stadium", 5, 1, 5_000, 4_000, 0, Place::Park),
     civic("dock", 1, 1, 1_200, 2_400, 0, Place::Shore),
     civic("port", 3, 1, 3_000, 4_000, 0, Place::Shore),
@@ -602,18 +609,28 @@ impl Civ<'_> {
         // where in a park: its centroid, then 10 m steps out along and across its box, nearest first
         let mut offs: Vec<(i64, i64, i64)> = (-6..=6i64).flat_map(|i| (-6..=6i64).map(move |j| (i * i + j * j, i, j))).collect();
         offs.sort();
+        // (the funfair only at full size: the park games/hqspectacle.js draws on it needs the room)
         for s in [4, 3, 2] {
+            if c.kind == FUNFAIR && s < 4 {
+                break;
+            }
             for &(_, k) in &parks {
                 let b = &self.blocks[k];
                 let poly = pts(b.poly.as_ref().unwrap());
                 let (u, _, _) = obb(&poly);
                 for &(_, i, j) in &offs {
                     let mid = along(along(centroid(&poly), u, i * 1_000), left(u), j * 1_000);
-                    // the front: across the box's axis, toward the plaza
-                    let f = if geom::dot(left(u), (-mid.0, -mid.1)) >= 0 { left(u) } else { (u.1, -u.0) };
+                    // the front: across the box's axis, toward the plaza (the funfair, deep as it is, may
+                    // also lie along it, facing the box's nearer end)
+                    let f0 = if geom::dot(left(u), (-mid.0, -mid.1)) >= 0 { left(u) } else { (u.1, -u.0) };
+                    let f1 = if geom::dot(u, (-mid.0, -mid.1)) >= 0 { u } else { (-u.0, -u.1) };
                     let (w, d) = (c.w_cm * s / 4, c.d_cm * s / 4);
-                    let r = rect(mid, f, w, d);
-                    if r.iter().all(|&q| inside(q, &poly)) && self.clear(&r) && geom::rise(self.t, &r) <= self.p.site_flat_cm {
+                    let fit = |f: P| {
+                        let r = rect(mid, f, w, d);
+                        (r.iter().all(|&q| inside(q, &poly)) && self.clear(&r) && geom::rise(self.t, &r) <= self.p.site_flat_cm).then_some((f, r))
+                    };
+                    let hit = fit(f0).or_else(|| if c.kind == FUNFAIR { fit(f1) } else { None });
+                    if let Some((f, r)) = hit {
                         let n = self.of_kind(c.kind);
                         self.sites.push(Site {
                             id: format!("{}:{n}", c.kind), kind: c.kind, block: b.id, x: mid.0, y: self.t.height_at(mid.0, mid.1), z: mid.1, w, d,
@@ -624,6 +641,9 @@ impl Civ<'_> {
                     }
                 }
             }
+        }
+        if c.kind == FUNFAIR {
+            return; // not on a cut-down downtown lot: `outside` tries open land for it
         }
         // no park will do: the biggest lot downtown (else any district's, where a river
         // took the parks' room) that holds it, or 3/4 or 1/2 of it; else (in `outside`)
@@ -673,6 +693,9 @@ pub fn place(seed: u64, p: &Profile, t: &Terrain, g: &Graph, blocks: &mut [Block
         stations: Vec::new(),
     };
     for row in CIVIC {
+        if row.kind == FUNFAIR && !p.v4 {
+            continue; // v1-v3 worlds are pinned: the funfair is v4's
+        }
         match row.place {
             Place::Plaza => c.plaza(row)?,
             Place::Junction => c.junction(row)?,
@@ -724,6 +747,7 @@ pub fn outside(p: &Profile, t: &Terrain, roads: &Roads, city: &mut City, river: 
                 None => shore(p, t, roads, city, row, claim.as_ref()),
             },
             Place::Edge if !city.sites.iter().any(|s| s.kind == row.kind) => edge(p, t, roads, city, river, row, claim.as_ref(), &[], |rise, r, k, _| (rise, r, k as i64)),
+            Place::Park if row.kind == FUNFAIR && !p.v4 => continue,
             Place::Park if !city.sites.iter().any(|s| s.kind == row.kind) => {
                 edge(p, t, roads, city, river, row, claim.as_ref(), &[], |rise, _, k, c| ((rise > 2 * p.site_flat_cm) as i64, dist2(c, mid), rise * 16 + k as i64))
             }

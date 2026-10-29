@@ -28,6 +28,17 @@ out.again = SP.claim(W, 5) === S && W.sites.length - sitesBefore === out.sitesAd
 // the same doc, packed afresh, claims the same
 const S2 = SP.claim(WD.pack(doc('claude-hq@2')), 5);
 out.same = JSON.stringify(S2) === JSON.stringify(S);
+// HQ 3.36: a v4 world's "funfair" ground. With no empty park block the park takes it, gate on its front;
+// with one, the block still wins (the funfair site does not count as using it)
+const F = WD.pack(doc('claude-hq@2')), FL = F.districts.legend, other = FL.indexOf('plaza');
+F.blocks.forEach(b => { if (FL[b.district] === 'park') b.district = other; });
+F.sites.push({id: 'funfair:0', kind: 'funfair', block: 999999, x: 10000, y: 0, z: -20000, w: 7000, d: 10000, front: [0, 65536]});
+const FP = SP.claim(F, 5).park;
+out.fair = FP && {x: FP.x, z: FP.z, w: FP.w, d: FP.d, gate: [FP.gate.x, FP.gate.z], block: FP.block,
+                  site: F.sites.filter(s => s.kind === 'funpark').length};
+const G = WD.pack(doc('claude-hq@2'));
+G.sites.push({id: 'funfair:0', kind: 'funfair', block: S.park.block, x: Math.round(S.park.x*100), y: 0, z: Math.round(S.park.z*100), w: 7000, d: 10000, front: [0, 65536]});
+out.fairBlock = JSON.stringify(SP.claim(G, 5).park) === JSON.stringify(S.park);
 // the park: its block, clear of roads and trees, registered as a site with a name and a front at its gate
 const P = S.park, blk = W.blocks.filter(b => b.id === P.block)[0];
 out.parkDistrict = leg[blk.district];
@@ -91,6 +102,13 @@ class ClaimTests(unittest.TestCase):
         self.assertLessEqual(len(self.o["marks"]), 8)
         self.assertEqual(self.o["sitesAdded"], 1 + len(self.o["marks"]))
         self.assertTrue(self.o["lotsSame"])
+
+    def test_the_park_takes_the_funfair_ground_when_no_park_block_will_do(self):
+        f = self.o["fair"]
+        self.assertIsNotNone(f)
+        self.assertEqual([f["x"], f["z"], f["w"], f["d"], f["block"], f["site"]], [100, -200, 70, 100, 999999, 1])
+        self.assertEqual(f["gate"], [100, -150])          # the site's front edge, the way its door faces
+        self.assertTrue(self.o["fairBlock"])
 
     def test_claiming_is_idempotent_and_the_same_everywhere(self):
         self.assertTrue(self.o["again"])
@@ -276,7 +294,7 @@ class SourceTests(unittest.TestCase):
         self.assertIn("for(i = 0; i < walkPts.length; i++)", self.js)
 
     def test_sites_name_ground_without_flattening_it(self):
-        self.assertEqual(self.js.count("pad: false"), 2)
+        self.assertEqual(self.js.count("pad: false"), 3)   # the park (on a block or the funfair ground), the landmarks
         world = open(os.path.join(ROOT, "games", "world.js"), encoding="utf-8").read()
         self.assertIn("if(s.pad !== false) I.padList.push", world)
 

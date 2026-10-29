@@ -106,6 +106,10 @@ var PACK_V = 6;   // bump whenever pack()'s output changes; cached records with 
                   // (4: v3 records could hold the 3D City's client-side claims, see cacheCopy; 5: edges keep `oneway`)
 var ONE = 65536, BUCKET = 64, TRUNK = 0.45, CLEAR = 2, BLEND = 4, SIDEWALK_UP = 0.15;
 var TREE_P = {forest: 0.55, park: 0.18, residential: 0.04};
+// HQ 3.36, @2+ docs (@1 is pinned): the districts that had none, so gardens, campuses and the ground between the roads
+// are not bare lawn (not wild land: the Commons' airfield is laid out on it, and a tree blocks it)
+var TREE_P2 = {forest: 0.55, park: 0.18, residential: 0.04, suburb: 0.14, tech: 0.12, biotech: 0.1, civic: 0.06, oldtown: 0.04,
+               street: 0.1};
 var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for docs older than the walk field
 // @3 water: the calm surface over sea level (games/ocean.js RIVER_Y, games/worldgeom.js RIVER_LIFT), the breakwater's
 // walkable half width, how far down a hole with nothing under it goes
@@ -1335,9 +1339,9 @@ function tunnelHit(W, x, z, yNow){
 function trees(W){
   var I = index(W);
   if(I.treeList) return I.treeList;
-  var D = W.districts, n = D.n, out = [], seed = W.hash + ":";
+  var D = W.districts, n = D.n, out = [], seed = W.hash + ":", TP = (W.v | 0) >= 2 ? TREE_P2 : TREE_P;
   for(var iz = 0; iz < n; iz++) for(var ix = 0; ix < n; ix++){
-    var name = D.legend[D.k[iz*n + ix]], p = TREE_P[name];
+    var name = D.legend[D.k[iz*n + ix]], p = TP[name];
     if(!p) continue;
     var h = hash32(seed + ix + ":" + iz);
     if((h & 0xffff)/65536 >= p) continue;

@@ -10,7 +10,8 @@
 //! straight from the ring's height at its outer end down to it. The land over the tunnel is
 //! never carved (the airport stands on it), nor is a cutting's: the client cuts it open
 //! (games/world.js holes) and draws its retaining walls and portals. The validator holds
-//! the depth, the grade and that nothing else crosses a cutting.
+//! the depth, the grade and that nothing else crosses a cutting. HQ 3.36: the tunnel and its cuttings
+//! carry a `WALK_CM` footway each side (the piece that much wider), for people on foot.
 
 use super::claims::Airport;
 use super::organic::geom::P;
@@ -19,6 +20,9 @@ use super::terrain::Terrain;
 
 /// From the road's surface up to the ground over a tunnel: 5.5 m clear and a 1.5 m roof.
 pub const DEPTH_CM: i64 = 700;
+/// HQ 3.36: the footway (cm) each side of the road in a tunnel or a cutting (the ring has none), so people walk
+/// through beside the traffic; the piece is that much wider.
+pub const WALK_CM: i64 = 200;
 /// An open cutting's length (cm): down `DEPTH_CM` at 4 %.
 pub const CUT_CM: i64 = 17_500;
 /// How far (cm) a cutting keeps from the ends of the ring's edge (its junctions).
@@ -77,6 +81,8 @@ pub fn build(roads: &mut Roads, claim: Option<&Airport>, t: &Terrain) -> usize {
         b: b_,
         points: slice(pts, &at, from, to),
         under,
+        walk: if under.is_some() { WALK_CM } else { e.walk },
+        width: if under.is_some() { e.width + 2 * (WALK_CM - e.walk.min(WALK_CM)) } else { e.width },
         ..e.clone()
     };
     let pieces = vec![

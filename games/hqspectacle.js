@@ -112,7 +112,7 @@ function claim(W, tier, Q){
   var leg = (W.districts && W.districts.legend) || [], out = {park: null, marks: []};
   var used = {};
   (W.lots || []).forEach(function(l){ if(l) used[l.block] = 1; });
-  (W.sites || []).forEach(function(s){ if(s) used[s.block] = 1; });
+  (W.sites || []).forEach(function(s){ if(s && s.kind !== "funfair") used[s.block] = 1; });   // the funfair's ground is the park's anyway
   function shown(o){ return o.min_tier == null || (o.min_tier | 0) <= tier; }
   // a site's y is its ground in cm (residents and traffic read it); the terrain's, since these sites are no pads
   function hCm(x, z){ return Q && Q.heightCm ? Q.heightCm(W, Math.round(x*100), Math.round(z*100)) | 0 : 0; }
@@ -127,6 +127,17 @@ function claim(W, tier, Q){
     var a = R.w*R.d;
     if(!best || a > best.a || (a === best.a && b.id < best.b.id)) best = {b: b, a: a, R: R};
   });
+  // HQ 3.36: a v4 world reserves the ground (a "funfair" site, games/hqcivic.js draws nothing there); with no
+  // empty park block the park takes that, its gate on the site's front
+  var fair = best ? null : (W.sites || []).filter(function(s){ return s && s.kind === "funfair" && shown(s); })[0];
+  if(fair && fair.front && Math.min(+fair.w || 0, +fair.d || 0)/100 >= PARK_MIN - 2*PARK_INSET){
+    var fl = Math.hypot(fair.front[0], fair.front[1]) || 1, fx = fair.front[0]/fl, fz = fair.front[1]/fl;
+    var fw = fair.w/100, fd = Math.min(fair.d/100, fw*2.2), fcx = fair.x/100, fcz = fair.z/100;
+    out.park = {x: fcx, z: fcz, w: fw, d: fd, rot: Math.atan2(-fx, -fz), block: fair.block,
+                gate: {x: fcx + fx*fd/2, z: fcz + fz*fd/2}};
+    W.sites.push({id: "funpark:" + fair.block, kind: "funpark", name: PARK_NAME, block: fair.block, pad: false, claimed: 1, x: fair.x, y: fair.y | 0, z: fair.z,
+                  w: fair.w, d: fair.d, facing: "north", tier: 1, front: fair.front});
+  }
   if(best){
     var b = best.b, R = best.R, cx = R ? R.x : 0, cz = R ? R.z : 0, w = R ? R.w : 0, d = R ? R.d : 0;
     if(R && Math.min(w, d) >= PARK_MIN - 2*PARK_INSET){

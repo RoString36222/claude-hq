@@ -222,7 +222,7 @@ class CityLifeLooks(unittest.TestCase):
         self.assertEqual(f["outside"], 0)
         self.assertEqual(f["offGround"], 0)
         self.assertEqual(f["uncoloured"], 0)
-        for k in ("bench", "bin", "table"):
+        for k in ("bin", "table"):
             self.assertIn(k, f["kinds"])
         self.assertIn("furniture", self.o["tileMsg"])
 

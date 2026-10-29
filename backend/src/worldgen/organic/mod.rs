@@ -196,6 +196,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
     // lots: every block of a district that builds, split to its lot size; a lot must
     // be clear of every road, outside the block's holes, with its door on a road
     let mut lots: Vec<Lot> = Vec::new();
+    let sky = skyline(p, &blocks);
     for ((b, hs), fs) in blocks.iter().zip(&holes).zip(&fronts) {
         let ch = character(b.district);
         if !ch.grows || b.district == district::PLAZA {
@@ -212,7 +213,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
             if river.is_some_and(|r| r.pools.iter().any(|z| z.1.meets(&cut.poly))) {
                 continue;
             }
-            let floors = rng.range(ch.floors.0, ch.floors.1);
+            let floors = sky.floors(b.district, c, rng.range(ch.floors.0, ch.floors.1));
             lots.push(Lot {
                 id: 0, block: b.id, kind: "building", district: b.district, x: c.0, z: c.1, w: cut.w, d: cut.d,
                 facing: if cut.front.1 >= 0 { Facing::North } else { Facing::South },
@@ -402,6 +403,41 @@ fn prune(g: &mut Graph, p: &Profile, t: &Terrain, start: u32) {
 }
 
 /// Is every edge of the footprint at least its half-width from every road?
+/// HQ 3.36 (v4 only: older worlds are pinned): a skyline. Downtown's lots rise toward its middle, by up to
+/// `SKY_ADD` floors at the core (falling off with the square of the distance out to its furthest block), and the
+/// office districts by up to a third of that; the lot's own draw is kept, so the streets stay as they were.
+const SKY_ADD: i64 = 26;
+struct Skyline {
+    on: bool,
+    mid: P,
+    reach: i64,
+}
+fn skyline(p: &Profile, blocks: &[Block]) -> Skyline {
+    let dt: Vec<P> = blocks.iter().filter(|b| b.district == district::DOWNTOWN).map(|b| (b.x, b.z)).collect();
+    if !p.v4 || dt.is_empty() {
+        return Skyline { on: false, mid: (0, 0), reach: 1 };
+    }
+    let n = dt.len() as i64;
+    let mid = (dt.iter().map(|q| q.0).sum::<i64>() / n, dt.iter().map(|q| q.1).sum::<i64>() / n);
+    let reach = dt.iter().map(|&q| isqrt(dist2(q, mid))).max().unwrap_or(1).max(10_000);
+    Skyline { on: true, mid, reach }
+}
+impl Skyline {
+    fn floors(&self, d: u8, c: P, drawn: i64) -> i64 {
+        if !self.on {
+            return drawn;
+        }
+        let r = isqrt(dist2(c, self.mid)).min(self.reach);
+        let t = 1000 - r * 1000 / self.reach; // per mille, 1000 at the core
+        let add = SKY_ADD * t * t / 1_000_000;
+        match d {
+            district::DOWNTOWN => drawn + add,
+            district::OFFICE | district::FINANCE | district::MEDIA => drawn + add / 3,
+            _ => drawn,
+        }
+    }
+}
+
 fn clear_of_roads(g: &Graph, poly: &[P], half: impl Fn(u32) -> i64) -> bool {
     let reach = 1_000;
     let (x0, x1) = (poly.iter().map(|q| q.0).min().unwrap() - reach, poly.iter().map(|q| q.0).max().unwrap() + reach);

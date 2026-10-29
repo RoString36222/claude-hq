@@ -232,11 +232,19 @@ out.route = {len: R.len, T: R.T, seaA: R.seaA, seaB: R.seaB, hand: R.hand, handL
   startOff: Math.hypot(mid0.x - IP.x - st.x, mid0.z - IP.z - st.z), startY: mid0.y - st.y,
   endOff: Math.hypot(midE.x - 0, midE.z - 0), endLat: Math.abs(midE.x), revLen: Rb.len, revT: Rb.T, revUnderEnd: RL.underAt(Rb, Rb.len - 40), revUnderStart: RL.underAt(Rb, 40),
   same: JSON.stringify(Array.from(RL.linkRoute({world: ISL, x: IP.x, z: IP.z, W: Wi}, {world: C3, x: 0, z: 0, W: CDOC}, {plat: 2}).pts)) === JSON.stringify(Array.from(R.pts))};
+// ---- [3.36] the island on each side of the Commons: the sea viaduct never crosses its own land ----
+out.swing = [IP, {x: -IP.x, z: -IP.z}, {x: -IP.z, z: IP.x}, {x: IP.z, z: -IP.x}].map(function(P){
+  const Rs = RL.linkRoute({world: ISL, x: P.x, z: P.z, W: Wi}, {world: C3, x: 0, z: 0, W: CDOC}, {plat: 2}), co = Wi.island && Wi.island.coast; let over = 0;
+  for (let s = Rs.seaA + 400; s <= Rs.seaB - 400; s += 10) { const q = RL.at(Rs, s), lx = (q.x - P.x)*100, lz = (q.z - P.z)*100; let ins = false;
+    if (co) for (let i = 0, j = co.length - 1; i < co.length; j = i++) { const a = co[i], b = co[j]; if ((a[1] > lz) !== (b[1] > lz) && lx < (b[0] - a[0])*(lz - a[1])/(b[1] - a[1]) + a[0]) ins = !ins; }
+    if (ins) over++; }
+  return {over: over, coast: !!co};
+});
 // ---- the Service on the island ----
 const svc = RL.linkService({here: ISL, W: Wi, arch: ARCH, docs: {[C3]: CDOC}});
 const ms = 1.7e12, lines = svc.lines(), deps = svc.departures('il:' + ISL, ms, 4), T1 = svc.trip(lines[0].id, 'il:' + ISL, 'il:' + C3, ms);
 const tun = T1.pose(T1.depart + 20000), sea = T1.pose(T1.hand), atEnd = T1.pose(T1.reach + 1000, 'to'), atStart = T1.pose(T1.arrive + 1000);
-const seats = []; for (let i = 0; i < T1.seats + T1.standing; i++) { const sp = T1.seat(i, T1.depart + 60000), pp = T1.pose(T1.depart + 60000); seats.push([Math.hypot(sp.x - pp.x, sp.z - pp.z), sp.y - pp.y]); }
+const seats = []; for (let i = 0; i < T1.seats + T1.standing; i++) { const sp = T1.seat(i, T1.hand), pp = T1.pose(T1.hand); seats.push([Math.hypot(sp.x - pp.x, sp.z - pp.z), sp.y - pp.y]); }
 out.isl = {lines: lines.map(l => [l.id, l.short, l.world, l.stops]), stops: svc.stops().map(s => [s.id, s.under, s.name]), deps: deps.map(d => [d.at - ms, d.short, d.plat, d.to]),
   trip: {world: T1.world, mode: T1.mode, short: T1.short, dep: T1.depart - ms, arrive: T1.depart - T1.arrive, reach: (T1.reach - T1.depart)/1000, hand: (T1.hand - T1.depart)/1000,
          seats: T1.seats, standing: T1.standing, stops: T1.stops.map(s => s.id)},
@@ -321,6 +329,11 @@ class IslandLinkTest(unittest.TestCase):
         self.assertTrue(all(1 <= x <= 6 for x in p["nine"]))
         self.assertEqual(sorted(set(p["nine"])), [1, 2, 3, 4, 5, 6], "shared once there are more than six")
         self.assertTrue(1 <= p["alone"] <= 6)
+
+    def test_sea_viaduct_keeps_off_the_island_whichever_way_it_faces(self):
+        for w in self.o["swing"]:
+            self.assertTrue(w["coast"])
+            self.assertEqual(w["over"], 0, w)
 
     def test_route_tunnel_portal_sea(self):
         r = self.o["route"]

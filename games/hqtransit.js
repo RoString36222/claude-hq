@@ -10,8 +10,8 @@
  *   The ride: one hqRide session at a time (startRide: a Trip or a planned journey, leg after leg), its seat camera
  *     (V cycles seat, window, chase), S requests the stop, E gets off; the session holds you (carry) and owns the
  *     camera (camPose) while you ride; then cabs, the heli and the water taxi, in that order.
- *   E at a stop, station, platform or pier opens a board menu (the next departures, free); E at a metro entrance
- *     takes you down, on a platform "Way out" takes you up (HQV.hqUndergroundCtl).
+ *   E at a stop, station, platform or pier opens a board menu (the next departures, free); the metro's stairs are
+ *     walked down and up, E at a lift rides it (HQV.hqUndergroundCtl; HQ 3.36: nothing teleports).
  *   HQV.hqUnderground = {under(), set(on, reason)}: the switch. set hides the city's surface (o.surface(false) and
  *     the surface views here), swaps in a dark fog and shows the metro's underground (V.underground(on)); the
  *     avatar's ground below the street comes from the metro's walkable floors (ground / blocked).
@@ -30,6 +30,7 @@
  *   T.key(e) -> bool                 S (stop), V (camera) while a session holds you
  *   T.ground(x, z) -> y | null       below the street: the walkable floor (null: not underground, the hub's own)
  *   T.blocked(x, z) -> bool | null   below the street: no floor there (null: the hub decides)
+ *   T.noVehicle(x, z) -> bool        a metro entrance (stairs, lift, canopy): the hub blocks vehicles there
  *   T.under(), T.fog, T.session(), T.startRide(planOrTrip) -> S | null, T.board(stopId, mode?) -> items
  *   T.cabs, T.heli, T.water {taxi, hire, piers, targets}, T.link(world) -> bool, T.track(vehicleId)
  *   T.peerSeat(tk, tv, uid, ms) -> {x, y, z, yaw} | null   another player's seat in their vehicle
@@ -288,7 +289,6 @@ function create(c, o){
   function openBoard(near, p){
     var st = near.stop, s = near.svc, rows = T.board(st.id, s.mode);
     var items = rows.map(function(r){ return {text: r.text, fn: function(){ startTrip(r.trip, []); }}; });
-    if(under && ctl) items.push({text: "Way out to the street", fn: function(){ tryf(function(){ ctl.use(Date.now(), {x: p.x, y: me().y, z: p.z}); }); }});
     if(o.openMenu) o.openMenu((MODE_WORD[s.mode] || "Stop") + ": " + (st.name || st.id), items);
     return true;
   }
@@ -309,9 +309,10 @@ function create(c, o){
     if(heli && tryf(function(){ return heli.use(); }, false)) return true;
     var m = me();
     if(under){
+      // [3.36] the lift before the departures (it stands in the hall, within the station's board reach)
+      if(ctl && liftNear(p) && tryf(function(){ return ctl.use(lastMs || ms, {x: p.x, y: m.y, z: p.z}); }, false)) return true;
       var nu = stopsNear(p.x, p.z, STATION_R).filter(function(n){ return n.svc.mode === "metro" || (n.stop.under && n.svc.mode !== "bus"); })[0];
       if(nu) return openBoard(nu, p);
-      if(ctl && tryf(function(){ return ctl.use(ms, {x: p.x, y: m.y, z: p.z}); }, false)) return true;
       return false;
     }
     return false;
@@ -320,20 +321,25 @@ function create(c, o){
   T.use = function(p){
     p = p || me();
     if(T.useHeld(p)) return true;
+    var ms = lastMs || Date.now(), m = me();
+    // [3.36] E at a lift rides it (down from the street, up from the hall); stairs are walked, nothing teleports
+    if(ctl && liftNear(p) && tryf(function(){ return ctl.use(ms, {x: p.x, y: m.y, z: p.z}); }, false)) return true;
     if(under) return false;
-    var ms = Date.now(), m = me();
-    if(ctl && MV && MV.entranceAt && tryf(function(){ return MV.entranceAt(p.x, p.z, HQV.hqUndergroundCtl.E_R); }, null)){
-      if(tryf(function(){ return ctl.use(ms, {x: p.x, y: m.y, z: p.z}); }, false)) return true;
-    }
     var near = stopsNear(p.x, p.z, STOP_R).filter(function(n){ return !n.stop.under || n.svc.mode === "link"; })[0];
     if(near) return openBoard(near, p);
     return false;
   };
+  function liftNear(p){
+    var r = HQV.hqUndergroundCtl ? HQV.hqUndergroundCtl.E_R : 3.5, e = MV && MV.entranceAt && tryf(function(){ return MV.entranceAt(p.x, p.z, under ? r + 1.2 : r); }, null);
+    return !!(e && e.kind === "lift");
+  }
   // the hub's E prompt
   T.prompt = function(p){
     if(!p || ride) return null;
-    if(under) return stopsNear(p.x, p.z, STATION_R).length ? "E  Departures · way out" : "E  Way out";
-    if(MV && MV.entranceAt && tryf(function(){ return MV.entranceAt(p.x, p.z, 3.5); }, null)) return "E  Metro: go down";
+    if(liftNear(p)) return under ? "E  Lift up to the street" : "E  Lift down to the Metro";
+    if(under) return stopsNear(p.x, p.z, STATION_R).length ? "E  Departures" : null;
+    var en = MV && MV.entranceAt && tryf(function(){ return MV.entranceAt(p.x, p.z, 3.5); }, null);
+    if(en) return "Metro: walk down the stairs";
     var n = stopsNear(p.x, p.z, STOP_R).filter(function(q){ return !q.stop.under; })[0];
     return n ? "E  " + (MODE_WORD[n.svc.mode] || "Stop") + " departures" : null;
   };
@@ -351,6 +357,10 @@ function create(c, o){
     if(!MV || !MV.walkable || !belowStreet(x, z)) return null;
     var h = feet(x, z), y = h != null ? h : street(x, z);
     return !tryf(function(){ return MV.walkable(x, y, z); }, null);
+  };
+  // [3.36] a metro entrance's stairs, its lift or its canopy (2.5 m round the street door): no vehicle goes there
+  T.noVehicle = function(x, z){
+    return !!(MV && MV.entranceAt && (tryf(function(){ return MV.rampAt && MV.rampAt(x, z); }, null) || tryf(function(){ return MV.entranceAt(x, z, 2.5); }, null)));
   };
   T.under = function(){ return under; };
 

@@ -134,6 +134,10 @@ var WALLS = {
 };
 var ROOFS = {res: [[0.55, 0.28, 0.22], [0.40, 0.30, 0.28], [0.46, 0.36, 0.30]], com: [[0.35, 0.36, 0.38]],
              ind: [[0.42, 0.44, 0.46]], civ: [[0.50, 0.52, 0.50]]};
+// [3.36] (@2 on) more commercial walls: stone, brick, slate, sandstone
+var COM_MORE = [[0.90, 0.88, 0.82], [0.66, 0.40, 0.32], [0.42, 0.44, 0.48], [0.82, 0.72, 0.56]];
+// [3.36] a curtain-wall tower's walls (the mullions between its floor-high glass) and its glass
+var CURTAIN = [[0.22, 0.30, 0.36], [0.30, 0.36, 0.34], [0.18, 0.22, 0.28], [0.40, 0.46, 0.52]], CURTAIN_GLASS = [0.26, 0.40, 0.52];
 var GLASS = {res: [0.22, 0.27, 0.34], com: [0.30, 0.42, 0.52], ind: [0.30, 0.34, 0.36], civ: [0.24, 0.28, 0.32]};
 // city life: shopfront glass, awnings (and a stall's canopy, a cafe's parasol), rooftop clutter
 var SHOP_GLASS = [0.46, 0.56, 0.60], AWNINGS = [[0.72, 0.16, 0.14], [0.14, 0.42, 0.28], [0.16, 0.30, 0.56], [0.86, 0.50, 0.12],
@@ -1363,9 +1367,10 @@ function roadTile(W, tx, tz, flat, gap){
   function ribbon(E, s0, s1){
     var endA = s0 === E.tA, endB = s1 === E.len - E.tB;
     // (phase 7: below the land, all of it in `tunnel`)
-    var asph0 = asph, marks0 = marks, kerb0 = kerb;
-    if(E.under && tg){ asph = tg; marks = tg; kerb = tg; }
-    try { ribbonIn(E, s0, s1, endA, endB); } finally { asph = asph0; marks = marks0; kerb = kerb0; }
+    // ([3.36] its footways too: a tunnel's pieces carry them, generator tunnels.rs WALK_CM)
+    var asph0 = asph, marks0 = marks, kerb0 = kerb, walk0 = walk;
+    if(E.under && tg){ asph = tg; marks = tg; kerb = tg; walk = tg; }
+    try { ribbonIn(E, s0, s1, endA, endB); } finally { asph = asph0; marks = marks0; kerb = kerb0; walk = walk0; }
   }
   function ribbonIn(E, s0, s1, endA, endB){
     var st = stations(E, s0, s1), cw = E.cw;
@@ -2809,9 +2814,22 @@ function shell(W, lot, detail, body, win, R, ys, facing){
   var lu = useOf(W, lot), CL = lu ? HQV.cityLife : null;
   // a window's lit attribute: its use's code (lit by the hour) with city life, else the old flag (lit when v < p)
   function lit(v, p){ return CL ? CL.litCode(lu.use, v) : (v < p ? 1 : 0); }
-  var pal = WALLS[style], wc = jit(pal[Math.floor(r()*pal.length)], r, 0.06);
+  var v2 = !!(lot.front || lot.poly);   // (an @1 lot is pinned as it was)
+  var pal = v2 && style === "com" ? WALLS.com.concat(COM_MORE) : WALLS[style], wc = jit(pal[Math.floor(r()*pal.length)], r, 0.06);
   var rp = ROOFS[style], rc = jit(rp[Math.floor(r()*rp.length)], r, 0.06);
-  walls(body, R, yb, yt, wc, bid);
+  // [3.36] a commercial block's massing: tiers [{R, y0, y1, f0, f1}] (a podium, the tower set back on it, a
+  // tall one stepping in again near the top), and a curtain-wall tower (its walls the glass, glazed floor to floor)
+  var tiers = v2 ? massing(R, yb, gy, yt, floors, style, r) : [{R: R, y0: yb, y1: yt, f0: 0, f1: floors}], curtain = style === "com" && tiers.length > 1 && r() < 0.45;
+  if(curtain) wc = jit(CURTAIN[Math.floor(r()*CURTAIN.length)], r, 0.04);
+  tiers.forEach(function(T, i){ walls(body, T.R, T.y0, T.y1, i === 0 && curtain ? jit(WALLS.com[0], r, 0.04) : wc, bid); });
+  if(tiers.length > 1){
+    tiers.forEach(function(T){ flatRoof(body, T.R, T.y1, rc, bid); });
+    if(detail) return;
+    var top = tiers[tiers.length - 1];
+    if(lu) roofKit(W, lot, lu, body, top.R, top.y1, floors, wc, bid);
+    tierWindows(W, lot, lu, body, win, tiers, gy, facing, curtain, bid, lit, r);
+    return;
+  }
   if(detail){ flatRoof(body, R, yt, rc, bid); return; }
   var F = framer(R), U = F.U, V = F.V;
   if(style === "res"){
@@ -2866,6 +2884,42 @@ function shell(W, lot, detail, body, win, R, ys, facing){
         windowQuad(win, wl, uc - ww/2, uc + ww/2, y0, y1, glass, bid, lit(r(), 0.45));
       }
     }
+  });
+}
+// [3.36] a commercial block of 7 floors or more: a podium of 1-3 floors over the whole rect, the tower inset 12-24 %
+// a side on it (never under 8 m across), and from 14 floors (6 in 10) a top fifth stepped in again; else one tier
+function massing(R, yb, gy, yt, floors, style, r){
+  var one = [{R: R, y0: yb, y1: yt, f0: 0, f1: floors}];
+  if(style !== "com" || floors < 7) return one;
+  var pf = 1 + Math.floor(r()*3), lx = R.x1 - R.x0, lz = R.z1 - R.z0, k = 0.12 + r()*0.12;
+  function inset(Q, fx, fz){ return {x0: Q.x0 + fx, x1: Q.x1 - fx, z0: Q.z0 + fz, z1: Q.z1 - fz}; }
+  var RT = inset(R, lx*k, lz*k);
+  if(RT.x1 - RT.x0 < 8 || RT.z1 - RT.z0 < 8) return one;
+  var yP = gy + pf*FLOOR_H, out = [{R: R, y0: yb, y1: yP, f0: 0, f1: pf}];
+  if(floors >= 14 && r() < 0.6){
+    var sf = floors - Math.max(2, Math.floor(floors*0.2)), RS = inset(RT, (RT.x1 - RT.x0)*0.14, (RT.z1 - RT.z0)*0.14);
+    if(RS.x1 - RS.x0 >= 6 && RS.z1 - RS.z0 >= 6){
+      var yS = gy + sf*FLOOR_H;
+      return out.concat([{R: RT, y0: yP, y1: yS, f0: pf, f1: sf}, {R: RS, y0: yS, y1: yt, f0: sf, f1: floors}]);
+    }
+  }
+  return out.concat([{R: RT, y0: yP, y1: yt, f0: pf, f1: floors}]);
+}
+// the windows of a tiered block: the podium's ground floor front its shopfront (city life), its floors in bands; the
+// tower's in bands, or (curtain) glazed floor to floor
+function tierWindows(W, lot, lu, body, win, tiers, gy, facing, curtain, bid, lit, r){
+  var fd = FACING[facing] || FACING.north, shop = lu && lu.ground !== "door";
+  tiers.forEach(function(T, i){
+    wallList(T.R).forEach(function(wl){
+      if(wl.L <= 1.4) return;
+      var front = i === 0 && shop && wl.out[0] === fd.x && wl.out[1] === fd.z && wl.L >= 3;
+      if(front) groundFloor(W, lot, lu, body, win, wl, gy, bid);
+      for(var f = Math.max(T.f0, front ? 1 : 0); f < T.f1; f++){
+        var fy = gy + f*FLOOR_H, cw = curtain && i > 0;
+        windowQuad(win, wl, cw ? 0.15 : 0.5, wl.L - (cw ? 0.15 : 0.5), fy + (cw ? 0.15 : 0.9), fy + (cw ? FLOOR_H - 0.15 : 2.7),
+                   cw ? CURTAIN_GLASS : GLASS.com, bid, lit(r(), 0.6));
+      }
+    });
   });
 }
 // ---- city life (HQV.cityLife loaded): the lot's use, read from the whole world (the same at every tier) ----
@@ -3410,7 +3464,7 @@ HQV.worldgeom = {
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
   emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, AWNINGS: AWNINGS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
-  tierDiff: tierDiff, footprint: footprint, riverWater: riverWater, riverRing: riverRing, bridgeGaps: bridgeGaps,
+  tierDiff: tierDiff, footprint: footprint, massing: massing, riverWater: riverWater, riverRing: riverRing, bridgeGaps: bridgeGaps,
   BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,
   SEA_HIDE: SEA_HIDE, meshY: meshY,
   waterGeo: waterGeo, tramEdges: tramEdges, cutHoles: cutHoles, holeSet: holeSet, TRAM: {INNER: TRAM_INNER, W: TRAM_W, EDGE: TRAM_EDGE}

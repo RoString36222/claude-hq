@@ -245,6 +245,12 @@ fn every_civic_kind_is_placed_by_its_rule() {
         for row in CIVIC {
             let got = sites(w, row.kind);
             let want = match row.place {
+                // full size or not at all (a city whose parks are cut by roads has none)
+                _ if row.kind == "funfair" => {
+                    assert!(p.v4 || got.is_empty(), "{}: a funfair before v4", w.id);
+                    assert!(got.iter().all(|s| (s.w, s.d) == (7_000, 10_000)), "{}: a funfair cut down", w.id);
+                    !got.is_empty()
+                }
                 Place::Shore => p.coast_r_cm.or(p.sea_cm).is_some(),
                 // a personal island's city fills it at full size: no open land is left for a runway
                 Place::Edge if w.profile == "island" => !got.is_empty(),

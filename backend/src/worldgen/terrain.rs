@@ -41,6 +41,9 @@ pub fn generate(seed: u64, p: &Profile) -> Terrain {
 }
 
 /// The base terrain, with the coast's sea and then `river` (already generated) shaped in.
+/// City Gen v5: how far (cm) the city's plateau is raised (its lowest ground was at the sea's level).
+pub const V5_LIFT_CM: i64 = 800;
+
 pub fn generate_with(seed: u64, p: &Profile, river: Option<&super::river::River>) -> Terrain {
     let n = (p.size_cm / p.cell_cm) as usize + 1;
     let origin = -p.size_cm / 2;
@@ -51,7 +54,8 @@ pub fn generate_with(seed: u64, p: &Profile, river: Option<&super::river::River>
             let (x, z) = (origin + ix as i64 * p.cell_cm, origin + iz as i64 * p.cell_cm);
             let d = isqrt(x * x + z * z);
             let hills = fbm(hs, x, z, p.hills) + (d - p.core_r_cm).max(0) * p.rise_pm / 1000;
-            let plateau = fbm(ps, x, z, p.plateau);
+            // v5: the city's plateau stands V5_LIFT_CM up, clear of the sea (its lows were the sea's level, so wet)
+            let plateau = fbm(ps, x, z, p.plateau) + if p.v5 { V5_LIFT_CM } else { 0 };
             let t = smoothstep((d - p.core_r_cm) * ONE / p.blend_cm);
             heights.push((plateau + (hills - plateau) * t / ONE) as i32);
         }

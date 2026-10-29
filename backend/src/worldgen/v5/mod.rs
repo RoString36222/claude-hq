@@ -1,0 +1,2 @@
+//! City Gen v5 (docs/plans/city-gen-v5.md): the city planned in a volume.
+pub mod space;

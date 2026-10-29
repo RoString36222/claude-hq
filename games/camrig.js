@@ -389,6 +389,8 @@ function pullIn(s, from, want, radius, dt, q){
 // back out (COL_OUT); while blocked the goal only moves out once the room has grown COL_HYST m. Once clear it keeps
 // the pulled-in distance for COL_HOLD s before easing out (HQ 3.3.1): riding past buildings the ray clips corner
 // after corner, and without the hold the camera pumped in (fast) and out (slow) at every one.
+// [3.36] under a ceiling: the camera stays CEIL_GAP m below it, and no lower than CEIL_MIN m over your feet
+var CEIL_GAP = 0.45, CEIL_MIN = 1.2;
 function chaseCollide(s, from, want, radius, dt, q){
   var _ = s._, vec = v3(want.x - from.x, want.y - from.y, want.z - from.z), len = vlen(vec) || 1e-6;
   var t = clamp(num(q.hit(from, want), 1), 0, 1), goal = 1;
@@ -476,6 +478,13 @@ function chasePose(s, mode, T, dt, q){
   A.x = ax[0]; A.vx = ax[1]; A.z = az[0]; A.vz = az[1];
   // the camera: behind the pivot along camYaw; height over max(pivot feet, ground under the camera (sprung))
   var el = e0 + _.orbitPitch, r = Math.sqrt(back*back + up*up), horiz = r*Math.cos(el), h = r*Math.sin(el);
+  // [3.36] under a ceiling (q.ceil: a station, a tunnel; null in the open) the camera keeps its distance and lowers its
+  // angle to fit below it, CEIL_GAP m under, rather than being pressed against it over your head
+  var cl = q.ceil ? q.ceil(P.x, P.z) : null;
+  if(cl != null && isFinite(cl)){
+    var hm = Math.max(CEIL_MIN, cl - CEIL_GAP - (P.y - LOOK_H));
+    if(h > hm){ h = hm; horiz = Math.sqrt(Math.max(0, r*r - h*h)); }
+  }
   var off = rotYaw(-side, -horiz, camYaw), px = P.x + off.x, pz = P.z + off.z, g = q.ground(px, pz);
   if(_.gnd == null) _.gnd = {y: g, v: 0};
   var gs = spring(_.gnd.y, _.gnd.v, g, M.lag, dt); _.gnd.y = gs[0]; _.gnd.v = gs[1];
@@ -659,7 +668,8 @@ function step(s, tgt, dt, q){
   q = q || {};
   var T = normTgt(tgt);
   var Q = {ground: typeof q.ground === "function" ? function(x, z){ return num(q.ground(x, z), T.y); } : function(){ return T.y; },
-           hit: typeof q.hit === "function" ? q.hit : function(){ return 1; }};
+           hit: typeof q.hit === "function" ? q.hit : function(){ return 1; },
+           ceil: typeof q.ceil === "function" ? q.ceil : null};
   if(q.viewH) _.viewH = q.viewH;
   _.tgt = T; _.t += dt;
   var pose, settle = null;

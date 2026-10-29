@@ -4218,7 +4218,7 @@ function mount(el, api){
     C.input(rig, ev);
     var T = rigTarget();
     // (the camera's floor: the ground, and over water its surface, so it never dips under the waves: cur.camGround)
-    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
+    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, ceil: cur.camCeil || null, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
     if(rig.mode === "cine" && rig.wake) C.setMode(rig, rig.prev && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase");
     if(rig.mode !== lastMode) modeChanged(lastMode, rig.mode);
     if(pose && !pose.ortho){
@@ -6113,6 +6113,13 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, scene: function(){ return cur && cur.scene; }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, unride: function(){ if(ride) dismount(true); return !ride; }, stats: function(){ return smokeStats(); },
+                         // what the camera rig is told at a point, for tools: {ground, ceil, hit (from you, up LOOK_H, to the point)}
+                         camEnv: function(x, y, z){ if(!cur) return null; var a = {x: avatar.x, y: avatar.g.position.y + 1.6, z: avatar.z};
+                           return {ground: (cur.camGround || groundAt)(x, z), ceil: cur.camCeil ? cur.camCeil(x, z) : null, hit: cur.camHit ? cur.camHit(a, {x: x, y: y, z: z}) : 1}; },
+                         // the camera and you, for tools: {x, y, z, near, mode, lookAt [x, y, z], avatar {x, y, z}}
+                         cam: function(){ var c = curCam(), d = new THREE.Vector3(); c.getWorldDirection(d);
+                           return {x: c.position.x, y: c.position.y, z: c.position.z, near: c.near, mode: rig ? rig.mode : "classic", dir: [d.x, d.y, d.z],
+                                   avatar: avatar ? {x: avatar.x, y: avatar.g.position.y, z: avatar.z} : null}; },
                          // [3.16] the grenade launcher, for tools: fire one (true), or a blast a metre in front of you ("boom"); -> its state
                          grenade: function(a){
                            if(a === true){ GN.out = true; GN.cd = 0; gnFire(); }

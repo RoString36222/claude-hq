@@ -1190,15 +1190,24 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // the avatar's height when it is in a tunnel or cutting (the camera's floor and its ray then stay down there), else undefined
   // [3.36] below the street: how far along from -> to the camera may go (0..1) before the ceiling over your floor
-  // (UNDER_HEAD m up: the halls are 3.6 m, the platforms 4.5) or a wall (no walkable floor a step from yours)
-  var UNDER_HEAD = 3.3;
+  // [3.36] below the street, on the level you are on (the deck under your feet, not the first floor found at a point:
+  // a hall can stand over a platform): its floor, its ceiling (UNDER_CEIL by the deck's kind) and what stops the camera
+  var UNDER_CEIL = {platform: 4.5}, UNDER_CEIL_DEF = 3.6, UNDER_STEP = 2.5;
+  function underFeet(){ var a = c.avatar && c.avatar(); return a && a.hy != null && isFinite(a.hy) ? a : null; }
+  function underDeck(x, z){
+    var a = underFeet(); if(!a || !transit.floorAt) return null;
+    return transit.floorAt(x, z, a.hy) || transit.floorAt(a.x, a.z, a.hy) || {y: a.hy, kind: "hall"};
+  }
+  function underCeil(d){ return d.y + (UNDER_CEIL[d.kind] || UNDER_CEIL_DEF); }
+  // how far along from -> to the camera may go (0..1): to the ceiling of your deck, and to where your level ends (a wall,
+  // or a floor more than UNDER_STEP from yours); over the track, inside the station, is open
   function underHit(from, to){
-    var f0 = transit.ground(from.x, from.z); if(f0 == null || !isFinite(f0)) return 1;
-    var t = 1, cy = f0 + UNDER_HEAD;
+    var a = underFeet(), d0 = a && underDeck(a.x, a.z); if(!d0) return 1;
+    var t = 1, cy = underCeil(d0) - 0.2;
     if(to.y > cy && from.y < cy) t = (cy - from.y)/(to.y - from.y);
-    for(var i = 1; i <= 12; i++){
-      var u = i/12*t, x = from.x + (to.x - from.x)*u, z = from.z + (to.z - from.z)*u, f = transit.ground(x, z);
-      if(f == null || !isFinite(f) || Math.abs(f - f0) > 2.5) return Math.max(0, (i - 1)/12*t);
+    for(var i = 1; i <= 16; i++){
+      var u = i/16*t, x = from.x + (to.x - from.x)*u, y = from.y + (to.y - from.y)*u, z = from.z + (to.z - from.z)*u, f = transit.floorAt(x, z, d0.y);
+      if(f ? Math.abs(f.y - d0.y) > UNDER_STEP : !transit.inside(x, Math.min(y, d0.y + 1), z)) return Math.max(0, (i - 1)/16*t);
     }
     return t;
   }
@@ -2865,7 +2874,16 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // the camera's floor (hq3d rigFrame): the ground, and over open water the water's surface plus 0.5 m, so a chase
   // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
+  // [3.36] the ceiling over the camera (m), or null in the open: below the street, that of the deck you are on (underCeil)
+  w.camCeil = function(x, z){
+    if(!(transit && transit.under() && transit.floorAt)) return null;
+    var d = underDeck(x, z);
+    return d ? underCeil(d) : null;
+  };
   w.camGround = function(x, z){
+    // [3.36] below the street the camera's floor is the station's (where you are when it is past the station's edge): the
+    // street's floor held it up at street level, looking down on the station's roof
+    if(transit && transit.under() && transit.floorAt){ var d = underDeck(x, z); if(d) return d.y; }
     var ty = tunnelLevel();
     if(ty != null && WD.tunnelAt(W, x, z, ty)) return WD.groundAt(W, x, z, false, ty);   // [3.30] in the tunnel: its road, never the land over it
     var g = groundY(x, z);
@@ -3806,6 +3824,9 @@ HQV.hqWorlds.city3d = function(c, w){
   w.onLook = function(){ forceYou = true; build(); };      // your own look: your building again
   w.camHit = function(from, to){
     if(!W) return 1;
+    // [3.36] below the street only the station's own ceiling and walls stop the camera: the terrain and the buildings over
+    // it are above you there, so a ray from you up to the camera met the ground at once and held the camera on your head
+    if(transit && transit.under() && transit.floorAt) return underHit(from, to);
     var t = WD.rayGround(W, from, to, undefined, tunnelLevel());   // [3.30] in a tunnel: its walls and ceiling
     var x0 = Math.min(from.x, to.x), x1 = Math.max(from.x, to.x), z0 = Math.min(from.z, to.z), z1 = Math.max(from.z, to.z);
     if(Math.hypot(to.x - from.x, to.z - from.z) > 60){ var u = 60/Math.hypot(to.x - from.x, to.z - from.z);   // only what is within 60 m
@@ -3813,7 +3834,6 @@ HQV.hqWorlds.city3d = function(c, w){
       z0 = Math.min(from.z, from.z + (to.z - from.z)*u); z1 = Math.max(from.z, from.z + (to.z - from.z)*u); }
     buildingsIn(x0, x1, z0, z1).concat(placedIn(x0, x1, z0, z1)).forEach(function(b){ var h = segBox(from, to, b); if(h < t) t = h; });
     if(cp){ var ch = HQV.hqCarpark.camHit(cp.site, from, to); if(ch < t) t = ch; }   // carpark: the floor above you
-    if(transit && transit.under() && transit.ground){ var uh = underHit(from, to); if(uh < t) t = uh; }   // [3.36] a station's ceiling and walls
     return t;
   };
   w.occluderItems = function(x, y, z){

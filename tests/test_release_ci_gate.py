@@ -65,7 +65,7 @@ echo "$line"
     def deploy(self, *responses, wait="300", **extra):
         with open(self.responses, "w") as f:
             f.write("\n".join(responses) + "\n")
-        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], ARENA_SKIP_PULL="1", **extra)
+        env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"], ARENA_SKIP_PULL="1", ARENA_FROM="git")
         for k in ("ARENA_CI_WAIT", "ARENA_GH_TOKEN", "GITHUB_TOKEN"):
             env.pop(k, None)
         env.update(extra)

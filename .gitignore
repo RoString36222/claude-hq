@@ -48,6 +48,7 @@ games-save.json
 backend/.release.env
 backend/.release.env.tmp
 backend/.releases
+.arena-releases/
 .autodeploy-tried
 .arena-deploy.log
 .music-cache/

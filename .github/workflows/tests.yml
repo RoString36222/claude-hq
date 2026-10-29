@@ -1,7 +1,7 @@
 name: ci
 
-# Build checks only; nothing here releases anything. Deploys go through
-# ops/release.sh on the Arena host, which waits for these checks to pass.
+# The checks every PR and main must pass. On main, once they all have, the
+# release job publishes the Arena release ops/release.sh deploys on the host.
 on:
   push:
     branches: [main]
@@ -85,3 +85,59 @@ jobs:
           name: graphics-tour
           path: ${{ runner.temp }}/graphics-tour
           if-no-files-found: ignore
+
+  # On main, once every check above has passed: the Arena release the host deploys
+  # (ops/release.sh deploy). The image goes to ghcr.io, tagged with its version, and the
+  # GitHub release "arena-latest" (a pre-release, so the app's own release stays Latest)
+  # carries arena-release.json and arena-config-<version>.tar.gz (ops/release_bundle.py).
+  # The new config is uploaded before the manifest that names it, and the last few are
+  # kept, so a host reading the release mid-update never gets a manifest without its config.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests, backend, dashboard]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    concurrency:
+      group: arena-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version and image
+        id: v
+        run: |
+          echo "version=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y.%m.%d)-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-arena" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push the Arena image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          build-args: ARENA_VERSION=${{ steps.v.outputs.version }}
+          tags: ${{ steps.v.outputs.image }}:${{ steps.v.outputs.version }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Publish arena-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+          IMAGE: ${{ steps.v.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          python3 ops/release_bundle.py dist "$VERSION" "$GITHUB_SHA" "$IMAGE"
+          gh release view arena-latest >/dev/null 2>&1 || gh release create arena-latest --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "Arena (latest)" --notes "The Arena release the host deploys (ops/release.sh deploy). Updated by CI on every green commit on main."
+          gh release upload arena-latest "dist/arena-config-$VERSION.tar.gz" --clobber
+          gh release upload arena-latest dist/arena-release.json --clobber
+          gh release edit arena-latest --notes "Arena $VERSION (${GITHUB_SHA:0:7}): $IMAGE. Updated by CI on every green commit on main; ops/release.sh deploy reads it."
+          # keep the five newest configs
+          gh release view arena-latest --json assets --jq '.assets | sort_by(.createdAt) | reverse | .[].name' \
+            | grep '^arena-config-' | tail -n +6 \
+            | while read -r old; do gh release delete-asset arena-latest "$old" -y; done

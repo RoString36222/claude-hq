@@ -4,9 +4,22 @@
 # and roll back to the previous build if it is not healthy.
 #
 #   ops/release.sh check                  run every test suite locally (before you merge)
-#   ops/release.sh deploy                 ship origin/main
+#   ops/release.sh deploy                 ship the latest Arena release (CI's), or with ARENA_FROM=git
+#                                         build origin/main here
+#   ops/release.sh latest                 the latest Arena release: "<version> <commit>"
 #   ops/release.sh rollback               go back to the previous release (no rebuild)
 #   ops/release.sh status                 what is running, and the release history
+#
+# Releases (HQ 3.36): once every check passes on main, CI pushes the Arena image to
+# ghcr.io and updates the GitHub release "arena-latest": arena-release.json (version,
+# commit, image by digest) and arena-config-<version>.tar.gz (backend/docker-compose.yml,
+# backend/monitoring, ops; ops/release_bundle.py packs it). deploy downloads both,
+# checks the tarball's sha256, unpacks it to .arena-releases/<version>/, links the
+# host's own files into it (backend/.env, Caddyfile, sounds/, docker-compose.override.yml:
+# secrets and installer edits never come from a release), pulls the image and runs
+# compose from that config. Nothing compiles on the host, and there is no CI to wait
+# for: a release only exists once CI passed. The checkout fast-forwards to the
+# release's commit, so these scripts match it.
 #
 # Run deploy/rollback/status on the Arena host, from the repo checkout. Each
 # release is a tagged image (claude-hq-arena-rs:<version>, the version being
@@ -16,6 +29,7 @@
 # deploy panel and earlier releases on a host already use.)
 #
 # Options (environment):
+#   ARENA_FROM=release      release: deploy CI's release; git: pull, wait for CI, build here
 #   ARENA_BRANCH=main       branch to release
 #   ARENA_SKIP_CI=1         deploy even if GitHub CI has not passed for the commit
 #   ARENA_CI_WAIT=6000      seconds to wait for CI that is still running (the backend
@@ -36,6 +50,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$REPO/backend"
 STATE="$BACKEND/.release.env"         # what compose should run now (git-ignored)
 HISTORY="$BACKEND/.releases"          # one line per release, newest last (git-ignored)
+RELEASES="$REPO/.arena-releases"      # each release's config, unpacked (git-ignored)
+FROM="${ARENA_FROM:-release}"
 BRANCH="${ARENA_BRANCH:-main}"
 KEEP="${ARENA_KEEP:-3}"
 BUILD_CACHE="${ARENA_BUILD_CACHE:-3gb}"
@@ -43,29 +59,40 @@ CI_WAIT="${ARENA_CI_WAIT:-6000}"
 CI_POLL="${ARENA_CI_POLL:-20}"
 CI_BODY=""                            # the last check-runs answer (ci_passed)
 GH_REPO="${ARENA_GH_REPO:-RoString36222/claude-hq}"
+RELEASE_URL="${ARENA_RELEASE_URL:-https://github.com/$GH_REPO/releases/download/arena-latest}"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
 ok()   { printf '    \033[32m✓\033[0m %s\n' "$1"; }
 warn() { printf '    \033[33m!\033[0m %s\n' "$1"; }
 die()  { printf '    \033[31m✗\033[0m %s\n' "$1" >&2; exit 1; }
 
-# docker compose with the release state layered over .env (both optional).
-dc() {
-  local args=()
-  [[ -f "$BACKEND/.env" ]] && args+=(--env-file "$BACKEND/.env")
-  [[ -f "$STATE" ]] && args+=(--env-file "$STATE")
-  ( cd "$BACKEND" && docker compose "${args[@]}" "$@" )
-}
-
 current() { [[ -f "$STATE" ]] && grep -E "^$1=" "$STATE" | tail -1 | cut -d= -f2- || true; }
 
-write_state() {   # impl version
-  local impl="$1" version="$2"
+# docker compose with the release state layered over .env (both optional). A release's
+# config (ARENA_CONFIG_DIR, its backend/) when the state names one that is there, else the
+# checkout's. Its directory is also called backend, so the compose project (named after it)
+# and with it the volumes (the database, the certificates) stay the same either way.
+dc() {
+  local args=() dir; dir=$(current ARENA_CONFIG_DIR)
+  [[ -f "$BACKEND/.env" ]] && args+=(--env-file "$BACKEND/.env")
+  [[ -f "$STATE" ]] && args+=(--env-file "$STATE")
+  if [[ -n "$dir" && -f "$dir/docker-compose.yml" ]]; then
+    args+=(--project-directory "$dir" -f "$dir/docker-compose.yml")
+    [[ -f "$dir/docker-compose.override.yml" ]] && args+=(-f "$dir/docker-compose.override.yml")
+    ( cd "$dir" && docker compose "${args[@]}" "$@" )
+  else
+    ( cd "$BACKEND" && docker compose "${args[@]}" "$@" )
+  fi
+}
+
+write_state() {   # impl version [config dir]
+  local impl="$1" version="$2" dir="${3:-}"
   {
     echo "# Written by ops/release.sh: the release compose runs now."
     echo "ARENA_IMPL=$impl"
     echo "ARENA_VERSION=$version"
     echo "ARENA_APP_IMAGE=claude-hq-arena-$impl:$version"
+    if [[ -n "$dir" ]]; then echo "ARENA_CONFIG_DIR=$dir"; fi
   } > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
 }
 
@@ -158,6 +185,57 @@ prune() {  # impl
     || docker builder prune -f --keep-storage "$BUILD_CACHE" >/dev/null 2>&1 || true
 }
 
+# The latest Arena release -> "version sha image config config_sha256" (one line), or fails.
+latest_release() {
+  local body
+  body=$(curl -fsSL --max-time 30 "$RELEASE_URL/arena-release.json") || return 1
+  python3 - "$body" <<'PY'
+import json, re, sys
+m = json.loads(sys.argv[1])
+v, sha, img, cfg, sum_ = (str(m.get(k) or "") for k in ("version", "sha", "image", "config", "config_sha256"))
+ok = (re.fullmatch(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}", v) and re.fullmatch(r"[0-9a-f]{40}", sha)
+      and re.fullmatch(r"[a-z0-9./_-]+(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?", img)
+      and re.fullmatch(r"arena-config-[0-9.]+-[0-9a-f]{7}\.tar\.gz", cfg) and re.fullmatch(r"[0-9a-f]{64}", sum_))
+if not ok:
+    sys.exit("arena-release.json is not a release manifest")
+print(v, sha, img, cfg, sum_)
+PY
+}
+
+# A release's config into $RELEASES/<version>: downloaded, checked against its sha256, unpacked,
+# and the host's own files linked in. -> the directory's backend/ on stdout.
+fetch_config() {  # version config sha256
+  local version="$1" cfg="$2" sum="$3" dir="$RELEASES/$1" tmp
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/arena-release.XXXXXX")
+  curl -fsSL --max-time 120 -o "$tmp/$cfg" "$RELEASE_URL/$cfg" || { rm -rf "$tmp"; echo "could not download $cfg" >&2; return 1; }
+  local got; got=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$tmp/$cfg")
+  [[ "$got" == "$sum" ]] || { rm -rf "$tmp"; echo "$cfg does not match its sha256" >&2; return 1; }
+  rm -rf "$dir.new" && mkdir -p "$dir.new" && tar -xzf "$tmp/$cfg" -C "$dir.new" || { rm -rf "$tmp" "$dir.new"; return 1; }
+  rm -rf "$tmp"
+  local f
+  for f in .env Caddyfile sounds docker-compose.override.yml; do
+    [[ -e "$BACKEND/$f" ]] && ln -sfn "$BACKEND/$f" "$dir.new/backend/$f"
+  done
+  rm -rf "$dir" && mv "$dir.new" "$dir"
+  echo "$dir/backend"
+}
+
+# Keep the config of the releases in the history (the last KEEP), drop the rest.
+prune_configs() {
+  [[ -d "$RELEASES" ]] || return 0
+  local keep; keep=$(tail -n "$KEEP" "$HISTORY" 2>/dev/null | awk '{print $2}' || true)
+  local d
+  for d in "$RELEASES"/*/; do
+    [[ -d "$d" ]] || continue
+    grep -qx "$(basename "$d")" <<<"$keep" || rm -rf "$d"
+  done
+}
+
+cmd_latest() {
+  local m; m=$(latest_release) || die "no Arena release at $RELEASE_URL"
+  awk '{print $1, $2}' <<<"$m"
+}
+
 cmd_check() {
   say "Repo tests (frontend sync, ops)"
   # (each step stops the check when it fails: "all green" only when all of them are)
@@ -182,6 +260,41 @@ cmd_check() {
 }
 
 cmd_deploy() {
+  [[ "$FROM" == git ]] && { cmd_deploy_git; return; }
+  [[ "$FROM" == release ]] || die "ARENA_FROM is release or git, not $FROM"
+  local impl=rs prev_version prev_impl
+  prev_version=$(current ARENA_VERSION); prev_impl=$(current ARENA_IMPL)
+
+  say "Fetching the latest Arena release"
+  local m; m=$(latest_release) || die "no Arena release at $RELEASE_URL (CI publishes one for each green commit on main; ARENA_FROM=git builds here instead)"
+  local version sha image cfg sum
+  read -r version sha image cfg sum <<<"$m"
+  ok "$version: ${sha:0:7}, $image"
+
+  if [[ "${ARENA_SKIP_PULL:-}" != 1 ]]; then
+    # the checkout follows the release, so the scripts here match the config it ships
+    [[ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]] || die "local changes in $REPO; commit or stash them first"
+    git -C "$REPO" fetch origin "$BRANCH" --quiet
+    git -C "$REPO" merge --ff-only "$sha" --quiet || warn "the checkout could not fast-forward to ${sha:0:7}; deploying the release anyway"
+  fi
+
+  if [[ "$version" == "$prev_version" && "$impl" == "$prev_impl" ]] && healthy; then
+    ok "$version ($impl) is already running"; return 0
+  fi
+
+  say "Fetching its config"
+  local dir; dir=$(fetch_config "$version" "$cfg" "$sum") || die "could not fetch the release's config"
+  ok "$dir"
+
+  say "Pulling $image"
+  docker pull -q "$image" >/dev/null || die "could not pull $image (if the package is private: docker login ghcr.io)"
+  docker tag "$image" "claude-hq-arena-$impl:$version" || die "could not tag $image"
+  write_state "$impl" "$version" "$dir"
+  go_live "$impl" "$version" "$prev_impl" "$prev_version" "$sha"
+  prune_configs
+}
+
+cmd_deploy_git() {
   local impl=rs
   local prev_version prev_impl
   prev_version=$(current ARENA_VERSION); prev_impl=$(current ARENA_IMPL)
@@ -223,7 +336,12 @@ cmd_deploy() {
   say "Building $impl $version"
   write_state "$impl" "$version"
   dc build app || { restore "$prev_impl" "$prev_version"; die "build failed"; }
+  go_live "$impl" "$version" "$prev_impl" "$prev_version" "$sha"
+}
 
+# Start the release the state names, wait for it to be healthy, and record it; else roll back.
+go_live() {  # impl version prev_impl prev_version sha
+  local impl="$1" version="$2" prev_impl="$3" prev_version="$4" sha="$5"
   say "Starting $impl $version"
   dc up -d --no-build app
   if wait_healthy "$version"; then
@@ -248,7 +366,8 @@ restore() {  # impl version: start an earlier release's image again (no rebuild)
   docker image inspect "claude-hq-arena-$impl:$version" >/dev/null 2>&1 \
     || die "image claude-hq-arena-$impl:$version is gone; cannot roll back without rebuilding"
   say "Rolling back to $version ($impl)"
-  write_state "$impl" "$version"
+  local dir="$RELEASES/$version/backend"; [[ -f "$dir/docker-compose.yml" ]] || dir=""
+  write_state "$impl" "$version" "$dir"
   dc up -d --no-build app
   if wait_healthy "$version"; then ok "rolled back, running $(running_version)"
   else warn "the rollback is not healthy either. If a migration ran, the old build may not know the new schema: roll FORWARD with ops/release.sh deploy"
@@ -280,7 +399,8 @@ cmd_status() {
 case "${1:-}" in
   check)    cmd_check ;;
   deploy)   cmd_deploy ;;
+  latest)   cmd_latest ;;
   rollback) cmd_rollback ;;
   status)   cmd_status ;;
-  *) sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -146,6 +146,15 @@ class DeployProgress(unittest.TestCase):
         r = self.p(RUN + say("Starting rs v") + "\n" + say("Released 2026.10.09-843e4c6 (rs)") + "\n")
         self.assertEqual((r["state"], r["pct"]), ("ok", 100))
 
+    def test_a_release_deploy_is_one_run_and_steps_over_the_build(self):
+        """HQ 3.36: deploy from CI's release: no CI gate or build to announce, a pull instead."""
+        rel = (say("Fetching the latest Arena release") + "\n    ok 2026.10.29-abcdef1\n" + say("Fetching its config") + "\n"
+               + say("Pulling ghcr.io/x/claude-hq-arena@sha256:aa") + "\n")
+        r = self.p(RUN + say("Released 2026.10.08-old (rs)") + "\n" + rel)
+        self.assertEqual((r["phase"], r["state"]), ("FETCH", "running"))
+        r = self.p(rel + say("Starting rs 2026.10.29-abcdef1") + "\n" + say("Released 2026.10.29-abcdef1 (rs)") + "\n")
+        self.assertEqual((r["state"], r["pct"]), ("ok", 100))
+
     def test_a_failed_release_freezes_where_it_got_to(self):
         """The property that matters most: a failure must NOT read as finished."""
         r = self.p(RUN + "    \x1b[31m✗\x1b[0m build failed\n"

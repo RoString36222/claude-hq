@@ -338,6 +338,8 @@ _BY = re.compile(r"panel: (deploy|rollback) requested by (\S+)")
 _COMMIT = re.compile(r"^ {4}([0-9a-f]{7,40}) (.*)$")
 _VERSION = re.compile(r"==> (?:Released|Rolling back to) (\S+)")
 STALE_SECS = 900            # a run silent this long is no longer "in progress" (the host rebooted, it was killed)
+# "Deploy now" waits this long for the release: release.sh holds up to 6000 s for CI (ARENA_CI_WAIT), then builds
+DEPLOY_TIMEOUT = 6000 + 1800
 HISTORY_MAX = 40
 HISTORY_BYTES = 4_000_000
 RELEASES = os.environ.get("ARENA_RELEASES", os.path.join(ARENA_DIR, "backend", ".releases"))
@@ -1451,7 +1453,7 @@ class Handler(BaseHTTPRequestHandler):
                                         "error": f"A release is already in progress (started by {who}). Watch it here."})
         if path == "/api/deploy":
             _log_line(f"panel: deploy requested by {login}")
-            rc, out = run(["bash", f"{ARENA_DIR}/ops/autodeploy.sh"], timeout=900)
+            rc, out = run(["bash", f"{ARENA_DIR}/ops/autodeploy.sh"], timeout=DEPLOY_TIMEOUT)
             if rc == 0:
                 return self._json(200, {"ok": True, "message": "Deployed", "error": None, "reason": None})
             reason = parse_progress(read_log_tail(DEPLOY_LOG))["reason"] or "failed"

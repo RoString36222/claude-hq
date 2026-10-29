@@ -779,6 +779,44 @@ pub fn airport_first(p: &Profile, t: &Terrain, city: &mut City, river: Option<&R
     claim
 }
 
+/// City Gen v5: the airport placed before any street (plan first): on the coast, just inside the city's edge, its front
+/// toward the plaza and its airside out to sea (the client lays the runway RU m out, claims.rs); of 72 directions the
+/// flattest footprint off the river and its zone (graded flat as its pad: no slope refuses one), the furthest from the
+/// river's mouth breaking ties. Its block is set once the blocks exist. None where every direction is wet.
+pub fn airport_v5(p: &Profile, t: &Terrain, river: Option<&River>) -> Option<Site> {
+    let row = CIVIC.iter().find(|r| r.kind == "airport")?;
+    let coast = p.coast_r_cm?;
+    let mouth = river.and_then(|r| r.center.first().map(|&q| (q[0], q[1])));
+    let r = (coast - super::V5_SHORE_CM - row.d_cm / 2 - 1_000).max(p.plaza_cm * 4);
+    let mut best: Option<(i64, i64, P, P)> = None;
+    for k in 0..72 {
+        let d = geom::turn((ONE, 0), k * 5);
+        let c = (d.0 * r / ONE, d.1 * r / ONE);
+        let f = (-d.0, -d.1);
+        let poly = rect(c, f, row.w_cm, row.d_cm);
+        if poly.iter().any(|&q| wet(p, t, q) || river.is_some_and(|rv| rv.zone(q))) {
+            continue;
+        }
+        // the flattest wins; none is refused for its slope (the site's pad is graded flat: an airport is earthworks)
+        let rise = geom::rise(t, &poly);
+        let away = mouth.map_or(0, |m| len((c.0 - m.0, c.1 - m.1)));
+        let key = (rise / 50, -away / 10_000);
+        if best.is_none_or(|b| (key.0, key.1) < (b.0, b.1)) {
+            best = Some((key.0, key.1, c, f));
+        }
+    }
+    let (_, _, c, f) = best?;
+    let poly = rect(c, f, row.w_cm, row.d_cm);
+    let mut site = Site {
+        id: "airport:0".to_string(), kind: row.kind, block: 0, x: c.0, y: 0, z: c.1, w: row.w_cm, d: row.d_cm,
+        facing: if f.1 >= 0 { Facing::North } else { Facing::South },
+        tier: Some(row.tier), poly: Some(poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), view: None,
+    };
+    let foot = site.foot();
+    site.y = t.height_at(foot.0, foot.1);
+    Some(site)
+}
+
 /// The site a row outside the city's lots puts at `c`, its front `f`.
 fn outside_site(t: &Terrain, city: &City, row: &Civic, c: P, f: P) -> Site {
     let poly = rect(c, f, row.w_cm, row.d_cm);

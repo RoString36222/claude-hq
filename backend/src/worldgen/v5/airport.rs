@@ -18,7 +18,11 @@ use super::super::organic::geom::{crossing, inside, rise, P};
 
 pub const STRIP_W_CM: i64 = 15_000;
 pub const STRIP_END_CM: i64 = 6_000;
-pub const APRON_W_CM: i64 = 9_000;
+/// The apron side, past the strip: the apron, stands and concourse, the terminal, its forecourt and car park (the client's
+/// airfield, hqairfield.js, laid to the runway: its terminal `TERMINAL_CM` from the runway, its access road 146 m past it).
+pub const APRON_W_CM: i64 = 38_800;
+/// From the runway's centre line to the terminal's middle (cm): the airfield's frame origin in the client.
+pub const TERMINAL_CM: i64 = 31_700;
 pub const STEP_CM: i64 = 5_000;
 pub const APP_LOOK_CM: i64 = 60_000;
 pub const APP_START_CM: i64 = 6_000;
@@ -64,6 +68,12 @@ pub fn footprint(c: P, d: (i64, i64), len: i64, side: i64) -> Vec<P> {
     quad(c, d, -half, half, w0, w1)
 }
 
+/// The terminal's landside, where its road meets the city: 40 m past the airport's box on the apron side.
+pub fn landside(c: P, d: (i64, i64), side: i64) -> P {
+    let w = side * (STRIP_W_CM / 2 + APRON_W_CM + 4_000);
+    (c.0 - d.1 * w / 1000, c.1 + d.0 * w / 1000)
+}
+
 /// Does any lake, canal or the marina reach into `poly` (a body narrower than the footprint passes between its corners)?
 fn wet(land: &Land, poly: &[P]) -> bool {
     let n = poly.len();
@@ -73,11 +83,35 @@ fn wet(land: &Land, poly: &[P]) -> bool {
     })
 }
 
+/// Is there a way for a road over dry land, off `poly`, from `from` to within 150 m of the island's middle (a 20 m grid,
+/// each step with dry land 40 m round it: as the roads' grid, roads.rs)?
+fn reaches(land: &Land, from: P, poly: &[P], r: i64) -> bool {
+    const G: i64 = 2_000;
+    let n = r / G + 1;
+    let dry = |c: (i64, i64)| { let q = (c.0 * G, c.1 * G); land.dry(q) && !inside(q, poly) };
+    let ok = |c: (i64, i64)| c.0.abs() <= n && c.1.abs() <= n && (-2..=2).all(|a| (-2..=2).all(|b| dry((c.0 + a, c.1 + b))));
+    let start = ((from.0 as f64 / G as f64).round() as i64, (from.1 as f64 / G as f64).round() as i64);
+    let mut seen = std::collections::BTreeSet::from([start]);
+    let mut todo = vec![start];
+    while let Some(c) = todo.pop() {
+        if (c.0 * G).pow(2) + (c.1 * G).pow(2) <= 15_000i64.pow(2) {
+            return true;
+        }
+        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let x = (c.0 + dx, c.1 + dz);
+            if ok(x) && seen.insert(x) {
+                todo.push(x);
+            }
+        }
+    }
+    false
+}
+
 /// Places the airport on `land` and locks it in `space`. None where no footprint fits on dry land.
 pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
     let len = (land.city_d() / 4 / 1_000) * 1_000;
     let r = land.p.city_r_cm + land.p.coast_r_cm.map_or(0, |c| (c - land.p.city_r_cm).max(0));
-    let mut best: Option<((i64, i64, i64, i64), Airport)> = None;
+    let mut all: Vec<((i64, i64, i64, i64), Airport)> = Vec::new();
     for k in 0..18 {
         let a = (k as f64 * 10.0).to_radians();
         let d = ((a.cos() * 1000.0).round() as i64, (a.sin() * 1000.0).round() as i64);
@@ -90,7 +124,7 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                 }
                 for side in [1, -1] {
                     let poly = footprint(c, d, len, side);
-                    if !poly.iter().all(|&q| land.dry(q)) || !land.dry(c) || wet(land, &poly) {
+                    if !poly.iter().all(|&q| land.dry(q)) || !land.dry(c) || wet(land, &poly) || !land.dry(landside(c, d, side)) {
                         continue;
                     }
                     let flat = rise(&land.t, &poly);
@@ -112,14 +146,14 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                     });
                     let out = -((c.0 as f64).hypot(c.1 as f64) as i64) / 1_000;
                     let key = (flat / 200 + under * UNDER_COST + if over_centre { 1_000 } else { 0 }, out, k, i * 1000 + j);
-                    if best.as_ref().is_none_or(|b| key < b.0) {
-                        best = Some((key, Airport { c, dir: d, len, side, poly, y: land.height(c), solids: Vec::new() }));
-                    }
+                    all.push((key, Airport { c, dir: d, len, side, poly, y: land.height(c), solids: Vec::new() }));
                 }
             }
         }
     }
-    let (_, mut ap) = best?;
+    // the best whose landside the city's middle reaches over dry land, round the airport (no river or lake between)
+    all.sort_by_key(|x| x.0);
+    let (_, mut ap) = all.into_iter().find(|(_, a)| reaches(land, landside(a.c, a.dir, a.side), &a.poly, r))?;
     // locked: the footprint from the ground into the sky; each approach a run of boxes stepping up its surface
     ap.solids.push(space.put("airport", "airport", ap.poly.clone(), ap.y + GROUND.0, ap.y + SKY.1));
     for s in [-1, 1] {

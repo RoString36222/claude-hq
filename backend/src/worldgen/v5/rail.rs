@@ -9,7 +9,7 @@
 //!   - every step, ramps included, is checked in the volume at its own height; one that meets something drops a level;
 //!   - the Island Link ends at its abutment on the viaduct, its front out to sea.
 use super::align::{connect, Pose};
-use super::airport::{Airport, APRON_W_CM, STRIP_W_CM};
+use super::airport::{Airport, TERMINAL_CM};
 use super::land::Land;
 use super::space::Space;
 use super::super::organic::geom::{inside, seg_dist2, P};
@@ -86,7 +86,7 @@ fn step_box(a: (f64, f64), b: (f64, f64)) -> Vec<P> {
 /// (`DEEP_CM`, under every metro line). Each point takes the highest free; then the grade is held by lowering, never
 /// raising: a point is at most a grade's climb over its neighbours, so a line goes down well before what it must pass
 /// under and comes up only after it. A point that then meets something drops a level, and the profile is laid again.
-fn profile(land: &Land, ap: &Airport, space: &Space, pts: &[Pose], must_end_up: bool) -> Option<(Vec<i64>, Vec<&'static str>)> {
+fn profile(land: &Land, ap: &Airport, space: &Space, pts: &[Pose], must_end_up: bool, stations: &[P]) -> Option<(Vec<i64>, Vec<&'static str>)> {
     let n = pts.len();
     // the ground: the terrain's, and on the airport its graded level (its box stands on that, not on the terrain); within
     // EDGE_CM of the airport the lower of the two, so a level under one is under both where they meet
@@ -105,7 +105,9 @@ fn profile(land: &Land, ap: &Airport, space: &Space, pts: &[Pose], must_end_up: 
         return None;
     }
     let step = |i: usize| ((pts[i].0 - pts[i - 1].0).hypot(pts[i].1 - pts[i - 1].1) * GRADE_PM as f64 / 1000.0) as i64;
-    for _round in 0..6 {
+    // a platform's points: on a viaduct or under the street, never on a ramp (half sunk, it walls the street off)
+    let platform: Vec<bool> = pts.iter().map(|p| stations.iter().any(|s| (p.0 - s.0 as f64).hypot(p.1 - s.1 as f64) <= PLATFORM_CM / 2.0 + 400.0)).collect();
+    for _round in 0..8 {
         let mut y: Vec<i64> = (0..n).map(|i| g[i] + levels[lv[i]]).collect();
         // the grade, by lowering: forward (a climb no steeper than the grade) and back (a descent no steeper)
         for i in 1..n {
@@ -114,7 +116,7 @@ fn profile(land: &Land, ap: &Airport, space: &Space, pts: &[Pose], must_end_up: 
         for i in (0..n - 1).rev() {
             y[i] = y[i].min(y[i + 1] + step(i + 1));
         }
-        let bad: Vec<usize> = (0..n).filter(|&i| !free_at(i, y[i])).collect();
+        let bad: Vec<usize> = (0..n).filter(|&i| !free_at(i, y[i]) || (platform[i] && y[i] < g[i] + UP_CM - 100 && y[i] > g[i] - DOWN_CM + 100)).collect();
         if bad.is_empty() {
             if must_end_up && y[n - 1] < g[n - 1] + UP_CM / 2 {
                 return None;
@@ -133,8 +135,8 @@ fn profile(land: &Land, ap: &Airport, space: &Space, pts: &[Pose], must_end_up: 
 }
 
 pub fn plan(land: &Land, hub: P, port: Option<(P, P)>, ap: &Airport, space: &mut Space) -> Vec<Line> {
-    let mut out = Vec::new();
-    let terminal = { let w = ap.side * (STRIP_W_CM / 2 + APRON_W_CM / 2); (ap.c.0 - ap.dir.1 * w / 1000, ap.c.1 + ap.dir.0 * w / 1000) };
+    let mut out: Vec<Line> = Vec::new();
+    let terminal = { let w = ap.side * (TERMINAL_CM); (ap.c.0 - ap.dir.1 * w / 1000, ap.c.1 + ap.dir.0 * w / 1000) };
     // the City Line: the port's station a little inland of its quay, Central, the terminal
     let mut cl: Vec<P> = Vec::new();
     if let Some((q, f)) = port {
@@ -142,10 +144,27 @@ pub fn plan(land: &Land, hub: P, port: Option<(P, P)>, ap: &Airport, space: &mut
         cl.push(if land.dry(inland) { inland } else { q });
     }
     cl.extend([hub, terminal]);
-    // the Island Link: Central to the coast, out over open sea away from the airport's approaches and the port
-    let mut il: Option<(Vec<P>, f64)> = None;
+    // a line through `seq`: its plan, its profile in the volume, its swept box carved
+    let build = |id: &'static str, seq: Vec<P>, end: Option<f64>, sea: bool, space: &mut Space| -> Option<Line> {
+        if seq.len() < 2 {
+            return None;
+        }
+        let (pts, min_r) = plan_line(&seq, end);
+        let (y, kinds) = profile(land, ap, space, &pts, sea, &seq)?;
+        let path: Vec<[i64; 3]> = pts.iter().zip(&y).map(|(p, &h)| [p.0.round() as i64, h, p.1.round() as i64]).collect();
+        let owner = id.to_string();
+        for w in path.windows(2) {
+            let b = step_box((w[0][0] as f64, w[0][2] as f64), (w[1][0] as f64, w[1][2] as f64));
+            space.put(if id == "CL" { "rail" } else { "link" }, &owner, b, w[0][1].min(w[1][1]), w[0][1].max(w[1][1]) + CLEAR_CM);
+        }
+        let sea_end = sea.then(|| { let l = pts[pts.len() - 1]; ((l.0 as i64, l.1 as i64), (l.2.cos(), l.2.sin())) });
+        Some(Line { id, stations: seq, path, kinds, min_r: min_r as i64, sea: sea_end })
+    };
+    out.extend(build("CL", cl, None, false, space));
+    // the Island Link: Central to the coast, out over open sea away from the airport's approaches and the port; the best
+    // bearing whose line can be built
     if let Some(c) = &land.coast {
-        let best = (0..36).filter_map(|k| {
+        let mut ranked: Vec<(i64, usize, P, f64)> = (0..36).filter_map(|k| {
             let a = (k as f64 * 10.0).to_radians();
             // the coast along this bearing: the last dry point
             let mut at = None;
@@ -162,50 +181,36 @@ pub fn plan(land: &Land, hub: P, port: Option<(P, P)>, ap: &Airport, space: &mut
             let off_app = ((a - ad).sin()).abs();   // 1: square to the runway's line, 0: along an approach
             let off_port = port.map_or(1.0, |p| (d(q, p.0) as f64 / 50_000.0).min(1.0));
             let off_air = (d(q, ap.c) as f64 / 60_000.0).min(1.0);
-            Some(((off_app + off_port + off_air) * 1000.0) as i64).map(|s| (s, k, q, a))
-        }).max_by_key(|x| (x.0, -(x.1 as i64)));
-        if let Some((_, _, q, a)) = best {
-            // its Central platforms beside the plaza, IL_SET_CM out toward its bearing (the City Line's stand over
-            // the plaza itself, the metro's concourse under it)
+            Some((((off_app + off_port + off_air) * 1000.0) as i64, k, q, a))
+        }).collect();
+        ranked.sort_by_key(|x| (-x.0, x.1));
+        // its Central platforms beside the plaza, IL_SET_CM out toward its bearing (the City Line's stand over the plaza
+        // itself, the metro's concourse under it); its last station half a platform inland (the platform, and the line,
+        // end on the coast)
+        let il = ranked.iter().find_map(|&(_, _, q, a)| {
             let start = (hub.0 + (a.cos() * IL_SET_CM as f64) as i64, hub.1 + (a.sin() * IL_SET_CM as f64) as i64);
-            // (its last station half a platform inland: the platform, and the line, end on the coast)
             let last = (q.0 - (a.cos() * PLATFORM_CM / 2.0) as i64, q.1 - (a.sin() * PLATFORM_CM / 2.0) as i64);
-            il = Some((vec![start, last], a));
-        }
-    }
-    for (id, seq, end, sea) in [("CL", cl, None, false)].into_iter().chain(il.map(|(s, a)| ("IL", s, Some(a), true))) {
-        if seq.len() < 2 {
-            continue;
-        }
-        let (pts, min_r) = plan_line(&seq, end);
-        let Some((y, kinds)) = profile(land, ap, space, &pts, sea) else { continue };
-        let path: Vec<[i64; 3]> = pts.iter().zip(&y).map(|(p, &h)| [p.0.round() as i64, h, p.1.round() as i64]).collect();
-        let owner = id.to_string();
-        for w in path.windows(2) {
-            let b = step_box((w[0][0] as f64, w[0][2] as f64), (w[1][0] as f64, w[1][2] as f64));
-            space.put(if id == "CL" { "rail" } else { "link" }, &owner, b, w[0][1].min(w[1][1]), w[0][1].max(w[1][1]) + CLEAR_CM);
-        }
-        let sea_end = sea.then(|| { let l = pts[pts.len() - 1]; ((l.0 as i64, l.1 as i64), (l.2.cos(), l.2.sin())) });
-        out.push(Line { id, stations: seq, path, kinds, min_r: min_r as i64, sea: sea_end });
+            build("IL", vec![start, last], Some(a), true, space)
+        });
+        out.extend(il);
     }
     out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::City;
     use super::*;
 
-    fn commons() -> (Land, Airport, Vec<Line>) {
-        let c = City::plan("claude-hq").unwrap();
-        (c.land, c.airport, c.rail)
+    fn commons() -> (&'static Land, &'static Airport, &'static [Line]) {
+        let c = super::super::commons();
+        (&c.land, &c.airport, &c.rail)
     }
 
     #[test]
     fn both_lines_are_built_with_no_corner_and_within_their_grade() {
         let (_, _, r) = commons();
         assert_eq!(r.iter().map(|l| l.id).collect::<Vec<_>>(), vec!["CL", "IL"]);
-        for l in &r {
+        for l in r {
             assert!(l.min_r >= 12_000, "{}: a {} m curve", l.id, l.min_r / 100);
             for w in l.path.windows(3) {
                 let (h1, h2) = (((w[1][2] - w[0][2]) as f64).atan2((w[1][0] - w[0][0]) as f64), ((w[2][2] - w[1][2]) as f64).atan2((w[2][0] - w[1][0]) as f64));
@@ -225,7 +230,7 @@ mod tests {
     #[test]
     fn under_the_airport_never_over_it_and_the_link_ends_up_on_the_coast() {
         let (land, ap, r) = commons();
-        for l in &r {
+        for l in r {
             for (i, p) in l.path.iter().enumerate() {
                 if inside((p[0], p[2]), &ap.poly) {
                     assert_eq!(l.kinds[i], "tunnel", "{} passes the airport other than under it", l.id);

@@ -68,6 +68,9 @@ JS_ERRORS = ("Uncaught", "SyntaxError", "ReferenceError", "TypeError")
 # how long a page may take to load the world and draw 30 frames: the cold whole-map load is ~37 s on a
 # fast Mac under SwiftShader and slower on CI's shared macOS runners (the budgets below are the real checks)
 SMOKE_TIMEOUT = 180.0
+# cam=map waits on the page for up to 900 frames for every label kind (games/hq3d.js smokeFrame); a CI box under
+# SwiftShader draws a few frames a second, so give it the time those frames take rather than failing first
+MAP_TIMEOUT = 420.0
 # one DevTools call while the page's main thread is busy: a cold frame links ~90 shader programs at once under
 # SwiftShader (three.js blocks in WebGLProgram onFirstUse), ~12 s locally and past 30 s on CI's shared macOS runners,
 # so a Runtime.evaluate queued behind it waits that long. Not a hang: the poll's own deadline (SMOKE_TIMEOUT) still holds.
@@ -485,10 +488,10 @@ class Page:
             pass
 
 
-def parse_smoke(v):
+def parse_smoke(v, timeout=SMOKE_TIMEOUT):
     """'ok {json}' -> dict; raises with the page's message otherwise."""
     if not v:
-        raise RuntimeError("data-hq-smoke never appeared within %ds" % SMOKE_TIMEOUT)
+        raise RuntimeError("data-hq-smoke never appeared within %ds" % timeout)
     if not v.startswith("ok "):
         raise RuntimeError("data-hq-smoke: " + v[:500])
     return json.loads(v[3:])
@@ -570,15 +573,15 @@ def run_3d(chrome_exe, tmp, root, base, arena, world):
     try:
         results = {}
 
-        def one(name, url):
+        def one(name, url, timeout=SMOKE_TIMEOUT):
             pg = br.open(url)
             try:
-                v = pg.wait_smoke()
+                v = pg.wait_smoke(timeout)
                 errs = pg.errors()
                 if errs:
                     fail(f"{name}: the page threw:\n" + "\n".join(errs[:20]))
                 try:
-                    s = parse_smoke(v)
+                    s = parse_smoke(v, timeout)
                 except RuntimeError as e:
                     fail(f"{name}: {e}", "\n".join(pg.console()[-40:]))
                 results[name] = s
@@ -589,7 +592,7 @@ def run_3d(chrome_exe, tmp, root, base, arena, world):
         # 1. the map, first load: fetched from the Arena (200)
         # the whole map (span 2048) from the plaza: a highway (shields), the HQs and the
         # synthetic friend all in view; nearer the door the friend's tag loses to your HQ's
-        s = one("map", smoke_url(base, "map", sp["plaza"], span=2048))
+        s = one("map", smoke_url(base, "map", sp["plaza"], span=2048), MAP_TIMEOUT)
         lb = s.get("labels") or {}
         missing = [k for k in ("roads", "shields", "hqs", "peers") if not (lb.get(k) or 0) > 0]
         if missing:

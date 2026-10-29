@@ -85,6 +85,7 @@ pub mod terrain;
 pub mod transit;
 pub mod tunnels;
 pub mod validate;
+pub mod v5;
 pub mod water;
 pub mod zones;
 

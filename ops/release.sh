@@ -18,8 +18,8 @@
 # Options (environment):
 #   ARENA_BRANCH=main       branch to release
 #   ARENA_SKIP_CI=1         deploy even if GitHub CI has not passed for the commit
-#   ARENA_CI_WAIT=900       seconds to wait for CI that is still running (the backend
-#                           job alone takes about 9 minutes), polled every ARENA_CI_POLL=20
+#   ARENA_CI_WAIT=6000      seconds to wait for CI that is still running (the backend
+#                           job has taken up to 28 minutes), polled every ARENA_CI_POLL=20
 #   ARENA_GH_TOKEN=...      optional GitHub token (else GITHUB_TOKEN, else the gh CLI) to
 #                           read a failed job's log and name a known flaky check
 #   ARENA_SKIP_PULL=1       release the checkout as it is (used by the CI smoke test)
@@ -39,7 +39,7 @@ HISTORY="$BACKEND/.releases"          # one line per release, newest last (git-i
 BRANCH="${ARENA_BRANCH:-main}"
 KEEP="${ARENA_KEEP:-3}"
 BUILD_CACHE="${ARENA_BUILD_CACHE:-3gb}"
-CI_WAIT="${ARENA_CI_WAIT:-900}"
+CI_WAIT="${ARENA_CI_WAIT:-6000}"
 CI_POLL="${ARENA_CI_POLL:-20}"
 CI_BODY=""                            # the last check-runs answer (ci_passed)
 GH_REPO="${ARENA_GH_REPO:-RoString36222/claude-hq}"
@@ -199,7 +199,7 @@ cmd_deploy() {
     say "Checking GitHub CI for ${sha:0:7}"
     # A deploy right after a merge lands while CI is still running: wait for it
     # rather than fail (autodeploy would otherwise not retry for 5 minutes). The
-    # backend job takes about 9 minutes, so the hold is 15 by default.
+    # backend job has taken up to 28 minutes, so the hold is 100 by default.
     local waited=0 rc
     while :; do
       rc=0; ci_passed "$sha" || rc=$?

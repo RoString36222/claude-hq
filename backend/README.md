@@ -15,6 +15,13 @@ cargo test --locked && cargo clippy --locked --all-targets -- -D warnings
   byte copy of the browser's file under `games/`, checked by `tests/test_game_data_sync.py`.
 - `Dockerfile` builds from this folder alone; `docker-compose.yml` + `Caddyfile` run it
   on a VPS behind Caddy (`../deploy-vps.sh` first, then `../ops/release.sh deploy`).
+- Deploys come from CI's release (HQ 3.36). Once every check passes on `main`, CI pushes the image to
+  `ghcr.io/rostring36222/claude-hq-arena` and updates the GitHub release `arena-latest` with the config
+  (`docker-compose.yml`, `monitoring/`, `ops/`). `ops/release.sh deploy` downloads that config, checks its
+  sha256, pulls the image and starts it; nothing compiles on the host. The host keeps its own `.env`,
+  `Caddyfile`, `sounds/` and any `docker-compose.override.yml`. The image package must be public, or the
+  host must be logged in to ghcr.io (`docker login ghcr.io` with a token that has `read:packages`).
+  `ARENA_FROM=git ops/release.sh deploy` builds `main` on the host as before.
 
 ## Monitoring (Prometheus + Grafana)
 

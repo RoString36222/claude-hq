@@ -49,6 +49,13 @@ cd "$DIR"
 
 git fetch origin "$BRANCH" --quiet
 REMOTE=$(git rev-parse "origin/$BRANCH")
+# HQ 3.36: release.sh deploys CI's latest Arena release (ARENA_FROM=release, the default), so that
+# commit, not main's head, is what there is to release: main moves first and its release follows
+# once CI passes. No release to read (GitHub unreachable, or none yet): nothing to do this tick.
+if [ "${ARENA_FROM:-release}" = release ]; then
+  REMOTE=$("$DIR/ops/release.sh" latest 2>/dev/null | awk '{print $2}') || REMOTE=""
+  [ -n "$REMOTE" ] || exit 0
+fi
 # Compare with what is RELEASED (the -<sha7> end of ARENA_VERSION), not the checkout:
 # release.sh fast-forwards the checkout before its CI gate, so a push that arrives
 # while CI is still running used to move HEAD, fail the gate, and then look

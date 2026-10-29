@@ -112,6 +112,12 @@ for (const k of ['bike', 'single', 'twin', 'vtwin', 'boxer', 'four', 'v4', 'trip
 // the catalogue's vehicles on their voices
 const cat = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
 out.cat = {}; cat.vehicles.forEach(v => { out.cat[v.id] = [v.sound, P.voiceFor(v.spec, String(v['class']).split('.')[0] === 'bike' ? 'bike' : 'car')]; });
+// [3.36] every car on every exhaust drives the shaper no harder than its plain engine; the extra sub goes round it
+out.drive = [];
+cat.vehicles.filter(v => String(v['class']).split('.')[0] !== 'bike').forEach(v => {
+  const kind = v.sound || 'v8', real = P.engineFor ? P.engineFor(v.spec, 'car', kind) : null;
+  [null, 'sport', 'quad', 'titanium'].forEach(ex => { const d = E.shaperDrive(kind, E.engineProfile(kind, ex, real)); out.drive.push([v.id, ex, d.peak, d.peak0, d.subIn, d.subClean]); });
+});
 console.log(JSON.stringify(out));
 """
 
@@ -125,6 +131,14 @@ class EngineSound(unittest.TestCase):
                            input=SCRIPT, capture_output=True, text=True, timeout=30)
         assert r.returncode == 0, r.stderr
         cls.o = json.loads(r.stdout)
+
+    def test_tone_and_exhaust_never_drive_the_shaper_harder_than_the_engine(self):
+        self.assertGreater(len(self.o["drive"]), 30)
+        for vid, ex, peak, peak0, sub_in, sub_clean in self.o["drive"]:
+            self.assertLessEqual(peak, peak0 + 1e-9, (vid, ex))
+            self.assertGreaterEqual(sub_clean, 0, (vid, ex))
+        ko = [d for d in self.o["drive"] if d[0] == "koenigsegg-jesko-absolut"]
+        self.assertEqual(len(ko), 4)
 
     def test_firing_frequency(self):
         o = self.o

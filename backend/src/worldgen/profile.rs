@@ -112,6 +112,8 @@ pub struct Profile {
     pub water: bool,
     /// City Gen v4 (phase 2, @3): roads paved and drawn by the plan's classes (classes.rs).
     pub v4: bool,
+    /// City Gen v5 (generator version 4, docs/plans/city-gen-v5.md): the planned network.
+    pub v5: bool,
     /// Generator @3: the tiers a local road and an arterial are paved at, widest first
     /// (organic/widen.rs). Empty: every one at `paved_road_cm` / `paved_avenue_cm`.
     pub local_tiers: &'static [Tier],
@@ -208,6 +210,7 @@ pub fn city() -> Profile {
         river_cm: None,
         water: false,
         v4: false,
+        v5: false,
     }
 }
 

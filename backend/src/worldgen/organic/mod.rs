@@ -22,6 +22,7 @@ pub mod geom;
 pub mod hq;
 pub mod graph;
 pub mod lots;
+pub mod planned;
 pub mod streets;
 pub mod tensor;
 pub mod trams;
@@ -101,7 +102,8 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
             pools.push((first, n));
         }
     }
-    let mut chains = streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)?;
+    // City Gen v5 (generator version 4): the planned network (planned.rs) instead of the grown one
+    let mut chains = if p.v5 { planned::network(&mut g, &ctx, &mut grow, &mut streets, art_names, local_names)? } else { streets::arterials(&mut g, &ctx, &mut grow, &mut streets, art_names)? };
     // the dock's quay: a street to the bank behind the dock from the nearest arterial,
     // else (once the local streets have grown) from the nearest street; none if a street
     // already ends on the bank there (within 15 m)
@@ -119,7 +121,9 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
         g.edges.iter().any(|e| e.alive && e.kind != Kind::Water && [e.a, e.b].iter().any(|&n| dist2(g.nodes[n as usize], q) <= 1_500 * 1_500))
     };
     let quay = quay.filter(|&(to, road)| !laid(&g, to) && !g.spur(to, 12_000, streets::MIN_CM, Kind::Local, road));
-    streets::locals(&mut g, &ctx, &mut grow, &chains, &mut streets, local_names);
+    if !p.v5 {
+        streets::locals(&mut g, &ctx, &mut grow, &chains, &mut streets, local_names);
+    }
     // @3: a pool no street reaches gets one, to its shore nearest the plaza (else its
     // wall would float inside a block)
     for &(first, n) in &pools {

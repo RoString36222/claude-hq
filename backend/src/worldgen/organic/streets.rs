@@ -69,7 +69,7 @@ impl Ctx<'_> {
     }
 
     /// Inside the city, on dry land, off the river's bank.
-    fn open(&self, q: P) -> bool {
+    pub(super) fn open(&self, q: P) -> bool {
         len(q) <= self.p.city_r_cm && !self.wet(q) && !self.river.is_some_and(|r| r.zone(q))
     }
 }

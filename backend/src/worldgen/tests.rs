@@ -49,7 +49,7 @@ fn other_seeds_are_other_worlds() {
 #[test]
 fn world_ids_are_checked() {
     assert!(parse_id("claude-hq@1").is_ok() && parse_id("claude-hq@2").is_ok());
-    for bad in ["claude-hq", "@1", "claude-hq@4", "claude-hq@x", "has space@1", "a/b@1", &format!("{}@1", "x".repeat(65))] {
+    for bad in ["claude-hq", "@1", "claude-hq@5", "claude-hq@x", "has space@1", "a/b@1", &format!("{}@1", "x".repeat(65))] {
         assert!(parse_id(bad).is_err(), "{bad} should be refused");
     }
 }

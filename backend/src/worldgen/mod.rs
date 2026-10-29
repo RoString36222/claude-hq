@@ -96,6 +96,8 @@ mod tests;
 mod v3_tests;
 #[cfg(test)]
 mod v4_tests;
+#[cfg(test)]
+mod v5_tests;
 
 use serde::Serialize;
 
@@ -105,8 +107,9 @@ pub use terrain::Edit;
 /// world, and keep the old behaviour reachable: things are stored against a
 /// world id (lots, maps, scores), so `claude-hq@1` must keep generating the
 /// same world forever. 1 is the grid city, 2 the organic one, 3 the organic one with
-/// its water and lines (HQ 3.15).
-pub const VERSION: [u32; 3] = [1, 2, 3];
+/// its water and lines (HQ 3.15); 4 City Gen v5, the planned city (docs/plans/city-gen-v5.md), built
+/// alongside the live @3 until it replaces it.
+pub const VERSION: [u32; 4] = [1, 2, 3, 4];
 
 /// The profile a world id's seed and version select: the grid city at @1; at @2
 /// a personal island for a `user:` seed, else the Commons; at @3 the same with water.
@@ -116,8 +119,26 @@ pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
         _ if seed.starts_with("user:") => profile::island(),
         _ => profile::commons(),
     };
-    if version >= 3 { profile::with_water(p) } else { p }
+    let p = if version >= 3 { profile::with_water(p) } else { p };
+    // ARENA_WORLDGEN=v5 builds the @3 ids with v5 too: a local Arena, so today's client draws the planned city
+    // (never set on the live host)
+    let v5 = version >= 4 || (version == 3 && std::env::var("ARENA_WORLDGEN").is_ok_and(|v| v == "v5"));
+    // v5: the city fills its island, to V5_SHORE_CM inside the coast (@3's 480 m town left most of the Commons' 1 km
+    // island to farmland and wild grass)
+    let city_r_cm = match (v5, p.coast_r_cm) { (true, Some(c)) => (c - V5_SHORE_CM).max(p.city_r_cm), _ => p.city_r_cm };
+    if !v5 {
+        return p;
+    }
+    // and stands on its plateau (the land fell to the sea's level past @3's 400 m one), the expressway ring a coastal
+    // beltway just outside it (inside, every grid street would cross it at grade)
+    let ring_r_cm = if p.ring_r_cm > 0 { city_r_cm + V5_BELT_CM } else { 0 };
+    profile::Profile { v5, city_r_cm, core_r_cm: city_r_cm, ring_r_cm, ..p }
 }
+
+/// City Gen v5: how far inside the coast (cm) the city stops: the shore road, the beach, the piers; and how far past
+/// the city's edge (cm) the expressway ring runs.
+pub const V5_SHORE_CM: i64 = 15_000;
+pub const V5_BELT_CM: i64 = 5_000;
 
 /// Where world `id`'s river meets the sea, in the world's own frame: [x, z] cm of the
 /// mouth (the centre line's first point, on the coast) and [dx, dz], the way out to

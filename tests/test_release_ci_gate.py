@@ -101,9 +101,9 @@ echo "$line"
         self.assertNotIn("Building", out)
 
     def test_the_default_hold_outlasts_the_backend_job(self):
-        # the backend job takes about 9 minutes: the hold is 15 by default, polled every 20 s
+        # the backend job has taken up to 28 minutes: the hold is 100 by default, polled every 20 s
         out = self.deploy(checks(backend="in_progress"), checks(backend="success"), wait=None)
-        self.assertIn("holding for CI, up to 900s", out)
+        self.assertIn("holding for CI, up to 6000s", out)
         self.assertIn("CI passed", out)
 
     def test_a_long_running_ci_is_polled_until_the_wait(self):

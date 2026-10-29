@@ -213,12 +213,11 @@ pub fn build(land: &Land, hub: P, cells: &[(P, Use)], space: &mut Space) -> Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::super::City;
     use super::*;
 
-    fn commons() -> (Land, Space, Airport, LandUse) {
-        let c = City::plan("claude-hq").unwrap();
-        (c.land, c.space, c.airport, c.landuse)
+    fn commons() -> (&'static Land, &'static Space, &'static Airport, &'static LandUse) {
+        let c = super::super::commons();
+        (&c.land, &c.space, &c.airport, &c.landuse)
     }
 
     #[test]
@@ -271,7 +270,7 @@ mod show {
     #[test]
     #[ignore]
     fn show_the_commons_land_use() {
-        let c = super::super::City::plan("claude-hq").unwrap();
+        let c = super::super::commons();
         let (land, ap, lu) = (&c.land, &c.airport, &c.landuse);
         let j = serde_json::json!({
             "coast": land.coast.as_ref().map(|c| c.poly.clone()),

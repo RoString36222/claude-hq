@@ -42,10 +42,26 @@ impl City {
         let cells = landuse::zone(&land, &airport, hub, port);
         let centres = roads::centres(hub, port, &airport, &rail, &cells);
         let arterials = roads::arterials(&land, &mut space, &centres);
-        let buildings = landuse::build(&land, hub, &cells, &mut space);
+        let mut buildings = landuse::build(&land, hub, &cells, &mut space);
+        let mut streets = roads::locals(&land, &mut space, hub, &buildings, &arterials);
+        // every building reachable: a street network that could not be joined to the arterials goes, with the buildings
+        // only it serves (their space stays empty)
+        let comps = roads::components(&arterials, &streets);
+        let main = comps.first().copied();
+        let mut k = arterials.len();
+        streets.retain(|_| { k += 1; comps.get(k - 1).copied() == main });
+        let near = |q: P| arterials.iter().chain(&streets).any(|r| r.points.iter().any(|p| (p[0] - q.0).pow(2) + (p[2] - q.1).pow(2) <= 5_000i64.pow(2)));
+        buildings.retain(|b| near(b.c));
         let landuse = landuse::LandUse { hub, port, cells, buildings };
-        let streets = roads::locals(&land, &mut space, hub, &landuse.buildings, &arterials);
         let metro = metro::plan(&land, &landuse, &airport, &mut space);
         Ok(City { land, space, airport, hub, port, rail, centres, arterials, streets, landuse, metro })
     }
+}
+
+/// The Commons' plan, made once for every test that reads it (planning it in each, in parallel, slows the suite's
+/// timed tests).
+#[cfg(test)]
+pub fn commons() -> &'static City {
+    static C: std::sync::OnceLock<City> = std::sync::OnceLock::new();
+    C.get_or_init(|| City::plan("claude-hq").expect("the Commons plans"))
 }

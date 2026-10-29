@@ -40,6 +40,8 @@ function inPoly(P, x, z){
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a <= -Math.PI) a += 2*Math.PI; return a; }
 
 /* ---------- the layout (a port of tools/airfield_fixture.js; offsets relative to RU exactly as there) ---------- */
+// RU_PLAN: a planned runway's distance (m) from the terminal (backend v5/airport.rs TERMINAL_CM)
+var RU_PLAN = 317;
 var CLEAR = 6, SEA = -4, LEN = 1600, RW_W = 45, SH = 7.5, PAD = 60, GATE_FLOOR = 5.0, R_TURN = 40, R_LEAD = 30, R_EXIT = 300, R_JOIN = 150;
 
 function arc(c, r, a0, a1, out){
@@ -103,17 +105,22 @@ function build(W, WD, site, fl){
     var y = Math.max(Math.ceil((hi + 0.3)*10)/10, SEA + 1.5);
     return y <= ySite + 0.5 ? y : null;
   }
+  // City Gen v5 (@4): the runway is planned (site.runway, its length in cm); the terminal stands RU_PLAN from it (the
+  // site's x, z), the airfield laid to it: no search, no exits off a short runway (the far-end link), the service
+  // buildings drawn in along it, the touchdown and its aids scaled to its length
+  var rw = site.runway && +site.runway.len > 0 ? site.runway : null, RL = rw ? (+rw.len)/100 : LEN, KV = RL/LEN;
   var RU = null;
-  for(var ru = 355; ru <= 455 && RU == null; ru += 10) if(fits(ru) != null) RU = ru;
+  if(rw) RU = RU_PLAN;
+  else for(var ru = 355; ru <= 455 && RU == null; ru += 10) if(fits(ru) != null) RU = ru;
   if(RU == null) return {ok: false, why: "no runway fits"};
 
-  var HALF = LEN/2, UA = RU - 110, UB = RU - 152, U_HOLD = RU - 50, U_HOLDPT = U_HOLD - 19, U_STAND = RU - 193;
+  var HALF = RL/2, UA = RU - 110, UB = RU - 152, U_HOLD = RU - 50, U_HOLDPT = U_HOLD - 19, U_STAND = RU - 193;
   var U_CONC0 = RU - 241, U_CONC1 = RU - 223, U_SVC = RU - 218, U_LANE_N = RU - 175, U_LANE_S = RU - 168.5, V_LINK = HALF + 15;
   // design lines (straight centrelines), frame
   var lines = {RWY: [[RU, -HALF], [RU, HALF]], A: [[UA, -V_LINK], [UA, V_LINK]], B: [[UB, -V_LINK], [UB, V_LINK]],
                A1: [[UB, -V_LINK], [RU, -V_LINK]], A6: [[UB, V_LINK], [RU, V_LINK]]};
   var tanE = Math.tan(30*Math.PI/180), dvE = (RU - UA)/tanE;
-  var exitDefs = [{id: "A4", end: "36", along: 1000}, {id: "A5", end: "36", along: 1250}, {id: "A3", end: "18", along: 1000}, {id: "A2", end: "18", along: 1250}];
+  var exitDefs = rw ? [] : [{id: "A4", end: "36", along: 1000}, {id: "A5", end: "36", along: 1250}, {id: "A3", end: "18", along: 1000}, {id: "A2", end: "18", along: 1250}];
   exitDefs.forEach(function(e){ var sg = e.end === "36" ? 1 : -1, v0 = sg*(-HALF + e.along); lines[e.id] = [[RU, v0], [UA, v0 + sg*dvE]]; e.v0 = v0; e.sg = sg; });
   // turn curves
   var curves = {};
@@ -145,20 +152,22 @@ function build(W, WD, site, fl){
     var sg = id === "36" ? 1 : -1, thr = [RU, -sg*HALF], left = id === "36" ? [-1, 0] : [1, 0];
     function at(a, b){ return [thr[0] + left[0]*b, thr[1] + sg*a]; }
     function wpa(a, b){ var p = at(a, b); return wp(p[0], p[1]); }
-    var papi = [0, 1, 2, 3].map(function(i){ return wpa(300, RW_W/2 + 15 + 9*i); });
+    var papi = [0, 1, 2, 3].map(function(i){ return wpa(300*KV, RW_W/2 + 15 + 9*i); });
     var appr = []; for(var a = 30; a <= 420; a += 30) appr.push(wpa(-a, 0));
-    return {id: id, thr: wp(thr[0], thr[1]), dir: wd(0, sg), left: wd(left[0], left[1]), yaw: yawOf(wd(0, sg)), len: LEN,
+    return {id: id, thr: wp(thr[0], thr[1]), dir: wd(0, sg), left: wd(left[0], left[1]), yaw: yawOf(wd(0, sg)), len: RL,
       lineup: wp(RU, -sg*(V_LINK - R_TURN)), hold: wp(U_HOLDPT, -sg*V_LINK), holdLine: [wp(U_HOLD, -sg*V_LINK - 12.5), wp(U_HOLD, -sg*V_LINK + 12.5)],
-      touchdown: 330, aim: 310,
+      touchdown: r3(330*KV), aim: r3(310*KV),
       exits: exitDefs.filter(function(e){ return e.end === id; }).map(function(e){ return {id: e.id, along: e.along}; })
-        .concat([{id: id === "36" ? "A6" : "A1", along: LEN + 15}]),
-      papi: papi, glideslope: wpa(320, -(RW_W/2 + 37.5)), localizer: wp(RU, sg*(HALF + 100)), windsock: wpa(150, RW_W/2 + 40),
-      approach: appr, crossbar: 300, pad: [wp(RU, -sg*HALF), wp(RU, -sg*(HALF + PAD))]};
+        .concat([{id: id === "36" ? "A6" : "A1", along: RL + 15}]),
+      papi: papi, glideslope: wpa(320*KV, -(RW_W/2 + 37.5)), localizer: wp(RU, sg*(HALF + 100)), windsock: wpa(150*KV, RW_W/2 + 40),
+      approach: appr, crossbar: r3(300*KV), pad: [wp(RU, -sg*HALF), wp(RU, -sg*(HALF + PAD))]};
   }
+  // (along a planned runway the service row is drawn in to the strip's ends, past the apron's 245 m)
+  var KS = rw ? Math.min(1, (HALF + PAD - 10)/480) : 1;
   var air = {
     apron: [rect(U_CONC0, RU - 129, -150, 150), rect(RU - 195, RU - 129, -245, -150), rect(RU - 180, RU - 129, 150, 245)],
     main: [rect(RU - 170, RU + 70, -HALF - PAD, HALF + PAD)],
-    service: {fuel: rect(RU - 215, RU - 170, -480, -360), fire: rect(RU - 215, RU - 170, -340, -270), hangars: rect(RU - 215, RU - 170, 320, 470), depot: rect(RU - 180, RU - 170, 150, 245)}
+    service: {fuel: rect(RU - 215, RU - 170, -480*KS, -360*KS), fire: rect(RU - 215, RU - 170, -340*KS, -270*KS), hangars: rect(RU - 215, RU - 170, 320*KS, 470*KS), depot: rect(RU - 180, RU - 170, 150, 245)}
   };
   function sampleMax(poly){
     var xs = poly.map(function(p){ return p[0]; }), zs = poly.map(function(p){ return p[1]; }), hi = -1e9;
@@ -174,7 +183,7 @@ function build(W, WD, site, fl){
   var tw = wp(95, -100), asr = wp(110, 110);
   return {
     v: 1, ok: true, world: W.id, site: site.id, frame: {o: O, B: wd(1, 0), T: wd(0, 1), RU: RU}, y: Y, ySite: ySite, sea: SEA,
-    runway: {c: wp(RU, 0), dir: wd(0, 1), len: LEN, w: RW_W, shoulder: SH, pad: PAD, ends: [endOf("36"), endOf("18")]},
+    runway: {c: wp(RU, 0), dir: wd(0, 1), len: RL, w: RW_W, shoulder: SH, pad: PAD, ends: [endOf("36"), endOf("18")]},
     lines: mapObj(lines, W2),
     widths: {RWY: RW_W, A: 18, B: 18, A1: 18, A6: 18, A2: 18, A3: 18, A4: 18, A5: 18, shoulder: 3.5},
     curves: mapObj(curves, W2),

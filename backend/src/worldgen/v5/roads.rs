@@ -12,12 +12,12 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, BTreeMap};
 
-use super::airport::{Airport, APRON_W_CM, STRIP_W_CM};
+use super::airport::Airport;
 use super::land::Land;
 use super::landuse::Use;
 use super::rail;
 use super::space::Space;
-use super::super::organic::geom::P;
+use super::super::organic::geom::{inside, P};
 
 pub const GRID_CM: i64 = 2_000;
 pub const MERGE_CM: i64 = 12_000;
@@ -62,10 +62,10 @@ pub fn centres(hub: P, port: Option<(P, P)>, ap: &Airport, rails: &[rail::Line],
         out.push((q.0 - f.0.signum() * 6_000, q.1 - f.1.signum() * 6_000));
     }
     // the terminal's landside: past the apron, off the airport
-    let w = ap.side * (STRIP_W_CM / 2 + APRON_W_CM + 4_000);
-    out.push((ap.c.0 - ap.dir.1 * w / 1000, ap.c.1 + ap.dir.0 * w / 1000));
+    out.push(super::airport::landside(ap.c, ap.dir, ap.side));
     for l in rails {
-        out.extend(l.stations.iter().copied());
+        // (the terminal's station is reached through the terminal: its landside is the centre)
+        out.extend(l.stations.iter().copied().filter(|&q| !super::super::organic::geom::inside(q, &ap.poly)));
     }
     let bearing = |q: P| ((q.1 - hub.1) as f64).atan2((q.0 - hub.0) as f64);
     for (u, groups) in [(Use::Home, 4usize), (Use::Industry, 2), (Use::Office, 1)] {
@@ -122,6 +122,8 @@ struct Grid {
     /// The cells a laid arterial runs through (a later route rides on them), and those beside them.
     road: Vec<bool>,
     beside: Vec<bool>,
+    /// Over the river (a bridge): a road crosses it straight, and dearly.
+    wet: Vec<bool>,
 }
 
 impl Grid {
@@ -129,11 +131,22 @@ impl Grid {
         let n = (land.p.city_r_cm + 10_000) / GRID_CM;
         let side = 2 * n + 1;
         let mut free = vec![false; (side * side) as usize];
+        let mut wet = vec![false; (side * side) as usize];
         for i in -n..=n {
             for j in -n..=n {
                 let q = (i * GRID_CM, j * GRID_CM);
-                if q.0 * q.0 + q.1 * q.1 > (land.p.city_r_cm + 5_000).pow(2) || !land.dry(q) {
+                if q.0 * q.0 + q.1 * q.1 > (land.p.city_r_cm + 5_000).pow(2) {
                     continue;
+                }
+                // the river's banks and water are bridged (inside the coast, off the lakes, canals and marina)
+                let river = land.river.as_ref().is_some_and(|r| r.zone(q))
+                    && land.coast.as_ref().is_none_or(|c| inside(q, &c.poly))
+                    && !land.water.iter().any(|w| inside(q, w));
+                if !land.dry(q) && !river {
+                    continue;
+                }
+                if river {
+                    wet[((i + n) * side + (j + n)) as usize] = true;
                 }
                 let g = land.height(q);
                 let h = GRID_CM / 2;
@@ -149,7 +162,7 @@ impl Grid {
             (-1..=1).all(|a| (-1..=1).all(|b| at(i + a, j + b)))
         }).collect();
         let m = roomy.len();
-        Grid { n, free: roomy, road: vec![false; m], beside: vec![false; m] }
+        Grid { n, free: roomy, road: vec![false; m], beside: vec![false; m], wet }
     }
     fn idx(&self, c: (i64, i64)) -> usize {
         let side = 2 * self.n + 1;
@@ -230,7 +243,11 @@ fn route(land: &Land, grid: &Grid, a: (i64, i64), b: (i64, i64)) -> Option<Vec<(
             let slope = (ht(nc) - ht(c)).abs() * 1000 / step;
             // riding a laid arterial is cheap; running alongside one (a parallel road) dear: routes merge into trunks
             let k2 = grid.idx(nc);
-            let ride = if grid.road[k2] { step * SHARE_PM / 1000 } else if grid.beside[k2] { step * BESIDE_PM / 1000 } else { step };
+            // a bridge runs straight: no turn on it or onto it
+            if t != 0 && (grid.wet[k2] || grid.wet[grid.idx(c)]) {
+                continue;
+            }
+            let ride = if grid.wet[k2] { step * BRIDGE_PM / 1000 } else if grid.road[k2] { step * SHARE_PM / 1000 } else if grid.beside[k2] { step * BESIDE_PM / 1000 } else { step };
             let ng = g + ride + step * slope / 1000 * SLOPE_COST_PM / 10 + if t != 0 { TURN_COST } else { 0 };
             if best.get(&key(nc, nk, nr)).is_none_or(|&x| ng < x) {
                 best.insert(key(nc, nk, nr), ng);
@@ -357,11 +374,10 @@ pub fn arterials(land: &Land, space: &mut Space, cs: &[P]) -> Vec<Road> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::City;
 
     #[test]
     fn the_arterials_join_every_centre_and_never_turn_sharply() {
-        let c = City::plan("claude-hq").unwrap();
+        let c = super::super::commons();
         let n = c.centres.len();
         assert!(n >= 6, "{n} centres");
         // every centre joined to Central through the arterials
@@ -372,7 +388,8 @@ mod tests {
             parent[a] = b;
         }
         let root = find(&mut parent, 0);
-        assert!((0..n).all(|i| find(&mut parent, i) == root), "every centre reached");
+        let lost: Vec<(i64, i64)> = (0..n).filter(|&i| find(&mut parent, i) != root).map(|i| c.centres[i]).collect();
+        assert!(lost.is_empty(), "every centre reached: not {lost:?} (airport landside {:?})", super::super::airport::landside(c.airport.c, c.airport.dir, c.airport.side));
         for r in &c.arterials {
             assert!(!r.fallback, "arterial {} - {}: no curve fitted", r.from, r.to);
             assert!(r.min_r >= 3_000.0, "arterial {} - {}: a {:.0} m curve", r.from, r.to, r.min_r / 100.0);
@@ -381,7 +398,7 @@ mod tests {
 
     #[test]
     fn no_building_stands_on_an_arterial() {
-        let c = City::plan("claude-hq").unwrap();
+        let c = super::super::commons();
         for b in &c.landuse.buildings {
             let s = &c.space.solids[b.solid as usize];
             assert!(c.space.solids.iter().filter(|o| o.kind == "road").all(|o| !(o.y0 < s.y1 && s.y0 < o.y1 && super::super::space::near(&o.poly, &s.poly, 1))), "building {}", b.id);
@@ -392,6 +409,8 @@ mod tests {
 /// A local street's half width (cm).
 pub const LOCAL_HW_CM: i64 = 450;
 /// A street within this (cm) of another's end or line joins it.
+/// A bridge's cost over the same run on land (per mille).
+const BRIDGE_PM: i64 = 4_000;
 pub const JOIN_CM: i64 = 1_500;
 
 /// The plots each use's buildings stand on (landuse.rs build()): their size along x and z (cm).
@@ -446,7 +465,7 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
                     // the way must be free (of buildings, rail, the airport; other roads may cross it)
                     let ok = pts.windows(2).all(|w| {
                         let g = land.height((w[0].0 as i64, w[0].1 as i64));
-                        land.dry((w[0].0 as i64, w[0].1 as i64)) && space.blocker_but(&box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM, 0, &["road"]).is_none()
+                        land.dry((w[0].0 as i64, w[0].1 as i64)) && space.blocker_but(&box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM, 100, &["road"]).is_none()
                     });
                     if ok {
                         for w in pts.windows(2) {
@@ -468,7 +487,7 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
         let cells: Vec<(i64, i64)> = r.points.iter().map(|p| grid.cell((p[0], p[2]))).collect();
         grid.lay(&cells);
     }
-    for pass in 0..3 {
+    for pass in 0..6 {
     let comps = components(arterials, &out);
     let art_c = comps.first().copied();
     let mut seen = std::collections::BTreeSet::new();
@@ -480,16 +499,19 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
         }
         let p0 = if pass % 2 == 0 { r.points[0] } else { r.points[r.points.len() - 1] };
         let from = (p0[0], p0[2]);
-        let to = arterials.iter().flat_map(|a| a.points.iter()).min_by_key(|p| d(from, (p[0], p[2]))).map(|p| (p[0], p[2]));
+        // the nearest point of the main network (the arterials and every street already joined to them)
+        let main = arterials.iter().chain(out.iter().enumerate().filter(|(j, _)| comps.get(arterials.len() + j).copied() == art_c).map(|(_, r)| r));
+        let to = main.flat_map(|a| a.points.iter()).min_by_key(|p| d(from, (p[0], p[2]))).map(|p| (p[0], p[2]));
         let (Some(to), Some(a), _) = (to, grid.snap(from), ()) else { continue };
         let Some(b) = grid.snap(to) else { continue };
         let Some(cells) = route(land, &grid, a, b) else { continue };
-        let raw: Vec<(f64, f64)> = std::iter::once((from.0 as f64, from.1 as f64)).chain(cells.iter().map(|c| ((c.0 * GRID_CM) as f64, (c.1 * GRID_CM) as f64))).collect();
+        // (from the street's end, through the cells, onto the point it joins: the snapped cells may stand off both)
+        let raw: Vec<(f64, f64)> = std::iter::once((from.0 as f64, from.1 as f64)).chain(cells.iter().map(|c| ((c.0 * GRID_CM) as f64, (c.1 * GRID_CM) as f64))).chain(std::iter::once((to.0 as f64, to.1 as f64))).collect();
         let (pts, min_r) = round(&simplify(&raw, SIMPLIFY_CM), R_MIN_CM);
         let points = pts.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
         out.push(Road { class: "link", from: usize::MAX, to: usize::MAX, points, min_r, fallback: false });
     }
-    if out.len() == before || pass == 2 {
+    if (out.len() == before && pass > 0) || pass == 5 {
         break;
     }
     }
@@ -526,18 +548,18 @@ pub fn components(arterials: &[Road], rest: &[Road]) -> Vec<usize> {
 
 #[cfg(test)]
 mod network_tests {
-    use super::super::City;
     use super::*;
 
     #[test]
     fn every_building_fronts_a_street_and_every_street_is_reachable() {
-        let c = City::plan("claude-hq").unwrap();
+        let c = super::super::commons();
         let all: Vec<&Road> = c.arterials.iter().chain(&c.streets).collect();
         // one network
         let comps = components(&c.arterials, &c.streets);
         let main = comps[0];
         let joined = comps.iter().filter(|&&x| x == main).count();
-        assert!(joined * 100 >= comps.len() * 98, "{joined} of {} roads in one network", comps.len());
+        let lost: Vec<(usize, (i64, i64), (i64, i64))> = comps.iter().enumerate().filter(|(_, &x)| x != main).map(|(k, &x)| { let r = all[k]; (x, (r.points[0][0] / 100, r.points[0][2] / 100), (r.points[r.points.len() - 1][0] / 100, r.points[r.points.len() - 1][2] / 100)) }).collect();
+        assert_eq!(joined, comps.len(), "roads off the network: {lost:?}");
         // every building within 30 m of a road (its door on a street)
         let near = |q: P| all.iter().any(|r| r.points.iter().any(|p| d(q, (p[0], p[2])) <= 3_000 + 2_000));
         let far: Vec<u32> = c.landuse.buildings.iter().filter(|b| !near(b.c)).map(|b| b.id).collect();

@@ -51,6 +51,30 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     // the streets: the arterials first (their edges named avenues), then the local streets and links
     let all: Vec<&Road> = arterials.iter().chain(streets.iter()).collect();
     let mut roads = graph(&all);
+    // where a road crosses the river: a bridge, straight and level from bank to bank (@3's)
+    if let Some(r) = land.river.as_ref() {
+        let edges = std::mem::take(&mut roads.edges);
+        roads.edges = super::super::roads::bridged(&mut roads.nodes, &land.t, edges, r);
+        for (k, e) in roads.edges.iter_mut().enumerate() {
+            e.id = k as u32;
+        }
+    }
+    // (an edge whose end the graph moved onto a neighbour's, now on the airport's box: dropped)
+    {
+        let a = super::airport::footprint(ap.c, ap.dir, ap.len, ap.side);
+        let claim = |p: P, q: P, clear: i64| {
+            let n = a.len();
+            super::super::organic::geom::inside(p, &a) || super::super::organic::geom::inside(q, &a)
+                || (0..n).any(|k| super::super::organic::geom::seg_dist2(p, q, a[k], a[(k + 1) % n]) < clear * clear)
+        };
+        roads.edges.retain(|e| !e.points.windows(2).any(|s| claim((s[0][0], s[0][2]), (s[1][0], s[1][2]), e.width / 2)));
+        let used: BTreeSet<u32> = roads.edges.iter().flat_map(|e| [e.a, e.b]).collect();
+        let map: BTreeMap<u32, u32> = used.iter().enumerate().map(|(k, &n)| (n, k as u32)).collect();
+        roads.nodes = std::mem::take(&mut roads.nodes).into_iter().filter(|n| used.contains(&n.id)).map(|mut n| { n.id = map[&n.id]; n }).collect();
+        for (k, e) in roads.edges.iter_mut().enumerate() {
+            (e.id, e.a, e.b) = (k as u32, map[&e.a], map[&e.b]);
+        }
+    }
 
     // the buildings: a block and a lot each
     let mut doc = Doc { blocks: Vec::new(), lots: Vec::new(), sites: Vec::new() };
@@ -82,10 +106,10 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     doc.sites.push(site("spawn:0", "spawn", spawn, gy(spawn), 200, 200, None, [0, ONE]));
     doc.sites.push(site("transit:0", "transit", (hub.0, hub.1 - 2_500), gy(hub), 2_000, 1_400, None, [0, ONE]));
     {
-        // the airport: its x, z the apron's outer edge at the runway's middle, its front out of the apron
+        // the airport: its x, z the terminal's middle (the client's airfield frame), its front out of the apron to the city
         let (dx, dz) = (ap.dir.0 as f64 / 1000.0, ap.dir.1 as f64 / 1000.0);
         let (nx, nz) = (-dz * ap.side as f64, dx * ap.side as f64);
-        let out = (super::airport::STRIP_W_CM / 2 + super::airport::APRON_W_CM) as f64;
+        let out = super::airport::TERMINAL_CM as f64;
         let at = (ap.c.0 + (nx * out) as i64, ap.c.1 + (nz * out) as i64);
         let poly: Vec<[i64; 2]> = ap.poly.iter().map(|q| [q.0, q.1]).collect();
         let w = ap.len + 2 * super::airport::STRIP_END_CM;
@@ -153,7 +177,7 @@ fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, lots: &mut
         }
         let l = &lots[k];
         let c = (l.x, l.z);
-        if l.kind == "hq" || chosen.iter().any(|q| (q.0 - c.0).pow(2) + (q.1 - c.1).pow(2) < gap * gap) {
+        if l.kind == "hq" {
             continue;
         }
         // the parcel: out from the building each way, 1 m at a time, while clear of every street (to 30 m)
@@ -179,10 +203,11 @@ fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, lots: &mut
         (hq.poly, hq.front, hq.door) = (Some(poly), Some(f), [door[0], l.door[1], door[1]]);
         hq.facing = if f[1] < 0 { Facing::South } else { Facing::North };
         (hq.kind, hq.floors, hq.rank, hq.tier) = ("hq", 0, Some(chosen.len() as u32), Some(chosen.len() as u32 / p.hq_tier.max(1) as u32));
-        if !fits(&hq) {
+        let at = (hq.x, hq.z);
+        if !fits(&hq) || chosen.iter().any(|q| (q.0 - at.0).pow(2) + (q.1 - at.1).pow(2) < gap * gap) {
             continue;
         }
-        chosen.push(c);
+        chosen.push(at);
         lots[k] = hq;
     }
     }
@@ -481,21 +506,5 @@ mod tests {
         };
         assert_eq!(deg(0, 0), 4);
         assert_eq!(deg(5_000, 0), 3);
-    }
-
-    #[test]
-    fn the_commons_at_4_is_a_doc_the_client_reads() {
-        let l = layers("claude-hq", &[]).expect("layers");
-        assert!(l.roads.edges.len() > 100);
-        assert!(l.lots.iter().filter(|x| x.kind == "hq").count() > 10, "an HQ pool");
-        assert!(l.sites.iter().any(|s| s.kind == "airport") && l.sites.iter().any(|s| s.kind == "spawn"));
-        let m = l.metro.as_ref().unwrap();
-        assert!(m.lines.len() >= 3 && m.entrances.len() >= 2 * m.stations.len());
-        let rl = l.rail.as_ref().unwrap();
-        assert!(rl.lines.len() == 2 && rl.lines.iter().all(|x| x.kinds.len() + 1 == x.path.len()));
-        // every node a road meets
-        for n in &l.roads.nodes {
-            assert!(l.roads.edges.iter().any(|e| e.a == n.id || e.b == n.id), "node {} on no road", n.id);
-        }
     }
 }

@@ -11,7 +11,7 @@
 //!   4. each line at its own depth, `LEVEL_GAP_CM` below the one before (lines cross without meeting); its tunnels,
 //!      platforms and a concourse over each station carved in the volume, and two entrances on free ground beside it
 //!      (toward each end of its platform, else anywhere round it out to 150 m).
-use super::airport::{Airport, APRON_W_CM, STRIP_W_CM};
+use super::airport::{Airport, TERMINAL_CM};
 use super::align::{connect, Pose};
 use super::land::Land;
 use super::landuse::{LandUse, Use};
@@ -96,7 +96,7 @@ pub fn destinations(lu: &LandUse, ap: &Airport) -> Vec<P> {
         }
     }
     // the terminal: the apron's middle
-    let w = ap.side * (STRIP_W_CM / 2 + APRON_W_CM / 2);
+    let w = ap.side * (TERMINAL_CM);
     out.push((ap.c.0 - ap.dir.1 * w / 1000, ap.c.1 + ap.dir.0 * w / 1000));
     let mut merged: Vec<P> = Vec::new();
     for q in out {
@@ -198,6 +198,8 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
                  (c.0 + (ux + vx) as i64, c.1 + (uz + vz) as i64), (c.0 + (-ux + vx) as i64, c.1 + (-uz + vz) as i64)]
         };
         let _ = space.carve("concourse", "metro", rect(st.c, 3_000.0, 1_000.0), g - 800, g - 250, 0);
+        // (the terminal's station: its ways up are inside the terminal, in the airport's box)
+        let ignore: &[&str] = if super::super::organic::geom::inside(st.c, &ap.poly) { &["airport"] } else { &[] };
         for side in [1.0, -1.0] {
             // the nearest free street-level spot 20-80 m off the platform's end on this side
             // (nearest first, toward its end, then anywhere round it out to 150 m: a terminal's station rises at the
@@ -207,7 +209,7 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
                 let ang = st.heading + if side > 0.0 { 0.0 } else { std::f64::consts::PI } + off;
                 let q = (st.c.0 + (ang.cos() * k as f64 * 1_000.0) as i64, st.c.1 + (ang.sin() * k as f64 * 1_000.0) as i64);
                 let foot = rect(q, 400.0, 200.0);
-                (land.dry(q) && space.blocker(&foot, g - 800, g + 400, 300).is_none()).then_some((q, foot))
+                (land.dry(q) && space.blocker_but(&foot, g - 800, g + 400, 300, ignore).is_none()).then_some((q, foot))
             });
             if let Some((q, foot)) = spot {
                 space.put("entrance", "metro", foot, g - 800, g + 400);
@@ -220,12 +222,11 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
 
 #[cfg(test)]
 mod tests {
-    use super::super::City;
     use super::*;
 
-    fn commons() -> (Land, LandUse, Airport, Metro) {
-        let c = City::plan("claude-hq").unwrap();
-        (c.land, c.landuse, c.airport, c.metro)
+    fn commons() -> (&'static Land, &'static LandUse, &'static Airport, &'static Metro) {
+        let c = super::super::commons();
+        (&c.land, &c.landuse, &c.airport, &c.metro)
     }
 
     #[test]
@@ -262,7 +263,7 @@ mod tests {
         let homes: Vec<P> = lu.buildings.iter().filter(|b| b.use_ == Use::Home).map(|b| b.c).collect();
         let served = homes.iter().filter(|&&q| near(q, 50_000)).count();
         assert!(served * 100 >= homes.len() * 55, "{served} of {} homes within 500 m of a station", homes.len());
-        let w = ap.side * (STRIP_W_CM / 2 + APRON_W_CM / 2);
+        let w = ap.side * (TERMINAL_CM);
         assert!(near((ap.c.0 - ap.dir.1 * w / 1000, ap.c.1 + ap.dir.0 * w / 1000), 30_000), "a station at the terminal");
         assert!(m.stations.iter().all(|s| !s.entrances.is_empty()), "every station has a way in");
     }
@@ -274,7 +275,7 @@ mod show {
     #[test]
     #[ignore]
     fn show_the_commons_metro() {
-        let c = super::super::City::plan("claude-hq").unwrap();
+        let c = super::super::commons();
         let (land, ap, lu, m) = (&c.land, &c.airport, &c.landuse, &c.metro);
         let j = serde_json::json!({
             "coast": land.coast.as_ref().map(|c| c.poly.clone()), "water": land.water, "airport": ap.poly, "hub": lu.hub, "port": lu.port.map(|p| p.0),

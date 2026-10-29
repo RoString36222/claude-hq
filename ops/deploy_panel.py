@@ -589,6 +589,58 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
  .act.primary:hover:not(:disabled){background:var(--red);color:var(--bg)}
  .act:disabled{color:#555;cursor:not-allowed}
  .act:disabled::before,.act:disabled::after{color:#3a3a3a}
+ /* The brief: plain sentences in the sans, not telemetry caps -- it is read, not scanned. Four steps with one
+    mark each (done filled green, under way amber ring, ready filled amber, failed red, not yet hollow grey),
+    and the one button carries the action itself in its label. */
+ .brief{--amber:#ffb000;margin:22px 0 28px;border:1px solid var(--line);background:var(--panel);
+   font-family:var(--sans);text-transform:none;letter-spacing:0}
+ .bnow{padding:22px 24px 18px;border-bottom:1px solid var(--line)}
+ .beyebrow{margin:0 0 8px;font:11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+ .bhead{margin:0;display:flex;align-items:center;font:700 clamp(1.5rem,4.4vw,2.3rem)/1.1 var(--sans);letter-spacing:-.02em;
+   color:var(--ink);text-transform:none}
+ .bhead .dot{width:12px;height:12px;margin-right:14px;vertical-align:0}
+ .brief.bad .bhead{color:var(--red)}
+ .bline{margin:10px 0 0;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
+ .bwhen{margin:4px 0 0;font-size:13px;color:var(--dim)}
+ .bwhen:empty{display:none}
+ .steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+   border-bottom:1px solid var(--line)}
+ .st{position:relative;min-width:0;padding:16px 16px 16px 44px;border-right:1px solid var(--line)}
+ .st:last-child{border-right:0}
+ .st::before{content:"";position:absolute;left:18px;top:18px;width:14px;height:14px;box-sizing:border-box;
+   border:2px solid #4a4a4a;border-radius:50%}
+ .st b{display:block;font:600 14px/1.2 var(--sans)}
+ .st span{display:block;margin-top:5px;font-size:12.5px;line-height:1.4;color:var(--dim);overflow-wrap:anywhere}
+ .st.done::before{background:var(--green);border-color:var(--green)}
+ .st.active::before{border-color:var(--amber);animation:stpulse 1.4s ease-in-out infinite}
+ .st.active b,.st.ready b{color:var(--amber)}
+ .st.ready::before{background:var(--amber);border-color:var(--amber)}
+ .st.fail::before{background:var(--red);border-color:var(--red)}
+ .st.fail b,.st.fail span{color:#ff7a7a}
+ .st.idle b{color:var(--dim)}
+ @keyframes stpulse{50%{box-shadow:0 0 0 6px rgba(255,176,0,.2)}}
+ .bact{display:grid;grid-template-columns:minmax(14rem,auto) 1fr auto;gap:18px;align-items:center;padding:18px 24px}
+ .bact .act{flex:none;padding:16px 20px;border:1px solid var(--line)}
+ .bact .act.primary:not(:disabled){background:var(--red);color:#0a0a0a;border-color:var(--red)}
+ .bact .act.primary:not(:disabled)::before,.bact .act.primary:not(:disabled)::after{color:#0a0a0a}
+ .bact .act.primary:hover:not(:disabled){background:#ff3030}
+ .bact .act:disabled{color:var(--dim)}
+ /* rolling back is the exception, so it reads as the quiet one beside the button that matters */
+ .bact #rollback{font-size:11px;padding:12px 14px;color:var(--dim)}
+ .bact #rollback:hover:not(:disabled){color:var(--bg)}
+ .why{margin:0;font-size:14px;line-height:1.45}
+ .ships{border-top:1px solid var(--line);padding:12px 24px 14px}
+ .ships summary{cursor:pointer;font:11px/1.6 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+ .ships summary:focus-visible{outline:2px solid var(--red);outline-offset:3px}
+ .ships ul{margin:10px 0 0;padding:0;list-style:none;font:13px/1.7 var(--mono)}
+ .ships code{color:var(--dim);margin-right:12px}
+ @media (max-width:760px){
+   .steps{grid-template-columns:1fr 1fr}
+   .st:nth-child(2){border-right:0}
+   .st:nth-child(-n+2){border-bottom:1px solid var(--line)}
+   .bact{grid-template-columns:1fr}
+ }
+ @media (prefers-reduced-motion:reduce){.st.active::before{animation:none;box-shadow:0 0 0 3px rgba(255,176,0,.25)}}
 
  /* Section rules that span the container, per the blueprint grid. */
  h2{display:flex;align-items:center;gap:12px;font-size:10px;letter-spacing:.2em;
@@ -957,23 +1009,23 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
 
  <output class="msg" id="msg"></output>
 
- <dl class="bay">
-  <div class="cell">
-   <dt>service</dt>
-   <dd><i class="dot __DOTCLS__"></i><span class="health __DOTCLS__">__HEALTH__</span></dd>
+ <!-- The brief (HQ 3.36): three questions, answered top to bottom in plain words. What is live and is it well;
+      where the newest commit on main is on its way to live; what the one button will do, and why it can't yet. -->
+ <section class="brief" id="brief" aria-labelledby="bheadtxt">
+  <div class="bnow">
+   <p class="beyebrow">now live on __DOMAIN__</p>
+   <h2 class="bhead"><i class="dot __DOTCLS__"></i><span id="bheadtxt">__HEALTH_HEAD__</span></h2>
+   <p class="bline" id="bline">__LOCAL__ &middot; __SUBJECT__</p>
+   <p class="bwhen" id="bwhen"></p>
   </div>
-  <div class="cell"><dt>running</dt><dd><samp>__LOCAL__</samp></dd></div>
-  <div class="cell"><dt>head &middot; __BRANCH__</dt><dd><samp>__REMOTE__</samp></dd></div>
-  <div class="cell wide"><dt>last commit</dt>
-   <dd class="subj">__SUBJECT__ <span class="age">__WHEN__</span></dd></div>
-  __BEHIND__
- </dl>
-
- <nav class="actions">
-  <button class="act primary" id="deploy" __DISABLED__><span>deploy latest</span></button>
-  <button class="act" id="rollback"><span>roll back one</span></button>
-  <button class="act" id="refresh"><span>refresh</span></button>
- </nav>
+  <ol class="steps" id="steps" aria-label="The newest commit on __BRANCH__, on its way to live"></ol>
+  <div class="bact">
+   <button class="act primary" id="deploy" disabled><span id="deploylbl">checking</span></button>
+   <p class="why" id="why" role="status">Reading where main, CI and the release are&hellip;</p>
+   <button class="act" id="rollback" disabled><span id="rolllbl">roll back</span></button>
+  </div>
+  <details class="ships" id="shipsbox" hidden><summary id="shipssum">what ships</summary><ul id="ships"></ul></details>
+ </section>
 
  <section class="rig" id="rig" aria-live="polite">
   <div class="chips" id="chips"></div>
@@ -1254,11 +1306,40 @@ function tick(){
     setTimeout(tick, j.active?2000:10000);
   }).catch(function(){ setTimeout(tick,10000); });
 }
-history(); setInterval(history,30000); tick();
+// The brief: /api/status every 20 s, set as text only. While a release runs the buttons stay as tick() left
+// them (disabled); the labels and the reason still follow.
+var STATE_WORD={done:"done",active:"under way",ready:"ready",fail:"failed",idle:"not yet"}, ROLLTO=null;
+function clear(n){ while(n.firstChild) n.removeChild(n.firstChild); }
+function drawBrief(b){
+  $id("brief").className="brief "+(b.tone||"ok");
+  $id("bheadtxt").textContent=b.headline;
+  $id("bline").textContent=b.line;
+  $id("bwhen").textContent=b.deployed_at?"Deployed "+ago(Date.now()/1000-b.deployed_at):"";
+  var ol=$id("steps"); clear(ol);
+  (b.steps||[]).forEach(function(s,i){
+    var li=el("li","st "+s.state);
+    li.appendChild(el("b",null,(i+1)+"  "+s.label)); li.appendChild(el("span",null,s.detail||""));
+    li.setAttribute("aria-label",s.label+": "+(STATE_WORD[s.state]||s.state)+(s.detail?". "+s.detail:""));
+    ol.appendChild(li);
+  });
+  if(!ACTING&&!WAS_ACTIVE){ $id("deploy").disabled=!b.action.enabled; $id("rollback").disabled=!b.rollback.enabled; }
+  $id("deploylbl").textContent=b.action.label; $id("why").textContent=b.action.why;
+  $id("rolllbl").textContent=b.rollback.label; ROLLTO=b.rollback.version;
+  var ul=$id("ships"); clear(ul);
+  (b.changes||[]).forEach(function(c){ var li=el("li"); li.appendChild(el("code",null,c.sha)); li.appendChild(document.createTextNode(c.subject)); ul.appendChild(li); });
+  if(b.more) ul.appendChild(el("li",null,"and "+b.more+" more"));
+  var n=(b.changes||[]).length+(b.more||0);
+  $id("shipsbox").hidden=!n;
+  $id("shipssum").textContent=(b.action.enabled?"what this deploy ships":"on main, not live yet")+" ("+n+")";
+}
+function brief(){
+  fetch("/api/status",{headers:{"X-Panel-Token":CSRF}}).then(function(r){return r.json();}).then(drawBrief)
+    .catch(function(){ $id("why").textContent="Could not read the status. Trying again in 20 seconds."; });
+}
+history(); setInterval(history,30000); tick(); brief(); setInterval(brief,20000);
 $id("deploy").onclick=function(){act("/api/deploy");};
 $id("rollback").onclick=function(){
-  if(confirm("Roll back to the previous release?"))act("/api/rollback");};
-$id("refresh").onclick=function(){location.reload();};
+  if(confirm("Roll back to "+(ROLLTO||"the previous release")+"? The Arena restarts on it."))act("/api/rollback");};
 </script>
 """
 
@@ -1271,7 +1352,180 @@ FAILURES = {
     "ci_unreachable": "Could not reach GitHub to check CI. Nothing was deployed.",
     "rolled_back": "Deploy failed and was rolled back to the previous release.",
     "failed": "Deploy failed.",
+    "no_release": "No Arena release to deploy yet: CI publishes one once main's checks pass (about 30 minutes after a merge). Nothing was deployed.",
 }
+
+
+def no_release():
+    """True when there is nothing to deploy: a deploy is CI's latest Arena release (HQ 3.36; ARENA_FROM=git
+    builds main here instead), and until CI has published one, once main's checks pass after a merge, there
+    is none. The panel says so rather than start a run autodeploy ends without a word ("interrupted")."""
+    if os.environ.get("ARENA_FROM", "release") != "release":
+        return False
+    try:
+        rc, _ = run(["bash", f"{ARENA_DIR}/ops/release.sh", "latest"], timeout=60)
+    except Exception:
+        return True
+    return rc != 0
+
+
+# ---- The brief (HQ 3.36): what is live, where the next release is, and what the button will do ----------
+GH_REPO = os.environ.get("ARENA_GH_REPO", "RoString36222/claude-hq")
+_CACHE = {}
+
+
+def _cached(key, secs, make):
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit[0] < secs:
+        return hit[1]
+    val = make()
+    _CACHE[key] = (time.time(), val)
+    return val
+
+
+def _checks(sha):
+    """GitHub's check runs on a commit -> [{name, status}] (status: pending or the conclusion), or None when
+    GitHub cannot be read. Cached 30 s: unauthenticated, the API allows 60 requests an hour."""
+    def get():
+        token = os.environ.get("ARENA_GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        args = ["curl", "-fsS", "--max-time", "8", "-H", "Accept: application/vnd.github+json"]
+        if token:
+            args += ["-H", "Authorization: Bearer " + token]
+        try:
+            rc, out = run(args + [f"https://api.github.com/repos/{GH_REPO}/commits/{sha}/check-runs?per_page=100"], timeout=15)
+            runs = json.loads(out).get("check_runs", []) if rc == 0 else None
+        except Exception:
+            runs = None
+        if runs is None:
+            return None
+        return [{"name": r.get("name", "?"), "status": r.get("conclusion") or "pending"
+                 if r.get("status") == "completed" else "pending"} for r in runs]
+    return _cached("checks:" + sha, 30, get) if sha else None
+
+
+def _latest_release():
+    """CI's latest Arena release -> {version, sha}, or None (none published, or unreadable). Cached 30 s."""
+    def get():
+        try:
+            rc, out = run(["bash", f"{ARENA_DIR}/ops/release.sh", "latest"], timeout=60)
+        except Exception:
+            return None
+        parts = out.split()
+        return {"version": parts[-2], "sha": parts[-1]} if rc == 0 and len(parts) >= 2 else None
+    return _cached("release", 30, get)
+
+
+def _history_rows(text):
+    """backend/.releases -> [(epoch, version, sha7, kind)], oldest first ("rollback" rows are not releases)."""
+    rows = []
+    for ln in (text or "").splitlines():
+        f = ln.split()
+        if len(f) >= 4 and f[2] == "rs":
+            rows.append((_epoch(f[0]), f[1], f[3], f[4] if len(f) > 4 else "deploy"))
+    return rows
+
+
+def brief(live, head, release, checks, healthy, rows, changes, mode="release"):
+    """The page's story, from what is known (pure, so tests/test_deploy_panel.py can walk every case).
+
+    live: {version, sha, subject} of the running release; head: {sha, subject, when} of main; release: CI's
+    latest {version, sha} or None; checks: GitHub's check runs on head (None: unknown); healthy: the health
+    check; rows: _history_rows; changes: [{sha, subject}] the deploy would ship.
+    -> {tone, headline, line, deployed_at, steps: [{key, label, state, detail}], action: {enabled, label, why},
+        rollback: {enabled, label, version}, changes}
+    """
+    lsha, hsha = (live.get("sha") or ""), (head.get("sha") or "")
+    def same(a, b):
+        return bool(a and b) and (a.startswith(b) or b.startswith(a))
+    at_head = same(lsha, hsha)
+    ci = [c for c in (checks or []) if c["name"] != "release"]
+    rel_job = next((c for c in (checks or []) if c["name"] == "release"), None)
+    failed = [c["name"] for c in ci if c["status"] not in ("success", "skipped", "neutral", "pending")]
+    pending = [c["name"] for c in ci if c["status"] == "pending"]
+    ci_state = ("unknown" if checks is None else "failed" if failed else "running" if pending or not ci else "passed")
+    rel_at_head = bool(release) and same(release["sha"], hsha)
+    deployable = bool(release) and not same(release["sha"], lsha)
+
+    steps = [{"key": "merged", "label": "Merged", "state": "done",
+              "detail": ("%s %s" % (hsha[:7], head.get("subject") or "")).strip()}]
+    if at_head:
+        steps.append({"key": "ci", "label": "CI checks", "state": "done", "detail": "passed"})
+    else:
+        steps.append({"key": "ci", "label": "CI checks",
+                      "state": {"failed": "fail", "running": "active", "passed": "done"}.get(ci_state, "idle"),
+                      "detail": ("failed: " + ", ".join(failed)) if failed else
+                                ("running: " + ", ".join(pending)) if pending else
+                                ("passed" if ci_state == "passed" else "waiting for GitHub" if ci_state == "unknown" else "starting")})
+    if at_head or rel_at_head:
+        steps.append({"key": "release", "label": "Release", "state": "done",
+                      "detail": release["version"] if rel_at_head else live.get("version") or ""})
+    else:
+        busy = ci_state == "passed" or (rel_job and rel_job["status"] == "pending")
+        bad = rel_job and rel_job["status"] not in ("success", "pending", "skipped")
+        steps.append({"key": "release", "label": "Release", "state": "fail" if bad else "active" if busy else "idle",
+                      "detail": "publishing failed" if bad else "publishing the image" if busy else "after CI"})
+    steps.append({"key": "live", "label": "Live", "state": "done" if at_head else "ready" if rel_at_head else "idle",
+                  "detail": (live.get("version") or "running") if at_head else
+                            "ready to deploy" if rel_at_head else "not yet"})
+
+    n = len(changes)
+    if mode == "git":
+        action = ({"enabled": True, "label": "Deploy " + hsha[:7], "why": "Builds main here and ships it (ARENA_FROM=git)."}
+                  if not at_head else {"enabled": False, "label": "Up to date", "why": "Everything on main is live."})
+    elif deployable:
+        action = {"enabled": True, "label": "Deploy " + release["version"],
+                  "why": "%d change%s since what is live." % (n, "" if n == 1 else "s") if n else "A newer release is ready."}
+    elif at_head:
+        action = {"enabled": False, "label": "Up to date", "why": "Everything on main is live."}
+    elif ci_state == "failed":
+        action = {"enabled": False, "label": "CI failed", "why": "Fix main (%s failed). What is live keeps running." % ", ".join(failed)}
+    elif ci_state == "running":
+        action = {"enabled": False, "label": "Waiting for CI",
+                  "why": "%s still running on %s. The release publishes when they pass." % (", ".join(pending) or "Checks", hsha[:7])}
+    elif ci_state == "passed":
+        action = {"enabled": False, "label": "Publishing release", "why": "CI passed. The release job is pushing the image."}
+    else:
+        action = {"enabled": False, "label": "Waiting for CI", "why": "No CI result for %s yet." % hsha[:7]}
+
+    cur = live.get("version") or ""
+    prev = next((r for r in reversed(rows) if r[1] != cur and r[3] != "rollback"), None)
+    rollback = ({"enabled": True, "label": "Roll back to " + prev[1], "version": prev[1]} if prev
+                else {"enabled": False, "label": "Nothing to roll back to", "version": None})
+    deployed_at = next((r[0] for r in reversed(rows) if r[1] == cur), None)
+    tone = "bad" if not healthy else "warn" if (action["enabled"] or ci_state == "failed") else "ok"
+    headline = ("Live and healthy" if healthy else "Live, but not answering its health check")
+    line = " \u00b7 ".join(x for x in (cur or (lsha[:7] if lsha else "no release yet"), live.get("subject") or "") if x)
+    return {"tone": tone, "headline": headline, "line": line, "deployed_at": deployed_at, "steps": steps,
+            "action": action, "rollback": rollback, "changes": changes[:12], "more": max(0, n - 12)}
+
+
+def overview():
+    """brief() from the host: git, backend/.release.env and .releases, CI's release, GitHub's checks."""
+    s = status()
+    try:
+        with open(os.path.join(ARENA_DIR, "backend", ".release.env")) as f:
+            state = f.read()
+    except OSError:
+        state = ""
+    version = next((ln.split("=", 1)[1].strip() for ln in reversed(state.splitlines()) if ln.startswith("ARENA_VERSION=")), "")
+    lsha = git("rev-parse", s["local"]) if s["local"] else ""
+    hsha = git("rev-parse", f"origin/{BRANCH}")
+    live = {"version": version, "sha": lsha, "subject": git("log", "-1", "--pretty=%s", lsha)[:90] if lsha else ""}
+    head = {"sha": hsha, "subject": git("log", "-1", "--pretty=%s", hsha)[:90], "when": git("log", "-1", "--pretty=%cr", hsha)}
+    mode = os.environ.get("ARENA_FROM", "release")
+    release = _latest_release() if mode == "release" else None
+    target = release["sha"] if release else hsha
+    changes = []
+    if lsha and target:
+        for ln in git("log", "--no-merges", "--pretty=%h %s", "-n", "40", f"{lsha}..{target}").splitlines():
+            sha, _, subj = ln.partition(" ")
+            changes.append({"sha": sha, "subject": subj[:100]})
+    try:
+        with open(RELEASES) as f:
+            rows = _history_rows(f.read())
+    except OSError:
+        rows = []
+    return brief(live, head, release, _checks(hsha), s["healthy"], rows, changes, mode)
 
 
 def render(login, csrf):
@@ -1287,6 +1541,7 @@ def render(login, csrf):
             .replace("__WHO__", html.escape(login))
             .replace("__DOMAIN__", html.escape(ARENA_DOMAIN or "arena"))
             .replace("__BRANCH__", html.escape(BRANCH))
+            .replace("__HEALTH_HEAD__", "Live and healthy" if s["healthy"] else "Live, but not answering its health check")
             .replace("__HEALTH__", "healthy" if s["healthy"] else "not responding")
             .replace("__DOTCLS__", "up" if s["healthy"] else "down")
             .replace("__LOCAL__", html.escape(s["local"]))
@@ -1402,6 +1657,9 @@ class Handler(BaseHTTPRequestHandler):
             # is a ThreadingHTTPServer, so this answers while /api/deploy is
             # still blocking in another thread.
             return self._json(200, live(read_log_tail(DEPLOY_LOG), _log_mtime()))
+        if path == "/api/status":
+            # The brief at the top of the page, polled every 20 s. Read-only; data only (the page sets it as text).
+            return self._json(200, overview())
         if path == "/api/history":
             # Everyone's releases, so every open panel shows the same list: the log (all of it that fits) and
             # backend/.releases. Read-only.
@@ -1452,6 +1710,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(409, {"ok": False, "reason": "busy", "message": None,
                                         "error": f"A release is already in progress (started by {who}). Watch it here."})
         if path == "/api/deploy":
+            if no_release():
+                return self._json(200, {"ok": False, "reason": "no_release", "message": FAILURES["no_release"],
+                                        "error": FAILURES["no_release"]})
             _log_line(f"panel: deploy requested by {login}")
             rc, out = run(["bash", f"{ARENA_DIR}/ops/autodeploy.sh"], timeout=DEPLOY_TIMEOUT)
             if rc == 0:

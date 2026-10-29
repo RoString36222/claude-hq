@@ -28,6 +28,8 @@ pub const IND_OUT_PM: i64 = 450;
 pub const GAP_CM: i64 = 15_000;
 pub const NOISE_CM: i64 = 8_000;
 pub const SPACING_CM: i64 = 2_000;
+/// The plaza round the hub (cm): no building in it.
+pub const PLAZA_CM: i64 = 6_000;
 /// The shares of the city's cells (per mille): industry, offices; homes take the rest that is not gap or noise.
 pub const IND_PM: i64 = 150;
 pub const OFFICE_PM: i64 = 130;
@@ -84,15 +86,18 @@ fn under_approach(q: P, ap: &Airport) -> bool {
     past > 0 && past < 100_000 && w.abs() < 7_500 + past * 150 / 1000
 }
 
-pub fn plan(land: &Land, ap: &Airport, space: &mut Space) -> LandUse {
+/// The city's dry cells (their middles, cm) within its radius, off the airport.
+fn dry_cells(land: &Land, ap: &Airport) -> Vec<P> {
     let r = land.p.city_r_cm;
     let n = r / CELL_CM;
-    let mid = |i: i64, j: i64| (i * CELL_CM, j * CELL_CM);
-    let dry: Vec<P> = (-n..=n).flat_map(|i| (-n..=n).map(move |j| (i, j))).map(|(i, j)| mid(i, j))
+    (-n..=n).flat_map(|i| (-n..=n).map(move |j| (i * CELL_CM, j * CELL_CM)))
         .filter(|&q| q.0 * q.0 + q.1 * q.1 <= r * r && land.dry(q) && to_airport(q, ap) > 0)
-        .collect();
+        .collect()
+}
 
-    // 1. the centre: flattest ground near the middle, clear of the airport
+/// Steps 1 and 2: the centre (the hub) and the port (its quay and front), decided before the lines and the land use.
+pub fn centre(land: &Land, ap: &Airport) -> (P, Option<(P, P)>) {
+    let dry = dry_cells(land, ap);
     let hub = dry.iter().copied()
         .filter(|&q| to_airport(q, ap) >= CENTRE_CLEAR_CM)
         .min_by_key(|&q| (d(q, (0, 0)) / 5_000 + rise(&land.t, &[(q.0 - 2_000, q.1 - 2_000), (q.0 + 2_000, q.1 + 2_000)]) / 100, q))
@@ -101,6 +106,13 @@ pub fn plan(land: &Land, ap: &Airport, space: &mut Space) -> LandUse {
     let port = land.river.as_ref().map(|rv| rv.port).filter(|p| p.0 != (0, 0)).or_else(|| {
         land.coast.as_ref().and_then(|c| c.poly.iter().copied().max_by_key(|&q| (d(q, ap.c), q)).map(|q| (q, (-q.0.signum(), -q.1.signum()))))
     });
+    (hub, port)
+}
+
+/// Steps 3 and 4: the land use and its buildings, round the centre and the lines already in the volume.
+pub fn plan(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>, space: &mut Space) -> LandUse {
+    let r = land.p.city_r_cm;
+    let dry = dry_cells(land, ap);
     let port_at = port.map(|p| p.0);
 
     // 3. the land
@@ -159,6 +171,10 @@ pub fn plan(land: &Land, ap: &Airport, space: &mut Space) -> LandUse {
                 if !poly.iter().all(|&c| land.dry(c)) {
                     continue;
                 }
+                // the plaza round the hub stays open (Central's station, the squares, the lines over and under it)
+                if d(q, hub) < PLAZA_CM {
+                    continue;
+                }
                 if u == Use::Home && buildings.iter().any(|b: &Building| b.use_ == Use::Industry && d(b.c, q) < GAP_CM) {
                     continue;
                 }
@@ -180,15 +196,12 @@ pub fn plan(land: &Land, ap: &Airport, space: &mut Space) -> LandUse {
 
 #[cfg(test)]
 mod tests {
-    use super::super::airport;
+    use super::super::City;
     use super::*;
 
     fn commons() -> (Land, Space, Airport, LandUse) {
-        let land = Land::new("claude-hq").unwrap();
-        let mut v = Space::default();
-        let ap = airport::place(&land, &mut v).unwrap();
-        let lu = plan(&land, &ap, &mut v);
-        (land, v, ap, lu)
+        let c = City::plan("claude-hq").unwrap();
+        (c.land, c.space, c.airport, c.landuse)
     }
 
     #[test]
@@ -200,7 +213,9 @@ mod tests {
         // every building's box is free of every other solid, with the spacing
         for b in &lu.buildings {
             let s = &v.solids[b.solid as usize];
-            let others = v.solids.iter().filter(|o| o.id != s.id && o.y0 < s.y1 && s.y0 < o.y1)
+            // (against buildings, the railways and the airport: a metro entrance or concourse is meant to stand by one)
+            let others = v.solids.iter().filter(|o| matches!(o.kind, "building" | "rail" | "link" | "airport" | "approach"))
+                .filter(|o| o.id != s.id && o.y0 < s.y1 && s.y0 < o.y1)
                 .any(|o| super::super::space::near(&o.poly, &s.poly, SPACING_CM - 1));
             assert!(!others, "building {} meets another solid", b.id);
         }
@@ -239,11 +254,8 @@ mod show {
     #[test]
     #[ignore]
     fn show_the_commons_land_use() {
-        use super::super::airport;
-        let land = super::Land::new("claude-hq").unwrap();
-        let mut v = super::Space::default();
-        let ap = airport::place(&land, &mut v).unwrap();
-        let lu = super::plan(&land, &ap, &mut v);
+        let c = super::super::City::plan("claude-hq").unwrap();
+        let (land, ap, lu) = (&c.land, &c.airport, &c.landuse);
         let j = serde_json::json!({
             "coast": land.coast.as_ref().map(|c| c.poly.clone()),
             "water": land.water, "airport": ap.poly, "hub": lu.hub, "port": lu.port.map(|p| p.0),

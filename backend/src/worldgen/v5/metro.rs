@@ -22,7 +22,7 @@ pub const HOME_GROUPS: usize = 4;
 pub const MERGE_CM: i64 = 25_000;
 pub const INFILL_CM: i64 = 65_000;
 pub const PLATFORM_CM: f64 = 12_000.0;
-pub const TOP_CM: i64 = 1_600;
+pub const TOP_CM: i64 = 2_000;
 pub const LEVEL_GAP_CM: i64 = 900;
 pub const TUNNEL_HW_CM: i64 = 450;
 pub const TUNNEL_UP_CM: i64 = 700;
@@ -220,16 +220,12 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
 
 #[cfg(test)]
 mod tests {
-    use super::super::{airport, landuse};
+    use super::super::City;
     use super::*;
 
     fn commons() -> (Land, LandUse, Airport, Metro) {
-        let land = Land::new("claude-hq").unwrap();
-        let mut v = Space::default();
-        let ap = airport::place(&land, &mut v).unwrap();
-        let lu = landuse::plan(&land, &ap, &mut v);
-        let m = plan(&land, &lu, &ap, &mut v);
-        (land, lu, ap, m)
+        let c = City::plan("claude-hq").unwrap();
+        (c.land, c.landuse, c.airport, c.metro)
     }
 
     #[test]
@@ -268,7 +264,7 @@ mod tests {
         assert!(served * 100 >= homes.len() * 55, "{served} of {} homes within 500 m of a station", homes.len());
         let w = ap.side * (STRIP_W_CM / 2 + APRON_W_CM / 2);
         assert!(near((ap.c.0 - ap.dir.1 * w / 1000, ap.c.1 + ap.dir.0 * w / 1000), 30_000), "a station at the terminal");
-        assert!(m.stations.iter().all(|s| s.entrances.len() >= 1), "every station has a way in");
+        assert!(m.stations.iter().all(|s| !s.entrances.is_empty()), "every station has a way in");
     }
 }
 
@@ -278,16 +274,13 @@ mod show {
     #[test]
     #[ignore]
     fn show_the_commons_metro() {
-        use super::super::{airport, landuse};
-        let land = super::Land::new("claude-hq").unwrap();
-        let mut v = super::Space::default();
-        let ap = airport::place(&land, &mut v).unwrap();
-        let lu = landuse::plan(&land, &ap, &mut v);
-        let m = super::plan(&land, &lu, &ap, &mut v);
+        let c = super::super::City::plan("claude-hq").unwrap();
+        let (land, ap, lu, m) = (&c.land, &c.airport, &c.landuse, &c.metro);
         let j = serde_json::json!({
             "coast": land.coast.as_ref().map(|c| c.poly.clone()), "water": land.water, "airport": ap.poly, "hub": lu.hub, "port": lu.port.map(|p| p.0),
             "cells": lu.cells.iter().map(|(q, u)| (q, format!("{u:?}"))).collect::<Vec<_>>(),
             "buildings": lu.buildings.iter().map(|b| (b.poly.clone(), format!("{:?}", b.use_), b.h)).collect::<Vec<_>>(),
+            "rail": c.rail.iter().map(|l| (l.id, l.path.iter().map(|p| (p[0], p[2])).collect::<Vec<_>>(), l.kinds.clone())).collect::<Vec<_>>(),
             "lines": m.lines.iter().map(|l| (l.path.iter().map(|p| (p[0], p[2])).collect::<Vec<_>>(), l.min_r, l.rail_y)).collect::<Vec<_>>(),
             "stations": m.stations.iter().map(|s| (s.c, s.entrances.clone(), s.lines.clone())).collect::<Vec<_>>(),
         });

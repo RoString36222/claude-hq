@@ -5,9 +5,11 @@
 //! orientation (10 degree steps) and position (a `STEP_CM` grid) whose footprint is all on dry land is scored:
 //!   - flat: the rise over the footprint (it is graded, so a slope costs, it does not refuse);
 //!   - approaches: the dry land under each approach's first `APP_LOOK_CM` (over the sea is best: nothing will stand
-//!     under an aircraft's approach);
+//!     under an aircraft's approach), at `UNDER_COST` a step; an approach whose line passes within `CENTRE_KEEP_CM` of
+//!     the city's middle all but rules a site out;
 //!   - away from the centre: the farther out the better (in the city is allowed, at its edge is preferred);
-//! the lowest score wins, the smaller angle and then position breaking ties. Locked: the footprint from the ground into
+//!
+//! The lowest score wins, the smaller angle and then position breaking ties. Locked: the footprint from the ground into
 //! the sky, and each approach surface as stepped boxes rising at `APP_RISE_PM` from `APP_START_CM` past the threshold,
 //! widening `APP_SPREAD_PM` each side (ICAO Annex 14), to `APP_LEN_CM`; under them the volume stays free.
 use super::land::Land;
@@ -24,6 +26,15 @@ pub const APP_LEN_CM: i64 = 100_000;
 pub const APP_STEP_CM: i64 = 10_000;
 pub const APP_RISE_PM: i64 = 20;
 pub const APP_SPREAD_PM: i64 = 150;
+/// What a step of dry land under an approach costs (against the rise in 2 m steps), and how far (cm) every approach's
+/// line keeps from the city's middle.
+pub const UNDER_COST: i64 = 20;
+pub const CENTRE_KEEP_CM: i64 = 30_000;
+
+/// Where an approach starts: half the runway and the threshold's margin.
+fn ap_half(len: i64) -> i64 {
+    len / 2 + APP_START_CM
+}
 
 #[derive(Clone, Debug)]
 pub struct Airport {
@@ -84,8 +95,14 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                             }
                         }
                     }
+                    // and an approach's line over the city's middle: never (an approach is flown low over what is under it)
+                    let over_centre = [-1i64, 1].iter().any(|&s| {
+                        let (ax, az) = (c.0 + d.0 * s * ap_half(len) / 1000, c.1 + d.1 * s * ap_half(len) / 1000);
+                        let (bx, bz) = (ax + d.0 * s * APP_LEN_CM / 1000, az + d.1 * s * APP_LEN_CM / 1000);
+                        super::super::organic::geom::seg_dist2((ax, az), (bx, bz), (0, 0), (0, 0)) < CENTRE_KEEP_CM * CENTRE_KEEP_CM
+                    });
                     let out = -((c.0 as f64).hypot(c.1 as f64) as i64) / 1_000;
-                    let key = (flat / 200 + under * 3, out, k, i * 1000 + j);
+                    let key = (flat / 200 + under * UNDER_COST + if over_centre { 1_000 } else { 0 }, out, k, i * 1000 + j);
                     if best.as_ref().is_none_or(|b| key < b.0) {
                         best = Some((key, Airport { c, dir: d, len, side, poly, y: land.height(c), solids: Vec::new() }));
                     }

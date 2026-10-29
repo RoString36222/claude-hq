@@ -24,6 +24,8 @@ pub struct City {
     /// The places the arterials join, and the arterials.
     pub centres: Vec<P>,
     pub arterials: Vec<roads::Road>,
+    /// The local streets between the plots, and the links joining their networks to the arterials.
+    pub streets: Vec<roads::Road>,
     pub landuse: landuse::LandUse,
     pub metro: metro::Metro,
 }
@@ -41,7 +43,8 @@ impl City {
         let arterials = roads::arterials(&land, &mut space, &centres);
         let buildings = landuse::build(&land, hub, &cells, &mut space);
         let landuse = landuse::LandUse { hub, port, cells, buildings };
+        let streets = roads::locals(&land, &mut space, hub, &landuse.buildings, &arterials);
         let metro = metro::plan(&land, &landuse, &airport, &mut space);
-        Ok(City { land, space, airport, hub, port, rail, centres, arterials, landuse, metro })
+        Ok(City { land, space, airport, hub, port, rail, centres, arterials, streets, landuse, metro })
     }
 }

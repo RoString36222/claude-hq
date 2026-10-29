@@ -1271,7 +1271,21 @@ FAILURES = {
     "ci_unreachable": "Could not reach GitHub to check CI. Nothing was deployed.",
     "rolled_back": "Deploy failed and was rolled back to the previous release.",
     "failed": "Deploy failed.",
+    "no_release": "No Arena release to deploy yet: CI publishes one once main's checks pass (about 30 minutes after a merge). Nothing was deployed.",
 }
+
+
+def no_release():
+    """True when there is nothing to deploy: a deploy is CI's latest Arena release (HQ 3.36; ARENA_FROM=git
+    builds main here instead), and until CI has published one, once main's checks pass after a merge, there
+    is none. The panel says so rather than start a run autodeploy ends without a word ("interrupted")."""
+    if os.environ.get("ARENA_FROM", "release") != "release":
+        return False
+    try:
+        rc, _ = run(["bash", f"{ARENA_DIR}/ops/release.sh", "latest"], timeout=60)
+    except Exception:
+        return True
+    return rc != 0
 
 
 def render(login, csrf):
@@ -1452,6 +1466,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(409, {"ok": False, "reason": "busy", "message": None,
                                         "error": f"A release is already in progress (started by {who}). Watch it here."})
         if path == "/api/deploy":
+            if no_release():
+                return self._json(200, {"ok": False, "reason": "no_release", "message": FAILURES["no_release"],
+                                        "error": FAILURES["no_release"]})
             _log_line(f"panel: deploy requested by {login}")
             rc, out = run(["bash", f"{ARENA_DIR}/ops/autodeploy.sh"], timeout=DEPLOY_TIMEOUT)
             if rc == 0:

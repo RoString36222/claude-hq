@@ -534,3 +534,37 @@ class Live(unittest.TestCase):
         self.assertIn("function tick()", page)
         block = page[page.index("function history()"):page.index("function tick()")]
         self.assertNotIn("innerHTML", block)              # data reaches the page as text only
+
+
+class NoRelease(unittest.TestCase):
+    """HQ 3.36: Deploy latest with no Arena release published yet is refused, with why, not run."""
+
+    def setUp(self):
+        self.calls = []
+        self._run = deploy_panel.run
+        self.addCleanup(setattr, deploy_panel, "run", self._run)
+        self.addCleanup(os.environ.pop, "ARENA_FROM", None)
+        os.environ.pop("ARENA_FROM", None)
+
+    def answer(self, rc):
+        def fake(args, cwd=None, timeout=600):
+            self.calls.append(args)
+            return rc, ""
+        deploy_panel.run = fake
+
+    def test_no_release_yet(self):
+        self.answer(1)
+        self.assertTrue(deploy_panel.no_release())
+        self.assertEqual(self.calls[0][-1], "latest")
+        self.assertIn("No Arena release", deploy_panel.FAILURES["no_release"])
+
+    def test_a_release_to_deploy(self):
+        self.answer(0)
+        self.assertFalse(deploy_panel.no_release())
+
+    def test_git_mode_does_not_ask(self):
+        os.environ["ARENA_FROM"] = "git"
+        self.answer(1)
+        self.assertFalse(deploy_panel.no_release())
+        self.assertEqual(self.calls, [])
+

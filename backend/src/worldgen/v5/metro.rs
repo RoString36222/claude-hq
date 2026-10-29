@@ -280,6 +280,8 @@ mod show {
             "coast": land.coast.as_ref().map(|c| c.poly.clone()), "water": land.water, "airport": ap.poly, "hub": lu.hub, "port": lu.port.map(|p| p.0),
             "cells": lu.cells.iter().map(|(q, u)| (q, format!("{u:?}"))).collect::<Vec<_>>(),
             "buildings": lu.buildings.iter().map(|b| (b.poly.clone(), format!("{:?}", b.use_), b.h)).collect::<Vec<_>>(),
+            "arterials": c.arterials.iter().map(|r| (r.points.iter().map(|p| (p[0], p[2])).collect::<Vec<_>>(), (r.min_r / 100.0) as i64)).collect::<Vec<_>>(),
+            "centres": c.centres.clone(),
             "rail": c.rail.iter().map(|l| (l.id, l.path.iter().map(|p| (p[0], p[2])).collect::<Vec<_>>(), l.kinds.clone())).collect::<Vec<_>>(),
             "lines": m.lines.iter().map(|l| (l.path.iter().map(|p| (p[0], p[2])).collect::<Vec<_>>(), l.min_r, l.rail_y)).collect::<Vec<_>>(),
             "stations": m.stations.iter().map(|s| (s.c, s.entrances.clone(), s.lines.clone())).collect::<Vec<_>>(),

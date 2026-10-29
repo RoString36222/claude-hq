@@ -1,14 +1,15 @@
 //! City Gen v5 (docs/plans/city-gen-v5.md): the city planned in a volume.
 //!
 //! City::plan(seed) runs the decisions in their order, each seeing only the volume still free: the land and water, the
-//! airport, the centre and the port, the railways (the transport spine, before any building), the land use and its
-//! buildings, the metro.
+//! airport, the centre and the port, the railways (the transport spine, before any building), the land's uses, the
+//! arterials between their centres, the buildings round them, the metro.
 pub mod airport;
 pub mod align;
 pub mod land;
 pub mod landuse;
 pub mod metro;
 pub mod rail;
+pub mod roads;
 pub mod space;
 
 use super::organic::geom::P;
@@ -20,6 +21,9 @@ pub struct City {
     pub hub: P,
     pub port: Option<(P, P)>,
     pub rail: Vec<rail::Line>,
+    /// The places the arterials join, and the arterials.
+    pub centres: Vec<P>,
+    pub arterials: Vec<roads::Road>,
     pub landuse: landuse::LandUse,
     pub metro: metro::Metro,
 }
@@ -31,8 +35,13 @@ impl City {
         let airport = airport::place(&land, &mut space).ok_or("v5: no room for the airport")?;
         let (hub, port) = landuse::centre(&land, &airport);
         let rail = rail::plan(&land, hub, port, &airport, &mut space);
-        let landuse = landuse::plan(&land, &airport, hub, port, &mut space);
+        // the land's uses, the arterials between their centres, then the buildings round them
+        let cells = landuse::zone(&land, &airport, hub, port);
+        let centres = roads::centres(hub, port, &airport, &rail, &cells);
+        let arterials = roads::arterials(&land, &mut space, &centres);
+        let buildings = landuse::build(&land, hub, &cells, &mut space);
+        let landuse = landuse::LandUse { hub, port, cells, buildings };
         let metro = metro::plan(&land, &landuse, &airport, &mut space);
-        Ok(City { land, space, airport, hub, port, rail, landuse, metro })
+        Ok(City { land, space, airport, hub, port, rail, centres, arterials, landuse, metro })
     }
 }

@@ -412,17 +412,170 @@ function coastR(W){
   for(var i = 0; i < c.length; i++) m = Math.max(m, hyp(c[i][0], c[i][1])/100);
   return m;
 }
-// [3.36] the waypoints [[x, z], ...] that take a sea viaduct from abutment e (archipelago m) round its island (centre
-// cx, cz; coast radius r m) offshore until it faces (tx, tz): first SWING_OUT m straight out along its front f, then an
-// arc at that radius; none when the abutment already faces within 60 degrees
-var SWING_OUT = 300;
-function swingRound(cx, cz, e, f, tx, tz, r){
-  var e0 = [e[0] + f[0]*SWING_OUT, e[2] + f[1]*SWING_OUT], ox = e0[0] - cx, oz = e0[1] - cz, a0 = Math.atan2(oz, ox), d = Math.atan2(tz, tx) - a0;
-  while(d > Math.PI) d -= 2*Math.PI;
-  while(d < -Math.PI) d += 2*Math.PI;
-  if(Math.abs(d) < Math.PI/3) return [];
-  var rr = Math.max((r || 0) + 150, hyp(ox, oz)), n = Math.ceil(Math.abs(d)/(Math.PI/8)), out = [e0];
-  for(var i = 1; i <= n; i++){ var a = a0 + d*i/n; out.push([cx + Math.cos(a)*rr, cz + Math.sin(a)*rr]); }
+// [3.36] the sea crossing's plan, laid out the way a line is: straight out from each abutment along its front, the
+// shortest way round what it must not cross, every bend a circular curve. What it must not cross: each end's coast (its
+// convex hull) and its rail.keepOut (the generator's airport claim: the airfield, its runway ends' object-free areas and
+// protection zones), each grown SEA_MARGIN m. The route is the shortest path through corners SEA_WAY m out from those (a
+// visibility graph), its corners rounded to SEA_R m arcs: smaller only where the legs are short, or so an arc keeps out of
+// the margin (the room between SEA_WAY and SEA_MARGIN is what lets a corner be a railway's curve, not a kink).
+var SEA_OUT = 300, SEA_MARGIN = 150, SEA_WAY = 400, SEA_R = 900, SEA_FILL = 20;
+// the run straight out from an abutment is long enough for its first curve to be SEA_R_LEAVE m (2.5 km at most)
+var SEA_R_LEAVE = 600, SEA_OUT_MAX = 2500;
+// corners closer than SEA_MERGE m that turn the same way are merged into one (seaPlan)
+var SEA_MERGE = 700;
+function hull2(P){
+  var A = P.slice().sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; }), lo = [], hi = [], i;
+  function cr(o, a, b){ return (a[0] - o[0])*(b[1] - o[1]) - (a[1] - o[1])*(b[0] - o[0]); }
+  for(i = 0; i < A.length; i++){ while(lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], A[i]) <= 0) lo.pop(); lo.push(A[i]); }
+  for(i = A.length - 1; i >= 0; i--){ while(hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], A[i]) <= 0) hi.pop(); hi.push(A[i]); }
+  return lo.slice(0, -1).concat(hi.slice(0, -1));                       // counter-clockwise (x right, z up)
+}
+// a convex polygon (counter-clockwise) with every edge moved m out
+function grow2(P, m){
+  var n = P.length, out = [];
+  for(var i = 0; i < n; i++){
+    var a = P[(i + n - 1) % n], b = P[i], c = P[(i + 1) % n];
+    var e1 = [b[0] - a[0], b[1] - a[1]], e2 = [c[0] - b[0], c[1] - b[1]], l1 = hyp(e1[0], e1[1]) || 1, l2 = hyp(e2[0], e2[1]) || 1;
+    var n1 = [e1[1]/l1, -e1[0]/l1], n2 = [e2[1]/l2, -e2[0]/l2], k = 1 + n1[0]*n2[0] + n1[1]*n2[1];
+    out.push(k > 0.15 ? [b[0] + (n1[0] + n2[0])*m/k, b[1] + (n1[1] + n2[1])*m/k] : [b[0] + (n1[0] + n2[0])*m, b[1] + (n1[1] + n2[1])*m]);
+  }
+  return out;
+}
+// does p-q pass through convex polygon O (counter-clockwise), shrunk by `tol` m? (Cyrus-Beck)
+function cutsPoly(O, p, q, tol){
+  var t0 = 0, t1 = 1, dx = q[0] - p[0], dz = q[1] - p[1], n = O.length;
+  for(var i = 0; i < n; i++){
+    var a = O[i], b = O[(i + 1) % n], ex = b[0] - a[0], ez = b[1] - a[1], el = hyp(ex, ez) || 1, nx = ez/el, nz = -ex/el;
+    var num = nx*(a[0] - p[0]) + nz*(a[1] - p[1]) - tol, den = nx*dx + nz*dz;     // inside: n.(x - a) < -tol
+    if(Math.abs(den) < 1e-12){ if(num < 0) return false; continue; }
+    var t = num/den;
+    if(den > 0){ if(t < t1) t1 = t; } else { if(t > t0) t0 = t; }
+    if(t0 > t1) return false;
+  }
+  return t1 - t0 > 1e-6;
+}
+function insidePoly(O, x, z){ return cutsPoly(O, [x, z], [x + 1e-3, z], 0.5); }
+// the obstacles of one end (archipelago m): its coast's hull and its keep-out polygons, each {B: grown SEA_MARGIN (what
+// blocks), Wp: grown SEA_WAY (where the route may turn)}
+function seaObstacles(W, ox, oz){
+  var out = [], R = railView(W), c = W && W.island && W.island.coast;
+  function add(H){ out.push({B: grow2(H, SEA_MARGIN), Wp: grow2(H, SEA_WAY)}); }
+  if(c && c.length >= 3) add(hull2(c.map(function(p){ return [p[0]/100 + ox, p[1]/100 + oz]; })));
+  else { var r = coastR(W), ring = []; for(var i = 0; i < 24; i++){ var a = i*Math.PI/12; ring.push([ox + Math.cos(a)*r, oz + Math.sin(a)*r]); } add(ring); }
+  ((R && R.keepOut) || []).forEach(function(P){ if(P.length >= 3) add(hull2(P.map(function(p){ return [p[0] + ox, p[1] + oz]; }))); });
+  return out;
+}
+// the plan [[x, z], ...] from abutment ea (front fa) to eb (front fb), past `obs`, run straight out at least outA / outB m
+function seaPlan(ea, fa, eb, fb, obs, outA, outB){
+  var BL = obs.map(function(o){ return o.B; });
+  function blocked(p, q){ for(var i = 0; i < BL.length; i++) if(cutsPoly(BL[i], p, q, 1)) return true; return false; }
+  function free(p){ return !BL.some(function(O){ return insidePoly(O, p[0], p[1]); }); }
+  // straight out along the front: at least d0 m and clear of every obstacle (the coast hull holds the abutment), but never
+  // on through one (then the last clear point before it)
+  function outOf(e, f, d0){
+    var first = null, last = null;
+    for(var d = SEA_OUT; d <= d0 + 3000; d += 50){
+      var p = [e[0] + f[0]*d, e[1] + f[1]*d];
+      if(first && blocked(first, p)) return last;
+      if(free(p)){ if(!first) first = p; last = p; if(d >= d0) return p; }
+    }
+    return last || [e[0] + f[0]*SEA_OUT, e[1] + f[1]*SEA_OUT];
+  }
+  var S = outOf(ea, fa, outA || SEA_OUT), E = outOf(eb, fb, outB || SEA_OUT), N = [S, E];
+  obs.forEach(function(o){ o.Wp.forEach(function(v){ N.push(v); }); });
+  N = N.filter(function(p, i){ return i < 2 || free(p); });
+  // Dijkstra over the visibility graph (a few hundred corners at most)
+  var n = N.length, dist = [], prev = [], done = [], i, j;
+  for(i = 0; i < n; i++){ dist.push(Infinity); prev.push(-1); done.push(false); }
+  dist[0] = 0;
+  for(var it = 0; it < n; it++){
+    var u = -1;
+    for(i = 0; i < n; i++) if(!done[i] && (u < 0 || dist[i] < dist[u])) u = i;
+    if(u < 0 || dist[u] === Infinity) break;
+    done[u] = true;
+    if(u === 1) break;
+    for(j = 0; j < n; j++){
+      if(done[j]) continue;
+      var w = hyp(N[j][0] - N[u][0], N[j][1] - N[u][1]);
+      if(dist[u] + w < dist[j] && !blocked(N[u], N[j])){ dist[j] = dist[u] + w; prev[j] = u; }
+    }
+  }
+  var way = [];
+  if(dist[1] < Infinity){ for(var k = 1; k >= 0; k = prev[k]) way.unshift(N[k]); } else way = [S, E];
+  var Q = [[ea[0], ea[1]]].concat(way, [[eb[0], eb[1]]]);
+  // two corners close together turning the same way are one bend: they become one corner where the legs either side
+  // meet, when that is clear (else a curve between them could be no wider than half the gap)
+  for(var again = true, guard = 0; again && guard < 50; guard++){
+    again = false;
+    for(i = 1; i + 2 < Q.length; i++){
+      var A = Q[i - 1], B = Q[i], C2 = Q[i + 1], D = Q[i + 2];
+      if(hyp(C2[0] - B[0], C2[1] - B[1]) >= SEA_MERGE) continue;
+      var ux = B[0] - A[0], uz = B[1] - A[1], vx = C2[0] - D[0], vz = C2[1] - D[1], den = ux*vz - uz*vx;
+      if(Math.abs(den) < 1e-9) continue;
+      var t = ((C2[0] - B[0])*vz - (C2[1] - B[1])*vx)/den, w2 = ((C2[0] - B[0])*uz - (C2[1] - B[1])*ux)/den;
+      if(!(t >= 0 && w2 >= 0)) continue;                               // the legs meet ahead of both: a bend the same way
+      var X = [B[0] + ux*t, B[1] + uz*t];
+      if(hyp(X[0] - B[0], X[1] - B[1]) > 3*SEA_MERGE || !free(X) || blocked(B, X) || blocked(X, C2)) continue;   // (each leg as far as its old corner was already clear)
+      Q.splice(i, 2, X); again = true; break;
+    }
+  }
+  return Q;
+}
+// how far out (m) the plan's corner i (the end of the run out) must be for a SEA_R_LEAVE m curve there
+function seaLeave(Q, i){
+  if(i < 1 || i > Q.length - 2) return SEA_OUT;
+  var a = Q[i - 1], b = Q[i], c = Q[i + 1], l1 = hyp(b[0] - a[0], b[1] - a[1]) || 1, l2 = hyp(c[0] - b[0], c[1] - b[1]) || 1;
+  var th = Math.acos(Math.max(-1, Math.min(1, ((b[0] - a[0])*(c[0] - b[0]) + (b[1] - a[1])*(c[1] - b[1]))/(l1*l2))));
+  return Math.max(SEA_OUT, Math.min(SEA_OUT_MAX, SEA_R_LEAVE*Math.tan(th/2)));
+}
+// the plan's corners rounded, walking it from the first abutment: straight legs every SEA_FILL m, each corner a circular
+// arc (SEA_R, or what fits: the legs beside it, halved between two corners; and at a waypoint no deeper into the corner
+// than the margin leaves room for). A sharp corner with no room for a SEA_R_LEAVE m arc (an abutment facing away from
+// where the line goes) is a loop instead: a SEA_R_LEAVE m curve from the corner (or before it) turning until the line
+// faces its next corner, then on straight to it, as a line turns back on itself; of the loops that can (from before the
+// corner or at it, turning either way) the first that keeps clear(p) all round.
+function seaCurve(Q, clear){
+  var n = Q.length, out = [], pos = [Q[0][0], Q[0][1]], i, k;
+  function line(p, q){ var l = hyp(q[0] - p[0], q[1] - p[1]), m = Math.max(1, Math.ceil(l/SEA_FILL)); for(var j = 1; j <= m; j++) out.push([p[0] + (q[0] - p[0])*j/m, p[1] + (q[1] - p[1])*j/m]); }
+  for(i = 1; i < n - 1; i++){
+    var b = Q[i], c = Q[i + 1], l1 = hyp(b[0] - pos[0], b[1] - pos[1]), l2 = hyp(c[0] - b[0], c[1] - b[1]);
+    if(l1 < 1e-6 || l2 < 1e-6) continue;
+    var d1 = [(b[0] - pos[0])/l1, (b[1] - pos[1])/l1], d2 = [(c[0] - b[0])/l2, (c[1] - b[1])/l2];
+    var th = Math.acos(Math.max(-1, Math.min(1, d1[0]*d2[0] + d1[1]*d2[1]))), sg = d1[0]*d2[1] - d1[1]*d2[0] > 0 ? 1 : -1;
+    if(th < 1e-3){ line(pos, b); pos = b; continue; }
+    var tn = Math.tan(th/2), room = Math.min(l1, i + 1 === n - 1 ? l2 : l2/2), r = Math.min(SEA_R, room/tn);
+    if(i > 1 && i < n - 2) r = Math.min(r, (SEA_WAY - SEA_MARGIN - 20)/(1/Math.cos(th/2) - 1));
+    var cx, cz, a0, k2;
+    if(r < SEA_R_LEAVE && th > Math.PI/2){
+      // the loop: a SEA_R_LEAVE m curve from t1, turning `w` until facing c
+      var R = SEA_R_LEAVE, tries = [[Math.min(l1, R), sg], [0, sg], [Math.min(l1, R), -sg], [0, -sg]], best = null;
+      for(var tr = 0; tr < tries.length && !best; tr++){
+        var back = tries[tr][0], w = tries[tr][1], t1 = [b[0] - d1[0]*back, b[1] - d1[1]*back], arc = [];
+        cx = t1[0] - d1[1]*R*w; cz = t1[1] + d1[0]*R*w; a0 = Math.atan2(t1[1] - cz, t1[0] - cx);
+        for(k = 1; k*SEA_FILL/R < 2*Math.PI; k++){
+          var ang = a0 + w*SEA_FILL/R*k, p = [cx + Math.cos(ang)*R, cz + Math.sin(ang)*R], hx = -Math.sin(ang)*w, hz = Math.cos(ang)*w;
+          arc.push(p);
+          var tx = c[0] - p[0], tz = c[1] - p[1];
+          if((hx*tz - hz*tx <= 0) === (w > 0) && hx*tx + hz*tz > 0) break;   // facing c (or just past): leave the curve
+        }
+        var ex = arc.length ? arc[arc.length - 1] : t1, run = [];                 // and the straight on from it to c
+        for(var q2 = 1, nq = Math.ceil(hyp(c[0] - ex[0], c[1] - ex[1])/SEA_FILL); q2 < nq; q2++) run.push([ex[0] + (c[0] - ex[0])*q2/nq, ex[1] + (c[1] - ex[1])*q2/nq]);
+        if(!clear || tr === tries.length - 1 || (arc.every(clear) && run.every(clear))) best = {t1: t1, arc: arc};
+      }
+      line(pos, best.t1);
+      best.arc.forEach(function(q){ out.push(q); });
+      pos = best.arc.length ? best.arc[best.arc.length - 1] : best.t1;
+      continue;
+    }
+    // a fillet: tangent t1 on the way in, the arc's centre to the inside of the turn
+    var t = r*tn, f1 = [b[0] - d1[0]*t, b[1] - d1[1]*t];
+    line(pos, f1);
+    cx = f1[0] - d1[1]*r*sg; cz = f1[1] + d1[0]*r*sg; a0 = Math.atan2(f1[1] - cz, f1[0] - cx); k2 = Math.max(2, Math.ceil(r*th/SEA_FILL));
+    for(k = 1; k <= k2; k++){ var an = a0 + sg*th*k/k2; out.push([cx + Math.cos(an)*r, cz + Math.sin(an)*r]); }
+    pos = out[out.length - 1];
+  }
+  line(pos, Q[n - 1]);
+  out.pop();                                                            // the far abutment is the caller's
   return out;
 }
 function inside(P, x, z){
@@ -588,7 +741,8 @@ function railView(W){
               stairs: (s.stairs || []).filter(function(p){ return p && p.length >= 2; }).map(function(p){ return [cm(p[0]), cm(p[1])]; })};
     }),
     sea: sea ? {x: cm(sea.x), y: cm(sea.y), z: cm(sea.z), front: su, yaw: Math.atan2(su[0], su[1])} : null,
-    holes: []
+    holes: [],
+    keepOut: (L.keep_out || []).filter(function(P){ return P && P.length >= 3; }).map(function(P){ return P.map(function(p){ return [cm(p[0]), cm(p[1])]; }); })
   };
   if(RAIL_MEMO) RAIL_MEMO.set(L, out);
   return out;
@@ -651,29 +805,20 @@ function linkRoute(I, C, o){
   a.P.forEach(function(p, j){ V.push([p[0] + Ix, p[1], p[2] + Iz]); KK.push(a.K[Math.min(j, a.K.length - 1)]); });
   var iA = V.length - 1, ea = V[iA], bl = b.P[b.P.length - 1], eb = [bl[0] + Cx, bl[1], bl[2] + Cz];
   KK[iA] = K_SEA;
-  // the sea crossing: a cubic leaving the abutment along its front and arriving along the junction's
+  // the sea crossing: leaving the abutment along its front and arriving along the junction's, laid out round both
+  // coasts and what the generator keeps the line off (seaPlan, seaCurve; HQ 3.36)
   var fa = a.sea && a.sea.front ? a.sea.front : [dx, dz], fb = b.sea && b.sea.front ? b.sea.front : [-dx, -dz];
-  var D = hyp(eb[0] - ea[0], eb[2] - ea[2]), kk = Math.min(600, D/3), n = Math.max(2, Math.ceil(D/STEP));
-  // [3.36] an abutment facing away from the other end: the viaduct swings round its island offshore (past the coast's
-  // furthest point) instead of curving back over the land and what stands on it (the airport)
-  var wA = swingRound(Ix, Iz, ea, fa, Cx - Ix, Cz - Iz, coastR(I.W)), wB = swingRound(Cx, Cz, eb, fb, Ix - Cx, Iz - Cz, coastR(C.W)).reverse();
-  if(wA.length || wB.length){
-    var CP = [[ea[0] - fa[0]*kk, ea[2] - fa[1]*kk], [ea[0], ea[2]]].concat(wA, wB, [[eb[0], eb[2]], [eb[0] - fb[0]*kk, eb[2] - fb[1]*kk]]);
-    for(var sg = 1; sg + 2 < CP.length; sg++){
-      var q0 = CP[sg - 1], q1 = CP[sg], q2 = CP[sg + 1], q3 = CP[sg + 2], ns = Math.max(1, Math.ceil(hyp(q2[0] - q1[0], q2[1] - q1[1])/STEP));
-      for(var si = (sg === 1 ? 1 : 0); si < ns; si++){
-        var tt = si/ns, t2 = tt*tt, t3 = t2*tt;   // Catmull-Rom through the waypoints
-        V.push([0.5*(2*q1[0] + (q2[0] - q0[0])*tt + (2*q0[0] - 5*q1[0] + 4*q2[0] - q3[0])*t2 + (3*q1[0] - q0[0] - 3*q2[0] + q3[0])*t3), NaN,
-                0.5*(2*q1[1] + (q2[1] - q0[1])*tt + (2*q0[1] - 5*q1[1] + 4*q2[1] - q3[1])*t2 + (3*q1[1] - q0[1] - 3*q2[1] + q3[1])*t3)]); KK.push(K_SEA);
-      }
-    }
-  } else {
-    var p1 = [ea[0] + fa[0]*kk, ea[2] + fa[1]*kk], p2 = [eb[0] + fb[0]*kk, eb[2] + fb[1]*kk];
-    for(i = 1; i < n; i++){
-      var t = i/n, u = 1 - t, w0 = u*u*u, w1 = 3*u*u*t, w2 = 3*u*t*t, w3 = t*t*t;
-      V.push([w0*ea[0] + w1*p1[0] + w2*p2[0] + w3*eb[0], NaN, w0*ea[2] + w1*p1[1] + w2*p2[1] + w3*eb[2]]); KK.push(K_SEA);
-    }
+  var obs = seaObstacles(I.W, Ix, Iz).concat(seaObstacles(C.W, Cx, Cz));
+  var pa = [ea[0], ea[2]], pb = [eb[0], eb[2]], Q = seaPlan(pa, fa, pb, fb, obs), lA = SEA_OUT, lB = SEA_OUT;
+  // then the runs out long enough for each end's first curve (seaLeave): a longer run can change that curve, so until it
+  // holds (three passes at most)
+  for(var pass = 0; pass < 3; pass++){
+    var nA = Math.max(lA, seaLeave(Q, 1)), nB = Math.max(lB, seaLeave(Q, Q.length - 2));
+    if(nA === lA && nB === lB) break;
+    lA = nA; lB = nB; Q = seaPlan(pa, fa, pb, fb, obs, lA, lB);
   }
+  var BL = obs.map(function(o){ return o.B; });
+  seaCurve(Q, function(p){ return !BL.some(function(O){ return insidePoly(O, p[0], p[1]); }); }).forEach(function(p){ V.push([p[0], NaN, p[1]]); KK.push(K_SEA); });
   var iB = V.length;
   for(var j = b.P.length - 1; j >= 0; j--){ var q = b.P[j]; V.push([q[0] + Cx, q[1], q[2] + Cz]); KK.push(j > 0 ? b.K[Math.min(j - 1, b.K.length - 1)] : K_GRADE); }
   // the sea viaduct's height: SEA_UP over the water, eased from and to the abutments at GRADE
@@ -901,7 +1046,7 @@ HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, de
   // live ids
   commonsId: commonsId, isCommonsId: isCommonsId, canon: canon, sameWorld: sameWorld, islandIdOf: islandIdOf, WORLD_RE: WORLD_RE,
   // the Island Link
-  link: link, linkService: linkService, linkRoute: linkRoute, linkSpawn: linkSpawn, linkDepartures: linkDepartures, linkNext: linkNext,
+  link: link, linkService: linkService, linkRoute: linkRoute, seaPlan: seaPlan, seaCurve: seaCurve, seaObstacles: seaObstacles, seaLeave: seaLeave, linkSpawn: linkSpawn, linkDepartures: linkDepartures, linkNext: linkNext,
   linkPlatform: linkPlatform, linkOff: linkOff, railView: railView, ilOf: ilOf, underAt: underAt, kAt: kAt, timing: timing, radii: radii,
   SEATS: SEATS, STAND: STAND, SEAT_UP: SEAT_UP, DOOR_Z: DOOR_Z, LINK_EVERY: LINK_EVERY, LINK_PLATS: LINK_PLATS, LINK_COLOR: LINK_COLOR,
   K: {GRADE: K_GRADE, TUNNEL: K_TUNNEL, PORTAL: K_PORTAL, VIADUCT: K_VIADUCT, BRIDGE: K_BRIDGE, SEA: K_SEA}};

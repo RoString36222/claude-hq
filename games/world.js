@@ -868,7 +868,9 @@ function railOf(W){
               platforms: Math.max(1, s.platforms|0), lines: strs(s.lines), stairs: ringM(s.stairs)};
     }),
     sea: sea ? {x: cm(sea.x), y: cm(sea.y), z: cm(sea.z), front: su, yaw: yawOf(su)} : null,
-    holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; })
+    holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; }),
+    // HQ 3.36: what no line may cross above (the airport's claim), [[x, z], ...] m; the Island Link's sea crossing goes round
+    keepOut: (L.keep_out || []).map(ringM).filter(function(P){ return P.length >= 3; })
   };
   return M.rail;
 }

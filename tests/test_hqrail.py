@@ -240,6 +240,23 @@ out.swing = [IP, {x: -IP.x, z: -IP.z}, {x: -IP.z, z: IP.x}, {x: IP.z, z: -IP.x}]
     if (ins) over++; }
   return {over: over, coast: !!co};
 });
+// ---- [3.36] what the generator keeps lines off (rail.keep_out, an airport between the two): round it, curves not kinks ----
+// the keep-out: 600 m square on the plain route's middle
+const RP = RL.linkRoute({world: ISL, x: IP.x, z: IP.z, W: Wi}, {world: C3, x: 0, z: 0, W: CDOC}, {plat: 2}), KM = RL.at(RP, (RP.seaA + RP.seaB)/2);
+const kx0 = KM.x - 300, kx1 = KM.x + 300, kz0 = KM.z - 300, kz1 = KM.z + 300;
+const KDOC = JSON.parse(JSON.stringify(CDOC)), KR = [[kx0*100, kz0*100], [kx1*100, kz0*100], [kx1*100, kz1*100], [kx0*100, kz1*100]];
+KDOC.layers.rail.keep_out = [KR];
+out.keep = (function(){
+  const Rk = RL.linkRoute({world: ISL, x: IP.x, z: IP.z, W: Wi}, {world: C3, x: 0, z: 0, W: KDOC}, {plat: 2});
+  function inK(q){ return q.x >= kx0 && q.x <= kx1 && q.z >= kz0 && q.z <= kz1; }
+  function bends(Rs){ let r = 1e9; for (let s = Rs.seaA + 60; s <= Rs.seaB - 60; s += 20) { const a = RL.at(Rs, s - 40), b = RL.at(Rs, s), c = RL.at(Rs, s + 40);
+    const ab = Math.hypot(b.x - a.x, b.z - a.z), bc = Math.hypot(c.x - b.x, c.z - b.z), ca = Math.hypot(a.x - c.x, a.z - c.z), ar = Math.abs((b.x - a.x)*(c.z - a.z) - (b.z - a.z)*(c.x - a.x))/2;
+    if (ar > 1e-6) r = Math.min(r, ab*bc*ca/(4*ar)); } return r; }
+  let inside = 0, near = 1e9; for (let s = Rk.seaA; s <= Rk.seaB; s += 5) { const q = RL.at(Rk, s); if (inK(q)) inside++;
+    near = Math.min(near, Math.hypot(Math.max(kx0 - q.x, 0, q.x - kx1), Math.max(kz0 - q.z, 0, q.z - kz1))); }
+  let crossed = 0; for (let s = RP.seaA; s <= RP.seaB; s += 5) if (inK(RL.at(RP, s))) crossed++;
+  return {inside, near, crossed, minR: bends(Rk), minRP: bends(RP), longer: Rk.len - RP.len};
+})();
 // ---- the Service on the island ----
 const svc = RL.linkService({here: ISL, W: Wi, arch: ARCH, docs: {[C3]: CDOC}});
 const ms = 1.7e12, lines = svc.lines(), deps = svc.departures('il:' + ISL, ms, 4), T1 = svc.trip(lines[0].id, 'il:' + ISL, 'il:' + C3, ms);
@@ -329,6 +346,16 @@ class IslandLinkTest(unittest.TestCase):
         self.assertTrue(all(1 <= x <= 6 for x in p["nine"]))
         self.assertEqual(sorted(set(p["nine"])), [1, 2, 3, 4, 5, 6], "shared once there are more than six")
         self.assertTrue(1 <= p["alone"] <= 6)
+
+    def test_the_sea_viaduct_goes_round_what_the_generator_keeps_it_off(self):
+        k = self.o["keep"]
+        self.assertGreater(k["crossed"], 0, "the test keep-out must stand in the straight way")
+        self.assertEqual(k["inside"], 0)
+        self.assertGreaterEqual(k["near"], 100)            # the margin (150 m), less what an arc may take of it
+        self.assertGreater(k["longer"], 0)
+        # bends are curves of a railway's radius, not kinks
+        self.assertGreaterEqual(k["minR"], 500)
+        self.assertGreaterEqual(k["minRP"], 500)
 
     def test_sea_viaduct_keeps_off_the_island_whichever_way_it_faces(self):
         for w in self.o["swing"]:

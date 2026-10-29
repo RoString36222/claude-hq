@@ -14,7 +14,7 @@
 //! widening `APP_SPREAD_PM` each side (ICAO Annex 14), to `APP_LEN_CM`; under them the volume stays free.
 use super::land::Land;
 use super::space::{Space, GROUND, SKY};
-use super::super::organic::geom::{rise, P};
+use super::super::organic::geom::{crossing, inside, rise, P};
 
 pub const STRIP_W_CM: i64 = 15_000;
 pub const STRIP_END_CM: i64 = 6_000;
@@ -64,6 +64,15 @@ pub fn footprint(c: P, d: (i64, i64), len: i64, side: i64) -> Vec<P> {
     quad(c, d, -half, half, w0, w1)
 }
 
+/// Does any lake, canal or the marina reach into `poly` (a body narrower than the footprint passes between its corners)?
+fn wet(land: &Land, poly: &[P]) -> bool {
+    let n = poly.len();
+    land.water.iter().any(|w| {
+        w.iter().any(|&q| inside(q, poly))
+            || (0..w.len()).any(|i| (0..n).any(|k| crossing(w[i], w[(i + 1) % w.len()], poly[k], poly[(k + 1) % n]).is_some()))
+    })
+}
+
 /// Places the airport on `land` and locks it in `space`. None where no footprint fits on dry land.
 pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
     let len = (land.city_d() / 4 / 1_000) * 1_000;
@@ -81,7 +90,7 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                 }
                 for side in [1, -1] {
                     let poly = footprint(c, d, len, side);
-                    if !poly.iter().all(|&q| land.dry(q)) || !land.dry(c) {
+                    if !poly.iter().all(|&q| land.dry(q)) || !land.dry(c) || wet(land, &poly) {
                         continue;
                     }
                     let flat = rise(&land.t, &poly);

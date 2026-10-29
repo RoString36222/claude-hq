@@ -559,7 +559,7 @@ pub fn route_stations(r: &Roads, sites: &mut Vec<Site>, lots: &[Lot], routes: &m
                 sites.push(Site {
                     id: id.clone(), kind: "tramstop", block, x: centre.0, y: 0, z: centre.1, w: PLATFORM_LEN_CM, d: PLATFORM_W_CM,
                     facing: if front.1 >= 0 { super::city::Facing::North } else { super::city::Facing::South },
-                    tier: Some(TRAM_TIER), poly: Some(poly), front: Some([front.0, front.1]), view: None,
+                    tier: Some(TRAM_TIER), poly: Some(poly), front: Some([front.0, front.1]), view: None, runway: None,
                 });
                 routes[k].push(id);
                 added += 1;

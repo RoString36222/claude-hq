@@ -15,6 +15,8 @@ pub struct Land {
     pub river: Option<River>,
     /// The lakes, canals and marina (their outlines, cm).
     pub water: Vec<Vec<P>>,
+    /// The water's plan, finished on the streets once they are laid (v5/doc.rs).
+    pub plan: Option<water::Plan>,
 }
 
 impl Land {
@@ -33,7 +35,7 @@ impl Land {
             plan.shape(&mut t);
         }
         let water = plan.as_ref().map_or(Vec::new(), |w| w.outlines());
-        Ok(Land { seed, p, t, coast, river: rv, water })
+        Ok(Land { seed, p, t, coast, river: rv, water, plan })
     }
 
     /// Buildable: inside the coast, off the river and its banks' zone, out of every lake, canal and the marina.

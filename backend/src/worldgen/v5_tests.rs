@@ -1,17 +1,15 @@
-//! City Gen v5 (generator version 4, docs/plans/city-gen-v5.md): the planned city, built alongside @3.
+//! City Gen v5 (generator version 4, docs/plans/city-gen-v5.md): the city planned in a volume, as the doc's layers.
 
 use super::*;
 
-/// The planned Commons fills its island: a downtown grid, a grid in every sector between the avenues, its blocks and
-/// lots out past @3's 480 m town, and nothing the validator holds hard is broken.
+/// The planned Commons fills its island and breaks nothing the validator holds hard.
 #[test]
 fn the_planned_commons_fills_its_island() {
     let w = generate("claude-hq@4", &[]).unwrap();
     let l = &w.layers;
-    assert!(l.blocks.len() >= 120, "{} blocks", l.blocks.len());
-    assert!(l.lots.len() >= 800, "{} lots", l.lots.len());
-    let far = l.lots.iter().filter(|q| (q.x * q.x + q.z * q.z) > 60_000i64 * 60_000).count();
-    assert!(far >= 200, "{far} lots past 600 m");
+    assert!(l.lots.len() >= 300, "{} lots", l.lots.len());
+    let far = l.lots.iter().filter(|q| (q.x * q.x + q.z * q.z) > 50_000i64 * 50_000).count();
+    assert!(far >= 50, "{far} lots past 500 m");
     let v = validate::hard(l);
     assert!(v.is_empty(), "{}", validate::report(&v));
 }

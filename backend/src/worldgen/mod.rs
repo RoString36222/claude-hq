@@ -259,6 +259,11 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let (seed_str, version) = parse_id(id)?;
     let seed = rng::fnv1a64(seed_str.as_bytes());
     let p = profile_for(seed_str, version);
+    // City Gen v5: the city planned in a volume (v5/doc.rs writes it as these layers)
+    if p.v5 {
+        let layers = v5::doc::layers(seed_str, edits)?;
+        return Ok(doc(seed_str, version, &p, layers, edits));
+    }
 
     let mut river = river::River::new(seed, &p)?;
     // @3: the water, laid with the river before any street grows
@@ -386,6 +391,11 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let layers = Layers {
         terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit, island, river, water, metro, rail, gondola,
     };
+    Ok(doc(seed_str, version, &p, layers, edits))
+}
+
+/// The doc of `layers`: each layer's hash and the world's.
+fn doc(seed_str: &str, version: u32, p: &profile::Profile, layers: Layers, edits: &[Edit]) -> WorldDoc {
     let mut hashes = Hashes {
         terrain: hash(&layers.terrain),
         districts: hash(&layers.districts),
@@ -404,7 +414,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         world: String::new(),
     };
     hashes.world = hash(&hashes);
-    Ok(WorldDoc { id: format!("{seed_str}@{version}"), seed: seed_str.to_string(), version, profile: p.name, size_cm: p.size_cm, layers, hashes })
+    WorldDoc { id: format!("{seed_str}@{version}"), seed: seed_str.to_string(), version, profile: p.name, size_cm: p.size_cm, layers, hashes }
 }
 
 /// @3: the metro, the railway and the gondola, planned in that order on the finished
@@ -479,7 +489,7 @@ fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
         city.sites.push(city::Site {
             id: c.id.clone(), kind: c.kind, block, x: c.x, y: 0, z: c.z, w, d,
             facing: if c.front[1] >= 0 { city::Facing::North } else { city::Facing::South },
-            tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None,
+            tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None, runway: None,
         });
     }
     retire_lots(city, &gone);

@@ -5190,7 +5190,14 @@ function mount(el, api){
     get cabs(){ var TR = phoneTransit(); return TR ? TR.cabs : null; },
     get heli(){ var TR = phoneTransit(); return TR ? TR.heli : null; },
     get water(){ var TR = phoneTransit(); return TR ? TR.water : null; },
-    vehicles: {list: function(){ return callOn() ? callItems() : []; }, call: function(k){ return callPick(k); }, state: function(){ return inst.call.state(); }},
+    vehicles: {list: function(){ return callOn() ? callItems() : []; }, state: function(){ return inst.call.state(); },
+      // one just bought is not in the list until the garage is read again: read it, then call
+      call: function(k){
+        if(!callOn()) return false;
+        if(callList().some(function(x){ return x.key === k; })) return callPick(k);
+        ownRefresh().then(function(){ if(!callPick(k)) callSay("It can't come here yet: press C in the City to call it."); });
+        return true;
+      }},
     dealer: {mount: function(elx, onDone){
       if(!HQV.hqDealer || !HQV.hqDealer.mountPanel) return null;
       gamesCss();

@@ -60,6 +60,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     var t = 1;
     FLY.forEach(function(fl){ ch._fly = fl; for(var f = 0; f < CLOCK.length; f++){ var k = CLOCK[f]; t = isFinite(k) ? t + k : NaN; clip(ch, t || 0); ch.update(t); out.posed++; if(!isFinite(t)) t = 1; } });
     if(!finite(ch)) out.bad.push(tag);
+    ch._fly = null; for(var f2 = 0; f2 < 60; f2++){ t += 1/60; clip(ch, t); ch.update(t); }   // landed: the pose blends out within a second
     var r = ch.o.getObjectByName("root"); if(r.quaternion.w < 0.999 || r.position.length() > 1e-6) out.bad.push(tag + ": the root left tilted on landing");
   }
   function box(ch, k){ var m = ch._exo.meshes.filter(function(m){ return m.name === "exo-" + k; })[0]; m.geometry.computeBoundingBox(); return m.geometry.boundingBox; }
@@ -90,6 +91,32 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     });
   });
   out.bones = glb(FILES[0]).skel.bones.map(function(b){ return b.name; });
+  // ---- the flight pose's targets, the bank's limit, the thrusters (in a scene: two draws, finite, pointing the right way) ----
+  out.tg = {hover: X.targets({mode: "hover", speed: 0, agl: 8}), cruise: X.targets({mode: "cruise", speed: 40}), fast: X.targets({mode: "cruise", speed: 200}),
+            boost: X.targets({mode: "cruise", speed: 80, boost: true}), landed: X.targets({mode: "landed"}), low: X.targets({mode: "hover", agl: 0.2}),
+            none: X.targets(null), odd: X.targets({mode: "cruise", speed: NaN, agl: "x", vs: Infinity, boost: "yes"})};
+  out.bank = [X.BANK_MAX, X.bankFor(9, 300), X.bankFor(-9, 300), X.bankFor(0.5, 60), X.bankFor(0.5, 0), X.bankFor(NaN, NaN), X.bankFor(Infinity, 1), X.bankFor(1, -Infinity)];
+  out.fx = {};
+  X.FRAMES.forEach(function(F, fi){
+    var sc = new T.Scene(), ch = glb(FILES[fi % 6]); sc.add(ch.o); X.wear(T, ch, {f: fi, g: fi % 5}); var t = 1, r = {ok: true, max: 0, idle: 0, dirs: {}};
+    function check(){ var s = X.stats(ch); r.max = Math.max(r.max, s.draws + s.fx); if(s.fx > 2) r.ok = false; var Fx = ch._exo.fx; if(!Fx) return;
+      [Fx.fl.instanceMatrix.array, Fx.ia.array, Fx.pp.array, Fx.pc.array, Fx.ps.array].forEach(function(a){ for(var i = 0; i < a.length; i++) if(!isFinite(a[i])) r.ok = false; }); }
+    var ODDF = [{mode: "hover", agl: NaN, turn: "q"}, {mode: "cruise", speed: Infinity, boost: 1, vs: -1e9, spin: NaN}, {mode: "cruise", speed: -5, turn: 1e9, agl: -3},
+                {mode: "swim", speed: 4}, {mode: "landed"}, {mode: "?"}, null];
+    ODDF.forEach(function(fl){ ch._fly = fl; for(var i = 0; i < 25; i++){ var dt = [1/60, 0, NaN, -1, 5, 1/30][i % 6]; t = isFinite(dt) ? t + dt : NaN; clip(ch, t || 0); ch.update(t); check(); if(!isFinite(t)) t = 2; } });
+    if(!finite(ch)) r.ok = false;
+    [["hover", {mode: "hover", speed: 0, agl: 6}], ["cruise", {mode: "cruise", speed: 50}], ["boost", {mode: "cruise", speed: 90, boost: true}]].forEach(function(q){
+      ch._fly = q[1]; for(var i = 0; i < 120; i++){ t += 1/60; clip(ch, t); ch.update(t); } check(); var Fx = ch._exo.fx;
+      r.dirs[q[0]] = {boot: Fx.nd[0].toArray(), palm: Fx.nd[2].toArray(), tilt: ch._exo.s.tilt, fx: X.stats(ch).fx,
+                      len: new T.Vector3().setFromMatrixColumn(new T.Matrix4().fromArray(Fx.fl.instanceMatrix.array, 0), 1).length(),
+                      trail: Array.from(Fx.ps.array.slice(4 + 16)).filter(function(x){ return x > 0; }).length,
+                      dust: Array.from(Fx.ps.array.slice(4, 20)).filter(function(x){ return x > 0; }).length}; });
+    ch._fly = {mode: "hover", speed: 0, agl: 0.5}; for(var i = 0; i < 60; i++){ t += 1/60; ch.update(t); } r.dustLow = Array.from(ch._exo.fx.ps.array.slice(4, 20)).filter(function(x){ return x > 0; }).length;
+    ch._fly = null; for(var i = 0; i < 90; i++){ t += 1/60; ch.update(t); } r.idle = X.stats(ch).fx;
+    X.strip(ch); var left = 0; sc.traverse(function(o){ if(o.name === "exo-flames" || o.name === "exo-glow") left++; }); r.left = left;
+    out.fx[F.id] = r;
+  });
+  var lone = glb(FILES[0]); X.wear(T, lone, {}); lone._fly = {mode: "cruise", speed: 50}; for(var i = 0; i < 20; i++) lone.update(1 + i/60); out.portrait = X.stats(lone).fx;
   ODD.forEach(function(o, i){ var ch = glb(FILES[i % 6]); X.wear(T, ch, o); posed(ch, "odd" + i); out.odd++; });
   var plain = glb(FILES[0]); var sm = []; plain.o.traverse(function(n){ if(n.isSkinnedMesh) sm.push(n); }); sm.forEach(function(n){ n.parent.remove(n); }); out.noskin = X.wear(T, plain, {});
   for(var f = 0; f < 6; f++) for(var m = 1; m <= 6; m++){ var e = X.encode({f: f, p: (f*3) % 9, fin: f % 4, g: f % 5}, m), d = X.decode(e); out.rt.push([e, d && [d.f, d.p, d.fin, d.g, d.m]]); }
@@ -138,6 +165,60 @@ class ExoBudget(unittest.TestCase):
             self.assertLessEqual(s["tris"], 4000, k)
         self.assertEqual(o["budget"]["abyss"]["draws"], 4, "abyss alone has the glass dome")
         self.assertEqual(o["budget"]["sentinel"]["draws"], 3)
+
+    def test_flight_pose_blend_at_hover_cruise_and_boost(self):
+        g, deg = self.o["tg"], 3.14159265 / 180
+        self.assertLess(g["hover"]["tilt"], 10 * deg, "hover: upright")
+        self.assertGreater(g["hover"]["splay"], 0.08, "hover: legs a little apart")
+        self.assertGreater(g["hover"]["armOut"], 0.3, "hover: arms down and a little out")
+        self.assertEqual(g["hover"]["crouch"], 0)
+        self.assertTrue(70 * deg <= g["cruise"]["tilt"] <= 80 * deg, g["cruise"]["tilt"])
+        self.assertTrue(70 * deg <= g["fast"]["tilt"] <= 80 * deg, g["fast"]["tilt"])
+        self.assertGreater(g["boost"]["tilt"], 84 * deg, "boost: nearly flat")
+        self.assertLessEqual(g["boost"]["tilt"], 90 * deg)
+        self.assertLess(g["cruise"]["splay"], 0.03, "cruise: legs together")
+        self.assertLess(g["cruise"]["armSw"], 0, "cruise: arms swept back")
+        self.assertEqual(g["boost"]["lead"], 1, "boost: the leading arm forward")
+        self.assertEqual(g["landed"]["crouch"], 1)
+        self.assertGreater(g["low"]["crouch"], 0.5, "take-off / landing: a crouch")
+        self.assertLess(g["hover"]["thrust"], g["cruise"]["thrust"])
+        self.assertLess(g["cruise"]["thrust"], g["boost"]["thrust"])
+        self.assertEqual(g["none"]["thrust"], 0)
+        for k, v in g["odd"].items():
+            self.assertIsInstance(v, (int, float), k)
+
+    def test_the_bank_is_limited(self):
+        b = self.o["bank"]
+        self.assertAlmostEqual(b[0], 60 * 3.14159265 / 180, delta=0.02)
+        self.assertAlmostEqual(b[1], b[0])
+        self.assertAlmostEqual(b[2], -b[0])
+        self.assertGreater(b[3], 0.5, "a cruise turn banks well over")
+        self.assertLess(abs(b[4]), 0.1, "on the spot: hardly")
+        self.assertEqual(b[5], 0)
+        self.assertTrue(all(abs(x) <= b[0] + 1e-9 for x in b[1:]))
+
+    def test_thrusters_two_draws_finite_and_aimed(self):
+        fx = self.o["fx"]
+        self.assertEqual(sorted(fx), ["abyss", "bulwark", "flux", "sentinel", "stratos", "strider"])
+        for k, r in fx.items():
+            self.assertTrue(r["ok"], k + ": finite under odd inputs, at most 2 draws")
+            self.assertLessEqual(r["max"], 6, k + ": armour + flames at most 6 draw calls")
+            self.assertEqual(r["idle"], 0, k + ": no flames once landed")
+            self.assertEqual(r["left"], 0, k + ": strip takes the flames out of the scene")
+            d = r["dirs"]
+            for m in ("hover", "cruise", "boost"):
+                self.assertEqual(d[m]["fx"], 2, k + m)
+            self.assertLess(d["hover"]["boot"][1], -0.9, k + ": hover: the boots jet down")
+            self.assertLess(d["hover"]["palm"][1], -0.7, k + ": hover: the palms jet down")
+            self.assertLess(d["cruise"]["boot"][2], -0.8, k + ": cruise: the boots jet back")
+            self.assertLess(d["cruise"]["palm"][2], -0.7, k + ": cruise: the palms jet back")
+            self.assertLess(d["hover"]["len"], d["cruise"]["len"], k + ": short in a hover, long at cruise")
+            self.assertLess(d["cruise"]["len"], d["boost"]["len"], k + ": longer on a boost")
+            self.assertGreater(d["boost"]["trail"], 5, k + ": a boost leaves a trail")
+            self.assertEqual(d["cruise"]["trail"], 0, k)
+            self.assertEqual(d["cruise"]["dust"], 0, k + ": no dust up high")
+            self.assertGreater(r["dustLow"], 8, k + ": a dust ring hovering low")
+        self.assertEqual(self.o["portrait"], 0, "not in a scene (a portrait): no flames")
 
     def test_poses_stay_finite_with_odd_inputs_and_clocks(self):
         self.assertEqual(self.o["bad"], [])

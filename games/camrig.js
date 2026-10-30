@@ -64,8 +64,12 @@ var VEHICLE = {
   serpent: {backMul: 2.0, upMul: 1.2, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.6, 0.4]}, roll: 0.2},
   // [exo] flying an exosuit (games/hqexoride.js): a little further back and up, the horizon banking with you; first person is
   // the helmet's view (games/hqexohud.js draws the visor over it); exobig is the 1.3x Bulwark
-  exo:     {backMul: 1.5, upMul: 1.15, sideMul: 1, fovSpeedKick: 1.2, fpAnchor: {seat: [0, 0.55, 0.12]}, roll: 0.35},
-  exobig:  {backMul: 2.0, upMul: 1.4, sideMul: 1, fovSpeedKick: 1, fpAnchor: {seat: [0, 1.25, 0.2]}, roll: 0.3},
+  // headLag: it trails a turn a little; roll x lean x 0.5: the horizon leans 30% of the suit's bank (fp 10%, fpRoll), capped
+  // at rollMax rad; boostBack / boostFov: a boost pulls the camera back by that share and widens the view by those degrees
+  exo:     {backMul: 1.5, upMul: 1.15, sideMul: 1, fovSpeedKick: 1.2, fpAnchor: {seat: [0, 0.55, 0.12]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
+            headLag: 4.5, boostBack: 0.35, boostFov: 9},
+  exobig:  {backMul: 2.0, upMul: 1.4, sideMul: 1, fovSpeedKick: 1, fpAnchor: {seat: [0, 1.25, 0.2]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
+            headLag: 4.5, boostBack: 0.3, boostFov: 8},
   // [3.17] the tank (games/hqtank.js): well back and up, over its turret; first person from the driver's hatch
   tank:    {backMul: 2.0, upMul: 1.35, sideMul: 1, fovSpeedKick: 0.4, fpAnchor: {seat: [0.75, 2.35, 2.05]}, roll: 0},
   // planes (games/hqplane.js, HQ 3.2): well behind and above (the seaplane is 16 m long), the horizon banking a little;
@@ -362,7 +366,7 @@ function normTgt(t){
           speed: Math.abs(num(t.speed, 0)), vehicle: VEHICLE[t.vehicle] ? t.vehicle : null, lean: num(t.lean, 0), moving: !!t.moving,
           // where you are headed (null when still); a host without it: the facing while moving
           travelYaw: t.travelYaw === undefined ? (t.moving ? num(t.yaw, 0) : null) : (t.travelYaw == null ? null : num(t.travelYaw, null)),
-          turnRate: num(t.turnRate, 0), calm: !!t.calm, face: t.face == null ? null : num(t.face, null)};
+          turnRate: num(t.turnRate, 0), calm: !!t.calm, face: t.face == null ? null : num(t.face, null), boost: clamp(num(t.boost, 0), 0, 1)};
 }
 function basePose(mode){
   var M = MODES[mode];
@@ -375,6 +379,7 @@ function fovSpring(s, goal, dt){
   var r = spring(_.fov, _.fovV, goal, 12, dt); _.fov = r[0]; _.fovV = r[1];
   return _.fov;
 }
+function rollCap(V, r){ return V.rollMax ? clamp(r, -V.rollMax, V.rollMax) : r; }
 function fovOff(s){ return s.settings.fov - 65; }
 
 // Collision: t = q.hit(from, want); pull in at once to t*len - radius (min 0.6 m from `from`),
@@ -415,7 +420,10 @@ function chaseCollide(s, from, want, radius, dt, q){
 function chasePose(s, mode, T, dt, q){
   var _ = s._, M = MODES[mode], V = T.vehicle ? VEHICLE[T.vehicle] : null, red = s.settings.reduced, k;
   // T.size: a catalogue vehicle's length over its kind's starter (games/hq3d.js): a longer car, the camera further back
-  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale, baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
+  // a boost (T.boost 0..1, a vehicle with boostBack): sprung, the camera drops back and the view widens
+  if(_.bst == null){ _.bst = 0; _.bstV = 0; }
+  var bq = spring(_.bst, _.bstV, V && V.boostBack ? T.boost : 0, 3, dt); _.bst = bq[0]; _.bstV = bq[1];
+  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale*(1 + (V && V.boostBack || 0)*_.bst), baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
   _.upOff = clamp(_.upOff + _.lift*LIFT*dt, 0.6 - baseUp, 2*baseUp);
   var up = baseUp + _.upOff;
   // The orbit offset on top of the heading: Q/R swing eased in and out (exact exponential), right-drag adds
@@ -495,8 +503,8 @@ function chasePose(s, mode, T, dt, q){
   // behind a plane or a ship gets the depth precision that stops the shore and the water flickering far off (3.2)
   var pd = Math.sqrt((pos.x - P.x)*(pos.x - P.x) + (pos.y - P.y)*(pos.y - P.y) + (pos.z - P.z)*(pos.z - P.z));
   p.near = clamp(pd/12, M.near, NEAR_MAX);
-  p.fov = fovSpring(s, M.fov + fovOff(s) + kick, dt);
-  p.roll = red || !V ? 0 : V.roll*T.lean*0.5;
+  p.fov = fovSpring(s, M.fov + fovOff(s) + kick + (red || !V || !V.boostFov ? 0 : V.boostFov*_.bst), dt);
+  p.roll = red || !V ? 0 : rollCap(V, V.roll*T.lean*0.5);
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);
   s.lookPitch = Math.atan2(lk.y - pos.y, Math.sqrt((lk.x - pos.x)*(lk.x - pos.x) + (lk.z - pos.z)*(lk.z - pos.z)));
   s.moveYaw = camYaw;   // the camera heading (classic and older hosts move by it)
@@ -527,7 +535,7 @@ function fpPose(s, T, dt){
   var p = basePose("fp");
   p.pos = pos; p.look = v3(pos.x + dir.x*10, pos.y + dir.y*10, pos.z + dir.z*10); p.focus = v3(pos.x, pos.y, pos.z);
   p.fov = fovSpring(s, Math.min(100, M.fov + fovOff(s)), dt);
-  p.roll = set.reduced || !V ? 0 : V.roll*T.lean*0.5;
+  p.roll = set.reduced || !V ? 0 : rollCap(V, (V.fpRoll != null ? V.fpRoll : V.roll)*T.lean*0.5);   // fpRoll: a steadier horizon than the body's
   p.headBob = bob;
   p.vignette = clamp((T.speed - 4)/10, 0, 0.6);
   p.hideAvatar = true;

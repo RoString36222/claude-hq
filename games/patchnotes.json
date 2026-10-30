@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.37.2",
+      "title": "The exosuit really flies",
+      "body": "In the air your suited character now flies like it: upright with palms down in a hover, near-horizontal with legs trailing and arms swept back in a cruise, flat out with the leading arm forward on a boost, and a crouch for take-off and landing. Jets of light burn from both boot soles and both palms in your glow colour (short and flickering in a hover, long in a cruise, pulsing shock diamonds on a boost), and other players see them too. Turns bank up to 60 degrees and ease in and out, the body pitches with your climb, drifts a little at speed, and a double-tap of A or D in a cruise does a barrel roll. The chase camera lags into turns, leans with the bank and pulls back on a boost; first person keeps a steadier horizon."
+    },
+    {
       "version": "3.37.1",
       "title": "The exosuit fits your own character",
       "body": "Your suit is now armour on your own character instead of a separate body: a helmet over your big head, a chest plate and core, shoulder pads, gauntlets, shins and boots, sized to fit every base character, with each frame's extras. Your own walk and idle keep playing, and in the air the suit tilts and poses you.\n\nCustomise suit in the HQ side panel opens the customiser from anywhere. Suited, Go to (N) flies you there by air: a beacon, the distance, bearing and time in the banner, and a waypoint marker on your visor."

@@ -2182,10 +2182,14 @@ function mount(el, api){
     var XO = HQV.hqExo, R = HQV.hqExoRide; if(!R || !XO.me.on || EXO.fly) return;
     var F = XO.FRAMES[XO.me.look.f];
     EXO.fly = {st: R.newState(F.id, avatar.x, avatar.g.position.y, avatar.z, avatar.yaw + PI), cam: F.h > 1.2 ? "exobig" : "exo"};
-    EXO.land = 0; walkTo = null; walkDoor = null; avatar.airborne = false; avatar.vy = 0; movedHere = true;
+    EXO.land = 0; EXO.spin = null; walkTo = null; walkDoor = null; avatar.airborne = false; avatar.vy = 0; movedHere = true;
+    if(avatar.ch) setAnim(avatar.ch, "idle");                        // no walking in the air: the flight pose sits on the idle clip
     E.sfx("go");
     exoSay("Flying: W / S speed, A / D turn, Space / Shift up and down, hold X to boost. Come down slow to land.");
   }
+  function smooth01(x){ x = x < 0 ? 0 : x > 1 ? 1 : x; return x*x*(3 - 2*x); }
+  // the camera's lean: the suit's own smoothed bank (pose()'s, + left), as a vehicle's lean.rotation.z
+  function exoLean(){ var X = avatar && avatar.ch && avatar.ch._exo; return X && X.s ? -(X.s.bank || 0) : 0; }
   function exoLand(){
     var fl = EXO.fly; EXO.fly = null; if(!fl) return;
     avatar.g.rotation.x = 0; avatar.g.rotation.z = 0; avatar.pitch = 0;
@@ -2207,8 +2211,15 @@ function mount(el, api){
     avatar.speed = st.speed; avatar.travelYaw = st.speed > 0.5 ? avatar.yaw : null; avatar.pitch = st.pitch || 0;
     keyMove = st.mode !== "landed" || inp.fwd || inp.back; keyRun = false; movedHere = true;
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
-    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = st.mode === "cruise" ? -(st.pitch || 0)*0.5 : 0; avatar.g.rotation.z = st.mode === "landed" ? 0 : (st.roll || 0);
-    if(avatar.ch) avatar.ch._fly = st.mode === "landed" ? null : {mode: st.mode, speed: st.speed, boost: !!st.boosting};
+    // the body's attitude (lean into the flight, bank, climb, the crouch, the flames) is hqexo's pose(), on the hips
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = 0; avatar.g.rotation.z = 0;
+    var sp = EXO.spin; if(sp){ sp.t += dt; if(sp.t >= 0.75 || st.mode !== "cruise") EXO.spin = sp = null; }
+    if(avatar.ch){
+      setAnim(avatar.ch, "idle");
+      var fy = avatar.ch._fly || (avatar.ch._fly = {});
+      fy.mode = st.mode; fy.speed = st.speed; fy.boost = !!st.boosting; fy.turn = st.yr || 0; fy.vs = st.vs; fy.agl = st.agl;
+      fy.spin = sp ? sp.d*2*PI*smooth01(sp.t/0.75) : 0;
+    }
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
     var still = st.mode === "landed" && !inp.up && !inp.fwd && !inp.back;
     EXO.land = still ? EXO.land + dt : 0;
@@ -2246,8 +2257,17 @@ function mount(el, api){
       EXO.blackEl.hidden = !(EXO.black > 0); if(EXO.black > 0) EXO.black--;
     }
     if(XO.me.on && !EXO.S && ((ride && ride.kind) || POOL.u || (inst.transitNet && inst.transitNet()))) exoOff(true, "Suit off: you can't ride or drive in a suit.");
+    // peers fly from their synced mode alone (their speed a stand-in, their turn rate and height over the ground measured here)
+    var pf = null;
     for(var u in peers){ var P = peers[u], d = P.ch && P.ch._exo ? XO.decode(P.ex) : null;
-      if(P.ch && P.ch._exo) P.ch._fly = d && d.m >= 3 ? {mode: d.m === 6 ? "swim" : d.m === 3 ? "hover" : "cruise", speed: d.m >= 4 ? 30 : 0, boost: d.m === 5} : null; }
+      if(!(P.ch && P.ch._exo)) continue;
+      if(!(d && d.m >= 3)){ P.ch._fly = null; continue; }
+      var pfl = P.ch._fly || (P.ch._fly = {}), gp = P.g.position;
+      if(!pf) pf = exoEnv();
+      pfl.mode = d.m === 6 ? "swim" : d.m === 3 ? "hover" : "cruise"; pfl.speed = d.m === 5 ? 70 : d.m === 4 ? 40 : 0; pfl.boost = d.m === 5;
+      pfl.turn = P.fr || 0; pfl.vs = NaN; pfl.spin = 0;
+      var gy = pf.floor(gp.x, gp.z), wy = pf.water(gp.x, gp.z); if(wy != null && wy > gy && d.m !== 6) gy = wy;
+      pfl.agl = isFinite(gy) ? Math.max(0, gp.y - gy) : 10; }
     if(EXO.hud && XO.me.on && !EXO.S && cur && cur.camModes){
       var st = EXO.fly ? EXO.fly.st : {frame: XO.FRAMES[XO.me.look.f].id, x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw + PI, pitch: 0, roll: 0,
                                        speed: Math.abs(avatar.speed || 0), vs: 0, mode: "landed", boost: 1, boosting: false, agl: 0};
@@ -2265,6 +2285,12 @@ function mount(el, api){
     if(XO.panelOpen()){ keys = {}; if(down && e.key === "Escape") XO.panelClose(); if(!MOVE_KEYS[e.code] && e.key !== "Escape") return false; e.preventDefault(); e.stopPropagation(); return true; }
     if(EXO.S && e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); if(down){ XO.seqEnd(EXO.S); exoSeqDone(); } return true; }
     if(EXO.fly && e.code === "KeyX"){ e.preventDefault(); e.stopPropagation(); keys.KeyX = down; return true; }
+    // a double-tap of A or D in a cruise: a barrel roll that way (the pose's flourish; the flight itself is unchanged)
+    if(EXO.fly && down && !e.repeat && (e.code === "KeyA" || e.code === "KeyD")){
+      var tn = performance.now(), d = e.code === "KeyA" ? 1 : -1;
+      if(EXO.tap && EXO.tap.d === d && tn - EXO.tap.t < 280 && EXO.fly.st.mode === "cruise" && !EXO.spin && !E.calm()){ EXO.spin = {d: d, t: 0}; EXO.tap = null; }
+      else EXO.tap = {d: d, t: tn};
+    }
     // [exo] F suited in the City (nothing to use here): the palm repulsor, fired down the grenade path (its hits, damage,
     // knockback and where it is allowed: gnHere / gnCan), with a flash at the palm
     if(e.code === "KeyF" && XO.me.on && !EXO.S && gnHere() && !(cur.prompt && cur.prompt({x: avatar.x, z: avatar.z}))){
@@ -4551,8 +4577,9 @@ function mount(el, api){
             pitch: ride ? ride.pitch || 0 : (avatar.pitch || 0), roll: ride ? ride.roll || 0 : 0,
             speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.base || ride.kind : EXO.fly ? EXO.fly.cam : null,
             size: ride && ride.V && ride.V.size || 1,
-            lean: ride && ride.lean ? ride.lean.rotation.z : 0, moving: !!keyMove,
-            travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0};
+            lean: ride && ride.lean ? ride.lean.rotation.z : EXO.fly ? exoLean() : 0, moving: !!keyMove,
+            travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0,
+            boost: EXO.fly && EXO.fly.st.boosting ? 1 : 0};
   }
   // Any key, click, wheel or pad input: the idle timer restarts and a cinematic hands back the camera.
   function noteInput(){
@@ -6414,7 +6441,7 @@ function mount(el, api){
       P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
       if(P.ch){
         headUndo(P.ch);
-        if(vk) setAnim(P.ch, "idle"); else locomote(P.ch, P.fs, P.fr, dt);
+        if(vk || P.ch._fly) setAnim(P.ch, "idle"); else locomote(P.ch, P.fs, P.fr, dt);   // [exo] a flying suit: no walking in the air
         P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }

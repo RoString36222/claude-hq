@@ -47,8 +47,11 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     let City { mut land, airport: ap, hub, port, rail, arterials, streets, landuse, metro, .. } = c;
     let p = profile_for(seed, 4);
 
-    // the streets: the arterials first (their edges named avenues), then the local streets and links
-    let all: Vec<&Road> = arterials.iter().chain(streets.iter()).collect();
+    // the streets: the arterials first (their edges named avenues), then the local streets and links, and the port's
+    // drive from its land side's door to the nearest of them
+    let mut all: Vec<&Road> = arterials.iter().chain(streets.iter()).collect();
+    let drive = port.and_then(|(at, f)| port_drive(&all, &landuse.buildings, at, port_front(at, f)));
+    all.extend(drive.iter());
     let mut roads = graph(&all);
     // where a road crosses the river: a bridge, straight and level from bank to bank (@3's)
     if let Some(r) = land.river.as_ref() {
@@ -74,6 +77,10 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
             (e.id, e.a, e.b) = (k as u32, map[&e.a], map[&e.b]);
         }
     }
+    // the terminal's road: from the street end at its landside to where the airfield's access road starts (hqairfield.js),
+    // so the way to the curb is road all along
+    let (tat, tn) = terminal(&ap);
+    terminal_road(&mut roads, super::airport::landside(ap.c, ap.dir, ap.side), frame_pt(tat, tn, ACCESS_UV.0, ACCESS_UV.1));
 
     // the buildings: a block and a lot each
     let mut doc = Doc { blocks: Vec::new(), lots: Vec::new(), sites: Vec::new() };
@@ -100,28 +107,29 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
         tier: Some(1), poly, front: Some(front), view: None, runway: None,
     };
     let gy = |q: P| land.height(q);
-    doc.sites.push(site("fountain:0", "fountain", hub, gy(hub), 900, 900, None, [0, ONE]));
     let spawn = (hub.0, hub.1 + 2_000);
+    let transit_at = (hub.0, hub.1 - 2_500);
+    // the fountain on the plaza beside the hub's junction (the hub is where the avenues meet), its door on a sidewalk
+    let keep = [(spawn, 200, 200), (transit_at, 2_000, 1_400)];
+    let (fq, ff) = fountain_at(&roads, hub, &keep, &doc.lots).unwrap_or((hub, [0, ONE]));
+    doc.sites.push(site("fountain:0", "fountain", fq, gy(fq), FOUNTAIN_CM, FOUNTAIN_CM, None, ff));
     doc.sites.push(site("spawn:0", "spawn", spawn, gy(spawn), 200, 200, None, [0, ONE]));
-    doc.sites.push(site("transit:0", "transit", (hub.0, hub.1 - 2_500), gy(hub), 2_000, 1_400, None, [0, ONE]));
+    doc.sites.push(site("transit:0", "transit", transit_at, gy(hub), 2_000, 1_400, None, [0, ONE]));
     {
         // the airport: its x, z the terminal's middle (the client's airfield frame), its front out of the apron to the city
         let (dx, dz) = (ap.dir.0 as f64 / 1000.0, ap.dir.1 as f64 / 1000.0);
-        let (nx, nz) = (-dz * ap.side as f64, dx * ap.side as f64);
-        let out = super::airport::TERMINAL_CM as f64;
-        let at = (ap.c.0 + (nx * out) as i64, ap.c.1 + (nz * out) as i64);
-        // the site is the terminal (40 m deep along its front, 160 m across, world axes as @3's); the locked box is the
-        // runway's `area`, the generator's alone
-        let (w, d) = if nx.abs() > nz.abs() { (4_000, 16_000) } else { (16_000, 4_000) };
+        let ((nx, nz), at) = (tn, tat);
+        // the site is the terminal (40 m across, 160 m deep along its front: hqcivic.js AIRPORT_HALL's 40 x 160 frame,
+        // hqairfield.js's hall at u -66..66), w/d world axes as @3's; the locked box is the runway's `area`, the
+        // generator's alone
+        let (w, d) = if nx.abs() > nz.abs() { (16_000, 4_000) } else { (4_000, 16_000) };
         let mut s = site("airport:0", "airport", at, ap.y, w, d, None, q16(nx, nz));
         let area: Vec<[i64; 2]> = ap.poly.iter().map(|q| [q.0, q.1]).collect();
         s.runway = Some(Runway { x: ap.c.0, z: ap.c.1, dir: q16(dx, dz), len: ap.len, side: ap.side, area });
         doc.sites.push(s);
     }
     if let Some((at, f)) = port {
-        let fl = (f.0 as f64).hypot(f.1 as f64);
-        let front = if fl > 0.0 && (fl - ONE as f64).abs() < ONE as f64 / 10.0 { [f.0, f.1] } else { q16((f.0 - at.0) as f64, (f.1 - at.1) as f64) };
-        doc.sites.push(site("port:0", "port", at, gy(at), 3_000, 2_000, None, front));
+        doc.sites.push(site("port:0", "port", at, gy(at), PORT_W_CM, PORT_D_CM, None, port_front(at, f)));
     }
 
     // the HQ pool: the offices nearest Central first (an HQ is an office), then the homes; each one's lot grown to its
@@ -134,6 +142,7 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     let isl = land.coast.as_ref().map(|co| island::grow(&p, co, &mut roads, &mut doc, &mut tr));
 
     let mut terrain = land.t.clone();
+    grade_terminal(&mut terrain, tat, tn);
     terrain.apply(edits)?;
     roads.seat(&terrain, &p)?;
     roads.carve(&mut terrain, |q| land.river.as_ref().is_some_and(|r| r.wet(q)));
@@ -149,6 +158,181 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
         terrain, districts, roads, blocks: doc.blocks, lots: doc.lots, sites: doc.sites, zones, transit: Some(tr), island: isl,
         river: land.river, water, metro: Some(metro), rail: Some(rail), gondola: None,
     })
+}
+
+/// Where the terminal's road meets the airfield's access road, in the terminal's frame (m: u out of the city toward the
+/// runway, v across): hqairfield.js `landside.access` starts here on a planned airport, a local road's half width and a
+/// little more short of the box (u -146, the validator's `airport` rule).
+const ACCESS_UV: (f64, f64) = (-152.0, -8.0);
+/// The terminal's landside graded level (frame m): flat over the hall, its curb, forecourt and car park
+/// (u `GRADE_U`, |v| <= `GRADE_V`), easing back to the land over `GRADE_EASE` toward the city and the sides and
+/// `GRADE_BACK` behind the hall (short of the airside platform at u 76, which takes its own level).
+const GRADE_U: (f64, f64) = (-116.0, 66.0);
+const GRADE_V: f64 = 90.0;
+const GRADE_EASE: f64 = 30.0;
+const GRADE_BACK: f64 = 10.0;
+
+/// The terminal's middle (cm) and its front (unit: out of the apron toward the city), as the airport site's x, z, front.
+fn terminal(ap: &super::airport::Airport) -> (P, (f64, f64)) {
+    let (dx, dz) = (ap.dir.0 as f64 / 1000.0, ap.dir.1 as f64 / 1000.0);
+    let (nx, nz) = (-dz * ap.side as f64, dx * ap.side as f64);
+    let out = super::airport::TERMINAL_CM as f64;
+    ((ap.c.0 + (nx * out) as i64, ap.c.1 + (nz * out) as i64), (nx, nz))
+}
+
+/// The point (cm) at frame (u, v) m of the terminal at `o` with front `n` (hqairfield.js: B = -front, T = [B.z, -B.x]).
+fn frame_pt(o: P, n: (f64, f64), u: f64, v: f64) -> P {
+    let (bx, bz) = (-n.0, -n.1);
+    (o.0 + ((u * bx + v * bz) * 100.0).round() as i64, o.1 + ((u * bz - v * bx) * 100.0).round() as i64)
+}
+
+/// The terminal's landside graded flat to the ground's height at its middle (the site's y, `City::seat`): the hall
+/// stands on it, the curb and forecourt (drawn on the ground) are level with its door (all inside the airport's box).
+fn grade_terminal(t: &mut super::super::terrain::Terrain, o: P, n: (f64, f64)) {
+    let y = t.height_at(o.0, o.1) as f64;
+    let (bx, bz) = (-n.0, -n.1);
+    let ease = |d: f64, m: f64| { let k = (1.0 - d / m).clamp(0.0, 1.0); k * k * (3.0 - 2.0 * k) };
+    for iz in 0..t.n {
+        for ix in 0..t.n {
+            let (x, z) = t.vertex_pos(ix, iz);
+            let (dx, dz) = ((x - o.0) as f64 / 100.0, (z - o.1) as f64 / 100.0);
+            let (u, v) = (dx * bx + dz * bz, dx * bz - dz * bx);
+            let du = if u < GRADE_U.0 { (GRADE_U.0 - u, GRADE_EASE) } else { ((u - GRADE_U.1).max(0.0), GRADE_BACK) };
+            let w = ease(du.0, du.1) * ease((v.abs() - GRADE_V).max(0.0), GRADE_EASE);
+            if w > 0.0 {
+                let h = &mut t.heights[iz * t.n + ix];
+                *h = (*h as f64 + (y - *h as f64) * w).round() as i32;
+            }
+        }
+    }
+}
+
+/// A local road from the node nearest `from` (within 60 m: the street end at the terminal's landside) to `to`.
+fn terminal_road(roads: &mut Roads, from: P, to: P) {
+    let d = |n: &Node| ((n.x - from.0) as f64).hypot((n.z - from.1) as f64);
+    let Some(a) = roads.nodes.iter().filter(|n| d(n) <= 6_000.0).min_by(|p, q| d(p).total_cmp(&d(q))).map(|n| n.id) else { return };
+    let (ax, az) = (roads.nodes[a as usize].x, roads.nodes[a as usize].z);
+    let len = ((to.0 - ax) as f64).hypot((to.1 - az) as f64);
+    if len < 500.0 {
+        return;
+    }
+    let b = roads.nodes.len() as u32;
+    roads.nodes.push(Node { id: b, x: to.0, y: 0, z: to.1, junction: None, island: None });
+    let m = (len / 400.0).ceil() as i64;
+    let points: Vec<[i64; 3]> = (0..=m).map(|i| [ax + (to.0 - ax) * i / m, 0, az + (to.1 - az) * i / m]).collect();
+    let c = super::super::classes::class("local").expect("a class");
+    roads.edges.push(Edge {
+        id: roads.edges.len() as u32, a, b, class: "local", width: c.total_cm, walk: c.side_cm, lanes: 1, route: None,
+        name: "Terminal Road".to_string(), points, min_tier: None, bridge: None, v4: None, median: None, oneway: None, under: None,
+        tram: None, bed: None, lines: 0,
+    }.classed(Some("local")));
+}
+
+/// The fountain's site (cm a side) and the port's (w, d: world axes).
+const FOUNTAIN_CM: i64 = 900;
+const PORT_W_CM: i64 = 3_000;
+const PORT_D_CM: i64 = 2_000;
+/// A site's door stands this far out past its edge (cm: hqnav.js DOOR_OUT).
+const DOOR_OUT_CM: f64 = 200.0;
+
+/// The port's front: its Q16 unit, or toward the point it was given.
+fn port_front(at: P, f: P) -> [i64; 2] {
+    let fl = (f.0 as f64).hypot(f.1 as f64);
+    if fl > 0.0 && (fl - ONE as f64).abs() < ONE as f64 / 10.0 { [f.0, f.1] } else { q16((f.0 - at.0) as f64, (f.1 - at.1) as f64) }
+}
+
+/// Where hqnav.js puts a site's door (cm): out from `at` along `dir` (unit) past the site's w x d box (world axes) by
+/// `DOOR_OUT_CM`.
+fn door_of(at: P, dir: (f64, f64), w: i64, d: i64) -> (f64, f64) {
+    let r = dir.0.abs() * w as f64 / 2.0 + dir.1.abs() * d as f64 / 2.0 + DOOR_OUT_CM;
+    (at.0 as f64 + dir.0 * r, at.1 as f64 + dir.1 * r)
+}
+
+/// The port's drive: a local street from the nearest street (within 60 m) to its land side's door (the door at its end,
+/// on the sidewalk round its end), none when the door is already on one or a building stands in the way.
+fn port_drive(all: &[&Road], buildings: &[super::landuse::Building], at: P, front: [i64; 2]) -> Option<Road> {
+    let back = (-front[0] as f64 / ONE as f64, -front[1] as f64 / ONE as f64);
+    let door = door_of(at, back, PORT_W_CM, PORT_D_CM);
+    let c = super::super::classes::class("local")?;
+    // the nearest centre line point: (distance, foot, the road's half width)
+    let mut best: Option<(f64, (f64, f64), f64)> = None;
+    for r in all {
+        let hw = super::super::classes::class(if r.class == "arterial" { "avenue" } else { "local" }).map_or(0, |k| k.total_cm) as f64 / 2.0;
+        for s in r.points.windows(2) {
+            let (t, dd) = foot(door, (s[0][0] as f64, s[0][2] as f64), (s[1][0] as f64, s[1][2] as f64));
+            let f = (s[0][0] as f64 + t * (s[1][0] - s[0][0]) as f64, s[0][2] as f64 + t * (s[1][2] - s[0][2]) as f64);
+            if best.is_none_or(|b| dd < b.0) {
+                best = Some((dd, f, hw));
+            }
+        }
+    }
+    let (dd, f, hw) = best?;
+    if dd > 6_000.0 || dd <= hw {
+        return None;
+    }
+    // the street's end short of the door by the end's carriageway and half its sidewalk
+    let (ux, uz) = ((door.0 - f.0) / dd, (door.1 - f.1) / dd);
+    let back_cm = c.total_cm as f64 / 2.0 - c.side_cm as f64 / 2.0;
+    let len = dd - back_cm;
+    if len < 1_000.0 {
+        return None;
+    }
+    let m = (len / 400.0).ceil() as i64;
+    let points: Vec<[i64; 3]> = (0..=m).map(|i| {
+        let k = len * i as f64 / m as f64;
+        [(f.0 + ux * k).round() as i64, 0, (f.1 + uz * k).round() as i64]
+    }).collect();
+    let clear = c.total_cm / 2 + 100;
+    let (a, b) = ((points[0][0], points[0][2]), (points[m as usize][0], points[m as usize][2]));
+    if buildings.iter().any(|bd| {
+        let n = bd.poly.len();
+        super::super::organic::geom::inside(a, &bd.poly) || super::super::organic::geom::inside(b, &bd.poly)
+            || (0..n).any(|k| super::super::organic::geom::seg_dist2(a, b, bd.poly[k], bd.poly[(k + 1) % n]) < clear * clear)
+    }) {
+        return None;
+    }
+    Some(Road { class: "local", from: 0, to: 0, points, min_r: f64::INFINITY, fallback: false })
+}
+
+/// The fountain on the plaza: the spot nearest the hub (within 60 m) facing a road, its door (`door_of`) mid-sidewalk
+/// on it, its basin clear of every road's sidewalk and of the `keep` sites (centre, w, d) and the lots; with its front
+/// (Q16, toward that road). None when no spot fits.
+fn fountain_at(roads: &Roads, hub: P, keep: &[(P, i64, i64)], lots: &[Lot]) -> Option<(P, [i64; 2])> {
+    let segs: Vec<((f64, f64), (f64, f64), f64, f64)> = roads.edges.iter().flat_map(|e| e.points.windows(2).map(move |s| {
+        ((s[0][0] as f64, s[0][2] as f64), (s[1][0] as f64, s[1][2] as f64), e.width as f64 / 2.0, e.walk as f64)
+    })).filter(|s| foot((hub.0 as f64, hub.1 as f64), s.0, s.1).1 < 12_000.0).collect();
+    let half = FOUNTAIN_CM as f64 / 2.0;
+    let mut best: Option<(f64, P, [i64; 2])> = None;
+    for &(a, b, hw, walk) in &segs {
+        let l = (b.0 - a.0).hypot(b.1 - a.1);
+        if l < 1.0 {
+            continue;
+        }
+        let (dx, dz) = ((b.0 - a.0) / l, (b.1 - a.1) / l);
+        for side in [-1.0, 1.0] {
+            // facing the road: the front is -normal; the door that far out lands mid-sidewalk
+            let (nx, nz) = (-dz * side, dx * side);
+            let reach = (nx.abs() + nz.abs()) * half + DOOR_OUT_CM;
+            let off = hw - walk / 2.0 + reach;
+            let mut t = 0.0;
+            while t <= l {
+                let q = (a.0 + dx * t + nx * off, a.1 + dz * t + nz * off);
+                t += 200.0;
+                let qi = (q.0.round() as i64, q.1.round() as i64);
+                let dh = ((qi.0 - hub.0) as f64).hypot((qi.1 - hub.1) as f64);
+                if dh > 6_000.0 || best.is_some_and(|bb| bb.0 <= dh) {
+                    continue;
+                }
+                let free = segs.iter().all(|&(c, d, w2, _)| foot(q, c, d).1 >= w2 + half + 40.0)
+                    && keep.iter().all(|&(k, w, d)| (qi.0 - k.0).abs() * 2 > w + FOUNTAIN_CM + 200 || (qi.1 - k.1).abs() * 2 > d + FOUNTAIN_CM + 200)
+                    && lots.iter().all(|lt| (qi.0 - lt.x).abs() * 2 > lt.w + FOUNTAIN_CM + 200 || (qi.1 - lt.z).abs() * 2 > lt.d + FOUNTAIN_CM + 200);
+                if free {
+                    best = Some((dh, qi, q16(-nx, -nz)));
+                }
+            }
+        }
+    }
+    best.map(|b| (b.1, b.2))
 }
 
 /// The HQ lots (see `layers`).

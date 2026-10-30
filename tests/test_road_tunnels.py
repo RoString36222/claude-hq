@@ -91,6 +91,7 @@ for(var s = 1; s < tun.len - 1; s += 2){ var q = along(tun.pts, s); out.holes.tu
 
 // ---- surfaces over the tunnel ----
 out.over = {n: 0, land: 0, road: 0, landY: 0, roadY: 0, surf: 0, nr: 0, nrIn: 0, street: 0};
+var tunE = W.edges.filter(function(e){ return e.id === tun.edge; })[0];
 for(var s = 5; s < tun.len - 5; s += 10){
   var q = along(tun.pts, s), lx = q.dz, lz = -q.dx;
   [0, 7, -7].forEach(function(o){
@@ -98,12 +99,14 @@ for(var s = 5; s < tun.len - 5; s += 10){
     out.over.n++;
     // without yNow: the land (the airport); with yNow at the road: the road; with yNow on the land: the land
     if(Math.abs(H.groundAt(W, x, z) - H.heightAt(W, x, z)) < 0.05 || H.groundAt(W, x, z) > q.y + 5) out.over.land++;
-    if(Math.abs(H.groundAt(W, x, z, false, q.y) - q.y) < 0.05) out.over.road++;
+    // (the centre line is on the expressway's median, raised paving a kerb over the road, where the median runs)
+    var gq = H.groundAt(W, x, z, false, q.y) - q.y;
+    if(Math.abs(gq) < 0.05 || (o === 0 && tunE.median > 0 && Math.abs(gq - 0.15) < 0.05)) out.over.road++;
     if(h > q.y + 5) out.over.landY++;
     // (hq3d's "the street" sentinel, -1e9, and anything well under the tunnel: the land)
     if(H.groundAt(W, x, z, false, -1e9) > q.y + 5 && H.groundAt(W, x, z, false, q.y - 4) > q.y + 5 && !H.tunnelAt(W, x, z, -1e9)) out.over.street++;
     if(H.roadY(W, x, z) == null || H.roadY(W, x, z) > q.y + 5) out.over.roadY++;
-    if(H.surfaceAt(W, x, z, q.y) === "road") out.over.surf++;
+    if(H.surfaceAt(W, x, z, q.y) === "road" || (o === 0 && tunE.median > 0 && Math.abs(gq - 0.15) < 0.05 && H.surfaceAt(W, x, z, q.y) === "sidewalk")) out.over.surf++;
     var nr = H.nearestRoad(W, x, z, 40), ni = H.nearestRoad(W, x, z, 40, q.y);
     // (without yNow a tunnel is the nearest road only where no other is within 40 m)
     if(!nr || nr.edge !== tun.edge || !W.edges.some(function(e){ if(e.id === tun.edge) return false; var p = e.pts;

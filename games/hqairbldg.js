@@ -13,6 +13,7 @@
  *     concourse gallery under (x, z), or null (the caller uses the ground). Off the nave, a floor counts only when
  *     yRef >= floor - 1.5, so walking Ring Road 5 under the skybridge stays on the road.
  *   blockedAt(P, x, z, y) -> true when a wall, glass facade or prop at that level stands at (x, z).
+ *   hallAt(P, x, z, pad) -> true inside the civic terminal's footprint (grown by pad m): what a vehicle may not enter.
  *   roofAt(P, x, z) -> the top of whatever stands at (x, z) (roofs, the tower, the hangars), or null: the helicopter's floor.
  *   gateSpot(P, standId) -> {x, y, z, yaw}: in the gallery at the glass facing the stand; commuter stands (bus
  *     boarding): the gallery's south end, a few metres in from its end wall, facing up the gallery. null for an unknown stand.
@@ -212,6 +213,12 @@ function floorAt(P, x, z, yRef){
     if(f.free || yRef == null || +yRef >= y - SAW) return y;
   }
   return null;
+}
+// the terminal hall's footprint (grown by pad m) at (x, z): solid to a vehicle (its nave is walked, not driven)
+function hallAt(P, x, z, pad){
+  var T = P && P.term; if(!T) return false;
+  var q = toF(P.F, +x || 0, +z || 0), m = +pad || 0;
+  return q[0] >= T.u0 - m && q[0] <= T.u1 + m && q[1] >= T.v0 - m && q[1] <= T.v1 + m;
 }
 function inBlock(b, u, v){
   if(b.c) return Math.hypot(u - b.c[0], v - b.c[1]) <= b.r;
@@ -813,7 +820,7 @@ function create(c, L, o){
   return api;
 }
 
-HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, roofAt: roofAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create,
+HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, hallAt: hallAt, roofAt: roofAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create,
   NAVE: NAVE, toFrame: function(L, x, z){ return toF(frameOf(L), x, z); }, toWorld: function(L, u, v){ return toW(frameOf(L), u, v); },
   K: {DRUM_OUT: DRUM_OUT, DRUM_BACK: DRUM_BACK, DRUM_R: DRUM_R, COL_R: COL_R, CAB_D: CAB_D, CAB_W: CAB_W, BOGIE_R: BOGIE_R, BOGIE_BACK: BOGIE_BACK, RET_LEN: RET_LEN, DOOR: DOOR}};
 })();

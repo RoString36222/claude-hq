@@ -444,8 +444,12 @@ function cityStats(W, tier, st){
           population: num(st.population), treasury: num(st.treasury), specialty: typeof st.specialty === "string" ? st.specialty : null,
           happiness: parts.length ? Math.round(sum/parts.length*100) : null, parts: parts, homes: lots.length};
 }
-// where a site's door is (m): its centre, out along its front past its depth
-function doorOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 + f[0]*r, z: s.z/100 + f[1]*r, yaw: Math.atan2(f[0], f[1])}; }
+// where a site's door is (m): its centre, out along its front past its depth; the airport's, its drop-off curb
+// (HQV.hqAirfield.curbDoor, as HQV.hqnav's)
+function doorOf(s){
+  var cd = s && s.kind === "airport" && HQV.hqAirfield && HQV.hqAirfield.curbDoor ? HQV.hqAirfield.curbDoor(s) : null; if(cd) return cd;
+  var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 + f[0]*r, z: s.z/100 + f[1]*r, yaw: Math.atan2(f[0], f[1])};
+}
 // a site's back, a metre out (m): a dock's or a port's land side, where its front reaches out over the water
 function backOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 - f[0]*r, z: s.z/100 - f[1]*r}; }
 // the travel terminal (dock, port, transit hub, airport) whose door is within reach of (x, z), else null; a dock
@@ -1120,9 +1124,11 @@ HQV.hqWorlds.city3d = function(c, w){
     hqs.concat(views).forEach(function(E){ if(E.B) E.B.setNight(night); });
     lampGlows.forEach(function(g){ g.material.opacity = night ? 0.85 : 0.08; });
   }
-  function blocked(x, z){
+  // ride (optional): whether the body asking is a vehicle (hq3d bodyHits); without it, whether you ride now
+  function blocked(x, z, ride){
     if(!W) return true;
     var tu = inTunnel(x, z); if(tu) return WD.blockedAt(W, x, z, tu.y0) || trafficAt(x, z);   // [3.30] in the tunnel under the airport: its walls, the traffic
+    if(apL && apRideBlocked(x, z, ride)) return true;                         // AIR: a vehicle: the terminal hall, the platform's land edge
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z, deckLevel(x, z))) return true;                 // [3.29] a flyover's piers below it, its parapets on it
@@ -1169,6 +1175,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     var fy = apGroundY(x, z); if(fy != null) return fy;                    // AIR: the airfield's platform, the terminal, the gallery
+    var ly = apL ? AF.landsideAt(apL, x, z) : null; if(ly != null) return WD.heightAt(W, x, z) + ly;   // AIR: the landside's roads and curb walk, as drawn
     var gy = dy != null ? dy : WD.groundAt(W, x, z, false, deckLevel(x, z)), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
     return sy != null && sy > gy ? sy : gy;
   }
@@ -1950,15 +1957,42 @@ HQV.hqWorlds.city3d = function(c, w){
     return CRAFT.brandHex ? CRAFT.brandHex() : 0xe2805e;
   }
   // the platform, the approach piers, a building's floor: a walking floor (yRef: the walker's height; only the avatar
-  // has one, so a car on Ring Road 5 under the skybridge stays on the road)
-  function apFloor(x, z, yRef){
+  // has one, so a car on Ring Road 5 under the skybridge stays on the road); drive: you in a vehicle, which has no
+  // floor in the buildings (the nave, the skybridge, the gallery are walked). On the platform, its drawn layer's top
+  // (hqairport3d Y: the apron, a taxiway, the runway, the service road over its slab at L.y)
+  function apFloor(x, z, yRef, drive){
     if(!apL) return null;
-    var b = apP ? ABL.floorAt(apP, x, z, yRef == null ? -Infinity : yRef) : null;
+    var b = apP && !drive ? ABL.floorAt(apP, x, z, yRef == null ? -Infinity : yRef) : null;
     if(b != null) return b;
-    return AF.floorAt(apL, x, z);
+    var f = AF.floorAt(apL, x, z), pv = f != null && AP3 && AP3.Y ? AF.onPavement(apL, x, z) : null;
+    return f != null && pv ? f + (+AP3.Y[pv === "runway" ? "rwy" : pv === "taxiway" ? "taxi" : pv] || 0) : f;
   }
   function apNearMe(x, z){ var me = c.avatar && c.avatar(); return !!me && Math.abs(x - me.x) < 4 && Math.abs(z - me.z) < 4; }
-  function apGroundY(x, z){ return apL ? apFloor(x, z, apNearMe(x, z) ? apYRef : null) : null; }
+  function apGroundY(x, z){ var me = apL && apNearMe(x, z); return apL ? apFloor(x, z, me ? apYRef : null, me && riding()) : null; }
+  function riding(){ var m = c.motion && c.motion(); return !!(m && m.ride && !m.air); }
+  // AIR: what only a vehicle runs into: the terminal hall (its nave is walked, its glass front drawn only) and the
+  // platform's land edge (the fence over its retaining wall: a drop of up to 9 m, or a step up onto the slab);
+  // ride: the caller's (hq3d bodyHits), else whether you ride now
+  var AP_FENCE_R = 0.6;
+  function apRideBlocked(x, z, ride){
+    var hit = !!(apP && ABL.hallAt && ABL.hallAt(apP, x, z, 0.3)) || apFenceAt(x, z);
+    return hit && (ride != null ? !!ride : riding());
+  }
+  var apFence = null, apFenceOf = null;
+  function apFenceAt(x, z){
+    var F = ap3 && ap3.plan && ap3.plan.fence; if(!F || !F.length) return false;
+    if(apFenceOf !== F){
+      apFenceOf = F;
+      apFence = F.map(function(f){ var a = f[0], b = f[1]; return {a: a, b: b, x0: Math.min(a[0], b[0]) - AP_FENCE_R, x1: Math.max(a[0], b[0]) + AP_FENCE_R,
+                                                                      z0: Math.min(a[1], b[1]) - AP_FENCE_R, z1: Math.max(a[1], b[1]) + AP_FENCE_R}; });
+    }
+    for(var i = 0; i < apFence.length; i++){
+      var e = apFence[i]; if(x < e.x0 || x > e.x1 || z < e.z0 || z > e.z1) continue;
+      var dx = e.b[0] - e.a[0], dz = e.b[1] - e.a[1], l2 = dx*dx + dz*dz, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - e.a[0])*dx + (z - e.a[1])*dz)/l2)) : 0;
+      if(Math.hypot(x - e.a[0] - dx*t, z - e.a[1] - dz*t) <= AP_FENCE_R) return true;
+    }
+    return false;
+  }
   function apBlocked(x, z){
     if(!apP) return false;
     var y = apNearMe(x, z) && apYRef != null ? apYRef : (apL.ySite != null ? apL.ySite : 0);

@@ -321,7 +321,9 @@ function terrainAt(lk, lod, x, z){
   W.lots.forEach(function(l){
     if(l.kind !== "building") return;
     lots++;
-    var R = Q.buildingRect(l), m = Math.min(Q.groundAt(W, R.x0, R.z0), Q.groundAt(W, R.x1, R.z0), Q.groundAt(W, R.x0, R.z1), Q.groundAt(W, R.x1, R.z1));
+    // (groundRaw: the ground the base is built from; groundAt reads the drawn terrain mesh once worldgeom is loaded)
+    var gr = Q.groundRaw || Q.groundAt;
+    var R = Q.buildingRect(l), m = Math.min(gr(W, R.x0, R.z0), gr(W, R.x1, R.z0), gr(W, R.x0, R.z1), gr(W, R.x1, R.z1));
     if(!(l.id in lo) || lo[l.id] > m + 1e-3) fails++;
   });
   out.buildings = {lots: lots, built: Object.keys(lo).length, baseFails: fails};

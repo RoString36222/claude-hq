@@ -109,8 +109,8 @@ var ringE = W.edges.filter(function(e){ return e.cls === "ring"; });
 out.cross = flyIds.map(function(id){
   var F = pts(byId[id]), best = null;
   F.forEach(function(p){ ringE.forEach(function(r){ var q = near(pts(r), p[0], p[2]); if(!best || q.d < best.q.d) best = {p: p, q: q}; }); });
-  var x = best.p[0], z = best.p[2], deck = best.p[1], ring = best.q.y, nr = H.nearestRoad(W, x, z, 20), nrUp = H.nearestRoad(W, x, z, 20, deck), nrDn = H.nearestRoad(W, x, z, 20, ring);
-  return {off: best.q.d, deck: deck, ring: ring, g: H.groundAt(W, x, z), gDeck: H.groundAt(W, x, z, false, deck), gRing: H.groundAt(W, x, z, false, ring),
+  var x = best.p[0], z = best.p[2], deck = best.p[1], ring = best.q.y, ringMedian = ringE.some(function(r){ return r.median > 0; }), nr = H.nearestRoad(W, x, z, 20), nrUp = H.nearestRoad(W, x, z, 20, deck), nrDn = H.nearestRoad(W, x, z, 20, ring);
+  return {off: best.q.d, deck: deck, ring: ring, ringMedian: ringMedian, g: H.groundAt(W, x, z), gDeck: H.groundAt(W, x, z, false, deck), gRing: H.groundAt(W, x, z, false, ring),
           rY: H.roadY(W, x, z), rYDeck: H.roadY(W, x, z, deck), sDeck: H.surfaceAt(W, x, z, deck), s: H.surfaceAt(W, x, z),
           street: H.streetAt(W, x, z), nrUp: nrUp && nrUp.edge, nrDn: nrDn && byId[nrDn.edge].cls, fly: id,
           // the piers: one blocks at ground level, not on the deck over it
@@ -330,7 +330,8 @@ class InterchangeDecks(unittest.TestCase):
             self.assertAlmostEqual(c["g"], c["ring"], delta=0.3)
             self.assertAlmostEqual(c["rY"], c["ring"], delta=0.3)
             self.assertAlmostEqual(c["street"], c["ring"], delta=0.3)
-            self.assertEqual(c["s"], "road")
+            # (the ring's raised median, where the flyover's line crosses it, is paving, not carriageway)
+            self.assertIn(c["s"], ("road", "sidewalk") if c["ringMedian"] else ("road",))
             # with yNow at deck height: the deck; with the ring's height: the ring
             self.assertAlmostEqual(c["gDeck"], c["deck"], delta=0.05)
             self.assertAlmostEqual(c["rYDeck"], c["deck"], delta=0.05)

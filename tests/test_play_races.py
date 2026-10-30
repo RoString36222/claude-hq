@@ -26,9 +26,10 @@ function v4(d){ d.layers.roads.edges.forEach(function(e, i){ var o = V4[e["class
 var docs = {commons: doc("claude-hq@3.json.gz"), island: doc("island@3.json.gz"), v4: v4(doc("claude-hq@3.json.gz"))};
 // [3.32] on a tram's centre bed (City Gen v4 phase 9): a route down a tram avenue's middle has its gate or start on the
 // raised bed, the line across the carriageways either side
+// (or a median's: raised paving too, HQV.world's surfaceAt says sidewalk on it)
 function onBed(W, x, z){
-  var n = WD.nearestRoad(W, x, z, 30), e = n ? W.edges.filter(function(f){ return f.id === n.edge && f.bed > 0; })[0] : null;
-  return !!(e && n.dist < e.bed/200);
+  var n = WD.nearestRoad(W, x, z, 30), e = n ? W.edges.filter(function(f){ return f.id === n.edge && (f.bed > 0 || f.median > 0); })[0] : null;
+  return !!(e && n.dist < (e.bed > 0 ? e.bed : e.median)/200);
 }
 Object.keys(docs).forEach(function(name){
   var W = WD.pack(docs[name]), seed = P.hashStr(W.seed || W.id), R = PR.plan(W, seed, null), o = out[name] = {};

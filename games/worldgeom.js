@@ -334,7 +334,9 @@ function stations(E, s0, s1){
 
 /* ---------- surface heights (the ONE road surface: HQV.world.roadY) ---------- */
 // the ground at street level: HQV.world.groundAt, but over a terrain hole (@3) the street, not the hole's floor
-function gY(W, x, z){ var Q = WQ(); return Q.streetAt ? Q.streetAt(W, x, z) : Q.groundAt(W, x, z); }
+// (HQV.world.groundRaw: the ground before it is read off the drawn surfaces, which the terrain clamp and every piece
+// placed here are built from)
+function gY(W, x, z){ var Q = WQ(); return Q.groundRaw ? Q.groundRaw(W, x, z, true) : (Q.streetAt ? Q.streetAt(W, x, z) : Q.groundAt(W, x, z)); }
 // HQV.world.roadY at the vertex itself, moved onto the carriageway (walk false) or the sidewalk (walk true):
 // roadY adds 0.15 where the point is sidewalk, so only the kerb step is corrected
 // (yNow: the level asked for, HQV.world's stacked surfaces; an interchange's flyover and ramps pass their own y)
@@ -365,19 +367,28 @@ function tint(name){ return TINT[name] || TINT.wild; }
 // the piece's plane (extended). The pieces: every upward asphalt / sidewalk triangle the road tiles draw (exact) and
 // every polyline segment's band +-half, flat across and graded along (covers junctions and cut hairpin corners).
 // Unlike a minimum over a window this follows a graded road's slope, so it never digs trenches beside one.
-var CELL = 32, PIECE_GAP = 0.01;
+var CELL = 32, PIECE_GAP = 0.01, SLIVER_G = 0.3;
+// a doc newer than @1 (whose geometry stays byte-identical: the surfacing fixes, sliver bounds, plate corners, dead-end
+// caps, the plate ring's kerb correction and keeping lamps off carriageways, are for @2 on)
+function newer(W){ var B = (W && W.tierBase) || W || {}; return (B.v|0) >= 2; }
 function clampPieces(W){
   var C = prep(W);
   if(C.pieces) return C.pieces;
   var grid = {}, all = [];
-  function add(P, y0, gx, gz, own){   // P: convex [[x, z], ...]; plane y = y0 + gx*x + gz*z (margin already in y0)
+  function add(P, y0, gx, gz, own, bound){   // P: convex [[x, z], ...]; plane y = y0 + gx*x + gz*z (margin already in y0)
     var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, A = [];
     P.forEach(function(q){ x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); });
     for(var k = 0; k < P.length; k++){
       var p = P[k], q = P[(k + 1) % P.length], nx = q[1] - p[1], nz = p[0] - q[0], l = hypot(nx, nz);
       if(l > 1e-9) A.push([nx/l, nz/l]);
     }
-    var o = {P: P, A: A, y0: y0, gx: gx, gz: gz, x0: x0, x1: x1, z0: z0, z1: z1, seen: -1, own: !!own};
+    // lo (bound: a road piece steeper than SLIVER_G, in a doc newer than @1): the plane's least over the piece itself.
+    // Carried out over a vertex's star the plane is bounded by it, so a sliver (a 0.3 m wide triangle at 50 degrees) never
+    // digs a pit metres under the road beside it (every other piece's plane carries on: a bank's keeps the coarse lods
+    // under the water, a bridge approach's the land beside the river)
+    var lo = -Infinity;
+    if(bound && hypot(gx, gz) > SLIVER_G){ lo = Infinity; P.forEach(function(q){ lo = Math.min(lo, y0 + gx*q[0] + gz*q[1]); }); }
+    var o = {P: P, A: A, y0: y0, gx: gx, gz: gz, lo: lo, x0: x0, x1: x1, z0: z0, z1: z1, seen: -1, own: !!own};
     all.push(o);
     for(var j = Math.floor(z0/CELL); j <= Math.floor(z1/CELL); j++)
       for(var i = Math.floor(x0/CELL); i <= Math.floor(x1/CELL); i++) (grid[i + "," + j] = grid[i + "," + j] || []).push(o);
@@ -392,8 +403,8 @@ function clampPieces(W){
           a.y - gx*a.x - gz*a.z - 0.05 - SEAM, gx, gz);
     }
   });
-  for(var tz = 0; tz < NT; tz++) for(var tx = 0; tx < NT; tx++){
-    var r = roadTile(W, tx, tz, true);
+  var v2 = newer(W);
+  flatRoads(W).forEach(function(r){
     [r.asphalt, r.walk].forEach(function(g){
       var p = g.pos;
       for(var t = 0; t < g.idx.length; t += 3){
@@ -402,10 +413,10 @@ function clampPieces(W){
         var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
         if(!(Math.abs(ny) > 0.5*Math.sqrt(nx*nx + ny*ny + nz*nz))) continue;   // upward pieces only
         var gx = -nx/ny, gz = -nz/ny;
-        add([[p[ia], p[ia+2]], [p[ib], p[ib+2]], [p[ic], p[ic+2]]], p[ia+1] - gx*p[ia] - gz*p[ia+2] - LIFT - 0.05, gx, gz);
+        add([[p[ia], p[ia+2]], [p[ib], p[ib+2]], [p[ic], p[ic+2]]], p[ia+1] - gx*p[ia] - gz*p[ia+2] - LIFT - 0.05, gx, gz, false, v2);
       }
     });
-  }
+  });
   // v2 ground: every pavement, pad and beach triangle as drawn (none in a @1 doc). A river bank's pieces are `own`: at
   // the finest lod they push down only the land vertices inside them (terrainY). A bank is a 3 m strip on a slope
   // steeper than it, and its plane carried out over a land vertex's whole 8 m star dug the land beside the river under
@@ -423,6 +434,73 @@ function clampPieces(W){
   });
   C.pieces = {grid: grid, n: 0};
   return C.pieces;
+}
+// every tile's flat road pieces (roadTile(.., flat): the asphalt and sidewalk faces exactly as drawn, no kerbs, marks or
+// structure), once per W: the terrain clamp and the drawn-surface index (surfIndex) both read them
+function flatRoads(W){
+  var C = prep(W);
+  if(!C.flat){
+    C.flat = [];
+    for(var tz = 0; tz < NT; tz++) for(var tx = 0; tx < NT; tx++) C.flat.push(roadTile(W, tx, tz, true));
+  }
+  return C.flat;
+}
+// The drawn surfaces physics stands on (HQV.world.groundAt), once per W: every upward triangle of flatRoads (kind 1) and of
+// the ground items (blocks, lots, sites, beaches, banks: kind 2), each listed in the SURF_CELL m cells its box covers
+var SURF_CELL = 4, SURF_EPS = 1e-7;
+function surfIndex(W){
+  var C = prep(W);
+  if(C.surf) return C.surf;
+  var T = [], grid = new Map();
+  function tri(ax, ay, az, bx, by, bz, cx, cy, cz, kind){
+    var ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
+    var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+    if(!(Math.abs(ny) > 0.5*Math.sqrt(nx*nx + ny*ny + nz*nz))) return;   // a wall or a sliver on end: nothing to stand on
+    var id = T.length/10;
+    T.push(ax, ay, az, bx, by, bz, cx, cy, cz, kind);
+    var i0 = Math.floor(Math.min(ax, bx, cx)/SURF_CELL), i1 = Math.floor(Math.max(ax, bx, cx)/SURF_CELL);
+    var j0 = Math.floor(Math.min(az, bz, cz)/SURF_CELL), j1 = Math.floor(Math.max(az, bz, cz)/SURF_CELL);
+    for(var j = j0; j <= j1; j++) for(var i = i0; i <= i1; i++){
+      var key = i*65536 + j, L = grid.get(key);
+      if(!L) grid.set(key, L = []);
+      L.push(id);
+    }
+  }
+  flatRoads(W).forEach(function(r){
+    [r.asphalt, r.walk].forEach(function(g){
+      var p = g.pos, I = g.idx;
+      for(var t = 0; t < I.length; t += 3){
+        var a = 3*I[t], b = 3*I[t+1], c = 3*I[t+2];
+        tri(p[a], p[a+1], p[a+2], p[b], p[b+1], p[b+2], p[c], p[c+1], p[c+2], 1);
+      }
+    });
+  });
+  groundItems(W).forEach(function(it){
+    for(var t = 0; t < it.tri.length; t += 3){
+      var a = it.V[it.tri[t]], b = it.V[it.tri[t+1]], c = it.V[it.tri[t+2]];
+      tri(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], 2);
+    }
+  });
+  C.surf = {T: new Float64Array(T), grid: grid};
+  return C.surf;
+}
+// the highest drawn surface at (x, z) with lo <= y <= hi: road (true: the asphalt and sidewalks) or ground items (false),
+// or null where none is drawn
+function drawnTop(W, x, z, lo, hi, road){
+  var D = surfIndex(W), L = D.grid.get(Math.floor(x/SURF_CELL)*65536 + Math.floor(z/SURF_CELL)), T = D.T, best = null, kind = road ? 1 : 2;
+  if(!L) return null;
+  for(var n = 0; n < L.length; n++){
+    var o = 10*L[n];
+    if(T[o + 9] !== kind) continue;
+    var ax = T[o], az = T[o + 2], bx = T[o + 3], bz = T[o + 5], cx = T[o + 6], cz = T[o + 8];
+    var d = (bz - cz)*(ax - cx) + (cx - bx)*(az - cz);
+    if(Math.abs(d) < 1e-12) continue;
+    var l1 = ((bz - cz)*(x - cx) + (cx - bx)*(z - cz))/d, l2 = ((cz - az)*(x - cx) + (ax - cx)*(z - cz))/d, l3 = 1 - l1 - l2;
+    if(l1 < -SURF_EPS || l2 < -SURF_EPS || l3 < -SURF_EPS) continue;
+    var y = l1*T[o + 1] + l2*T[o + 4] + l3*T[o + 7];
+    if(y >= lo && y <= hi && (best == null || y > best)) best = y;
+  }
+  return best;
 }
 var STAR = [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]], STAR_AXES = [[1, 0], [0, 1], [Math.SQRT1_2, Math.SQRT1_2]];
 // separating-axis test: does convex piece o overlap the star of (x, z) at spacing s (by more than PIECE_GAP)?
@@ -477,7 +555,7 @@ function terrainY(W, x, z, step){
         o.seen = stamp;
         if(o.x1 < x - step || o.x0 > x + step || o.z1 < z - step || o.z0 > z + step) continue;
         if(o.own && fine ? !inPoly(o.P, x, z) : !starHits(o, x, z, step)) continue;
-        y = Math.min(y, o.y0 + o.gx*x + o.gz*z);
+        y = Math.min(y, Math.max(o.lo, o.y0 + o.gx*x + o.gz*z));
       }
     }
   var sea = seaY(W);
@@ -1439,6 +1517,7 @@ function roadTile(W, tx, tz, flat, gap){
   // junction patches, corner sidewalks, zebra crossings: by the tile holding the node
   C.nodeIds.forEach(function(id){
     var arms = C.inc[id] || [], n = C.nodes[id];
+    if(arms.length === 1 && n && inTile(n.x, n.z, tx, tz) && newer(W)) deadEnd(W, n, arms[0], asph, kerb, walk, flat);
     if(arms.length < 2 || !n || !inTile(n.x, n.z, tx, tz)) return;
     if(flat && arms.some(function(a){ return a.E.under; })) return;   // (phase 7: no clamp piece over a portal)
     // (phase 7: a portal's patch, between a tunnel and its cutting, in `tunnel`)
@@ -1469,22 +1548,79 @@ function armStation(E, end, t){
   if(end){ S.dx = -S.dx; S.dz = -S.dz; S.lx = -S.lx; S.lz = -S.lz; }   // arm frame: d points away from the node
   return S;
 }
+// The plate's outline between consecutive arms a and b (a's left kerb faces b's right) beyond the chord from a's kerb
+// point to b's, as [[x, z], ...] from a to b: where the two kerb lines (or with out, the sidewalks' outer lines) meet
+// between the node and both trims, that point (the carriageways' union has its corner there); round the outside of a
+// bend (b more than half a turn on from a) the arc round the node from a's kerb line to b's, as each road's band ends
+// in a half disc there (HQV.world: a carriageway reaches cw from its points); else none
+var CORNER_STEP = Math.PI/12;
+function cornerPts(n, a, b, out){
+  var ra = out ? a.E.half : a.E.cw, rb = out ? b.E.half : b.E.cw, g = b.yaw - a.yaw;
+  while(g <= 1e-9) g += 2*Math.PI;
+  if(g > Math.PI + 1e-3){
+    var m = Math.max(1, Math.ceil((g - Math.PI)/CORNER_STEP)), P = [];
+    for(var k = 0; k <= m; k++){
+      var f = k/m, yw = a.yaw + Math.PI/2 + (g - Math.PI)*f, r = ra + (rb - ra)*f;
+      P.push([n.x + Math.sin(yw)*r, n.z + Math.cos(yw)*r]);
+    }
+    return P;
+  }
+  if(out) return [];
+  var A = a.S, B = b.S, ax = A.x + A.lx*ra, az = A.z + A.lz*ra, bx = B.x - B.lx*rb, bz = B.z - B.lz*rb;
+  var cr = (-A.dx)*(-B.dz) - (-A.dz)*(-B.dx);
+  if(Math.abs(cr) < 1e-6) return [];
+  var u = ((bx - ax)*(-B.dz) - (bz - az)*(-B.dx))/cr, v = ((bx - ax)*(-A.dz) - (bz - az)*(-A.dx))/cr;
+  return u > 0.05 && v > 0.05 && u < a.t - 0.05 && v < b.t - 0.05 ? [[ax - A.dx*u, az - A.dz*u]] : [];
+}
+// A dead end (a node with one road): its band's half disc, as HQV.world's carriageway and sidewalk reach round the last
+// point: asphalt to cw, a sidewalk ring with its kerb out to the half width (none on a bridge, deck or tunnel)
+function deadEnd(W, n, a, asph, kerb, walk, flat){
+  var E = a.E, S = armStation(E, a.end, 0), Q = WQ(), ps = Math.atan2(S.dx, S.dz), m = 12, k;
+  if(E.deck || E.bridge || E.under) return;
+  function rim(r){
+    var P = [];
+    for(k = 0; k <= m; k++){ var yw = ps + Math.PI/2 + Math.PI*k/m; P.push([S.x + Math.sin(yw)*r, 0, S.z + Math.cos(yw)*r]); }
+    return P;
+  }
+  function y(p, up){ var v = ySurf(W, p[0], p[2], !!up); return (v != null ? v : S.y + (up ? KERB : 0)) + LIFT; }
+  var I = rim(E.cw), cy = y([S.x, 0, S.z]);
+  for(k = 0; k < m; k++) face(asph, [[S.x, cy, S.z], [I[k][0], y(I[k]), I[k][2]], [I[k + 1][0], y(I[k + 1]), I[k + 1][2]]], COL.asphalt, UP);
+  if(!(E.walk > 0)) return;
+  var O = rim(E.half), wc = aveish(E.cls) ? COL.walkAve : COL.walk;
+  for(k = 0; k < m; k++){
+    var i0 = I[k], i1 = I[k + 1], o0 = O[k], o1 = O[k + 1];
+    face(walk, [[i0[0], y(i0, 1), i0[2]], [o0[0], y(o0, 1), o0[2]], [o1[0], y(o1, 1), o1[2]], [i1[0], y(i1, 1), i1[2]]], wc, UP);
+    if(!flat) face(kerb, [[i0[0], y(i0, 1), i0[2]], [i1[0], y(i1, 1), i1[2]], [i1[0], y(i1) - 0.02, i1[2]], [i0[0], y(i0) - 0.02, i0[2]]],
+                   COL.kerb, [S.x - (i0[0] + i1[0])/2, 0, S.z - (i0[2] + i1[2])/2]);
+  }
+}
 function junction(W, C, n, arms, asph, marks, kerb, walk, dk){
-  var Q = WQ(), ring = [], lvl = n.junction === "ramps" ? n.y : undefined;   // (an interchange's: at the node's level)
+  var Q = WQ(), ring = [], lvl = n.junction === "ramps" ? n.y : undefined, v2 = newer(W);   // (an interchange's: at the node's level)
   arms.forEach(function(a){
     var S = armStation(a.E, a.end, a.t);
     a.S = S;
     ring.push(at(S, -a.E.cw, 0), at(S, a.E.cw, 0));
   });
+  // (the carriageway's y: a ring point sits on an arm's kerb line, where roadY may already be its sidewalk, KERB up)
   function yAt(p, up){
     var y = Q.roadY(W, p[0], p[2], lvl);
     if(y == null){ var r = Q.nearestRoad(W, p[0], p[2], 20, lvl); y = r ? r.y : n.y; }
+    else if(v2 && Q.surfaceAt(W, p[0], p[2], lvl) === "sidewalk") y -= KERB;
     return y + (up || 0);
   }
   var cy = yAt([n.x, 0, n.z]) + LIFT;
   ring.forEach(function(p){ p[1] = yAt(p) + LIFT; });
-  for(var k = 0; k < ring.length; k++){
-    var p = ring[k], q = ring[(k + 1) % ring.length];
+  // the plate's outline: the ring with each corner's own points (cornerPts: the carriageways' union, as HQV.world's
+  // roads are, not the chord between two arms' kerb points)
+  var plain = !v2 || n.junction === "roundabout" || n.junction === "ramps" || arms.some(function(a){ return a.E.deck || a.E.bridge || a.E.under; });
+  var corners = arms.map(function(a, k){ return plain ? [] : cornerPts(n, a, arms[(k + 1) % arms.length], false); });
+  var plate = [];
+  arms.forEach(function(a, k){
+    plate.push(ring[2*k], ring[2*k + 1]);
+    corners[k].forEach(function(c){ plate.push([c[0], yAt([c[0], 0, c[1]]) + LIFT, c[1]]); });
+  });
+  for(var k = 0; k < plate.length; k++){
+    var p = plate[k], q = plate[(k + 1) % plate.length];
     face(asph, [[n.x, cy, n.z], p, q], COL.asphalt, UP);
   }
   // corner sidewalks between consecutive arms (a's left faces b, b's right faces a)
@@ -1496,9 +1632,23 @@ function junction(W, C, n, arms, asph, marks, kerb, walk, dk){
     var ain = at(Sa, a.E.cw, 0), aout = at(Sa, a.E.half, 0), bout = at(Sb, -b.E.half, 0), bin = at(Sb, -b.E.cw, 0);
     var wy = function(P){ var r = Q.nearestRoad(W, P[0], P[2], 20); return (r ? r.y : n.y) + KERB + LIFT; };
     var yi = wy(ain), yo = wy(aout), yj = wy(bout), yk = wy(bin);
-    face(walk, [[ain[0], yi, ain[2]], [aout[0], yo, aout[2]], [bout[0], yj, bout[2]], [bin[0], yk, bin[2]]], COL.walk, UP);
-    face(kerb, [[ain[0], yi, ain[2]], [bin[0], yk, bin[2]], [bin[0], yAt(bin) + LIFT - 0.02, bin[2]], [ain[0], yAt(ain) + LIFT - 0.02, ain[2]]],
-         COL.kerb, [n.x - (ain[0] + bin[0])/2, 0, n.z - (ain[2] + bin[2])/2]);
+    // the inner line (kerb) and the outer one: through the corner's points where it has them
+    var cin = corners[k], cout = cin.length > 1 ? cornerPts(n, a, b, true) : [];
+    var IN = [ain].concat(cin.map(function(c){ return [c[0], 0, c[1]]; })).concat([bin]);
+    var OUT = [aout].concat(cout.map(function(c){ return [c[0], 0, c[1]]; })).concat([bout]);
+    if(cin.length > 1 && cout.length === cin.length){
+      // round the outside of a bend: quads between the two arcs
+      for(var j = 0; j + 1 < IN.length; j++){
+        var i0 = IN[j], i1 = IN[j + 1], o0 = OUT[j], o1 = OUT[j + 1];
+        face(walk, [[i0[0], wy(i0), i0[2]], [o0[0], wy(o0), o0[2]], [o1[0], wy(o1), o1[2]], [i1[0], wy(i1), i1[2]]], COL.walk, UP);
+      }
+    } else face(walk, [[ain[0], yi, ain[2]], [aout[0], yo, aout[2]], [bout[0], yj, bout[2]], [bin[0], yk, bin[2]]].concat(
+      cin.map(function(c){ var P = [c[0], 0, c[1]]; return [c[0], wy(P), c[1]]; }).reverse()), COL.walk, UP);
+    for(j = 0; j + 1 < IN.length; j++){
+      var u = IN[j], v = IN[j + 1];
+      face(kerb, [[u[0], wy(u), u[2]], [v[0], wy(v), v[2]], [v[0], yAt(v) + LIFT - 0.02, v[2]], [u[0], yAt(u) + LIFT - 0.02, u[2]]],
+           COL.kerb, [n.x - (u[0] + v[0])/2, 0, n.z - (u[2] + v[2])/2]);
+    }
   }
   // [3.26] City Gen v4's junction control: a roundabout's paved circle and its island (a mini one's painted, a full
   // one's raised and planted), and give-way lines across the way in on every arm that gives way
@@ -3179,7 +3329,9 @@ function gantries(W, C){
 function allProps(W){
   var C = prep(W);
   if(C.props) return C.props;
-  var Q = WQ(), B = {}, hash = W.hash;
+  var Q = WQ(), B = {}, hash = W.hash, v2 = newer(W);
+  // (@2 on: each stands on the surface as drawn, HQV.world.streetAt, as the avatar does)
+  function pY(W, x, z){ return v2 && Q.streetAt ? Q.streetAt(W, x, z) : gY(W, x, z); }
   var HS = holeSet(W), PI = C.deck ? Q.piersOf(W) : null, TU = C.under && Q.underOver;
   var RP = Q.railPiersOf ? Q.railPiersOf(W) : [];   // phase 8: the City Line's doc piers ([] without)
   function put(kind, o){
@@ -3187,11 +3339,13 @@ function allProps(W){
     if(PI && underDeck(W, PI, kind, o)) return;   // phase 6: nor on or under a deck, nor in a pier
     if(TU && kind === "gantries" && overTunnel(W, o)) return;   // phase 7: no gantry over a tunnel or cutting
     if(RP.length && nearRailPier(RP, kind, o)) return;   // phase 8: nor in (or within 1.5 m of) a City Line pier
+    // no lamp or name plate on a carriageway (a sidewalk's lamp where another road's runs over it at a junction)
+    if((kind === "lamps" || kind === "signs") && v2 && Q.surfaceAt(W, o.x, o.z) === "road") return;
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);
     var b = B[k] || (B[k] = {trees: [], lamps: [], parked: [], signs: [], gantries: [], furniture: []});
     b[kind].push(o);
   }
-  Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: gY(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
+  Q.trees(W).forEach(function(t){ put("trees", {x: t.x, y: pY(W, t.x, t.z), z: t.z, s: t.s, kind: t.kind}); });
   // [3.34] the trees on a boulevard's median (medianPlan; the hedges and shrubs are the road tile's)
   C.E.forEach(function(E){ var P = medianPlan(W, C, E); if(P) P.trees.forEach(function(t){ put("trees", {x: t.x, y: t.y, z: t.z, s: t.s, kind: t.kind}); }); });
   C.E.forEach(function(E){
@@ -3200,7 +3354,7 @@ function allProps(W){
       [1, -1].forEach(function(sg){
         for(var s = E.tA + 6 + (sg < 0 ? 15 : 0); s < E.len - E.tB - 6; s += 30){
           var p = pointAt(E, s), o = sg*(E.half - 0.35), x = p.x + p.lx*o, z = p.z + p.lz*o;
-          put("lamps", {x: x, y: gY(W, x, z), z: z, yaw: Math.atan2(-sg*p.lx, -sg*p.lz)});
+          put("lamps", {x: x, y: pY(W, x, z), z: z, yaw: Math.atan2(-sg*p.lx, -sg*p.lz)});
         }
       });
     }
@@ -3216,7 +3370,7 @@ function allProps(W){
           var h = Q.hash32(hash + ":park:" + E.id + ":" + k + ":" + sg);
           if(h/4294967296 >= 0.25) return;
           var o = sg*(E.cw - 0.95), x = p.x + p.lx*o, z = p.z + p.lz*o;
-          put("parked", {x: x, y: gY(W, x, z), z: z, yaw: Math.atan2(sg*p.dx, sg*p.dz), color: CAR_COLORS[(h >>> 8) % CAR_COLORS.length]});
+          put("parked", {x: x, y: pY(W, x, z), z: z, yaw: Math.atan2(sg*p.dx, sg*p.dz), color: CAR_COLORS[(h >>> 8) % CAR_COLORS.length]});
         });
       }
     }
@@ -3237,12 +3391,12 @@ function allProps(W){
         if(d >= E.len/2 || Q.surfaceAt(W, x, z) !== "road") break;
         d += 0.5;
       }
-      put("signs", {x: x, y: gY(W, x, z), z: z, yaw: Math.atan2(S.dx, S.dz), name: E.name, ref: E.ref, edge: E.id, node: id});
+      put("signs", {x: x, y: pY(W, x, z), z: z, yaw: Math.atan2(S.dx, S.dz), name: E.name, ref: E.ref, edge: E.id, node: id});
       // corner lamp between this arm and the next (this arm's left side)
       if(E.walk > 0 && (streetish(E.cls) || aveish(E.cls))){
         var C2 = armStation(E, a.end, Math.min(a.t + 0.8, E.len/2)), lo = E.half - 0.35;
         var lx = C2.x + C2.lx*lo, lz = C2.z + C2.lz*lo;
-        put("lamps", {x: lx, y: gY(W, lx, lz), z: lz, yaw: Math.atan2(-C2.lx, -C2.lz)});
+        put("lamps", {x: lx, y: pY(W, lx, lz), z: lz, yaw: Math.atan2(-C2.lx, -C2.lz)});
       }
     });
   });
@@ -3250,7 +3404,7 @@ function allProps(W){
   // city life: benches, bins, racks, kiosks, stalls and cafe tables on the kerb-side strip, on the ground
   var CL = HQV.cityLife;
   if(CL && CL.furniture) CL.furniture(W).forEach(function(f){
-    var o = {kind: f.kind, x: f.x, y: gY(W, f.x, f.z), z: f.z, yaw: f.yaw};
+    var o = {kind: f.kind, x: f.x, y: pY(W, f.x, f.z), z: f.z, yaw: f.yaw};
     if(f.kind === "stall" || f.kind === "table"){ o.c = AWNINGS[(Q.hash32(hash + ":furn:" + f.edge + ":" + f.x.toFixed(1) + ":" + f.z.toFixed(1)) >>> 0) % AWNINGS.length]; }
     put("furniture", o);
   });
@@ -3466,7 +3620,7 @@ HQV.worldgeom = {
   groundTile: groundTile, groundItems: groundItems, triangulate: triangulate, hasGround: hasGround, seaY: seaY, view: view,
   tierDiff: tierDiff, footprint: footprint, massing: massing, riverWater: riverWater, riverRing: riverRing, bridgeGaps: bridgeGaps,
   BRIDGE: {DECK_T: DECK_T, PARA_W: PARA_W, PARA_H: PARA_H, RAIL_H: RAIL_H, ABUT: ABUT}, RIVER_LIFT: RIVER_LIFT,
-  SEA_HIDE: SEA_HIDE, meshY: meshY,
+  SEA_HIDE: SEA_HIDE, meshY: meshY, drawnTop: drawnTop,
   waterGeo: waterGeo, tramEdges: tramEdges, cutHoles: cutHoles, holeSet: holeSet, TRAM: {INNER: TRAM_INNER, W: TRAM_W, EDGE: TRAM_EDGE}
 };
 // [3.34] phase 11's paint and planting

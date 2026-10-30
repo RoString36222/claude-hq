@@ -86,19 +86,29 @@ function graph(W, tier){
     if(nodeIx[e.a] == null || nodeIx[e.b] == null || e.pts.length < 6) return;
     keep.push(ei);
   });
-  var M = keep.length, EA = new Int32Array(M), EB = new Int32Array(M), LEN = new Float64Array(M);
-  var XZ = new Array(M), CUM = new Array(M);
-  for(k = 0; k < M; k++){
-    var e = W.edges[keep[k]], p = e.pts, m = p.length/3, xz = new Float64Array(2*m), cum = new Float64Array(m);
-    for(i = 0; i < m; i++){
-      xz[2*i] = p[3*i]/100; xz[2*i+1] = p[3*i+2]/100;
-      if(i) cum[i] = cum[i-1] + Math.hypot(xz[2*i] - xz[2*i-2], xz[2*i+1] - xz[2*i-1]);
-    }
-    EA[k] = nodeIx[e.a]; EB[k] = nodeIx[e.b]; LEN[k] = cum[m-1]; XZ[k] = xz; CUM[k] = cum;
+  var MR = keep.length, X = extraRoads(W, tier), NW = N;
+  N += X.nodes.length;
+  var M = MR + X.edges.length, EA = new Int32Array(M), EB = new Int32Array(M), LEN = new Float64Array(M);
+  var XZ = new Array(M), CUM = new Array(M), E = new Array(M);
+  function put(k, a, b, xz){
+    var m = xz.length/2, cum = new Float64Array(m);
+    for(i = 1; i < m; i++) cum[i] = cum[i-1] + Math.hypot(xz[2*i] - xz[2*i-2], xz[2*i+1] - xz[2*i-1]);
+    EA[k] = a; EB[k] = b; LEN[k] = cum[m-1]; XZ[k] = xz; CUM[k] = cum;
   }
+  for(k = 0; k < MR; k++){
+    var e = W.edges[keep[k]], p = e.pts, m = p.length/3, xz = new Float64Array(2*m);
+    for(i = 0; i < m; i++){ xz[2*i] = p[3*i]/100; xz[2*i+1] = p[3*i+2]/100; }
+    put(k, nodeIx[e.a], nodeIx[e.b], xz); E[k] = e;
+  }
+  // the extra roads (no W edge: keep -1), their new nodes after W's; an end on a W node by its id
+  X.edges.forEach(function(x, j){
+    var end = function(v){ return typeof v === "string" ? nodeIx[v.slice(1)] : NW + v; };
+    put(MR + j, end(x.a), end(x.b), x.xz); E[MR + j] = x.e; keep.push(-1);
+  });
   // node positions (the A* heuristic) and degrees (3+ roads: a junction)
   var NX = new Float64Array(N), NZ = new Float64Array(N), deg = new Int32Array(N);
   W.nodes.forEach(function(n, j){ NX[j] = n.x/100; NZ[j] = n.z/100; });
+  X.nodes.forEach(function(q, j){ NX[NW + j] = q[0]; NZ[NW + j] = q[1]; });
   for(k = 0; k < M; k++){ deg[EA[k]]++; deg[EB[k]]++; }
   var off = new Int32Array(N + 1);
   for(i = 0; i < N; i++) off[i + 1] = off[i] + deg[i];
@@ -137,13 +147,41 @@ function graph(W, tier){
       for(var gz = cz0; gz <= cz1; gz++) for(var gx = cx0; gx <= cx1; gx++) cells[gz*GX + gx].push(k, i >> 1);
     }
   }
-  var G = {W: W, tier: tier, N: N, M: M, keep: keep, EA: EA, EB: EB, LEN: LEN, XZ: XZ, CUM: CUM,
+  var G = {W: W, tier: tier, N: N, M: M, MR: MR, keep: keep, E: E, EA: EA, EB: EB, LEN: LEN, XZ: XZ, CUM: CUM,
            NX: NX, NZ: NZ, deg: deg, off: off, adj: adj, comp: comp, main: main,
            grid: {x0: x0, z0: z0, GX: GX, GZ: GZ, cells: cells},
            g: new Float64Array(N), from: new Int32Array(N), stamp: new Int32Array(N), closed: new Int32Array(N), gen: 0,
            heap: new Heap(64)};
   cache[tier] = G;
   return G;
+}
+
+// [v5] roads the doc has not got but the City draws and you drive: the airfield's access road and forecourt loop
+// (HQV.hqAirfield.landsideRoads), so a route to the airport follows them to the curb. -> {nodes: [[x, z] m],
+// edges: [{a, b (a new node's index, or "#" + a W node id where the access road starts within JOIN m of it), xz, e}]}
+var JOIN = 3;
+function extraRoads(W, tier){
+  var out = {nodes: [], edges: []}, AF = HQV.hqAirfield;
+  if(!AF || !AF.landsideRoads) return out;
+  (W.sites || []).forEach(function(s){
+    if(!s || s.kind !== "airport" || (s.tier != null && (s.tier | 0) > tier)) return;
+    var R = AF.landsideRoads(s), F = R && R.forecourt, A = R && R.access;
+    if(!F || F.length < 5 || !A || A.length < 2) return;
+    var e = {cls: "local", name: "Airport Forecourt", width: R.roadW*100, walk: 0, lanes: 2, pts: null};
+    function node(q){ out.nodes.push([q[0], q[1]]); return out.nodes.length - 1; }
+    function edge(a, b, pts){ var xz = new Float64Array(2*pts.length); pts.forEach(function(q, i){ xz[2*i] = q[0]; xz[2*i+1] = q[1]; }); out.edges.push({a: a, b: b, xz: xz, e: e}); }
+    // the access road's street end: on the street's node there (the generator's Terminal Road), else its own
+    var a0 = A[0], best = null, bd = JOIN;
+    (W.nodes || []).forEach(function(n){ var d = Math.hypot(n.x/100 - a0[0], n.z/100 - a0[1]); if(d < bd){ bd = d; best = n; } });
+    var s0 = best ? "#" + best.id : node(a0), j = node(A[A.length - 1]);
+    edge(s0, j, A);
+    // the loop (F: curb lane from F[0] round to F[4] = F[0]), split at the access road's junction j on its far side
+    // (F[2] -> F[3]) and at the curb's middle
+    var m = [(F[0][0] + F[1][0])/2, (F[0][1] + F[1][1])/2], c = node(m);
+    edge(c, j, [m, F[1], F[2], A[A.length - 1]]);
+    edge(j, c, [A[A.length - 1], F[3], F[0], m]);
+  });
+  return out;
 }
 
 /* ---------- snapping ---------- */
@@ -157,7 +195,7 @@ function projSeg(G, k, s, x, z){
 }
 // the nearest road point, ring by ring out from (x, z)'s cell until no closer cell is left;
 // comp >= 0 keeps only that component's roads -> {k, ei, s, x, z, d} | null
-function snapK(G, x, z, comp){
+function snapK(G, x, z, comp, real){
   if(!G.M) return null;
   var R = G.grid, cx = Math.floor((x - R.x0)/GRID), cz = Math.floor((z - R.z0)/GRID), best = null;
   var maxR = Math.max(R.GX, R.GZ) + Math.max(Math.abs(cx), Math.abs(cz));
@@ -171,7 +209,7 @@ function snapK(G, x, z, comp){
         var L = R.cells[gz*R.GX + gx];
         for(var i = 0; i < L.length; i += 2){
           var k = L[i];
-          if(comp >= 0 && G.comp[G.EA[k]] !== comp) continue;
+          if((comp >= 0 && G.comp[G.EA[k]] !== comp) || (real && k >= G.MR)) continue;
           projSeg(G, k, L[i+1], x, z);
           if(!best || T.d < best.d) best = {k: k, ei: G.keep[k], s: T.s, x: T.x, z: T.z, d: T.d};
         }
@@ -181,12 +219,12 @@ function snapK(G, x, z, comp){
   return best;
 }
 function snap(G, x, z){
-  var b = snapK(G, x, z, -1);
+  var b = snapK(G, x, z, -1, true);
   return b ? {ei: b.ei, s: b.s, x: b.x, z: b.z, d: b.d} : null;
 }
 
 /* ---------- routing ---------- */
-function speedOf(G, k, mode){ return mode === "walk" ? SPEED.walk : (SPEED[G.W.edges[G.keep[k]].cls] || SPEED.local); }
+function speedOf(G, k, mode){ return mode === "walk" ? SPEED.walk : (SPEED[G.E[k].cls] || SPEED.local); }
 // the point s m along kept edge k -> [x, z]
 function pointAt(G, k, s){
   var cum = G.CUM[k], P = G.XZ[k], m = cum.length, lo = 0, hi = m - 1;
@@ -218,7 +256,7 @@ function legsOf(G, A, B, mode){
     for(var j = G.off[n]; j < G.off[n + 1]; j++){
       var k = G.adj[j], o = G.EA[k] === n ? G.EB[k] : G.EA[k], c = g[n] + G.LEN[k]/speedOf(G, k, mode);
       // ([3.29] an interchange's ramp is driven from its a to its b only)
-      if(mode !== "walk" && G.EB[k] === n && G.EA[k] !== n && G.W.edges[G.keep[k]].oneway) continue;
+      if(mode !== "walk" && G.EB[k] === n && G.EA[k] !== n && G.E[k].oneway) continue;
       if(closed[o] === gen) continue;
       if(stamp[o] !== gen || c < g[o]){ stamp[o] = gen; g[o] = c; from[o] = k; H.push(c + hd(o), o); }
     }
@@ -300,15 +338,15 @@ function route(G, from, to, mode){
   var legs = legsOf(G, A, B, mode);
   if(!legs) return null;
   legs = legs.filter(function(L){ return Math.abs(L.s1 - L.s0) > 1e-6; });
-  var xs = [from.x, from.z], xo = [0], steps = [], along = 0, eta = 0, vOff = mode === "walk" ? SPEED.walk : SPEED.local, W = G.W;
+  var xs = [from.x, from.z], xo = [0], steps = [], along = 0, eta = 0, vOff = mode === "walk" ? SPEED.walk : SPEED.local;
   function dist(ax, az, bx, bz){ return Math.hypot(bx - ax, bz - az); }
   along = A.d; eta = A.d/vOff;
-  var e0 = legs.length ? W.edges[G.keep[legs[0].k]] : null;
+  var e0 = legs.length ? G.E[legs[0].k] : null;
   steps.push({at: 0, kind: "start", road: nameOf(e0), x: from.x, z: from.z});
   legs.forEach(function(L, i){
-    var e = W.edges[G.keep[L.k]], len = Math.abs(L.s1 - L.s0), p0 = pointAt(G, L.k, L.s0);
+    var e = G.E[L.k], len = Math.abs(L.s1 - L.s0), p0 = pointAt(G, L.k, L.s0);
     if(i > 0){
-      var P = legs[i - 1], pe = W.edges[G.keep[P.k]];
+      var P = legs[i - 1], pe = G.E[P.k];
       var node = L.s0 === 0 ? G.EA[L.k] : G.EB[L.k];
       var d = (legYaw(G, L, false) - legYaw(G, P, true))*DEG;
       d = ((d % 360) + 540) % 360 - 180;
@@ -336,7 +374,7 @@ function route(G, from, to, mode){
   for(i = 1; i < cum.length; i++) cum[i] = cum[i-1] + dist(pts[2*i-2], pts[2*i-1], pts[2*i], pts[2*i+1]);
   var total = cum[cum.length - 1];
   eta += B.d/vOff;
-  var eN = legs.length ? W.edges[G.keep[legs[legs.length - 1].k]] : null;
+  var eN = legs.length ? G.E[legs[legs.length - 1].k] : null;
   steps.push({at: total, kind: "arrive", road: nameOf(eN), x: to.x, z: to.z});
   steps.forEach(function(s){ s.at = Math.min(s.at, total); });
   var T = HQV.traffic, side = T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1;
@@ -416,6 +454,8 @@ function reach(s, f){
 // where you walk up to: out in front of the site; a dock's or port's front faces the water (its pier),
 // so its door is on the land side behind it
 function doorOf(s){
+  var cd = s.kind === "airport" && HQV.hqAirfield && HQV.hqAirfield.curbDoor ? HQV.hqAirfield.curbDoor(s) : null;   // its drop-off curb
+  if(cd) return {x: cd.x, z: cd.z};
   var f = frontOf(s);
   if(s.kind === "dock" || s.kind === "port") f = [-f[0], -f[1]];
   var h = reach(s, f) + DOOR_OUT;

@@ -23,7 +23,7 @@ CITY = read("games", "hqcity3d.js")
 
 class Source(unittest.TestCase):
     def test_blocked_counts_the_traffic(self):
-        body = CITY[CITY.index("  function blocked(x, z){"):]
+        body = CITY[CITY.index("  function blocked(x, z, ride){"):]
         body = body[:body.index("\n  }\n")]
         self.assertIn("if(trafficAt(x, z)) return true;", body)
 

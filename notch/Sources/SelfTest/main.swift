@@ -151,6 +151,20 @@ expect(o.sessions["need"]?.label == "Fix the bug" && o.sessions["new"]?.label ==
 expect(o.sessions["new"]?.folder == "y" && o.sessions["new"]?.status == .working, "HQ seeds live sessions")
 expect(o.sessions["old"] == nil, "archived not seeded")
 
+// an open tab quiet for a day: seeded as stale, sorted last, woken by any hook event
+let staleJSON = #"{"sessions":[{"sessionId":"tab","status":"stale","kind":"interactive","pid":7,"stale":true},{"sessionId":"gone","status":"stale","kind":"interactive","stale":true}]}"#
+let sh = HQSession.parse(Data(staleJSON.utf8))
+expect(sh.filter(\.live).map(\.sessionId) == ["tab"], "open stale tab is live; no pid is not")
+o.mergeHQ(sh, now: t0)
+expect(o.sessions["tab"]?.bucket == .stale && o.sessions["tab"]?.status == .idle, "stale tab seeded")
+expect(o.ordered.last?.id == "tab", "stale sorts last")
+o.apply(msg(#"{"event":"UserPromptSubmit","sessionId":"tab"}"#), now: t0.addingTimeInterval(10))
+expect(o.sessions["tab"]?.bucket == .working, "a prompt wakes a stale tab")
+o.mergeHQ(sh, now: t0.addingTimeInterval(20))
+expect(o.sessions["tab"]?.stale == false, "a lagging HQ poll does not re-stale it")
+o.apply(msg(#"{"event":"Stop","sessionId":"tab"}"#), now: t0.addingTimeInterval(30))
+expect(o.sessions["tab"]?.bucket == .idle, "done counts as idle")
+
 // MARK: plans, diffs, phone alerts
 
 // a plan waiting for approval
@@ -203,6 +217,50 @@ for bad in ["ftp://ntfy.sh", "ntfy.sh", "https://", "https://u:p@ntfy.sh", "http
     expect(PhoneTopic.url(server: bad, topic: tp) == nil, "bad server \(bad)")
 }
 expect(PhoneTopic.url(server: "https://ntfy.sh", topic: "../etc") == nil, "bad topic in url")
+
+// MARK: peeks
+
+do {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    let live: Set<String> = ["a", "b", "c"]
+    var q = PeekQueue()
+    q.push(.needsYou(sessionId: "a"), now: t0)
+    expect(q.current == nil, "a prompt never peeks (it opens the panel)")
+    q.push(.finished(sessionId: "a"), now: t0)
+    expect(q.current?.kind == .finished && q.current?.sessionId == "a", "finish peeks")
+    expect(q.current?.until == t0.addingTimeInterval(4), "a finish shows 4 s")
+    q.push(.finished(sessionId: "b"), now: t0.addingTimeInterval(1))
+    expect(q.current?.sessionId == "b", "a newer finish replaces the one showing")
+    q.push(.failed(sessionId: "c"), now: t0.addingTimeInterval(2))
+    expect(q.current?.kind == .failed && q.current?.sessionId == "c", "a failure beats a finish")
+    q.push(.finished(sessionId: "a"), now: t0.addingTimeInterval(3))
+    expect(q.current?.sessionId == "c", "a finish waits behind a failure")
+    q.tick(now: t0.addingTimeInterval(7), live: live)
+    expect(q.current?.sessionId == "c", "a failure shows 6 s")
+    q.tick(now: t0.addingTimeInterval(8.5), live: live)
+    expect(q.current?.sessionId == "b" && q.current?.until == t0.addingTimeInterval(12.5),
+           "then the finish the failure interrupted, for a full 4 s")
+    q.tick(now: t0.addingTimeInterval(13), live: live)
+    expect(q.current?.sessionId == "a", "then the finish that waited")
+    q.tick(now: t0.addingTimeInterval(20), live: live)
+    expect(q.current == nil, "then nothing")
+
+    var s = PeekQueue()
+    s.push(.failed(sessionId: "a"), now: t0)
+    s.push(.finished(sessionId: "b"), now: t0)
+    s.tick(now: t0.addingTimeInterval(11), live: live)
+    expect(s.current == nil, "news older than 10 s is dropped before it shows")
+    s.push(.finished(sessionId: "a"), now: t0)
+    s.push(.finished(sessionId: "a"), now: t0.addingTimeInterval(1))
+    expect(s.current?.until == t0.addingTimeInterval(5), "same session: the newer peek replaces it")
+    s.tick(now: t0.addingTimeInterval(2), live: ["b"])
+    expect(s.current == nil, "a peek for a session that ended goes away")
+    s.push(.failed(sessionId: "a"), now: t0)
+    s.push(.finished(sessionId: "b"), now: t0)
+    s.dismiss()
+    s.tick(now: t0.addingTimeInterval(7), live: live)
+    expect(s.current == nil, "dismiss drops the waiting peeks too")
+}
 
 // MARK: parity with HQ
 

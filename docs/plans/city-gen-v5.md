@@ -31,15 +31,26 @@ height range); **no two boxes intersect**, ever. `v5/space.rs` holds them and an
 
 ## The order of decisions (each one only sees the volume still free)
 
-1. **Land and water**: terrain, coast, river, lakes. The buildable area.
+1. **Land and water**: terrain, coast, river, lakes. The buildable area. The Commons is a **3.5 km island**: its
+   coast an exact circle 1,750 m out (`V5_COMMONS_COAST_CM` in `worldgen/mod.rs` is its reach, 1,775 m, as for every
+   coast), the city to 1,625 m (`V5_SHORE_CM` inside the reach: the shore road, the beach, the piers between it and
+   the coast), in a 3,840 m square (`V5_COMMONS_SIZE_CM`) with the sea about 170 m wide round it; the terrain keeps
+   its 8 m grid (481 x 481). A personal island keeps its size. The nearest archipelago slot (`archipelago.rs`, 3.1 km
+   out) still clears it: its island's coast is over 300 m off the Commons'.
 2. **Airport**: at the city's edge or inside it, whichever scores better (flat, a clear run over the sea or open land
    for its approaches, away from homes). **Its runway is as long as the fastest HQ vehicle needs to run from a
-   standstill to its top speed with nitro and brake to a stop** (the Chiron Super Sport, 2,138 m with the game's
-   physics: a 2.2 km runway, `RUNWAY_CM` in `v5/airport.rs`; `tests/test_runway_length.py` runs every catalogue
-   vehicle against it). That is longer than the Commons is wide, so only the apron side (apron, terminal, landside)
-   must stand on the island: the strip may run out over the sea on a pier deck (piles, a deck edge, a sea wall where
-   it meets the land), never across a river, lake, canal or the marina, and neither approach passes over the city's
-   middle. Its box is locked before anything else.
+   standstill to its top speed with nitro and brake to a stop** (the Koenigsegg Jesko Absolut, 2,842 m with the game's
+   physics: a 2.9 km runway, `RUNWAY_CM` in `v5/airport.rs`; `tests/test_runway_length.py` runs every catalogue
+   vehicle against it; the runway is that distance rounded up to the next 100 m). The apron side (apron, terminal,
+   landside) always stands on the island, and the footprint keeps a quarter of the city's radius from its middle.
+   **The strip goes on land if a site scores**: wholly inside the coast, its rise at most 15 m (the footprint is then
+   graded to the apron's level), and cutting off at most 5 % of the island from the city's middle (no road passes
+   under a runway, nor under an approach's first 400 m, so a strip across the island strands the land past it).
+   Else the pier rule: the strip may run out over the sea on a pier deck (piles, a deck edge, a sea wall where it
+   meets the land). Either way never across a river, lake, canal or the marina, and neither approach passes over the
+   city's middle. On the 3.5 km Commons a 2.9 km strip fits inside the coast only as a chord within about 0.88 km of
+   the middle, which strands about a fifth of the island past it, so the Commons' runway is on the pier rule until
+   roads can pass under the airport. Its box is locked before anything else.
 3. **Port** where the water is deepest and clear of the approaches.
 4. **The centre**: the plaza and Central (the metro and rail hub) near the middle, on high dry ground.
 5. **Land use from travel**: offices round the hub; homes in rings within a commute of the offices and a short walk of
@@ -48,7 +59,9 @@ height range); **no two boxes intersect**, ever. `v5/space.rs` holds them and an
    the volume (cubes by size), decently apart.
 6. **Metro** for the most connectivity: lines through the busiest pairs of districts, stations where they serve the
    most homes and jobs, underground by default, rising to the ground or onto a viaduct only where that is free and
-   saves something.
+   saves something. At most three lines meet under Central (`HUB_LINES` in `v5/metro.rs`: crossing lines are 7.5 m
+   apart, so a fourth would put its platform more than `DROP_CM`, 23 m, of stairs under the hall); a destination
+   left over gets a branch, a line to the nearest station of a line already laid, a level under it there.
 7. **Roads**: a network that connects every building end to end and every landmark; arterials between district
    centres and landmarks, collectors through districts, local access to every door. **Curves, not corners**: radii by
    design speed, a sharp turn only where nothing else fits. A road changes level (tunnel, underpass, flyover) only

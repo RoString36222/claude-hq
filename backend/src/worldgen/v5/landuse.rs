@@ -12,9 +12,13 @@
 //!      - homes: the rest, nearest the offices first (a short commute), the airport's noise (under its approaches,
 //!        within `NOISE_CM` of it) left green;
 //!      - parks: what is left;
-//!   4. the buildings: on each district's cells, a lattice of plots square to the hub, each a building box by its use
-//!      (towers nearest the hub tallest, then mid-rise blocks of homes, then low wide sheds), carved at `SPACING_CM`
-//!      from every other solid: room for a street between any two, so the road network can reach every door.
+//!   4. the buildings: each district (one use's cells in one face of the arterial network) a lattice of long thin
+//!      blocks (Manhattan's, about three times as long as they are deep) whose long side runs along the arterial most of
+//!      it is nearest, so each face has its own grid; each block a row or two of
+//!      building boxes by its use (towers nearest the hub tallest in small blocks, mid-rise homes in long ones, low wide
+//!      sheds in big ones), every one fronting a long street, carved at `SPACING_CM` from every other solid.
+use std::collections::BTreeMap;
+
 use super::airport::Airport;
 use super::land::Land;
 use super::space::{Space, GROUND};
@@ -55,6 +59,9 @@ pub struct Building {
     pub y: i64,
     pub h: i64,
     pub solid: u32,
+    /// Its district's frame (`LandUse::frames`) and its block in it.
+    pub frame: u32,
+    pub block: (i64, i64),
 }
 
 pub struct LandUse {
@@ -63,6 +70,8 @@ pub struct LandUse {
     /// Every cell's use (the cell's middle, cm).
     pub cells: Vec<(P, Use)>,
     pub buildings: Vec<Building>,
+    /// Each district's street frame (its blocks' axis and size).
+    pub frames: Vec<Frame>,
 }
 
 fn d(a: P, b: P) -> i64 {
@@ -111,11 +120,11 @@ pub fn centre(land: &Land, ap: &Airport) -> (P, Option<(P, P)>) {
     (hub, port)
 }
 
-/// Steps 3 and 4: the land use and its buildings, round the centre and the lines already in the volume.
-pub fn plan(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>, space: &mut Space) -> LandUse {
+/// Steps 3 and 4: the land use and its buildings, round the centre, the lines and the arterials already in the volume.
+pub fn plan(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>, arterials: &[super::roads::Road], space: &mut Space) -> LandUse {
     let cells = zone(land, ap, hub, port);
-    let buildings = build(land, hub, &cells, space);
-    LandUse { hub, port, cells, buildings }
+    let (buildings, frames) = build(land, hub, &cells, arterials, space);
+    LandUse { hub, port, cells, buildings, frames }
 }
 
 /// Step 3: every cell's use.
@@ -159,56 +168,213 @@ pub fn zone(land: &Land, ap: &Airport, hub: P, port: Option<(P, P)>) -> Vec<(P, 
     dry.iter().copied().zip(uses.into_iter().map(|u| u.unwrap_or(Use::Park))).collect()
 }
 
-/// Step 4: the buildings on the cells, round what is already in the volume (the lines, the arterials).
-pub fn build(land: &Land, hub: P, cells: &[(P, Use)], space: &mut Space) -> Vec<Building> {
+/// A district's street frame: the blocks' long side runs along `u` (its face's arterial's way), `o` a corner of block
+/// (0, 0); `long` and `short` the blocks' pitch (cm, street centre line to street centre line) along `u` and across it.
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub use_: Use,
+    pub o: (f64, f64),
+    pub u: (f64, f64),
+    pub long: f64,
+    pub short: f64,
+}
+
+impl Frame {
+    /// The world point (cm) at `a` along the long axis and `b` across it.
+    pub fn at(&self, a: f64, b: f64) -> (f64, f64) {
+        (self.o.0 + a * self.u.0 - b * self.u.1, self.o.1 + a * self.u.1 + b * self.u.0)
+    }
+}
+
+/// Each use's blocks (Manhattan's: long and thin): its building's footprint along the block and across it (cm), the
+/// rows of buildings across a block (back to back, each fronting a long street) and how many stand in a row (the
+/// district's own, between the two).
+pub fn block_of(u: Use) -> ((i64, i64), i64, (i64, i64)) {
+    match u {
+        Use::Industry => ((6_000, 4_000), 2, (3, 4)),
+        Use::Office => ((3_000, 4_400), 1, (3, 4)),
+        _ => ((2_400, 1_800), 2, (5, 6)),
+    }
+}
+/// From a street's centre line to the buildings' fronts (cm): its half width and a pavement.
+pub const FRONT_CM: i64 = 1_000;
+/// From the arterial a face's lattice is laid along (its centre line) to the lattice's first long street (cm): the
+/// arterial's half width and a building's setback from it, less a block's front, and a metre to spare.
+const ART_SIDE_CM: f64 = 600.0;
+
+/// Step 4: the buildings on the cells, round what is already in the volume (the lines, the arterials). Each district
+/// (the cells of one use in one face of the arterial network, joined) is a lattice of long blocks along the arterial
+/// most of its face is nearest; each block a row or two of buildings by its use (towers nearest the hub tallest, then mid-rise homes, then low wide sheds). The
+/// districts' frames are returned with the buildings (roads.rs `locals` lays the streets round their blocks).
+pub fn build(land: &Land, hub: P, cells: &[(P, Use)], arterials: &[super::roads::Road], space: &mut Space) -> (Vec<Building>, Vec<Frame>) {
     let r = land.p.city_r_cm;
-    // 4. the buildings: a plot lattice square to the hub (one axis toward it), per use its plot and building
     let mut rng = Rng::new(sub(land.seed, "v5-buildings", 0, 0));
+    // the arterials' segments (not Central's ring: its from and to both Central), each with its road
+    let segs: Vec<(usize, (f64, f64), (f64, f64))> = arterials.iter().enumerate().filter(|(_, a)| (a.from, a.to) != (0, 0))
+        .flat_map(|(k, a)| a.points.windows(2).map(move |w| (k, (w[0][0] as f64, w[0][2] as f64), (w[1][0] as f64, w[1][2] as f64))))
+        .filter(|(_, a, b)| a != b).collect();
+    let foot = |q: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+        let (ex, ez) = (b.0 - a.0, b.1 - a.1);
+        let t = (((q.0 - a.0) * ex + (q.1 - a.1) * ez) / (ex * ex + ez * ez)).clamp(0.0, 1.0);
+        (a.0 + t * ex, a.1 + t * ez)
+    };
+    let nearest = |q: (f64, f64)| segs.iter().map(|&(k, a, b)| { let f = foot(q, a, b); ((f.0 - q.0).hypot(f.1 - q.1), k, a, b) })
+        .min_by(|x, y| x.0.total_cmp(&y.0));
+    // the districts: the built cells of one use in one face of the arterial network (cells joined where no arterial runs
+    // between them), in connected pieces
+    let key = |q: P| (q.0.div_euclid(CELL_CM) + i64::from(q.0.rem_euclid(CELL_CM) * 2 >= CELL_CM), q.1.div_euclid(CELL_CM) + i64::from(q.1.rem_euclid(CELL_CM) * 2 >= CELL_CM));
+    let mut by_cell: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    for (s, &(_, a, b)) in segs.iter().enumerate() {
+        for q in [a, b] {
+            by_cell.entry(key((q.0 as i64, q.1 as i64))).or_default().push(s);
+        }
+    }
+    let cut = |c: (i64, i64), n: (i64, i64)| {
+        let (p, q) = ((c.0 * CELL_CM, c.1 * CELL_CM), (n.0 * CELL_CM, n.1 * CELL_CM));
+        (c.0.min(n.0) - 1..=c.0.max(n.0) + 1).any(|x| (c.1.min(n.1) - 1..=c.1.max(n.1) + 1).any(|z| by_cell.get(&(x, z)).is_some_and(|v| v.iter().any(|&s| {
+            let (_, a, b) = segs[s];
+            super::super::organic::geom::seg_dist2(p, q, (a.0 as i64, a.1 as i64), (b.0 as i64, b.1 as i64)) == 0
+        }))))
+    };
+    let mut tag: BTreeMap<(i64, i64), (Use, usize, (f64, f64), (f64, f64))> = BTreeMap::new();
+    for &(q, u) in cells {
+        if u == Use::Park {
+            continue;
+        }
+        let qf = (q.0 as f64, q.1 as f64);
+        let (k, dir, f) = nearest(qf).map_or((usize::MAX, (1.0, 0.0), qf), |(_, k, a, b)| { let l = (b.0 - a.0).hypot(b.1 - a.1); (k, ((b.0 - a.0) / l, (b.1 - a.1) / l), foot(qf, a, b)) });
+        tag.insert(key(q), (u, k, dir, f));
+    }
+    // flood a set of cells over the uncut sides: its pieces
+    let flood = |same: &dyn Fn((i64, i64), (i64, i64)) -> bool| {
+        let mut of: BTreeMap<(i64, i64), usize> = BTreeMap::new();
+        let mut parts: Vec<Vec<(i64, i64)>> = Vec::new();
+        for &c0 in tag.keys() {
+            if of.contains_key(&c0) {
+                continue;
+            }
+            let id = parts.len();
+            let (mut todo, mut mine) = (vec![c0], Vec::new());
+            of.insert(c0, id);
+            while let Some(c) = todo.pop() {
+                mine.push(c);
+                for n in [(c.0 + 1, c.1), (c.0 - 1, c.1), (c.0, c.1 + 1), (c.0, c.1 - 1)] {
+                    if !of.contains_key(&n) && tag.contains_key(&n) && same(c, n) && !cut(c, n) {
+                        of.insert(n, id);
+                        todo.push(n);
+                    }
+                }
+            }
+            parts.push(mine);
+        }
+        (of, parts)
+    };
+    let (face_of, faces) = flood(&|_, _| true);
+    let (of, parts) = flood(&|c, n| tag[&c].0 == tag[&n].0);
+    // each face's lattice: its long axis the way of the arterial most of its cells are nearest (their mean), its first
+    // long street beside that arterial
+    let axes: Vec<((f64, f64), (f64, f64))> = faces.iter().map(|mine| {
+        let mut count: BTreeMap<usize, usize> = BTreeMap::new();
+        for c in mine {
+            *count.entry(tag[c].1).or_default() += 1;
+        }
+        let k = count.iter().max_by_key(|&(k, n)| (*n, std::cmp::Reverse(*k))).map_or(usize::MAX, |(k, _)| *k);
+        let (mut sc, mut ss, mut cx, mut cz, mut fx, mut fz, mut n) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+        for c in mine.iter().filter(|c| tag[*c].1 == k) {
+            let (_, _, d, f) = tag[c];
+            let a = d.1.atan2(d.0) * 2.0;
+            (sc, ss, n) = (sc + a.cos(), ss + a.sin(), n + 1.0);
+            (cx, cz, fx, fz) = (cx + (c.0 * CELL_CM) as f64, cz + (c.1 * CELL_CM) as f64, fx + f.0, fz + f.1);
+        }
+        let a = ss.atan2(sc) / 2.0;
+        let ax = (a.cos(), a.sin());
+        let ((cx, cz), (fx, fz)) = ((cx / n, cz / n), (fx / n, fz / n));
+        if k == usize::MAX {
+            return (ax, (cx, cz));
+        }
+        // (the origin on the arterial's line, a little toward the face: the arterial's buildings keep their setback)
+        let nv = (-ax.1, ax.0);
+        let along = (fx - cx) * ax.0 + (fz - cz) * ax.1;
+        let f = (cx + along * ax.0, cz + along * ax.1);
+        let off = (fx - cx) * nv.0 + (fz - cz) * nv.1;
+        let s = if off <= 0.0 { 1.0 } else { -1.0 };
+        (ax, (f.0 + nv.0 * (off + s * ART_SIDE_CM), f.1 + nv.1 * (off + s * ART_SIDE_CM)))
+    }).collect();
+    let districts: Vec<(Use, Vec<(i64, i64)>)> = parts.into_iter().map(|mine| (tag[&mine[0]].0, mine)).collect();
+    // each district's blocks: its face's lattice, the blocks its use's size (the buildings in a row the face's own for
+    // the use: every piece of one use in a face on one lattice)
+    let frames: Vec<Frame> = districts.iter().map(|(u, mine)| {
+        let face = face_of[&mine[0]];
+        let (ax, o) = axes[face];
+        let ((bw, bd), rows, (n0, n1)) = block_of(*u);
+        let per = Rng::new(sub(land.seed, "v5-blocks", face as i64, *u as i64)).range(n0, n1);
+        let long = (per * bw + (per - 1) * SPACING_CM + 2 * FRONT_CM) as f64;
+        let short = (rows * bd + (rows - 1) * SPACING_CM + 2 * FRONT_CM) as f64;
+        Frame { use_: *u, o, u: ax, long, short }
+    }).collect();
+    // the buildings: industry first (every home then keeps GAP_CM from its buildings themselves), then offices, homes
     let mut buildings = Vec::new();
-    let use_at = |q: P| cells.iter().min_by_key(|(c, _)| d(*c, q)).filter(|(c, _)| d(*c, q) <= CELL_CM).map(|(_, u)| *u);
-    // (industry first: every home then keeps GAP_CM from its buildings themselves)
-    for (u, (pw, pd), (bw, bd)) in [
-        (Use::Industry, (8_400, 6_400), (6_000, 4_000)),
-        (Use::Office, (5_200, 5_200), (3_000, 3_000)),
-        (Use::Home, (4_400, 3_800), (2_400, 1_800)),
-    ] {
-        let m = r / pw.min(pd) + 2;
-        for i in -m..=m {
-            for j in -m..=m {
-                let q = (hub.0 + i * pw, hub.1 + j * pd);
-                if use_at(q) != Some(u) || !land.dry(q) {
-                    continue;
-                }
-                let (hw, hd) = (bw / 2 + rng.range(-bw / 10, bw / 10), bd / 2 + rng.range(-bd / 10, bd / 10));
-                let poly = vec![(q.0 - hw, q.1 - hd), (q.0 + hw, q.1 - hd), (q.0 + hw, q.1 + hd), (q.0 - hw, q.1 + hd)];
-                if !poly.iter().all(|&c| land.dry(c)) {
-                    continue;
-                }
-                // the plaza round the hub stays open (Central's station, the squares, the lines over and under it)
-                if d(q, hub) < PLAZA_CM {
-                    continue;
-                }
-                if u == Use::Home && buildings.iter().any(|b: &Building| b.use_ == Use::Industry && d(b.c, q) < GAP_CM) {
-                    continue;
-                }
-                let y = land.height(q);
-                let h = match u {
-                    // towers: taller toward the hub, 40 m to 140 m
-                    Use::Office => 4_000 + (10_000 * (r - d(q, hub)).max(0) / r.max(1)) + rng.range(0, 1_500),
-                    Use::Home => rng.range(1_200, 2_600),
-                    _ => rng.range(800, 1_400),
-                };
-                // SPACING_CM from every other solid (room for a street between two buildings), ROAD_SETBACK_CM from a road
-                // already laid (its pavement: a building fronts its road)
-                let (y0, y1) = (y + GROUND.0, y + h);
-                if space.blocker_but(&poly, y0, y1, SPACING_CM, &["road"]).is_none() && space.blocker(&poly, y0, y1, ROAD_SETBACK_CM).is_none() {
-                    let solid = space.put("building", "landuse", poly.clone(), y0, y1);
-                    buildings.push(Building { id: buildings.len() as u32, use_: u, poly, c: q, y, h, solid });
+    let mut order: Vec<usize> = (0..districts.len()).collect();
+    let rank = |u: Use| match u { Use::Industry => 0, Use::Office => 1, _ => 2 };
+    order.sort_by_key(|&k| (rank(districts[k].0), k));
+    for k in order {
+        let (u, ref mine) = districts[k];
+        let f = frames[k];
+        let ((bw, bd), rows, _) = block_of(u);
+        let per = ((f.long as i64 - 2 * FRONT_CM + SPACING_CM) / (bw + SPACING_CM)).max(1);
+        // the district's extent in its frame: the blocks that may hold a building of it
+        let (mut a0, mut a1, mut b0, mut b1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+        for c in mine {
+            let (dx, dz) = ((c.0 * CELL_CM) as f64 - f.o.0, (c.1 * CELL_CM) as f64 - f.o.1);
+            let (la, lb) = (dx * f.u.0 + dz * f.u.1, -dx * f.u.1 + dz * f.u.0);
+            let h = CELL_CM as f64;
+            (a0, a1, b0, b1) = (a0.min(la - h), a1.max(la + h), b0.min(lb - h), b1.max(lb + h));
+        }
+        for ia in (a0 / f.long).floor() as i64..=(a1 / f.long).ceil() as i64 {
+            for ib in (b0 / f.short).floor() as i64..=(b1 / f.short).ceil() as i64 {
+                for row in 0..rows {
+                    for i in 0..per {
+                        let la = ia as f64 * f.long + (FRONT_CM + bw / 2 + i * (bw + SPACING_CM)) as f64;
+                        let lb = ib as f64 * f.short + (FRONT_CM + bd / 2 + row * (bd + SPACING_CM)) as f64;
+                        let w = f.at(la, lb);
+                        let q = (w.0.round() as i64, w.1.round() as i64);
+                        if of.get(&key(q)) != Some(&k) || !land.dry(q) {
+                            continue;
+                        }
+                        // (a little smaller than its plot, never larger: the spacing to the next holds)
+                        let (hw, hd) = ((bw / 2 - rng.range(50, bw / 10)) as f64, (bd / 2 - rng.range(50, bd / 10)) as f64);
+                        let poly: Vec<P> = [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)].iter()
+                            .map(|&(x, z)| { let p = f.at(la + x, lb + z); (p.0.round() as i64, p.1.round() as i64) }).collect();
+                        if !poly.iter().all(|&c| land.dry(c)) {
+                            continue;
+                        }
+                        // the plaza round the hub stays open (Central's station, the squares, the lines over and under it)
+                        if d(q, hub) < PLAZA_CM {
+                            continue;
+                        }
+                        if u == Use::Home && buildings.iter().any(|b: &Building| b.use_ == Use::Industry && d(b.c, q) < GAP_CM) {
+                            continue;
+                        }
+                        let y = land.height(q);
+                        let h = match u {
+                            // towers: taller toward the hub, 40 m to 140 m
+                            Use::Office => 4_000 + (10_000 * (r - d(q, hub)).max(0) / r.max(1)) + rng.range(0, 1_500),
+                            Use::Home => rng.range(1_200, 2_600),
+                            _ => rng.range(800, 1_400),
+                        };
+                        // SPACING_CM from every other solid, ROAD_SETBACK_CM from a road already laid (its pavement: a
+                        // building fronts its road)
+                        let (y0, y1) = (y + GROUND.0, y + h);
+                        if space.blocker_but(&poly, y0, y1, SPACING_CM, &["road"]).is_none() && space.blocker(&poly, y0, y1, ROAD_SETBACK_CM).is_none() {
+                            let solid = space.put("building", "landuse", poly.clone(), y0, y1);
+                            buildings.push(Building { id: buildings.len() as u32, use_: u, poly, c: q, y, h, solid, frame: k as u32, block: (ia, ib) });
+                        }
+                    }
                 }
             }
         }
     }
-    buildings
+    (buildings, frames)
 }
 
 #[cfg(test)]

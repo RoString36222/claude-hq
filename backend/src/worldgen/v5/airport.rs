@@ -1,13 +1,17 @@
 //! City Gen v5: the airport, the first thing placed after the land and water, and locked in the volume.
 //!
 //! Its runway is `RUNWAY_CM` long: room for the fastest HQ vehicle to run from a standstill to its top speed (nitro on)
-//! and brake to a stop (the Chiron Super Sport, 2,138 m with the game's physics, games/hqvehiclephys.js; the test
-//! tests/test_runway_length.py runs every catalogue vehicle against this constant). That is longer than the Commons
-//! is wide, so only the apron side stands on the island: the terminal, its landside and the apron (`APRON_HALF_CM`
-//! either side of the runway's middle, from the strip's edge out `APRON_W_CM`) must be dry, and the strip may run out
-//! over the sea on a pier deck (the client's airfield draws it so where there is no land under it). Every orientation
-//! (10 degree steps) and position (a `STEP_CM` grid) whose apron side is dry, and whose strip crosses no river, lake,
-//! canal or the marina (it may cross the coast), is scored:
+//! and brake to a stop (the Koenigsegg Jesko Absolut, 2,842 m with the game's physics, games/hqvehiclephys.js; the test
+//! tests/test_runway_length.py runs every catalogue vehicle against this constant). The apron side always stands on the
+//! island: the terminal, its landside and the apron (`APRON_HALF_CM` either side of the runway's middle, from the
+//! strip's edge out `APRON_W_CM`) must be dry. The strip stands on the island too where a site allows it; else it may
+//! run out over the sea on a pier deck (the client's airfield draws it so where there is no land under it). Every
+//! orientation (10 degree steps) and position (a `STEP_CM` grid) whose apron side is dry, whose footprint keeps
+//! `MIDDLE_PM` of the city's radius from its middle, and whose strip crosses no river, lake, canal or the marina (it may
+//! cross the coast), is scored:
+//!   - on land first: a strip wholly inside the coast, its rise at most `LAND_FLAT_CM`, that cuts off at most `CUT_PM`
+//!     of the island from the city's middle (`cut_off`: the generator lays no road under a runway, so a strip across
+//!     the island leaves the land past it unreachable); then the pier sites;
 //!   - flat: the rise over the apron side and the dry land under the strip (one platform: a hill under it lifts it all);
 //!   - approaches: the dry land under each approach's first `APP_LOOK_CM` (over the sea is best: nothing will stand
 //!     under an aircraft's approach), at `UNDER_COST` a step; an approach whose line passes within `CENTRE_KEEP_CM` of
@@ -22,8 +26,9 @@ use super::land::Land;
 use super::space::{Space, GROUND, SKY};
 use super::super::organic::geom::{crossing, inside, P};
 
-/// The runway's length (cm): 0 -> top speed (nitro) -> 0 for the fastest HQ vehicle (2,138 m), rounded up.
-pub const RUNWAY_CM: i64 = 220_000;
+/// The runway's length (cm): 0 -> top speed (nitro) -> 0 for the fastest HQ vehicle (2,842 m), rounded up to the
+/// next 100 m.
+pub const RUNWAY_CM: i64 = 290_000;
 pub const STRIP_W_CM: i64 = 15_000;
 /// Along the whole runway the client's platform reaches this far (cm) from the centre line on the apron side: its
 /// taxiways (170 m) and the service row beside the apron (215 m, hqairfield.js `air.service`).
@@ -47,6 +52,19 @@ pub const APP_SPREAD_PM: i64 = 150;
 /// line keeps from the city's middle.
 pub const UNDER_COST: i64 = 20;
 pub const CENTRE_KEEP_CM: i64 = 30_000;
+/// The airport's footprint keeps this far (per mille of the city's radius) from the city's middle.
+pub const MIDDLE_PM: i64 = 250;
+/// A site whose whole strip stands on the island is preferred to any on a pier, if its rise (flat, cm) is at most this.
+pub const LAND_FLAT_CM: i64 = 1_500;
+/// A runway on the island is taken only if the land it and the low ends of its approaches cut off from the city's
+/// middle is at most `CUT_PM` of the island's dry land off the airport; checked on a `CUT_GRID_CM` grid. Under an
+/// approach a road's clearance (6 m, the approach's boxes stepping up 2 m a 100 m) is reached about `ROAD_UNDER_CM`
+/// past the threshold.
+pub const CUT_PM: i64 = 50;
+const CUT_GRID_CM: i64 = 5_000;
+const ROAD_UNDER_CM: i64 = 40_000;
+/// The dry land's grid (cm) the search reads: `Land::dry` once a cell, not once a sample.
+const DRY_CELL_CM: i64 = 1_000;
 
 /// Where an approach starts: half the runway and the threshold's margin.
 fn ap_half(len: i64) -> i64 {
@@ -130,12 +148,64 @@ fn reaches(land: &Land, from: P, poly: &[P], r: i64) -> bool {
     false
 }
 
+/// How much of the island's dry land off the airport (per mille) an airport at `ap` cuts off from the city's middle:
+/// land a road could not reach on a `CUT_GRID_CM` grid round its footprint and the ground under its approaches' first
+/// `ROAD_UNDER_CM` (too low there for a road under them; the generator lays no road tunnels).
+fn cut_off(dry: &dyn Fn(P) -> bool, ap: &Airport, lim: i64) -> i64 {
+    const G: i64 = CUT_GRID_CM;
+    let hw = STRIP_W_CM / 2 + ROAD_UNDER_CM * APP_SPREAD_PM / 1000;
+    let a0 = ap.len / 2;
+    let a1 = ap.len / 2 + APP_START_CM + ROAD_UNDER_CM;
+    let low = [quad(ap.c, ap.dir, a0, a1, -hw, hw), quad(ap.c, ap.dir, -a1, -a0, -hw, hw)];
+    let n = lim / G;
+    let side = 2 * n + 1;
+    let free = |i: i64, j: i64| { let q = (i * G, j * G); dry(q) && !inside(q, &ap.poly) && !low.iter().any(|l| inside(q, l)) };
+    // a road's way: the cell and the eight round it free (as the roads' grid keeps 40 m of dry land round a step)
+    let open = |i: i64, j: i64| (-1..=1).all(|a| (-1..=1).all(|b| free(i + a, j + b)));
+    let mut seen = vec![false; (side * side) as usize];
+    let at = |i: i64, j: i64| ((j + n) * side + (i + n)) as usize;
+    // from the open cell nearest the middle
+    let start = (0..=n).flat_map(|r| (-r..=r).flat_map(move |i| [(i, -r), (i, r), (-r, i), (r, i)])).find(|&(i, j)| open(i, j));
+    let Some(start) = start else { return 1000 };
+    let (mut todo, mut got) = (vec![start], 1);
+    seen[at(start.0, start.1)] = true;
+    while let Some((i, j)) = todo.pop() {
+        for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let (x, z) = (i + di, j + dj);
+            if x.abs() <= n && z.abs() <= n && !seen[at(x, z)] && open(x, z) {
+                seen[at(x, z)] = true;
+                got += 1;
+                todo.push((x, z));
+            }
+        }
+    }
+    let all = (-n..=n).flat_map(|i| (-n..=n).map(move |j| (i, j))).filter(|&(i, j)| open(i, j)).count() as i64;
+    1000 - got * 1000 / all.max(1)
+}
+
 /// Places the airport on `land` and locks it in `space`. None where no apron side fits on dry land.
 pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
     let len = RUNWAY_CM;
     let r = land.p.city_r_cm + land.p.coast_r_cm.map_or(0, |c| (c - land.p.city_r_cm).max(0));
     let in_coast = |q: P| land.coast.as_ref().is_none_or(|c| inside(q, &c.poly));
-    let mut all: Vec<((i64, i64, i64, i64), Airport)> = Vec::new();
+    // in the coast and dry, by DRY_CELL_CM cell (worked out the first time a cell is asked); past the grid, exactly
+    let lim = land.p.coast_r_cm.unwrap_or(land.p.size_cm / 2);
+    let nd = 2 * (lim / DRY_CELL_CM) + 1;
+    let memo: Vec<std::cell::Cell<u8>> = (0..nd * nd).map(|_| std::cell::Cell::new(0)).collect();
+    let cell = |q: P, bit: u8| -> bool {
+        let (i, j) = ((q.0 as f64 / DRY_CELL_CM as f64).round() as i64 + nd / 2, (q.1 as f64 / DRY_CELL_CM as f64).round() as i64 + nd / 2);
+        if i < 0 || j < 0 || i >= nd || j >= nd {
+            return if bit == 1 { land.dry(q) } else { in_coast(q) };
+        }
+        let m = &memo[(j * nd + i) as usize];
+        if m.get() == 0 {
+            let c = ((i - nd / 2) * DRY_CELL_CM, (j - nd / 2) * DRY_CELL_CM);
+            m.set(4 | (in_coast(c) as u8) << 1 | land.dry(c) as u8);
+        }
+        m.get() & bit != 0
+    };
+    let (dry, coast) = (|q: P| cell(q, 1), |q: P| cell(q, 2));
+    let mut all: Vec<((bool, i64, i64, i64, i64), Airport)> = Vec::new();
     for k in 0..18 {
         let a = (k as f64 * 10.0).to_radians();
         let d = ((a.cos() * 1000.0).round() as i64, (a.sin() * 1000.0).round() as i64);
@@ -148,7 +218,8 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                 }
                 for side in [1, -1] {
                     let apron = apron_box(c, d, side);
-                    if !apron.iter().all(|&q| land.dry(q)) || !land.dry(landside(c, d, side)) || wet(land, &apron) {
+                    let ls = landside(c, d, side);
+                    if !apron.iter().all(|&q| dry(q)) || !dry(ls) || !apron.iter().all(|&q| land.dry(q)) || !land.dry(ls) || wet(land, &apron) {
                         continue;
                     }
                     // an approach's line over the city's middle: never (an approach is flown low over what is under it)
@@ -158,20 +229,25 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                         super::super::organic::geom::seg_dist2((ax, az), (bx, bz), (0, 0), (0, 0)) < CENTRE_KEEP_CM * CENTRE_KEEP_CM
                     });
                     let poly = footprint(c, d, len, side);
-                    if over_centre || wet(land, &poly) {
+                    // nor does the airport stand on the city's middle
+                    let keep = land.p.city_r_cm * MIDDLE_PM / 1000;
+                    let on_middle = inside((0, 0), &poly)
+                        || (0..poly.len()).any(|e| super::super::organic::geom::seg_dist2(poly[e], poly[(e + 1) % poly.len()], (0, 0), (0, 0)) < keep * keep);
+                    if over_centre || on_middle || wet(land, &poly) {
                         continue;
                     }
                     // the strip, every 20 m: over the island it must be dry (no river between), over the sea it is a pier
                     let mut hs: Vec<i64> = apron.iter().map(|&q| land.height(q)).collect();
-                    let mut crosses = false;
+                    let (mut crosses, mut pier) = (false, 0);
                     'strip: for m in -(len / 2 + STRIP_END_CM) / 2_000..=(len / 2 + STRIP_END_CM) / 2_000 {
                         for w in [-STRIP_W_CM / 2, 0, STRIP_IN_CM] {
                             let (u, w) = (m * 2_000, w * side);
                             let q = (c.0 + (d.0 * u - d.1 * w) / 1000, c.1 + (d.1 * u + d.0 * w) / 1000);
-                            if !in_coast(q) {
+                            if !coast(q) {
+                                pier += 1;
                                 continue;
                             }
-                            if !land.dry(q) {
+                            if !dry(q) {
                                 crosses = true;
                                 break 'strip;
                             }
@@ -187,13 +263,15 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
                     for s in [-1, 1] {
                         for m in 0..APP_LOOK_CM / 2_000 {
                             let u = s * (len / 2 + APP_START_CM + m * 2_000);
-                            if land.dry((c.0 + d.0 * u / 1000, c.1 + d.1 * u / 1000)) {
+                            if dry((c.0 + d.0 * u / 1000, c.1 + d.1 * u / 1000)) {
                                 under += 1;
                             }
                         }
                     }
                     let out = -((c.0 as f64).hypot(c.1 as f64) as i64) / 1_000;
-                    let key = (flat / 200 + under * UNDER_COST, out, k, i * 1000 + j);
+                    // the whole strip on the island and flat enough first; else the pier rule's best
+                    let on_land = pier == 0 && flat <= LAND_FLAT_CM;
+                    let key = (!on_land, flat / 200 + under * UNDER_COST, out, k, i * 1000 + j);
                     let w = side * TERMINAL_CM;
                     let y = land.height((c.0 - d.1 * w / 1000, c.1 + d.0 * w / 1000));
                     all.push((key, Airport { c, dir: d, len, side, poly, y, solids: Vec::new() }));
@@ -203,7 +281,7 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
     }
     // the best whose landside the city's middle reaches over dry land, round the airport (no river or lake between)
     all.sort_by_key(|x| x.0);
-    let (_, mut ap) = all.into_iter().find(|(_, a)| reaches(land, landside(a.c, a.dir, a.side), &a.poly, r))?;
+    let (_, mut ap) = all.into_iter().find(|(key, a)| (key.0 || cut_off(&dry, a, lim) <= CUT_PM) && reaches(land, landside(a.c, a.dir, a.side), &a.poly, r))?;
     // locked: the footprint from the ground into the sky; each approach a run of boxes stepping up its surface
     ap.solids.push(space.put("airport", "airport", ap.poly.clone(), ap.y + GROUND.0, ap.y + SKY.1));
     for s in [-1, 1] {
@@ -233,20 +311,40 @@ mod tests {
     }
 
     #[test]
-    fn the_runway_fits_the_fastest_car_and_runs_out_to_sea() {
+    fn the_runway_fits_the_fastest_car_on_land_or_out_to_sea() {
         let (land, _, ap) = commons();
         assert_eq!(ap.len, RUNWAY_CM);
-        // the apron side on the island, the strip out over the sea past it
+        // the apron side on the island
         assert!(apron_box(ap.c, ap.dir, ap.side).iter().all(|&p| land.dry(p)));
         assert!(land.dry(landside(ap.c, ap.dir, ap.side)));
+        // the strip on the island, cutting off no more than CUT_PM of it; else out over the sea past both ends
         let end = |s: i64| (ap.c.0 + ap.dir.0 * s * ap.len / 2000, ap.c.1 + ap.dir.1 * s * ap.len / 2000);
-        assert!(!land.dry(end(-1)) && !land.dry(end(1)), "both ends over the sea");
+        let lim = land.p.coast_r_cm.unwrap();
+        if land.dry(end(-1)) && land.dry(end(1)) {
+            assert!(cut_off(&|q| land.dry(q), &ap, lim) <= CUT_PM, "a runway on land leaves the island whole");
+        } else {
+            assert!(!land.dry(end(-1)) && !land.dry(end(1)), "both ends over the sea");
+        }
+        // the footprint off the city's middle
+        let keep = land.p.city_r_cm * MIDDLE_PM / 1000;
+        assert!((0..ap.poly.len()).all(|e| super::super::super::organic::geom::seg_dist2(ap.poly[e], ap.poly[(e + 1) % ap.poly.len()], (0, 0), (0, 0)) >= keep * keep));
         // both approaches clear of the city's middle
         for s in [-1i64, 1] {
             let a = (ap.c.0 + ap.dir.0 * s * ap_half(ap.len) / 1000, ap.c.1 + ap.dir.1 * s * ap_half(ap.len) / 1000);
             let b = (a.0 + ap.dir.0 * s * APP_LEN_CM / 1000, a.1 + ap.dir.1 * s * APP_LEN_CM / 1000);
             assert!(super::super::super::organic::geom::seg_dist2(a, b, (0, 0), (0, 0)) >= CENTRE_KEEP_CM * CENTRE_KEEP_CM);
         }
+    }
+
+    /// A runway across the island leaves the land past it cut off from the middle (the Commons' 3.5 km city is wider
+    /// than the 2.9 km runway, but not by its approaches' ends); one along its coast, out over the sea, does not.
+    #[test]
+    fn a_runway_across_the_island_cuts_it_off() {
+        let (land, _, ap) = commons();
+        let lim = land.p.coast_r_cm.unwrap();
+        let across = Airport { c: (0, -70_000), dir: (1000, 0), len: RUNWAY_CM, side: 1, poly: footprint((0, -70_000), (1000, 0), RUNWAY_CM, 1), y: 0, solids: Vec::new() };
+        assert!(cut_off(&|q| land.dry(q), &across, lim) > CUT_PM);
+        assert!(cut_off(&|q| land.dry(q), &ap, lim) <= CUT_PM, "the chosen site leaves the island whole");
     }
 
     #[test]

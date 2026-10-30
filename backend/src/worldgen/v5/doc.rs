@@ -132,9 +132,9 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
         doc.sites.push(site("port:0", "port", at, gy(at), PORT_W_CM, PORT_D_CM, None, port_front(at, f)));
     }
 
-    // the HQ pool: the offices nearest Central first (an HQ is an office), then the homes; each one's lot grown to its
-    // parcel (clear of the streets), its door out to the nearest local street, at least `hq::GAP_CM` from the next
-    hq_pool(&p, &roads, hub, &mut doc.lots)?;
+    // the HQ pool: the blocks nearest Central first (offices, then homes), each laid out in equal HQ lots along its
+    // streets (New York's), every lot's door out to a local street
+    hq_pool(&p, &roads, hub, &doc.sites, &landuse.buildings, &landuse.frames, &mut doc.lots)?;
 
     let districts = districts_of(&land, &landuse.cells, hub);
     let zones = Some(zones::layer(land.seed, &doc.blocks));
@@ -142,6 +142,7 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     let isl = land.coast.as_ref().map(|co| island::grow(&p, co, &mut roads, &mut doc, &mut tr));
 
     let mut terrain = land.t.clone();
+    grade_airport(&mut terrain, &land, &ap);
     grade_terminal(&mut terrain, tat, tn);
     terrain.apply(edits)?;
     roads.seat(&terrain, &p)?;
@@ -207,10 +208,44 @@ fn grade_terminal(t: &mut super::super::terrain::Terrain, o: P, n: (f64, f64)) {
     }
 }
 
-/// A local road from the node nearest `from` (within 60 m: the street end at the terminal's landside) to `to`.
+/// The airport's footprint graded to its level (the site's y) on the island, easing back to the land over
+/// `GRADE_EASE` round it: a runway on land stands on its own flat platform, cut into the hills and filled over the
+/// dips (the sea under a pier stays as it is).
+fn grade_airport(t: &mut super::super::terrain::Terrain, land: &super::land::Land, ap: &super::airport::Airport) {
+    use super::super::organic::geom::{inside, seg_dist2};
+    let y = ap.y as f64;
+    let m = (GRADE_EASE * 100.0) as i64;
+    let (x0, x1, z0, z1) = ap.poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
+    let n = ap.poly.len();
+    for iz in 0..t.n {
+        for ix in 0..t.n {
+            let q = t.vertex_pos(ix, iz);
+            if q.0 < x0 - m || q.0 > x1 + m || q.1 < z0 - m || q.1 > z1 + m || !land.coast.as_ref().is_none_or(|c| inside(q, &c.poly)) {
+                continue;
+            }
+            let d = if inside(q, &ap.poly) { 0.0 } else { ((0..n).map(|e| seg_dist2(ap.poly[e], ap.poly[(e + 1) % n], q, q)).min().unwrap_or(i64::MAX) as f64).sqrt() / 100.0 };
+            let k = (1.0 - d / GRADE_EASE).clamp(0.0, 1.0);
+            let w = k * k * (3.0 - 2.0 * k);
+            if w > 0.0 {
+                let h = &mut t.heights[iz * t.n + ix];
+                *h = (*h as f64 + (y - *h as f64) * w).round() as i32;
+            }
+        }
+    }
+}
+
+/// A local road from the node nearest `from` (within 60 m: the street end at the terminal's landside) to `to`; not from
+/// the dead end of a road more than one class above it (an avenue would run on as a local: the validator's class-step).
 fn terminal_road(roads: &mut Roads, from: P, to: P) {
     let d = |n: &Node| ((n.x - from.0) as f64).hypot((n.z - from.1) as f64);
-    let Some(a) = roads.nodes.iter().filter(|n| d(n) <= 6_000.0).min_by(|p, q| d(p).total_cmp(&d(q))).map(|n| n.id) else { return };
+    let ok = |n: &Node| {
+        let mut es = roads.edges.iter().filter(|e| e.a == n.id || e.b == n.id);
+        match (es.next(), es.next()) {
+            (Some(e), None) => super::super::classes::one_step(e.v4.unwrap_or(e.class), "local"),
+            _ => true,
+        }
+    };
+    let Some(a) = roads.nodes.iter().filter(|n| d(n) <= 6_000.0 && ok(n)).min_by(|p, q| d(p).total_cmp(&d(q))).map(|n| n.id) else { return };
     let (ax, az) = (roads.nodes[a as usize].x, roads.nodes[a as usize].z);
     let len = ((to.0 - ax) as f64).hypot((to.1 - az) as f64);
     if len < 500.0 {
@@ -335,66 +370,176 @@ fn fountain_at(roads: &Roads, hub: P, keep: &[(P, i64, i64)], lots: &[Lot]) -> O
     best.map(|b| (b.1, b.2))
 }
 
-/// The HQ lots (see `layers`).
-fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, lots: &mut [Lot]) -> Result<(), String> {
-    use super::super::organic::hq::{arterial, fits, Streets, GAP_CM, MIN_GAP_CM};
-    let streets = Streets::new(roads);
-    // the road points by 10 m cell, with the half width each keeps clear
-    let mut near: BTreeMap<(i64, i64), Vec<(i64, i64, i64)>> = BTreeMap::new();
-    for e in &roads.edges {
-        for q in &e.points {
-            near.entry((q[0].div_euclid(1_000), q[2].div_euclid(1_000))).or_default().push((q[0], q[2], e.width / 2 + 100));
+/// Every HQ lot's size (cm), the same for every HQ (no one's lot is bigger than another's: the building on it grows
+/// with its owner's level, the lot does not): its frontage along its street and its depth back from it.
+pub const HQ_LOT_W: i64 = 3_600;
+pub const HQ_LOT_D: i64 = 3_400;
+
+/// How far (cm) an HQ lot stays out past a road's half width (its kerb and a hair: no pad over a pavement's edge).
+const LOT_ROAD_CM: i64 = 50;
+
+/// Do two convex polygons overlap (more than touching, within 2 cm)?
+fn convex_overlap(a: &[P], b: &[P]) -> bool {
+    for poly in [a, b] {
+        let n = poly.len();
+        for k in 0..n {
+            let (p, q) = (poly[k], poly[(k + 1) % n]);
+            let (nx, nz) = ((q.1 - p.1) as f64, -(q.0 - p.0) as f64);
+            let l = nx.hypot(nz);
+            if l < 1.0 {
+                continue;
+            }
+            let span = |s: &[P]| s.iter().fold((f64::MAX, f64::MIN), |m, v| { let t = (v.0 as f64 * nx + v.1 as f64 * nz) / l; (m.0.min(t), m.1.max(t)) });
+            let (sa, sb) = (span(a), span(b));
+            if sa.1 <= sb.0 + 2.0 || sb.1 <= sa.0 + 2.0 {
+                return false;
+            }
         }
     }
-    let clear = |q: P| {
-        let (kx, kz) = (q.0.div_euclid(1_000), q.1.div_euclid(1_000));
-        (kx - 2..=kx + 2).all(|x| (kz - 2..=kz + 2).all(|z| near.get(&(x, z)).is_none_or(|v| v.iter().all(|&(px, pz, hw)| (px - q.0).pow(2) + (pz - q.1).pow(2) > hw * hw))))
+    true
+}
+
+/// The HQ lots (see `layers`), New York style: the blocks nearest Central first (the offices, then the homes, then the
+/// sheds), each block (landuse.rs `Frame`: between its street centre lines, its buildings `FRONT_CM` in from them)
+/// laid out in equal `HQ_LOT_W` x `HQ_LOT_D` lots side by side along its long frontage, turned to the block's frame, a
+/// row on each long side where the block is deep enough for two back to back, else on the side that fronts more, every
+/// lot fronting a local street, its door on it. The block's buildings a lot stands on give way (the first lots take
+/// their places in the list, any more of them are dropped). Every lot clear of every road (its half width and
+/// `LOT_ROAD_CM`), the sites and the other lots, `hq::MIN_GAP_CM` from the next and with room for the HQ and its garage
+/// (`hq::fits`).
+fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, sites: &[Site], buildings: &[super::landuse::Building],
+    frames: &[super::landuse::Frame], lots: &mut Vec<Lot>) -> Result<(), String> {
+    use super::super::organic::geom::{inside, seg_dist2};
+    use super::super::organic::hq::{arterial, fits, Streets, MIN_GAP_CM};
+    use super::landuse::FRONT_CM;
+    let streets = Streets::new(roads);
+    // every road's pieces, with their half widths, by 50 m cell
+    const RC: i64 = 5_000;
+    let mut segs: Vec<(P, P, i64)> = Vec::new();
+    let mut cells: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    for e in &roads.edges {
+        for w in e.points.windows(2) {
+            let (a, b, r) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]), e.width / 2);
+            for cx in (a.0.min(b.0) - r).div_euclid(RC)..=(a.0.max(b.0) + r).div_euclid(RC) {
+                for cz in (a.1.min(b.1) - r).div_euclid(RC)..=(a.1.max(b.1) + r).div_euclid(RC) {
+                    cells.entry((cx, cz)).or_default().push(segs.len());
+                }
+            }
+            segs.push((a, b, r));
+        }
+    }
+    let off_roads = |poly: &[P]| {
+        let (x0, x1, z0, z1) = poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |m, q| (m.0.min(q.0), m.1.max(q.0), m.2.min(q.1), m.3.max(q.1)));
+        let n = poly.len();
+        (x0.div_euclid(RC) - 1..=x1.div_euclid(RC) + 1).all(|cx| (z0.div_euclid(RC) - 1..=z1.div_euclid(RC) + 1).all(|cz| {
+            cells.get(&(cx, cz)).is_none_or(|v| v.iter().all(|&s| {
+                let (a, b, r) = segs[s];
+                let c = r + LOT_ROAD_CM;
+                !inside(a, poly) && !inside(b, poly) && (0..n).all(|k| seg_dist2(poly[k], poly[(k + 1) % n], a, b) >= c * c)
+            }))
+        }))
     };
-    let hd = |l: &Lot| ((l.x - hub.0) as f64).hypot((l.z - hub.1) as f64) as i64;
-    let mut order: Vec<usize> = (0..lots.len()).collect();
-    order.sort_by_key(|&k| (lots[k].district != district::OFFICE, hd(&lots[k]), k));
+    let site_polys: Vec<Vec<P>> = sites.iter().map(|s| match s.poly.as_ref() {
+        Some(q) if q.len() >= 3 => q.iter().map(|v| (v[0], v[1])).collect(),
+        _ => vec![(s.x - s.w / 2, s.z - s.d / 2), (s.x + s.w / 2, s.z - s.d / 2), (s.x + s.w / 2, s.z + s.d / 2), (s.x - s.w / 2, s.z + s.d / 2)],
+    }).collect();
+    let poly_of = |l: &Lot| -> Vec<P> { l.poly.as_ref().map_or_else(Vec::new, |q| q.iter().map(|v| (v[0], v[1])).collect()) };
+    // the blocks: their buildings' lots (lot k is building k until the pool lays one), nearest Central first by use
+    let mut by: BTreeMap<(u32, i64, i64), Vec<usize>> = BTreeMap::new();
+    for (k, b) in buildings.iter().enumerate() {
+        if lots.get(k).is_some_and(|l| l.kind == "building") {
+            by.entry((b.frame, b.block.0, b.block.1)).or_default().push(k);
+        }
+    }
+    let rank_of = |u: Use| match u { Use::Office => 0, Use::Home => 1, _ => 2 };
+    let mut order: Vec<((u32, i64, i64), (i64, i64))> = by.keys().map(|&key| {
+        let f = &frames[key.0 as usize];
+        let c = f.at((key.1 as f64 + 0.5) * f.long, (key.2 as f64 + 0.5) * f.short);
+        (key, (rank_of(f.use_), ((c.0 - hub.0 as f64).hypot(c.1 - hub.1 as f64)) as i64))
+    }).collect();
+    order.sort_by_key(|&(key, r)| (r, key));
+    let (w, d) = (HQ_LOT_W as f64, HQ_LOT_D as f64);
     let mut chosen: Vec<P> = Vec::new();
-    // (the gap steps down to `MIN_GAP_CM` when too few lots qualify, as @3's pool)
-    for gap in [GAP_CM, 3_500, MIN_GAP_CM] {
-    for &k in &order {
+    let mut dead: BTreeSet<usize> = BTreeSet::new();
+    for (key, _) in order {
         if chosen.len() as i64 >= p.hq_lots {
             break;
         }
-        let l = &lots[k];
-        let c = (l.x, l.z);
-        if l.kind == "hq" {
+        let f = frames[key.0 as usize];
+        let mine = &by[&key];
+        let (a, b) = (key.1 as f64, key.2 as f64);
+        let fr = FRONT_CM as f64;
+        let (a0, a1, b0, b1) = (a * f.long + fr, (a + 1.0) * f.long - fr, b * f.short + fr, (b + 1.0) * f.short - fr);
+        let n = ((a1 - a0) / w).floor() as i64;
+        if n == 0 || b1 - b0 < d {
             continue;
         }
-        // the parcel: out from the building each way, 1 m at a time, while clear of every street (to 30 m)
-        let reach = |dx: i64, dz: i64, from: i64| (from..=3_000).step_by(100).take_while(|&r| clear((c.0 + dx * r, c.1 + dz * r))).last().unwrap_or(0);
-        let (e, w, n, s) = (reach(1, 0, l.w / 2), reach(-1, 0, l.w / 2), reach(0, 1, l.d / 2), reach(0, -1, l.d / 2));
-        if e < l.w / 2 || w < l.w / 2 || n < l.d / 2 || s < l.d / 2 {
+        let across = (-f.u.1, f.u.0);
+        let rnd = |q: (f64, f64)| (q.0.round() as i64, q.1.round() as i64);
+        let base = &lots[mine[0]];
+        // a row along one long side (s 1: the side at b1, fronting +across; -1: at b0): each lot that may stand there
+        let row = |s: f64| -> Vec<Lot> {
+            let edge = if s > 0.0 { b1 } else { b0 };
+            let front = q16(s * across.0, s * across.1);
+            let mut out = Vec::new();
+            for i in 0..n {
+                let la = (a0 + a1) / 2.0 - n as f64 * w / 2.0 + w / 2.0 + i as f64 * w;
+                let poly: Vec<P> = [(la - w / 2.0, edge), (la + w / 2.0, edge), (la + w / 2.0, edge - s * d), (la - w / 2.0, edge - s * d)]
+                    .iter().map(|&(x, z)| rnd(f.at(x, z))).collect();
+                let (at, door) = (rnd(f.at(la, edge - s * d / 2.0)), rnd(f.at(la, edge)));
+                if !off_roads(&poly) || !streets.fronted(door, front).is_some_and(|(_, _, class)| !arterial(class)) {
+                    continue;
+                }
+                if site_polys.iter().any(|sp| convex_overlap(sp, &poly))
+                    || lots.iter().enumerate().any(|(j, o)| !mine.contains(&j) && !dead.contains(&j) && o.poly.is_some() && convex_overlap(&poly_of(o), &poly))
+                    || chosen.iter().any(|q| (q.0 - at.0).pow(2) + (q.1 - at.1).pow(2) < MIN_GAP_CM * MIN_GAP_CM)
+                {
+                    continue;
+                }
+                let mut hq = base.clone();
+                (hq.x, hq.z, hq.w, hq.d) = (at.0, at.1, HQ_LOT_W, HQ_LOT_D);
+                (hq.poly, hq.front, hq.door) = (Some(poly.iter().map(|q| [q.0, q.1]).collect()), Some(front), [door.0, base.door[1], door.1]);
+                hq.facing = if front[1] < 0 { Facing::South } else { Facing::North };
+                (hq.kind, hq.floors) = ("hq", 0);
+                if fits(&hq) {
+                    out.push(hq);
+                }
+            }
+            out
+        };
+        let (hi, lo) = (row(1.0), row(-1.0));
+        let laid: Vec<Lot> = if b1 - b0 >= 2.0 * d { hi.into_iter().chain(lo).collect() } else if lo.len() > hi.len() { lo } else { hi };
+        let laid: Vec<Lot> = laid.into_iter().take((p.hq_lots - chosen.len() as i64).max(0) as usize).collect();
+        if laid.is_empty() {
             continue;
         }
-        let poly = vec![[c.0 - w, c.1 - s], [c.0 + e, c.1 - s], [c.0 + e, c.1 + n], [c.0 - w, c.1 + n]];
-        // the door on the side nearest a street, out to it
-        let sides = [(e, [ONE, 0], [c.0 + e, c.1]), (w, [-ONE, 0], [c.0 - w, c.1]), (n, [0, ONE], [c.0, c.1 + n]), (s, [0, -ONE], [c.0, c.1 - s])];
-        let mut best = None;
-        for &(r, f, door) in &sides {
-            if let Some((_, _, class)) = streets.fronted((door[0], door[1]), f) {
-                if !arterial(class) && best.is_none_or(|b: (i64, [i64; 2], [i64; 2])| r < b.0) {
-                    best = Some((r, f, door));
+        // the block's buildings under its lots give way: the first lots take their places, any more are dropped
+        let gone: Vec<usize> = mine.iter().copied().filter(|&j| { let q = poly_of(&lots[j]); laid.iter().any(|h| convex_overlap(&q, &poly_of(h))) }).collect();
+        let m = laid.len();
+        dead.extend(gone.iter().skip(m).copied());
+        for (i, mut hq) in laid.into_iter().enumerate() {
+            let r = chosen.len() as u32;
+            (hq.rank, hq.tier) = (Some(r), Some(r / p.hq_tier.max(1) as u32));
+            chosen.push((hq.x, hq.z));
+            match gone.get(i) {
+                Some(&j) => {
+                    (hq.id, hq.block, hq.district) = (lots[j].id, lots[j].block, lots[j].district);
+                    lots[j] = hq;
+                }
+                None => {
+                    hq.id = lots.len() as u32;
+                    lots.push(hq);
                 }
             }
         }
-        let Some((_, f, door)) = best else { continue };
-        let mut hq = l.clone();
-        (hq.x, hq.z, hq.w, hq.d) = ((2 * c.0 + e - w) / 2, (2 * c.1 + n - s) / 2, e + w, n + s);
-        (hq.poly, hq.front, hq.door) = (Some(poly), Some(f), [door[0], l.door[1], door[1]]);
-        hq.facing = if f[1] < 0 { Facing::South } else { Facing::North };
-        (hq.kind, hq.floors, hq.rank, hq.tier) = ("hq", 0, Some(chosen.len() as u32), Some(chosen.len() as u32 / p.hq_tier.max(1) as u32));
-        let at = (hq.x, hq.z);
-        if !fits(&hq) || chosen.iter().any(|q| (q.0 - at.0).pow(2) + (q.1 - at.1).pow(2) < gap * gap) {
-            continue;
-        }
-        chosen.push(at);
-        lots[k] = hq;
     }
+    // (the dropped buildings out, the lots' ids their places again)
+    if !dead.is_empty() {
+        let mut k = 0;
+        lots.retain(|_| { let keep = !dead.contains(&k); k += 1; keep });
+        for (i, l) in lots.iter_mut().enumerate() {
+            l.id = i as u32;
+        }
     }
     // (fewer than the profile's count is the validator's soft `hq-count`)
     Ok(())
@@ -707,5 +852,92 @@ mod tests {
         };
         assert_eq!(deg(0, 0), 4);
         assert_eq!(deg(5_000, 0), 3);
+    }
+}
+
+#[cfg(test)]
+mod hq_lot_tests {
+    use super::*;
+    use super::super::super::organic::geom::{inside, seg_dist2};
+    use super::super::super::organic::hq::{arterial, fits, Streets, MIN_GAP_CM};
+
+    fn layers4() -> &'static Layers {
+        static L: std::sync::OnceLock<Layers> = std::sync::OnceLock::new();
+        L.get_or_init(|| layers("claude-hq@4", &[]).unwrap())
+    }
+
+    fn ring(l: &Lot) -> Vec<P> {
+        l.poly.as_ref().unwrap().iter().map(|v| (v[0], v[1])).collect()
+    }
+
+    /// Every HQ lot the same size, side by side along its block's long frontage (New York's), turned to the block's
+    /// frame: the profile's count, each fronting a local street with its door on the front edge, with room for the HQ
+    /// and its garage, none on another lot, a site or the next HQ's ground.
+    #[test]
+    fn hq_lots_are_equal_and_front_a_street() {
+        let l = layers4();
+        let p = profile_for("claude-hq@4", 4);
+        let hq: Vec<&Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
+        assert_eq!(hq.len() as i64, p.hq_lots);
+        let ids: Vec<u32> = l.lots.iter().map(|x| x.id).collect();
+        assert_eq!(ids, (0..l.lots.len() as u32).collect::<Vec<_>>(), "lot ids their places");
+        let mut ranks: Vec<u32> = hq.iter().map(|x| x.rank.unwrap()).collect();
+        ranks.sort();
+        assert_eq!(ranks, (0..hq.len() as u32).collect::<Vec<_>>());
+        let streets = Streets::new(&l.roads);
+        let len = |a: P, b: P| ((a.0 - b.0) as f64).hypot((a.1 - b.1) as f64);
+        for a in &hq {
+            assert_eq!((a.w, a.d), (HQ_LOT_W, HQ_LOT_D), "lot {}", a.id);
+            let r = ring(a);
+            assert_eq!(r.len(), 4);
+            // a 36 m front edge (its door in the middle of it, facing out), 34 m deep
+            let f = a.front.unwrap();
+            let fu = (f[0] as f64 / ONE as f64, f[1] as f64 / ONE as f64);
+            assert!((len(r[0], r[1]) - HQ_LOT_W as f64).abs() < 3.0 && (len(r[1], r[2]) - HQ_LOT_D as f64).abs() < 3.0, "lot {} its size", a.id);
+            let mid = ((r[0].0 + r[1].0) / 2, (r[0].1 + r[1].1) / 2);
+            assert!(len(mid, (a.door[0], a.door[2])) < 3.0, "lot {}'s door mid front", a.id);
+            let out = ((a.door[0] - a.x) as f64 * fu.0 + (a.door[2] - a.z) as f64 * fu.1) - HQ_LOT_D as f64 / 2.0;
+            assert!(out.abs() < 3.0, "lot {} fronts the way its door is", a.id);
+            assert!(streets.fronted((a.door[0], a.door[2]), f).is_some_and(|(_, _, c)| !arterial(c)), "lot {} fronts a local street", a.id);
+            assert!(fits(a), "lot {} holds the HQ and its garage", a.id);
+            for o in l.lots.iter().filter(|o| o.id != a.id && o.poly.is_some()) {
+                assert!(!convex_overlap(&r, &ring(o)), "lot {} on lot {}", a.id, o.id);
+            }
+            for s in l.sites.iter().filter(|s| s.kind != "spawn") {
+                let sp = vec![(s.x - s.w / 2, s.z - s.d / 2), (s.x + s.w / 2, s.z - s.d / 2), (s.x + s.w / 2, s.z + s.d / 2), (s.x - s.w / 2, s.z + s.d / 2)];
+                assert!(!convex_overlap(&r, &sp), "lot {} on site {}", a.id, s.id);
+            }
+            for o in hq.iter().filter(|o| o.id != a.id) {
+                assert!((a.x - o.x).pow(2) + (a.z - o.z).pow(2) >= MIN_GAP_CM * MIN_GAP_CM);
+            }
+        }
+        // rows: lots side by side (their fronts the same way, a lot's width apart along it)
+        let rows = hq.iter().filter(|a| hq.iter().any(|o| o.id != a.id && o.front == a.front && (len((o.x, o.z), (a.x, a.z)) - HQ_LOT_W as f64).abs() < 3.0)).count();
+        assert!(rows >= 32, "{rows} lots in rows");
+        // turned: the v5 blocks are rotated rectangles, so are their lots
+        assert!(hq.iter().any(|a| a.front.unwrap()[0] != 0 && a.front.unwrap()[1] != 0), "some lot turned off the axes");
+    }
+
+    /// No HQ lot's ground on a road: every edge of it a road's half width clear of every road's centre line, none
+    /// inside it (a lot's pad over a carriageway draws over the asphalt).
+    #[test]
+    fn hq_lots_stay_off_the_roads() {
+        let l = layers4();
+        let mut bad = Vec::new();
+        for a in l.lots.iter().filter(|x| x.kind == "hq") {
+            let r = ring(a);
+            let n = r.len();
+            for e in &l.roads.edges {
+                let hw = e.width / 2;
+                for s in e.points.windows(2) {
+                    let (p, q) = ((s[0][0], s[0][2]), (s[1][0], s[1][2]));
+                    if inside(p, &r) || (0..n).any(|k| seg_dist2(r[k], r[(k + 1) % n], p, q) < hw * hw) {
+                        bad.push((a.id, e.id, e.class));
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "HQ lots on roads (lot, edge, class): {bad:?}");
     }
 }

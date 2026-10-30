@@ -327,6 +327,19 @@ mod tests {
         assert!((280_000.0..=340_000.0).contains(&median), "median spacing {median} cm");
     }
 
+    /// City Gen v5's Commons (a 3.5 km island, its coast at 1,750 m) is larger than @3's: every island's coast still
+    /// clears it by over 300 m (the slots never move).
+    #[test]
+    fn every_island_clears_the_v5_commons() {
+        let commons = crate::worldgen::profile_for("claude-hq", 4).coast_r_cm.unwrap();
+        let island = crate::worldgen::profile_for("user:a", 4).coast_r_cm.unwrap();
+        for n in 0..500 {
+            let (x, z) = slot_pos(n);
+            let gap = (x as f64).hypot(z as f64) - (commons + island) as f64;
+            assert!(gap > 30_000.0, "slot {n}: {gap} cm from the Commons' coast");
+        }
+    }
+
     #[test]
     fn slot_positions_are_a_pure_function_of_the_slot() {
         assert_eq!(slot_pos(0), slot_pos(0));

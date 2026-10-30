@@ -43,6 +43,9 @@ const SHARED_CM: f64 = 1_000.0;
 pub const RING_CM: f64 = 4_800.0;
 const SPOKE_CM: f64 = 6_000.0;
 const SPOKE_SEP: f64 = 1.2;
+/// A spoke whose bearing is not free turns off it in steps of `SPOKE_TURN` (radians), at most `SPOKE_TRIES` either way.
+const SPOKE_TURN: f64 = 0.05;
+const SPOKE_TRIES: i64 = 8;
 const DIRS: [(i64, i64); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
 
 #[derive(Clone, Debug)]
@@ -388,12 +391,21 @@ pub fn arterials(land: &Land, space: &mut Space, cs: &[P]) -> Vec<Road> {
         let spoke = (circus && (i == 0 || j == 0)).then(|| {
             let o = cs[if i == 0 { j } else { i }];
             let a = ((o.1 - hub.1) as f64).atan2((o.0 - hub.0) as f64);
-            let off = |b: f64| (a - b + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-            let a = spokes.iter().copied().filter(|&b| off(b).abs() < SPOKE_SEP).min_by(|x, y| off(*x).abs().total_cmp(&off(*y).abs())).unwrap_or(a);
+            let apart = |x: f64, y: f64| ((x - y + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI).abs();
+            let off = |b: f64| apart(a, b);
+            let at = |a: f64, r: f64| (hub.0 as f64 + a.cos() * r, hub.1 as f64 + a.sin() * r);
+            let a = match spokes.iter().copied().filter(|&b| off(b) < SPOKE_SEP).min_by(|x, y| off(*x).total_cmp(&off(*y))) {
+                Some(b) => b,
+                // a new spoke on the nearest bearing (SPOKE_TURN steps) whose straight run, and the room past it for the
+                // turn onto it, is free (a railway rising out of Central beside the bearing takes its ground)
+                None => (0..=SPOKE_TRIES).flat_map(|k| [k, -k]).map(|k| a + k as f64 * SPOKE_TURN)
+                    .find(|&b| spokes.iter().all(|&s| apart(b, s) >= SPOKE_SEP / 2.0) && clear(land, space, &[at(b, RING_CM), at(b, RING_CM + SPOKE_CM + 2.0 * GRID_CM as f64)], ART_HW_CM + GRID_CM / 2))
+                    .unwrap_or(a),
+            };
             if !spokes.contains(&a) {
                 spokes.push(a);
             }
-            let at = |r: f64| (hub.0 as f64 + a.cos() * r, hub.1 as f64 + a.sin() * r);
+            let at = |r: f64| at(a, r);
             (o, at(RING_CM + SPOKE_CM), at(RING_CM))
         });
         let (p, q) = match spoke { Some((o, s, _)) => (o, (s.0 as i64, s.1 as i64)), None => (cs[i], cs[j]) };
@@ -526,9 +538,22 @@ mod tests {
     #[test]
     fn no_building_stands_on_an_arterial() {
         let c = super::super::commons();
+        // the roads by 50 m square (each in every square its box reaches)
+        const G: i64 = 5_000;
+        let span = |poly: &[(i64, i64)]| {
+            let (x0, x1, z0, z1) = poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
+            ((x0 - 1).div_euclid(G)..=(x1 + 1).div_euclid(G)).flat_map(move |x| ((z0 - 1).div_euclid(G)..=(z1 + 1).div_euclid(G)).map(move |z| (x, z)))
+        };
+        let mut roads: std::collections::HashMap<(i64, i64), Vec<&super::super::space::Solid>> = std::collections::HashMap::new();
+        for o in c.space.solids.iter().filter(|o| o.kind == "road") {
+            for k in span(&o.poly) {
+                roads.entry(k).or_default().push(o);
+            }
+        }
         for b in &c.landuse.buildings {
             let s = &c.space.solids[b.solid as usize];
-            assert!(c.space.solids.iter().filter(|o| o.kind == "road").all(|o| !(o.y0 < s.y1 && s.y0 < o.y1 && super::super::space::near(&o.poly, &s.poly, 1))), "building {}", b.id);
+            let hit = span(&s.poly).flat_map(|k| roads.get(&k).into_iter().flatten()).any(|o| o.y0 < s.y1 && s.y0 < o.y1 && super::super::space::near(&o.poly, &s.poly, 1));
+            assert!(!hit, "building {}", b.id);
         }
     }
 }
@@ -541,15 +566,16 @@ const BRIDGE_PM: i64 = 4_000;
 pub const JOIN_CM: i64 = 1_500;
 /// A street within this (cm) of a laid road and running its way is alongside it.
 const ALONG_CM: i64 = 1_200;
-
-/// The plots each use's buildings stand on (landuse.rs build()): their size along x and z (cm).
-pub fn plot(u: Use) -> (i64, i64) {
-    match u {
-        Use::Industry => (8_400, 6_400),
-        Use::Office => (5_200, 5_200),
-        _ => (4_400, 3_800),
-    }
-}
+/// The shortest piece of a street left where something cuts it (cm).
+const MIN_STREET_CM: i64 = 2_000;
+/// How far (cm) a street's dead end runs on to meet the road it points at.
+const EXTEND_CM: i64 = 15_000;
+/// A street's curve where it turns a district's corner (cm): a local street's design radius (30 km/h).
+const R_CORNER_CM: f64 = 3_000.0;
+/// The farthest apart (cm) two dead ends side by side are joined across.
+const CLOSE_CM: i64 = 13_000;
+/// The longest dead end (cm) past a street's last junction that is cut off.
+const STUB_CM: i64 = 5_000;
 
 fn box_of(a: (f64, f64), b: (f64, f64), hw: i64) -> Vec<P> {
     let (dx, dz) = (b.0 - a.0, b.1 - a.1);
@@ -558,11 +584,13 @@ fn box_of(a: (f64, f64), b: (f64, f64), hw: i64) -> Vec<P> {
     vec![((a.0 + nx) as i64, (a.1 + nz) as i64), ((b.0 + nx) as i64, (b.1 + nz) as i64), ((b.0 - nx) as i64, (b.1 - nz) as i64), ((a.0 - nx) as i64, (a.1 - nz) as i64)]
 }
 
-/// After the buildings: the local streets along the gaps between their plots (each use's lattice, a street wherever a
-/// building of that use stands on either side and the way is free), then every street network that does not touch an
+/// After the buildings: the local streets round their blocks (each district's lattice, landuse.rs `Frame`: a street
+/// wherever a block with a building is beside it and the way is free), then every street network that does not touch an
 /// arterial joined to the nearest by a link routed as the arterials are (no sharp turns).
-pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landuse::Building], arterials: &[Road]) -> Vec<Road> {
+pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landuse::Building], frames: &[super::landuse::Frame], arterials: &[Road]) -> Vec<Road> {
     let mut out: Vec<Road> = Vec::new();
+    // (Central's ring, its from and to both Central: no street crosses it or the plaza)
+    let ring = arterials.iter().any(|r| (r.from, r.to) == (0, 0));
     // the roads laid so far, by ALONG_CM cell, as segments: a street may cross one, never run along it
     let mut laid: BTreeMap<(i64, i64), Vec<((f64, f64), (f64, f64))>> = BTreeMap::new();
     let lay = |laid: &mut BTreeMap<(i64, i64), Vec<((f64, f64), (f64, f64))>>, pts: &[(f64, f64)]| {
@@ -588,62 +616,307 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
             dd < ALONG_CM as f64 && ((dx * ex + dz * ez) / (l * le)).abs() > 0.8
         }))))
     };
-    for u in [Use::Industry, Use::Office, Use::Home] {
-        let (pw, pd) = plot(u);
-        let mine: std::collections::BTreeSet<(i64, i64)> = buildings.iter().filter(|b| b.use_ == u)
-            .map(|b| ((b.c.0 - hub.0) / pw, (b.c.1 - hub.1) / pd)).collect();
-        // the lattice's gap lines: x = (i + 1/2) pw between plots i and i+1, run along z; z likewise
-        for (along_z, (s0, s1)) in [(true, (pw, pd)), (false, (pd, pw))] {
+    // the arterials' segments by 50 m cell: a street ends where it meets one (a district's lattice stops at its arterials)
+    let mut arts: BTreeMap<(i64, i64), Vec<(P, P)>> = BTreeMap::new();
+    for r in arterials {
+        for w in r.points.windows(2) {
+            let (a, b) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]));
+            for q in [a, b] {
+                arts.entry((q.0.div_euclid(5_000), q.1.div_euclid(5_000))).or_default().push((a, b));
+            }
+        }
+    }
+    let crosses = |p: (f64, f64), q: (f64, f64)| {
+        let (p, q) = ((p.0 as i64, p.1 as i64), (q.0 as i64, q.1 as i64));
+        (p.0.min(q.0).div_euclid(5_000) - 1..=p.0.max(q.0).div_euclid(5_000) + 1).any(|x| (p.1.min(q.1).div_euclid(5_000) - 1..=p.1.max(q.1).div_euclid(5_000) + 1)
+            .any(|z| arts.get(&(x, z)).is_some_and(|v| v.iter().any(|&(a, b)| super::super::organic::geom::seg_dist2(p, q, a, b) == 0))))
+    };
+    for (fk, f) in frames.iter().enumerate() {
+        let mine: std::collections::BTreeSet<(i64, i64)> = buildings.iter().filter(|b| b.frame as usize == fk).map(|b| b.block).collect();
+        // a point of street serves the district where one of its buildings stands within a block corner of it (the
+        // corner of the plot round it) with no arterial between
+        let ((bw, bd), _, _) = super::landuse::block_of(f.use_);
+        let reach = ((bw / 2 + super::landuse::FRONT_CM) as f64).hypot((bd / 2 + super::landuse::FRONT_CM) as f64) + 500.0;
+        let cell = |q: (f64, f64)| ((q.0 / reach).floor() as i64, (q.1 / reach).floor() as i64);
+        let mut theirs: BTreeMap<(i64, i64), Vec<(f64, f64)>> = BTreeMap::new();
+        for b in buildings.iter().filter(|b| b.frame as usize == fk) {
+            let c = (b.c.0 as f64, b.c.1 as f64);
+            theirs.entry(cell(c)).or_default().push(c);
+        }
+        let serves = |q: (f64, f64)| {
+            let k = cell(q);
+            (k.0 - 1..=k.0 + 1).any(|x| (k.1 - 1..=k.1 + 1).any(|z| theirs.get(&(x, z)).is_some_and(|v| v.iter().any(|&c| (q.0 - c.0).hypot(q.1 - c.1) <= reach && !crosses(q, c)))))
+        };
+        // the streets round the district's blocks: its long streets (along its axis, between block rows b - 1 and b) and its
+        // cross streets (across it, between blocks a - 1 and a), each wherever a block with a building is beside it
+        for along in [true, false] {
             let mut runs: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
-            for &(i, j) in &mine {
-                let (line, at) = if along_z { (i, j) } else { (j, i) };
-                for l in [line - 1, line] {
+            for &(a, b) in &mine {
+                let (line, at) = if along { (b, a) } else { (a, b) };
+                for l in [line, line + 1] {
                     runs.entry(l).or_default().push(at);
                 }
             }
             for (l, mut ats) in runs {
                 ats.sort_unstable();
                 ats.dedup();
-                // consecutive plots along the line are one street (from the plot's lower edge to the upper's)
+                // consecutive blocks along the line are one street, from the first's corner to the last's
                 let mut k = 0;
                 while k < ats.len() {
                     let mut e = k;
                     while e + 1 < ats.len() && ats[e + 1] == ats[e] + 1 {
                         e += 1;
                     }
-                    let (c0, c1) = ((ats[k] as f64 - 0.5) * s1 as f64, (ats[e] as f64 + 0.5) * s1 as f64);
-                    let off = (l as f64 + 0.5) * s0 as f64;
-                    let (a, b) = if along_z { ((hub.0 as f64 + off, hub.1 as f64 + c0), (hub.0 as f64 + off, hub.1 as f64 + c1)) } else { ((hub.0 as f64 + c0, hub.1 as f64 + off), (hub.0 as f64 + c1, hub.1 as f64 + off)) };
+                    let (a, b) = if along {
+                        (f.at(ats[k] as f64 * f.long, l as f64 * f.short), f.at((ats[e] + 1) as f64 * f.long, l as f64 * f.short))
+                    } else {
+                        (f.at(l as f64 * f.long, ats[k] as f64 * f.short), f.at(l as f64 * f.long, (ats[e] + 1) as f64 * f.short))
+                    };
+                    k = e + 1;
                     let n = (((b.0 - a.0).hypot(b.1 - a.1)) / 400.0).ceil().max(1.0) as usize;
                     let pts: Vec<(f64, f64)> = (0..=n).map(|t| (a.0 + (b.0 - a.0) * t as f64 / n as f64, a.1 + (b.1 - a.1) * t as f64 / n as f64)).collect();
-                    // the way must be free (of buildings, rail, the airport; other roads may cross it)
-                    let ok = pts.windows(2).all(|w| {
+                    // the runs of it on free ground (dry, clear of buildings, rail, the airport: other roads may cross it;
+                    // off Central's circus), not alongside a road already laid (that road is the street there), up to the
+                    // arterials round its district (a piece on their far side, serving none of its buildings, is left out)
+                    let free: Vec<bool> = pts.windows(2).map(|w| {
                         let g = land.height((w[0].0 as i64, w[0].1 as i64));
-                        land.dry((w[0].0 as i64, w[0].1 as i64)) && space.blocker_but(&box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM, 100, &["road"]).is_none()
-                    });
-                    if ok {
-                        // the runs of it not alongside a road already laid (that road is the street there)
-                        let free: Vec<bool> = pts.windows(2).map(|w| !alongside(&laid, w[0], w[1])).collect();
-                        let mut i = 0;
-                        while i < free.len() {
-                            if !free[i] { i += 1; continue; }
-                            let i0 = i;
-                            while i < free.len() && free[i] { i += 1; }
-                            let run = &pts[i0..=i];
-                            if run.len() < 3 { continue; }
-                            for w in run.windows(2) {
-                                let g = deck(land, w[0], w[1], land.height((w[0].0 as i64, w[0].1 as i64)));
-                                space.put("road", "local", box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM);
-                            }
-                            lay(&mut laid, run);
-                            let points = run.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
-                            out.push(Road { class: "local", from: usize::MAX, to: usize::MAX, points, min_r: f64::INFINITY, fallback: false });
+                        land.dry((w[0].0 as i64, w[0].1 as i64)) && land.dry((w[1].0 as i64, w[1].1 as i64))
+                            && (!ring || (w[0].0 - hub.0 as f64).hypot(w[0].1 - hub.1 as f64).min((w[1].0 - hub.0 as f64).hypot(w[1].1 - hub.1 as f64)) > RING_SHUT_CM)
+                            && space.blocker_but(&box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM, 100, &["road"]).is_none()
+                            && !alongside(&laid, w[0], w[1])
+                            && !crosses(w[0], w[1])
+                    }).collect();
+                    let mut i = 0;
+                    while i < free.len() {
+                        if !free[i] { i += 1; continue; }
+                        let i0 = i;
+                        while i < free.len() && free[i] { i += 1; }
+                        // (its ends cut back to the last point serving a building; no stub shorter than MIN_STREET_CM)
+                        let (Some(j0), Some(j1)) = ((i0..=i).find(|&j| serves(pts[j])), (i0..=i).rev().find(|&j| serves(pts[j]))) else { continue };
+                        let run = &pts[j0..=j1];
+                        if ((run.len() - 1) * 400) < MIN_STREET_CM as usize && run.len() < pts.len() { continue; }
+                        for w in run.windows(2) {
+                            let g = deck(land, w[0], w[1], land.height((w[0].0 as i64, w[0].1 as i64)));
+                            space.put("road", "local", box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM);
                         }
+                        lay(&mut laid, run);
+                        let points = run.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
+                        out.push(Road { class: "local", from: usize::MAX, to: usize::MAX, points, min_r: f64::INFINITY, fallback: false });
                     }
-                    k = e + 1;
                 }
             }
         }
+    }
+    // a street's dead end runs on straight to the road it points at where one is within EXTEND_CM (a street stopping
+    // short of its district's arterial, or of the next district's street)
+    let key = |q: (f64, f64)| ((q.0 as i64).div_euclid(2_000), (q.1 as i64).div_euclid(2_000));
+    let mut segs: BTreeMap<(i64, i64), Vec<(usize, P, P)>> = BTreeMap::new();
+    let add = |segs: &mut BTreeMap<(i64, i64), Vec<(usize, P, P)>>, k: usize, pts: &[[i64; 3]]| {
+        for w in pts.windows(2) {
+            let (a, b) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]));
+            for q in [a, b] {
+                segs.entry(key((q.0 as f64, q.1 as f64))).or_default().push((k, a, b));
+            }
+        }
+    };
+    for (k, r) in arterials.iter().enumerate() {
+        add(&mut segs, usize::MAX - k, &r.points);
+    }
+    for (k, r) in out.iter().enumerate() {
+        add(&mut segs, k, &r.points);
+    }
+    // the distance (cm) from q to the nearest road but `k`
+    let gap = |segs: &BTreeMap<(i64, i64), Vec<(usize, P, P)>>, k: usize, q: (f64, f64)| {
+        let (c, p) = (key(q), (q.0 as i64, q.1 as i64));
+        (c.0 - 1..=c.0 + 1).flat_map(|x| (c.1 - 1..=c.1 + 1).map(move |z| (x, z))).flat_map(|c| segs.get(&c).into_iter().flatten())
+            .filter(|s| s.0 != k).map(|&(_, a, b)| (super::super::organic::geom::seg_dist2(p, p, a, b) as f64).sqrt()).fold(f64::INFINITY, f64::min)
+    };
+    for k in 0..out.len() {
+        for end in [0, 1] {
+            let pts = &out[k].points;
+            if pts.len() < 3 {
+                continue;
+            }
+            let (e, p) = if end == 0 { (pts[0], pts[2]) } else { (pts[pts.len() - 1], pts[pts.len() - 3]) };
+            let e = (e[0] as f64, e[2] as f64);
+            if gap(&segs, k, e) <= JOIN_CM as f64 {
+                continue;
+            }
+            let (dx, dz) = (e.0 - p[0] as f64, e.1 - p[2] as f64);
+            let l = dx.hypot(dz).max(1.0);
+            let dir = (dx / l, dz / l);
+            let mut ext: Vec<(f64, f64)> = Vec::new();
+            let mut last = e;
+            let mut hit = false;
+            for t in 1..=EXTEND_CM / 400 {
+                let q = (e.0 + dir.0 * (t * 400) as f64, e.1 + dir.1 * (t * 400) as f64);
+                let g = land.height((q.0 as i64, q.1 as i64));
+                let ok = land.dry((q.0 as i64, q.1 as i64))
+                    && (!ring || (q.0 - hub.0 as f64).hypot(q.1 - hub.1 as f64) > RING_SHUT_CM)
+                    && space.blocker_but(&box_of(last, q, LOCAL_HW_CM), g - 200, g + ROAD_UP_CM, 100, &["road"]).is_none();
+                if !ok {
+                    break;
+                }
+                ext.push(q);
+                last = q;
+                if gap(&segs, k, q) <= (JOIN_CM / 2) as f64 {
+                    hit = true;
+                    break;
+                }
+            }
+            if !hit {
+                continue;
+            }
+            let mut prev = e;
+            for &q in &ext {
+                let g = deck(land, prev, q, land.height((prev.0 as i64, prev.1 as i64)));
+                space.put("road", "local", box_of(prev, q, LOCAL_HW_CM), g - 200, g + ROAD_UP_CM);
+                prev = q;
+            }
+            let more: Vec<[i64; 3]> = ext.iter().map(|q| [q.0 as i64, land.height((q.0 as i64, q.1 as i64)), q.1 as i64]).collect();
+            let r = &mut out[k];
+            if end == 0 {
+                r.points.splice(0..0, more.into_iter().rev());
+            } else {
+                r.points.extend(more);
+            }
+            add(&mut segs, k, &r.points.clone());
+        }
+    }
+    // two dead ends side by side (a district's edge, where its blocks stop short) are joined by a street across: the
+    // block closed, its corners turned (below)
+    {
+        let mut segs: BTreeMap<(i64, i64), Vec<(usize, P, P)>> = BTreeMap::new();
+        for (k, r) in arterials.iter().enumerate() {
+            add(&mut segs, usize::MAX - k, &r.points);
+        }
+        for (k, r) in out.iter().enumerate() {
+            add(&mut segs, k, &r.points);
+        }
+        // the dead ends: (road, the end, its way out)
+        let mut dead: Vec<(usize, (f64, f64), (f64, f64))> = Vec::new();
+        for (k, r) in out.iter().enumerate() {
+            let n = r.points.len();
+            if n < 3 {
+                continue;
+            }
+            for (e, p) in [(r.points[0], r.points[2]), (r.points[n - 1], r.points[n - 3])] {
+                let e = (e[0] as f64, e[2] as f64);
+                if gap(&segs, k, e) > JOIN_CM as f64 {
+                    let (dx, dz) = (e.0 - p[0] as f64, e.1 - p[2] as f64);
+                    let l = dx.hypot(dz).max(1.0);
+                    dead.push((k, e, (dx / l, dz / l)));
+                }
+            }
+        }
+        let mut pairs: Vec<(i64, usize, usize)> = Vec::new();
+        for i in 0..dead.len() {
+            for j in i + 1..dead.len() {
+                let ((_, p, a), (_, q, b)) = (dead[i], dead[j]);
+                let (dx, dz) = (q.0 - p.0, q.1 - p.1);
+                let l = dx.hypot(dz);
+                if a.0 * b.0 + a.1 * b.1 > 0.98 && l <= CLOSE_CM as f64 && (dx * a.0 + dz * a.1).abs() <= 1_000.0 {
+                    pairs.push((l as i64, i, j));
+                }
+            }
+        }
+        pairs.sort_unstable();
+        for (_, i, j) in pairs {
+            let ((ki, p, _), (kj, q, _)) = (dead[i], dead[j]);
+            let n = ((q.0 - p.0).hypot(q.1 - p.1) / 400.0).ceil().max(1.0) as usize;
+            let pts: Vec<(f64, f64)> = (0..=n).map(|t| (p.0 + (q.0 - p.0) * t as f64 / n as f64, p.1 + (q.1 - p.1) * t as f64 / n as f64)).collect();
+            // (on free ground, meeting no road between its two ends)
+            let ok = pts.windows(2).all(|w| {
+                let g = land.height((w[0].0 as i64, w[0].1 as i64));
+                land.dry((w[1].0 as i64, w[1].1 as i64)) && !crosses(w[0], w[1])
+                    && space.blocker_but(&box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM, 100, &["road"]).is_none()
+            }) && pts[1..n].iter().all(|&m| {
+                let (c, mp) = (key(m), (m.0 as i64, m.1 as i64));
+                (c.0 - 1..=c.0 + 1).flat_map(|x| (c.1 - 1..=c.1 + 1).map(move |z| (x, z))).flat_map(|c| segs.get(&c).into_iter().flatten())
+                    .filter(|s| s.0 != ki && s.0 != kj).all(|&(_, a, b)| super::super::organic::geom::seg_dist2(mp, mp, a, b) > (2 * LOCAL_HW_CM).pow(2))
+            });
+            if !ok || n < 4 {
+                continue;
+            }
+            for w in pts.windows(2) {
+                let g = deck(land, w[0], w[1], land.height((w[0].0 as i64, w[0].1 as i64)));
+                space.put("road", "local", box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM);
+            }
+            let points: Vec<[i64; 3]> = pts.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
+            add(&mut segs, out.len(), &points);
+            out.push(Road { class: "local", from: usize::MAX, to: usize::MAX, points, min_r: f64::INFINITY, fallback: false });
+        }
+    }
+    // a dead end's last STUB_CM or less past the street's last junction goes (a cross street running on past a block's
+    // one row of buildings, which front their long street)
+    let mut segs: BTreeMap<(i64, i64), Vec<(usize, P, P)>> = BTreeMap::new();
+    for (k, r) in arterials.iter().enumerate() {
+        add(&mut segs, usize::MAX - k, &r.points);
+    }
+    for (k, r) in out.iter().enumerate() {
+        add(&mut segs, k, &r.points);
+    }
+    let mut gone = vec![false; out.len()];
+    for k in 0..out.len() {
+        let pts: Vec<(f64, f64)> = out[k].points.iter().map(|q| (q[0] as f64, q[2] as f64)).collect();
+        let n = pts.len();
+        let meets: Vec<bool> = pts.iter().map(|&q| gap(&segs, k, q) <= (JOIN_CM / 2) as f64).collect();
+        let len = |a: usize, b: usize| pts[a..=b].windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum::<f64>();
+        let (first, last) = (meets.iter().position(|&m| m), meets.iter().rposition(|&m| m));
+        let (mut i0, mut i1) = (0, n - 1);
+        if let Some(f) = first.filter(|&f| !meets[0] && len(0, f) <= STUB_CM as f64) {
+            i0 = f;
+        }
+        if let Some(l) = last.filter(|&l| !meets[n - 1] && len(l, n - 1) <= STUB_CM as f64) {
+            i1 = l;
+        }
+        if i1 <= i0 || len(i0, i1) < MIN_STREET_CM as f64 {
+            // (a street meeting nothing, or only a stub, stays for the links to join)
+            gone[k] = first.is_some() && i1 <= i0;
+            continue;
+        }
+        out[k].points = out[k].points[i0..=i1].to_vec();
+    }
+    let mut k = 0;
+    out.retain(|_| { k += 1; !gone[k - 1] });
+    // a corner where two streets end together and nothing else meets them (a district's outer corner) is one street
+    // round a curve: `R_CORNER_CM` where the way is clear, tighter where a building stands near the corner
+    loop {
+        let ends = |r: &Road| [(r.points[0][0], r.points[0][2]), (r.points[r.points.len() - 1][0], r.points[r.points.len() - 1][2])];
+        let mut pair = None;
+        'find: for i in 0..out.len() {
+            for j in i + 1..out.len() {
+                for (ei, &p) in ends(&out[i]).iter().enumerate() {
+                    for (ej, &q) in ends(&out[j]).iter().enumerate() {
+                        if d(p, q) > JOIN_CM / 2 || out[i].class != "local" || out[j].class != "local" {
+                            continue;
+                        }
+                        let alone = arterials.iter().chain(out.iter().enumerate().filter(|&(k, _)| k != i && k != j).map(|(_, r)| r))
+                            .all(|r| r.points.windows(2).all(|w| super::super::organic::geom::seg_dist2(p, p, (w[0][0], w[0][2]), (w[1][0], w[1][2])) > JOIN_CM * JOIN_CM));
+                        if alone {
+                            pair = Some((i, ei, j, ej));
+                            break 'find;
+                        }
+                    }
+                }
+            }
+        }
+        let Some((i, ei, j, ej)) = pair else { break };
+        let mut a: Vec<(f64, f64)> = out[i].points.iter().map(|q| (q[0] as f64, q[2] as f64)).collect();
+        let mut b: Vec<(f64, f64)> = out[j].points.iter().map(|q| (q[0] as f64, q[2] as f64)).collect();
+        if ei == 0 { a.reverse(); }
+        if ej == 1 { b.reverse(); }
+        a.extend(b.into_iter().skip(1));
+        let q = simplify(&a, 100.0);
+        let pts = [R_CORNER_CM, R_CORNER_CM * 2.0 / 3.0, R_CORNER_CM / 3.0].iter().map(|&r| round(&q, r).0).find(|p| clear(land, space, p, LOCAL_HW_CM)).unwrap_or(a);
+        for w in pts.windows(2) {
+            let g = deck(land, w[0], w[1], land.height((w[0].0 as i64, w[0].1 as i64)));
+            space.put("road", "local", box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM);
+        }
+        let (pts, min_r) = (pts.clone(), round(&simplify(&pts, 100.0), f64::INFINITY).1);
+        out[i].points = pts.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
+        out[i].min_r = min_r;
+        out.remove(j);
     }
     // join each street network that touches no arterial to the nearest arterial (again, while that joins more: a link
     // from one end may fail where another's succeeds)
@@ -680,7 +953,10 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
         let raw: Vec<(f64, f64)> = std::iter::once((from.0 as f64, from.1 as f64))
             .chain(cells.iter().filter(|c| off(c, from) && off(c, to)).map(|c| ((c.0 * GRID_CM) as f64, (c.1 * GRID_CM) as f64)))
             .chain(std::iter::once((to.0 as f64, to.1 as f64))).collect();
-        let (pts, min_r) = round(&simplify(&raw, SIMPLIFY_CM), R_MIN_CM);
+        // (its curves R_MIN_CM, tighter where that meets a building; none where every one does: that network goes, with
+        // the buildings only it serves)
+        let q = simplify(&raw, SIMPLIFY_CM);
+        let Some((pts, min_r)) = [R_MIN_CM, R_MIN_CM / 3.0].iter().map(|&r| round(&q, r)).find(|(p, _)| clear(land, space, p, LOCAL_HW_CM)) else { continue };
         let points = pts.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
         out.push(Road { class: "link", from: usize::MAX, to: usize::MAX, points, min_r, fallback: false });
     }
@@ -692,31 +968,56 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
 }
 
 /// Union-find over roads that touch (an end within JOIN_CM of another's line): each road's component (arterials first,
-/// then `rest`).
+/// then `rest`), named by its first road's index.
 pub fn components(arterials: &[Road], rest: &[Road]) -> Vec<usize> {
+    use super::super::organic::geom::seg_dist2;
+    const CELL: i64 = 4_000;
     let all: Vec<&Road> = arterials.iter().chain(rest).collect();
     let n = all.len();
     let mut p: Vec<usize> = (0..n).collect();
     fn find(p: &mut [usize], x: usize) -> usize { let mut x = x; while p[x] != x { p[x] = p[p[x]]; x = p[x]; } x }
-    let segs: Vec<Vec<(P, P)>> = all.iter().map(|r| r.points.windows(2).map(|w| ((w[0][0], w[0][2]), (w[1][0], w[1][2]))).collect()).collect();
-    let bb: Vec<(i64, i64, i64, i64)> = all.iter().map(|r| r.points.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q[0]), b.1.max(q[0]), b.2.min(q[2]), b.3.max(q[2])))).collect();
-    for i in 0..n {
-        for j in i + 1..n {
-            let (a, b) = (bb[i], bb[j]);
-            if a.0 > b.1 + JOIN_CM || b.0 > a.1 + JOIN_CM || a.2 > b.3 + JOIN_CM || b.2 > a.3 + JOIN_CM {
-                continue;
-            }
-            let ends = |r: &Road| [(r.points[0][0], r.points[0][2]), (r.points[r.points.len() - 1][0], r.points[r.points.len() - 1][2])];
-            let meet = ends(all[i]).iter().any(|&e| segs[j].iter().any(|&(x, y)| super::super::organic::geom::seg_dist2(e, e, x, y) < JOIN_CM * JOIN_CM))
-                || ends(all[j]).iter().any(|&e| segs[i].iter().any(|&(x, y)| super::super::organic::geom::seg_dist2(e, e, x, y) < JOIN_CM * JOIN_CM))
-                || segs[i].iter().any(|&(a1, a2)| segs[j].iter().any(|&(b1, b2)| super::super::organic::geom::seg_dist2(a1, a2, b1, b2) == 0));
-            if meet {
-                let (x, y) = (find(&mut p, i), find(&mut p, j));
-                p[x] = y;
+    fn union(p: &mut [usize], a: usize, b: usize) { let (x, y) = (find(p, a), find(p, b)); p[x] = y; }
+    // every segment by CELL square, in each square its box (grown by `g`) reaches
+    let cells = |a: P, b: P, g: i64| {
+        let (x0, x1) = ((a.0.min(b.0) - g).div_euclid(CELL), (a.0.max(b.0) + g).div_euclid(CELL));
+        let (z0, z1) = ((a.1.min(b.1) - g).div_euclid(CELL), (a.1.max(b.1) + g).div_euclid(CELL));
+        (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| (x, z)))
+    };
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<(usize, P, P)>> = std::collections::HashMap::new();
+    for (k, r) in all.iter().enumerate() {
+        for w in r.points.windows(2) {
+            let (a, b) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]));
+            for c in cells(a, b, 0) {
+                grid.entry(c).or_default().push((k, a, b));
             }
         }
     }
-    (0..n).map(|i| find(&mut p, i)).collect()
+    for (k, r) in all.iter().enumerate() {
+        // an end within JOIN_CM of another road's line
+        for e in [&r.points[0], &r.points[r.points.len() - 1]] {
+            let e = (e[0], e[2]);
+            for c in cells(e, e, JOIN_CM) {
+                for &(j, x, y) in grid.get(&c).into_iter().flatten() {
+                    if j != k && seg_dist2(e, e, x, y) < JOIN_CM * JOIN_CM {
+                        union(&mut p, k, j);
+                    }
+                }
+            }
+        }
+        // or its line meeting another's
+        for w in r.points.windows(2) {
+            let (a, b) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]));
+            for c in cells(a, b, 0) {
+                for &(j, x, y) in grid.get(&c).into_iter().flatten() {
+                    if j > k && find(&mut p, j) != find(&mut p, k) && seg_dist2(a, b, x, y) == 0 {
+                        union(&mut p, k, j);
+                    }
+                }
+            }
+        }
+    }
+    let mut first = vec![usize::MAX; n];
+    (0..n).map(|i| { let r = find(&mut p, i); if first[r] == usize::MAX { first[r] = i; } first[r] }).collect()
 }
 
 #[cfg(test)]

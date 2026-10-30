@@ -17,7 +17,9 @@
  *     (m, its own frame, door to +z). 3.19: one broad building over most of its lot: the podium (front always at FRONT),
  *     a base block over all of it (tiers[0], part "base"), the main tower (about 1:1.3) and its setbacks by style
  *     (COMPOSE: stacked slabs, wedding cake, top-heavy...), and the wings (level 10, 30) risen from the base flush with
- *     the tower's sides. grand 0..1 is how much of the lot it may fill (plan(): 11 x 8 m to 25 x 14 m); every part is
+ *     the tower's sides. HQ lots: three buildings again wherever the plan holds them (M.three): the tower and an annex
+ *     either side across a GAP3 light slot (wings with annex: true), all on the podium and one shared floor over it;
+ *     their floors (floorsOf) grow with the level, so the HQ's height is its owner's usage. grand 0..1 is how much of the lot it may fill (plan(): 11 x 8 m to 25 x 14 m); every part is
  *     a floor-height multiple from one datum (BASE_Y); heli (x, z, r, y): the helideck on the top roof (HELI_UP over
  *     it); the pad (x, z, r, y) in its middle: r = PAD_R, or less (to PAD_MIN) where the lot holds less room.
  *   footprint(grand, wings) -> [[cx, cz, hx, hz]]: the podium, its entrance apron, then each wing (on the podium: what a
@@ -54,6 +56,7 @@ function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 var FRONT = 3.8;                       // the podium's front face (the door, HQ_DOOR 4.8, is a metre in front of it)
 var BASE_Y = PLINTH + PODIUM_H + CORNICE;
 var WING_MIN = 2.6;                    // a wing narrower than this is not built (the tower takes the base's width)
+var GAP3 = 1.4;                        // the light slot between the tower and each annex: three buildings on one podium
 // the tower's tiers by style, over the main tower's footprint: [width, depth, share of its floors]
 //   glass: stacked slabs; deco: a wedding cake; brutal: top-heavy (its upper slab oversails); tokyo: a slab that
 //   turns narrow; stone: classic setbacks; eco: terraces stepping back
@@ -81,11 +84,15 @@ function massing(level, grand, stars, room, facade){
   var Pl = plan(grand), comp = COMPOSE[facade] || COMPOSE.glass, F = floorsOf(level);
   var pod = {x: 0, z: Pl.z, w: Pl.w, d: Pl.d, y0: PLINTH, h: PODIUM_H};
   var y = BASE_Y, tiers = [];
-  // the base: every floor below level 5; then one penthouse floor over it; from level 10 two to four floors
-  var fb = level < 5 ? F : level < 10 ? F - 1 : Math.min(4, 2 + Math.floor((level - 10)/15)), ft = F - fb;
+  // three buildings (the tower and an annex either side, a light slot between) on one podium and one shared floor over
+  // it, wherever the plan holds annexes WING_MIN wide; else one building: the base every floor below level 5, then a
+  // penthouse over it; from level 10 a base of two to four floors under a tower
+  var wt3 = Math.max(Pl.dt*0.9, Math.min(Pl.bw*0.5, Pl.dt*1.2)), aw = (Pl.bw - wt3)/2 - GAP3, three = aw >= WING_MIN;
+  var fb = three ? 1 : level < 5 ? F : level < 10 ? F - 1 : Math.min(4, 2 + Math.floor((level - 10)/15)), ft = F - fb;
   tiers.push({x: 0, z: Pl.z, w: Pl.bw, d: Pl.bd, y0: y, floors: fb, h: fb*FH, part: "base"}); y += fb*FH;
   var wt = Pl.wt, dt = Pl.dt;
-  if(level < 10){ wt = Pl.bw - 2*Math.max(1.6, Pl.bw*0.12); dt = Math.max(4.6, Pl.bd - 2.4); }       // a penthouse, set back all round
+  if(three) wt = wt3;
+  else if(level < 10){ wt = Pl.bw - 2*Math.max(1.6, Pl.bw*0.12); dt = Math.max(4.6, Pl.bd - 2.4); }  // a penthouse, set back all round
   else if(!Pl.wings) wt = Math.max(dt*0.9, Math.min(dt*1.5, Pl.bw - 1.2));                            // no room for wings: the tower takes the width (to 1:1.5)
   var nT = ft <= 0 ? 0 : level < 10 ? 1 : level < 25 ? (facade === "deco" || facade === "stone" ? 2 : 1) : level < 45 ? 2 : Math.min(comp.length, facade === "deco" ? 4 : 3);
   nT = Math.min(nT, ft);
@@ -108,9 +115,15 @@ function massing(level, grand, stars, room, facade){
   var pr = room != null && isFinite(+room) ? clamp(+room - 0.6, PAD_MIN, PAD_R) : PAD_R;
   var hy = y + HELI_UP, pad = {x: R.x, z: R.z, r: pr, y: hy + 0.02};
   var heli = {x: R.x, z: R.z, r: pr + WALK, y: hy, base: y};
-  // the wings (level 10, west; 30, east): the base risen beside the tower, flush with its side walls, a metre behind its face
+  // the annexes (three): a building either side of the tower across the light slot, from the shared floor up, at every
+  // level (their floors grow with it); else the wings (level 10, west; 30, east): the base risen flush with the tower
   var wings = [], T1 = tiers[1];
-  if(level >= 10 && T1 && Pl.wings){
+  if(three && T1){
+    var fa = Math.max(1, Math.min(T1.floors - 1, Math.round(T1.floors*0.7))), ay = BASE_Y + fb*FH;
+    [-1, 1].forEach(function(sd){
+      wings.push({x: sd*(wt/2 + GAP3 + aw/2), z: Pl.zt - 0.5, w: aw, d: dt - 1.0, y0: ay, floors: fa, h: fa*FH, side: sd, top: ay + fa*FH + 0.2, annex: true});
+    });
+  } else if(level >= 10 && T1 && Pl.wings){
     var fw = Math.max(1, Math.min(T1.floors - 1, Math.round(T1.floors*0.6)));
     [[-1, 10], [1, 30]].forEach(function(q){
       if(level < q[1]) return;
@@ -119,7 +132,7 @@ function massing(level, grand, stars, room, facade){
     });
   }
   return {level: level, grand: grand, facade: COMPOSE[facade] ? facade : "glass", podium: pod, tiers: tiers, prestige: prest, roof: roof, pad: pad, heli: heli, wings: wings,
-    top: y, lowTop: BASE_Y + fb*FH, front: FRONT, floors: F};
+    top: y, lowTop: BASE_Y + fb*FH, front: FRONT, floors: F, three: three};
 }
 // the ground the building stands on (what a lot's car-lift bay and its run out keep clear of): the podium (and its
 // plinth), its entrance apron, then each wing (on the podium: the same ground, kept for the bay rules' shape)
@@ -390,7 +403,8 @@ function make(c, opts){
     M.wings.forEach(function(Wg){
       K.geo("fac", sideGeo(THREE, Wg.w, Wg.h, Wg.d, TILE_W, TILE_H, Wg.y0 - BASE_Y), Wg.x, Wg.y0 + Wg.h/2, Wg.z);
       K.box("roof", Wg.w, 0.2, Wg.d, Wg.x, Wg.y0 + Wg.h + 0.1, Wg.z);
-      K.box("body", Wg.w + 0.18, 0.34, Wg.d + 0.36, Wg.x + Wg.side*0.09, Wg.y0 + Wg.h - 0.17, Wg.z);
+      if(Wg.annex) K.box("body", Wg.w + 0.36, 0.34, Wg.d + 0.36, Wg.x, Wg.y0 + Wg.h - 0.17, Wg.z);          // an annex stands apart: its band all round
+      else K.box("body", Wg.w + 0.18, 0.34, Wg.d + 0.36, Wg.x + Wg.side*0.09, Wg.y0 + Wg.h - 0.17, Wg.z);
     });
     if(M.prestige){
       var Pp = M.prestige;

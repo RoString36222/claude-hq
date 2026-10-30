@@ -1,7 +1,7 @@
 /* Claude HQ: the parts of Arena City, shared by both Cities.
  *
  * The fountain, the bike park, the skatepark and what stands beside every HQ (its garage, car,
- * motorbike and bicycle). Moved out of games/hqcity.js unchanged, so the legacy City
+ * motorbike and bicycle, and its lot's finish by level: lotDress). Moved out of games/hqcity.js unchanged, so the legacy City
  * (HQV.hqWorlds.city) and the generated 3D City (games/hqcity3d.js, HQV.hqWorlds.city3d) build
  * the same things. Every part takes the hq3d ctx `c` and the group to build into; nothing here
  * touches THREE until a part is called, so node can load the file with only a window stub.
@@ -242,5 +242,134 @@ function lotExtras(c, g, col, rot, toWorld, apronEnd, uid, at, mine){
   return {items: [], glows: glows, car: null, garage: {top: top, walls: walls, on: 0}, hits: hits, doors: [door], door: door, lift: lift, move: move};
 }
 
-HQV.hqCityParts = {fountain: fountain, bikePark: bikePark, skatePark: skatePark, lotExtras: lotExtras, lamplit: lamplit, FOUNT_R: FOUNT_R};
+/* ---------- an HQ lot's finish: the poshness of its owner's level, on the same lot for everyone ---------- */
+// Every HQ lot is the same size; what its owner's usage (the HQ level) buys is the finish round the buildings, in tiers:
+// 0 plain paving; 1 (level 10) lawns, trees and lamps; 2 (level 25) a stone forecourt, a fountain, planters and flag
+// poles; 3 (level 40) marble paving, a gold trim round the lot and valet cars at the kerb. Built into g (the HQ's group,
+// its frame: the door to +z) on R, the lot's outline in that frame (hqcity3d lotRing); keep: [[x, z, hx, hz]] what it
+// stands clear of (the building, the walk to its door, the garage, its apron and driveway). Deterministic per owner
+// (c.rng, mulberry32, seeded by uid). Pure placement in dressPlan (node-tested); lotDress builds it.
+var DRESS_LEVELS = [10, 25, 40];
+var DRESS_Y = 0.19;          // the lot's own ground (worldgeom: KERB + LIFT + PAD, 0.23 m) over the HQ's group (PAD_UP, 0.05 m): flat finish just on it
+function dressTier(level){ level = level | 0; var t = 0; for(var i = 0; i < DRESS_LEVELS.length; i++) if(level >= DRESS_LEVELS[i]) t = i + 1; return t; }
+function ringIn(R, x, z){
+  var inside = false;
+  for(var i = 0, j = R.length - 1; i < R.length; j = i++){
+    var xi = R[i][0], zi = R[i][1], xj = R[j][0], zj = R[j][1];
+    if((zi > z) !== (zj > z) && x < (xj - xi)*(z - zi)/(zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// -> [{kind: "tree" | "lamp" | "planter" | "fountain" | "flag" | "car" | "lawn" | "forecourt", x, z, ...}] (lot frame, m)
+function dressPlan(R, level, uid, keep, rngOf){
+  var out = [], tier = dressTier(level);
+  if(!R || R.length < 3) return out;
+  keep = keep || [];
+  var rnd = rngOf ? rngOf("lot:" + String(uid || "")) : function(){ return 0.5; };
+  var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  R.forEach(function(q){ x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); });
+  var used = [];
+  // a piece of half size (hx, hz) at (x, z): inside the lot (its corners, a margin in), clear of keep and of what is placed
+  function free(x, z, hx, hz){
+    for(var i = -1; i <= 1; i += 2) for(var j = -1; j <= 1; j += 2) if(!ringIn(R, x + i*(hx + 0.4), z + j*(hz + 0.4))) return false;
+    var all = keep.concat(used);
+    for(var k = 0; k < all.length; k++){ var K = all[k]; if(Math.abs(x - K[0]) < hx + K[2] + 0.3 && Math.abs(z - K[1]) < hz + K[3] + 0.3) return false; }
+    return true;
+  }
+  function put(o, hx, hz){ if(!free(o.x, o.z, hx, hz)) return false; used.push([o.x, o.z, hx, hz]); out.push(o); return true; }
+  var foot = keep[0] || [0, 0, 0, 0], back = foot[1] - foot[3], front = foot[1] + foot[3];
+  if(tier >= 1){
+    // the lawns: behind the building and down its sides (flat: drawn under what stands on them)
+    if(back - z0 > 2) out.push({kind: "lawn", x: (x0 + x1)/2, z: (z0 + back)/2, w: x1 - x0 - 1.2, d: back - z0 - 0.9});
+    [-1, 1].forEach(function(sd){ var a = sd < 0 ? x0 : foot[0] + sd*foot[2], b = sd < 0 ? foot[0] - foot[2] : x1;
+      if(b - a > 2) out.push({kind: "lawn", x: (a + b)/2, z: (back + front)/2, w: b - a - 1.0, d: front - back}); });
+    // the trees: a row along the back and down the sides, about 5 m apart, each a little off the line
+    var spots = [];
+    for(var tx = x0 + 2.5; tx <= x1 - 2.5; tx += 5) spots.push([tx, z0 + 1.8]);
+    for(var tz = z0 + 6.5; tz <= front; tz += 5){ spots.push([x0 + 1.8, tz]); spots.push([x1 - 1.8, tz]); }
+    spots.forEach(function(q){ var x = q[0] + (rnd() - 0.5)*1.2, z = q[1] + (rnd() - 0.5)*0.8;
+      put({kind: "tree", x: x, z: z, h: 4 + rnd()*2.5, cone: rnd() < 0.35}, 0.5, 0.5); });
+  }
+  if(tier >= 2){
+    // the forecourt: stone across the front between the building and the pavement
+    if(z1 - front > 2) out.push({kind: "forecourt", x: (x0 + x1)/2, z: (front + z1)/2, w: x1 - x0 - 1.2, d: z1 - front - 0.6});
+    // the fountain: the first free spot either side of the walk, nearest the door
+    var fz = front + (z1 - front)*0.4;
+    [[7, fz], [-7, fz], [10, fz], [-10, fz], [13, fz], [-13, fz]].some(function(q){ return put({kind: "fountain", x: q[0], z: q[1], r: 1.8}, 1.9, 1.9); });
+    // the planters flanking the walk to the door, and three flag poles at a front corner
+    [[-2.6, front + 2.2], [2.6, front + 2.2], [-2.6, z1 - 1.6], [2.6, z1 - 1.6]].forEach(function(q){ put({kind: "planter", x: q[0], z: q[1]}, 0.5, 0.5); });
+    [1, -1].some(function(sd){ var fx = sd*(x1 - 2.2), fzz = front + 1.6;
+      if(!free(fx, fzz, 1.6, 0.4)) return false;
+      [-1.2, 0, 1.2].forEach(function(o){ put({kind: "flag", x: fx + o, z: fzz, h: 7 + (o === 0 ? 1 : 0)}, 0.15, 0.15); });
+      return true; });
+  }
+  if(tier >= 3){
+    // the valet cars: two or three at the kerb, nose to tail, their colours the owner's own
+    var PAL = [0x0e0f12, 0xf2f2f0, 0x8a0f1e, 0x13294b, 0xb9a06a, 0x3a3f45], n = 2 + (rnd() < 0.5 ? 1 : 0), placed = 0;
+    for(var cx = x1 - 3; cx >= x0 + 3 && placed < n; cx -= 0.5){
+      if(put({kind: "car", x: cx, z: z1 - 2.4, yaw: Math.PI/2, col: PAL[Math.floor(rnd()*PAL.length) % PAL.length]}, 2.2, 1.0)){ placed++; cx -= 4.2; }
+    }
+  }
+  // the lamps along the frontage (last: round what stands there)
+  if(tier >= 1) for(var lx = x0 + 3; lx <= x1 - 3; lx += 4) if(put({kind: "lamp", x: lx, z: z1 - 1.2, gold: tier >= 3}, 0.2, 0.2)) lx += 4;
+  return out;
+}
+function lotDress(c, g, R, level, uid, keep, night){
+  var THREE = c.THREE, PI = c.PI, mat = c.mat, tier = dressTier(level);
+  var plan = dressPlan(R, level, uid, keep, function(k){ return c.rng(c.hashStr(k)); });
+  var glows = [], blocks = [];
+  var leaf = mat(0x3f8a4f, {roughness: 0.85}), leaf2 = mat(0x2e6b3d, {roughness: 0.85}), bark = mat(0x5b4331, {roughness: 0.9});
+  var lawn = mat(0x5f9a4a, {roughness: 0.95}), stone = mat(tier >= 3 ? 0xece8e0 : 0xb9b3a8, {roughness: tier >= 3 ? 0.35 : 0.8});
+  var steel = mat(0x3a4048, {metalness: 0.7, roughness: 0.35}), gold = mat(0xd8b34a, {metalness: 0.9, roughness: 0.25});
+  function flat(m, w, d, x, z, y){ var o = new THREE.Mesh(new THREE.PlaneGeometry(w, d), m); o.rotation.x = -PI/2; o.position.set(x, y, z); o.receiveShadow = true; g.add(o); return o; }
+  plan.forEach(function(o){
+    if(o.kind === "lawn") flat(lawn, o.w, o.d, o.x, o.z, DRESS_Y + 0.012);
+    else if(o.kind === "forecourt") flat(stone, o.w, o.d, o.x, o.z, DRESS_Y + 0.008);
+    else if(o.kind === "tree"){
+      c.cyl(0.12, 0.16, o.h*0.45, bark, o.x, o.h*0.225, o.z, g, 6);
+      if(o.cone) c.add(new THREE.Mesh(new THREE.ConeGeometry(1.3, o.h*0.75, 8), leaf2), o.x, o.h*0.62, o.z, g);
+      else { var cr = c.sph(1.4, leaf, o.x, o.h*0.68, o.z, g); cr.scale.set(1, 1.15, 1); }
+      blocks.push([o.x, o.z, 0.35]);
+    } else if(o.kind === "lamp"){
+      c.cyl(0.06, 0.08, 4.2, o.gold ? gold : steel, o.x, 2.1, o.z, g, 6);
+      c.box(0.5, 0.12, 0.5, o.gold ? gold : steel, o.x, 4.25, o.z, g);
+      var gl = c.glow(0xffd9a0, 2.4, night ? 0.85 : 0.08); gl.position.set(o.x, 4.05, o.z); g.add(gl); glows.push(gl);
+      blocks.push([o.x, o.z, 0.25]);
+    } else if(o.kind === "planter"){
+      c.box(0.9, 0.6, 0.9, stone, o.x, 0.3, o.z, g); c.sph(0.5, leaf2, o.x, 0.85, o.z, g);
+      blocks.push([o.x, o.z, 0.6]);
+    } else if(o.kind === "fountain"){
+      c.cyl(o.r, o.r + 0.1, 0.55, stone, o.x, 0.27, o.z, g, 24);
+      var wm = new THREE.MeshStandardMaterial({color: 0x5fb8dc, emissive: new THREE.Color(c.COL.cyan), emissiveIntensity: 0.2, roughness: 0.1, transparent: true, opacity: 0.88});
+      c.cyl(o.r - 0.15, o.r - 0.15, 0.04, wm, o.x, 0.5, o.z, g, 24);
+      c.cyl(0.25, 0.35, 1.3, stone, o.x, 0.95, o.z, g, 10); c.cyl(0.8, 0.2, 0.2, tier >= 3 ? gold : stone, o.x, 1.65, o.z, g, 16);
+      blocks.push([o.x, o.z, o.r + 0.3]);
+    } else if(o.kind === "flag"){
+      c.cyl(0.05, 0.06, o.h, tier >= 3 ? gold : steel, o.x, o.h/2, o.z, g, 6);
+      c.box(1.1, 0.7, 0.03, mat([0xc23b3b, 0x2f5fa8, 0xe8c24a][Math.abs(Math.round(o.x*10)) % 3], {roughness: 0.8}), o.x + 0.58, o.h - 0.5, o.z, g);
+      blocks.push([o.x, o.z, 0.2]);
+    } else if(o.kind === "car" && typeof c.car === "function"){
+      var V = c.car(o.col, 0xd8b34a); V.g.position.set(o.x, 0, o.z); V.g.rotation.y = o.yaw; g.add(V.g);
+      blocks.push([o.x, o.z, 0, 2.1, 0.95]);
+    }
+  });
+  if(tier >= 3){
+    // the gold trim round the lot: a thin band along each edge of its outline
+    for(var i = 0, j = R.length - 1; i < R.length; j = i++){
+      var a = R[j], b = R[i], len = Math.hypot(b[0] - a[0], b[1] - a[1]); if(!(len > 0.5)) continue;
+      var t = c.box(len, 0.08, 0.14, gold, (a[0] + b[0])/2, DRESS_Y + 0.03, (a[1] + b[1])/2, g); t.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]);
+    }
+  }
+  return {tier: tier, plan: plan, glows: glows, blocks: blocks};
+}
+// what the finish blocks at (x, z), the lot frame: a disc [x, z, r] or a box [x, z, 0, hx, hz]
+function dressBlocked(D, x, z){
+  var B = D && D.blocks; if(!B) return false;
+  for(var i = 0; i < B.length; i++){ var b = B[i];
+    if(b[2] > 0 ? Math.hypot(x - b[0], z - b[1]) < b[2] : Math.abs(x - b[0]) < b[3] && Math.abs(z - b[1]) < b[4]) return true; }
+  return false;
+}
+
+HQV.hqCityParts = {fountain: fountain, bikePark: bikePark, skatePark: skatePark, lotExtras: lotExtras, lamplit: lamplit, FOUNT_R: FOUNT_R,
+  lotDress: lotDress, dressPlan: dressPlan, dressTier: dressTier, dressBlocked: dressBlocked, DRESS_LEVELS: DRESS_LEVELS, DRESS_Y: DRESS_Y};
 })();

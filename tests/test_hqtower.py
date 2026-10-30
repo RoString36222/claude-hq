@@ -241,12 +241,16 @@ class HqTower(unittest.TestCase):
                     self.assertGreaterEqual(min(main["w"], main["d"]), 4.5)
                     self.assertGreaterEqual(ma / (base["w"] * base["d"]), 0.3, "a strong tower over the base")
                 for w in s["wings"]:
-                    self.assertAlmostEqual(abs(w["x"]) - w["w"] / 2, main["w"] / 2, places=6, msg="a wing is flush with the tower's side")
+                    # an annex (three buildings) stands across the 1.4 m light slot; a wing is flush with the tower's side
+                    gap = 1.4 if w.get("annex") else 0
+                    self.assertAlmostEqual(abs(w["x"]) - w["w"] / 2, main["w"] / 2 + gap, places=6, msg="a wing's place beside the tower")
                     self.assertAlmostEqual(w["y0"], base["y0"] + base["h"], places=6, msg="a wing rises from the base's roof")
                     self.assertLessEqual(w["y0"] + w["h"], main["y0"] + main["h"] - 2.8, "below the tower's top floor")
                     self.assertLessEqual(abs(w["x"]) + w["w"] / 2, base["w"] / 2 + 1e-6)
                 if s["L"] >= 30 and s["g"] >= 0.5:
                     self.assertEqual(len(s["wings"]), 2)
+                if s["g"] >= 0.5:
+                    self.assertTrue(all(w.get("annex") for w in s["wings"]) and len(s["wings"]) == 2, "three buildings at every level")
                 self.assertLessEqual(s["heli"]["y"] - s["roof"]["y"], 1.5, "the helideck sits on the top roof")
 
     def test_every_commons_lot_fits(self):

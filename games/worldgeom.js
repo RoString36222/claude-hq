@@ -165,6 +165,14 @@ function rng(seed){
 function jit(c, r, amt){ var k = 1 + (r() - 0.5)*2*amt; return [clamp(c[0]*k, 0, 1), clamp(c[1]*k, 0, 1), clamp(c[2]*k, 0, 1)]; }
 
 /* ---------- tiling ---------- */
+// the tile grid covers W's square: 8 x 8 tiles of TILE m over a 2,048 m world, more over a larger one (the v5 Commons,
+// 4,096 m: 16 x 16). Every entry point that reads ORIGIN / NT sets them from its W first
+function grid(W){
+  var h = W && W.half > 0 ? Math.max(4*TILE, Math.ceil(W.half/TILE)*TILE) : null;
+  if(h == null || -h === ORIGIN) return;
+  ORIGIN = -h; NT = 2*h/TILE;
+  if(HQV.worldgeom){ HQV.worldgeom.ORIGIN = ORIGIN; HQV.worldgeom.NT = NT; }
+}
 function tileOf(x, z){
   return {tx: clamp(Math.floor((x - ORIGIN)/TILE), 0, NT - 1), tz: clamp(Math.floor((z - ORIGIN)/TILE), 0, NT - 1)};
 }
@@ -227,6 +235,7 @@ function emptyGeo(){ return fin(geo()); }
 // A W that is not a view of the same world empties it.
 var CACHES = [];
 function prep(W){
+  grid(W);
   for(var ci = CACHES.length - 1; ci >= 0; ci--) if(CACHES[ci].W === W) return CACHES[ci].C;
   var baseW = W.tierBase || W;
   CACHES = CACHES.filter(function(c){ return (c.W.tierBase || c.W) === baseW; }).slice(-3);
@@ -611,6 +620,7 @@ function terrainY(W, x, z, step){
 }
 // the terrain mesh height at (x, z) for a uniform lod (the grid's two triangles per cell, as terrainTile splits them)
 function meshY(W, x, z, lod){
+  grid(W);
   var step = LOD_STEP[lod], n = 2*(-ORIGIN)/step;
   var i = clamp(Math.floor((x - ORIGIN)/step), 0, n - 1), j = clamp(Math.floor((z - ORIGIN)/step), 0, n - 1);
   var x0 = ORIGIN + i*step, z0 = ORIGIN + j*step, fx = (x - x0)/step, fz = (z - z0)/step;
@@ -652,6 +662,7 @@ function skirtDepth(W, x, z, dx, dz, memo){
   return Math.max(SKIRT, Math.ceil((gap + 0.25)*4)/4);
 }
 function terrainTile(W, tx, tz, lods){
+  grid(W);
   var Q = WQ(), g = geo(), x0 = ORIGIN + tx*TILE, z0 = ORIGIN + tz*TILE, memo = {};
   for(var cz = 0; cz < CPT; cz++) for(var cx = 0; cx < CPT; cx++){
     var lod = clamp((lods && lods[cz*CPT + cx])|0, 0, 2), step = LOD_STEP[lod], n = CHUNK/step;
@@ -3666,6 +3677,7 @@ function view(W, tier){
 // -> {terrain, roads, ground, buildings, props: ["tx,tz", ...]}, sorted; all empty when a and b show the same world
 var TERRAIN_REACH = 40, BLEND_REACH = 5, PROP_REACH = 12;
 function tierDiff(W, a, b){
+  grid(W);
   var B = (W && W.tierBase) || W, out = {terrain: [], roads: [], ground: [], buildings: [], props: []};
   if(!B || a == null || b == null || !isFinite(+a) || !isFinite(+b)) return out;
   var lo = Math.min(Math.floor(+a), Math.floor(+b)), hi = Math.max(Math.floor(+a), Math.floor(+b));
@@ -3739,6 +3751,7 @@ function tierDiff(W, a, b){
 // m.tier (optional) builds the tile as that city tier shows it (view above); "ground" is the v2 ground (groundTile);
 // m.gap leaves the bridges' pieces over the water out of "roads" (roadTile's gap)
 function buildTile(W, m){
+  grid(W);
   m = m || {};
   if(m.tier != null) W = view(W, m.tier);
   var tx = clamp(m.tx|0, 0, NT - 1), tz = clamp(m.tz|0, 0, NT - 1), want = m.want || [], out = {op: "tile", id: m.id, tx: tx, tz: tz};
@@ -3775,7 +3788,7 @@ function transferables(o, list){
 }
 
 HQV.worldgeom = {
-  ORIGIN: ORIGIN, TILE: TILE, CHUNK: CHUNK, NT: NT, LOD_STEP: LOD_STEP, FLOOR_H: FLOOR_H, LIFT: LIFT, MARK_LIFT: MARK_LIFT,
+  ORIGIN: ORIGIN, TILE: TILE, CHUNK: CHUNK, NT: NT, grid: grid, LOD_STEP: LOD_STEP, FLOOR_H: FLOOR_H, LIFT: LIFT, MARK_LIFT: MARK_LIFT,
   tileOf: tileOf, tileKey: tileKey, terrainTile: terrainTile, roadTile: roadTile, buildingTile: buildingTile,
   props: props, routes: routes, nameAtlasLayout: nameAtlasLayout, buildTile: buildTile, transferables: transferables,
   emptyGeo: emptyGeo, CAR_COLORS: CAR_COLORS, AWNINGS: AWNINGS, GANTRY_POST: GANTRY_POST, GANTRY_SINK: GANTRY_SINK,

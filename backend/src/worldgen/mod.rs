@@ -124,22 +124,30 @@ pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
     // ARENA_WORLDGEN=v5 builds the @3 ids with v5 too: a local Arena, so today's client draws the planned city
     // (never set on the live host)
     let v5 = version >= 4 || (version == 3 && std::env::var("ARENA_WORLDGEN").is_ok_and(|v| v == "v5"));
-    // v5: the city fills its island, to V5_SHORE_CM inside the coast (@3's 480 m town left most of the Commons' 1 km
-    // island to farmland and wild grass)
-    let city_r_cm = match (v5, p.coast_r_cm) { (true, Some(c)) => (c - V5_SHORE_CM).max(p.city_r_cm), _ => p.city_r_cm };
     if !v5 {
         return p;
     }
+    // v5: the Commons is a 3.5 km island, the city to V5_SHORE_CM inside its coast's reach, in a square with the sea round
+    // it (a personal island keeps its size)
+    let (coast_r_cm, size_cm) = if p.name == "commons" { (Some(V5_COMMONS_COAST_CM), V5_COMMONS_SIZE_CM) } else { (p.coast_r_cm, p.size_cm) };
+    // the city fills its island, to V5_SHORE_CM inside the coast (@3's 480 m town left most of the Commons' 1 km
+    // island to farmland and wild grass)
+    let city_r_cm = coast_r_cm.map_or(p.city_r_cm, |c| (c - V5_SHORE_CM).max(p.city_r_cm));
     // and stands on its plateau (the land fell to the sea's level past @3's 400 m one), the expressway ring a coastal
     // beltway just outside it (inside, every grid street would cross it at grade)
     let ring_r_cm = if p.ring_r_cm > 0 { city_r_cm + V5_BELT_CM } else { 0 };
-    profile::Profile { v5, city_r_cm, core_r_cm: city_r_cm, ring_r_cm, ..p }
+    profile::Profile { v5, city_r_cm, core_r_cm: city_r_cm, ring_r_cm, coast_r_cm, size_cm, ..p }
 }
 
 /// City Gen v5: how far inside the coast (cm) the city stops: the shore road, the beach, the piers; and how far past
 /// the city's edge (cm) the expressway ring runs.
 pub const V5_SHORE_CM: i64 = 15_000;
 pub const V5_BELT_CM: i64 = 5_000;
+/// City Gen v5: the Commons' island, its coast's reach (cm: a 3.5 km island, its coast a circle 1,750 m out, as
+/// island.rs keeps the coast 25 m inside this; the city to 1,625 m) and the world's square (cm), the sea 170 m wide
+/// round the coast.
+pub const V5_COMMONS_COAST_CM: i64 = 177_500;
+pub const V5_COMMONS_SIZE_CM: i64 = 384_000;
 
 /// Where world `id`'s river meets the sea, in the world's own frame: [x, z] cm of the
 /// mouth (the centre line's first point, on the coast) and [dx, dz], the way out to

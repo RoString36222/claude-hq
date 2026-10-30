@@ -272,6 +272,21 @@ function garageOf(lot, p, h, wings, grand){
   if(st){ var F = garageFits(lot, p, st, grandOf(lot, p)); if(F.ok) return toGarage(st, F.way); }
   return garagePlace(lot, p, wings, grand);
 }
+// What an HQ lot's finish (hqcityparts lotDress) stands clear of, in the lot's frame [[x, z, hx, hz]]: the building at
+// its grand with both wings (the podium first), the walk to its door, and the garage g (the bay, the apron out of its door,
+// its driveway's legs)
+function lotKeep(grand, g){
+  var keep = hqFoot(grand || 0, 2).concat([[0, HQ_DOOR + 6, 1.6, 6]]);
+  if(!g || !isFinite(+g.x) || !isFinite(+g.z)) return keep;
+  var G = HQV.hqLotExtras.garage, r = garageR(g), u = GDIR[r], odd = r % 2 === 1;
+  keep.push([g.x, g.z, (odd ? G.d : G.w)/2 + 0.3, (odd ? G.w : G.d)/2 + 0.3]);
+  keep.push([g.x + u[0]*(G.d/2 + GARAGE_CLEAR/2), g.z + u[1]*(G.d/2 + GARAGE_CLEAR/2), odd ? GARAGE_CLEAR/2 : G.w/2, odd ? G.w/2 : GARAGE_CLEAR/2]);
+  var way = Array.isArray(g.way) ? g.way : [];
+  for(var i = 1; i < way.length; i++){ var a = way[i - 1], b = way[i];
+    keep.push([(a.x + b.x)/2, (a.z + b.z)/2, Math.abs(b.x - a.x)/2 + GARAGE_WAY/2, Math.abs(b.z - a.z)/2 + GARAGE_WAY/2]); }
+  if(r === 0 && way.length === 1) keep.push([g.x, (g.z + way[0].z)/2 + G.d/2, GARAGE_WAY/2, Math.abs(way[0].z - g.z)/2 + 1]);
+  return keep;
+}
 // How much of its lot an HQ may fill (the HQ revamp; 3.19: in eighths, the tower's plan from 11 x 8 m to 25 x 14 m): the
 // largest step at which every part of the footprint that fitted inside the lot's polygon at the smallest size still
 // does, for every wing count, and a car-lift bay still fits beside it (0 when not even the smallest podium fits). The
@@ -314,12 +329,14 @@ function placeView(site){
 }
 // a point in a placed thing's own frame (lx, lz; +z is its front) -> the world
 function toWorld(p, lx, lz){ var cr = Math.cos(p.rot), sr = Math.sin(p.rot); return {x: p.x + lx*cr + lz*sr, z: p.z - lx*sr + lz*cr}; }
-// the HQ entry whose lot holds (x, z) (m), else null. entries: [{lot, ...}]
+// the HQ entry whose lot holds (x, z) (m), else null. entries: [{lot, ...}] (a lot with a polygon: inside it, as a
+// v5 lot turned to its block's frame; else its w x d box)
 function pickAt(entries, x, z){
   var xc = x*100, zc = z*100;
   for(var i = 0; i < (entries || []).length; i++){
     var l = entries[i].lot;
-    if(l && Math.abs(xc - l.x) <= l.w/2 && Math.abs(zc - l.z) <= l.d/2) return entries[i];
+    if(!l) continue;
+    if(l.poly && l.poly.length >= 3 ? inRing(polyOf(l), x, z) : Math.abs(xc - l.x) <= l.w/2 && Math.abs(zc - l.z) <= l.d/2) return entries[i];
   }
   return null;
 }
@@ -681,7 +698,7 @@ HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorl
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, garagePlace: garagePlace, garageFits: garageFits, garageOf: garageOf, garageStored: garageStored, garageLocal: garageLocal,
-  toGarage: toGarage, garageR: garageR, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  toGarage: toGarage, garageR: garageR, lotKeep: lotKeep, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats, citySound: citySound};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -975,8 +992,16 @@ HQV.hqWorlds.city3d = function(c, w){
   function building(E){
     var h = E.h, cos = h.cos || {}, crew = h.crew || {}, name = HQV.hqCityName(h), p = E;
     var g = new THREE.Group(); g.position.set(p.x, p.y + PAD_UP, p.z); g.rotation.y = p.rot; hqG.add(g); E.g = g;
-    var pad = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}));
-    pad.rotation.x = -PI/2; pad.position.set(0, 0.02, 1.5); pad.receiveShadow = true; g.add(pad);
+    // the paving: the whole lot (every HQ lot the same size), marble from the top finish tier; else the old 30 x 15 m pad
+    var R = lotRing(E.lot, p), padM = new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}), pad;
+    if(R && R.length >= 3 && parts.dressTier && parts.dressTier(h.level) >= 3) padM = new THREE.MeshStandardMaterial({color: 0xf1ede6, roughness: 0.3, metalness: 0.05});
+    if(R && R.length >= 3){
+      var sh = new THREE.Shape(); R.forEach(function(q, n){ if(n) sh.lineTo(q[0], -q[1]); else sh.moveTo(q[0], -q[1]); });
+      var pg = new THREE.ShapeGeometry(sh), uv = pg.attributes.uv, pp = pg.attributes.position;
+      for(var ui = 0; ui < uv.count; ui++) uv.setXY(ui, pp.getX(ui)/30, pp.getY(ui)/15);   // the old pad's tile size
+      pad = new THREE.Mesh(pg, padM); pad.rotation.x = -PI/2; pad.position.set(0, padM.map ? 0.02 : parts.DRESS_Y, 0);   // marble: on the lot's own ground
+    } else { pad = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), padM); pad.rotation.x = -PI/2; pad.position.set(0, 0.02, 1.5); }
+    pad.receiveShadow = true; g.add(pad);
     if(h.isYou){ var ring = new THREE.Mesh(new THREE.RingGeometry(14.6, 15.1, 64), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.5, toneMapped: false}));
       ring.rotation.x = -PI/2; ring.position.set(0, 0.04, 0.5); ring.scale.y = 0.45; g.add(ring); }
     var B = HQV.hqBuilding(c, {
@@ -1001,6 +1026,9 @@ HQV.hqWorlds.city3d = function(c, w){
     var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage, h.isYou)
                      : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
+    // the lot's finish by its owner's level (lawns, trees, lamps; forecourt, fountain, flags; marble, gold, valet cars)
+    E.dress = R && R.length >= 3 && parts.lotDress ? parts.lotDress(c, g, R, h.level | 0, h.userId, lotKeep(B.grand, E.garage), night) : null;
+    if(E.dress) E.glows = E.glows.concat(E.dress.glows);
     (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
     if(X.move){ hits.push(X.move); B.hits.push(X.move); }                          // [3.33] your bay's Move garage plate
     (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
@@ -1159,6 +1187,7 @@ HQV.hqWorlds.city3d = function(c, w){
         var q = garageLocal(GP, lx, lz), k = L.car && garageLocal(GP, L.car.g.position.x, L.car.g.position.z);   // [3.33] turned into the bay's own frame (r)
         if(HQV.hqLotExtraBlocked(q.x, q.z, !L.car || L.car.g.visible, k && {x: k.x, z: k.z, yaw: L.car.g.rotation.y*(GP.s === -1 ? -1 : 1)})) return true;
       }
+      if(L.dress && parts.dressBlocked(L.dress, lx, lz)) return true;                // its lot's trees, lamps, fountain, planters, flags, valet cars
     }
     for(var j = 0; j < civic.length; j++){
       var C = civic[j];
@@ -2285,7 +2314,9 @@ HQV.hqWorlds.city3d = function(c, w){
     });
     if(c.active && c.active(w)){
       HQV.hqCity3d.air = w.air;
-      if(HQV.camrig && HQV.camrig.setReach) HQV.camrig.setReach(apL ? AP_REACH : 0);      // the map pans out to the approach piers
+      // the map pans over the whole world (the v5 Commons' is 4 km) and out to the runway's ends on their piers
+      var rwR = apL && apL.runway && apL.runway.c ? Math.max(Math.abs(apL.runway.c[0]), Math.abs(apL.runway.c[1])) + (+apL.runway.len || 0)/2 : 0;
+      if(HQV.camrig && HQV.camrig.setReach) HQV.camrig.setReach(Math.max(W ? W.half : 0, apL ? AP_REACH : 0, rwR));
     }
     flightStep(t, dt);
   }
@@ -3427,7 +3458,7 @@ HQV.hqWorlds.city3d = function(c, w){
     snap: function(x, z){
       if(!W || !HQV.hqnav) return null;
       var p = HQV.hqnav.snap(navGraph(), x, z); if(!p) return null;
-      var D = edgeDir(p.ei, p.x, p.z);
+      var D = p.ei >= 0 ? edgeDir(p.ei, p.x, p.z) : {ux: 0, uz: 1, half: 3.5};   // (an airport extra road: no W edge)
       return {x: p.x, z: p.z, ux: D.ux, uz: D.uz, half: D.half, d: p.d};
     },
     route: function(from, to){ return W && HQV.hqnav ? HQV.hqnav.route(navGraph(), from, to, "drive") : null; },
@@ -3436,7 +3467,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(!W || !HQV.hqnav) return [];
       var G = navGraph(), out = [];
       for(var k = 0; k < G.M; k++){
-        var e = W.edges[G.keep[k]]; if(e.cls === "highway" || e.bridge) continue;
+        var e = G.E[k]; if(!e || G.keep[k] < 0 || e.cls === "highway" || e.bridge) continue;   // (not the airport's extra roads)
         var P = G.XZ[k], C = G.CUM[k], last = -1e9;
         for(var i = 0; i < P.length; i += 2){
           if(C[i/2] - last < 25) continue;

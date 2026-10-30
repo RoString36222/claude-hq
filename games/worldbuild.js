@@ -164,7 +164,9 @@ function idle(fn){
 /* ---------- create ---------- */
 function create(c, W, opts){
   opts = opts || {};
-  var THREE = c.THREE, Gm = HQV.worldgeom, NT = Gm.NT, TILE = Gm.TILE, ORIGIN = Gm.ORIGIN;
+  var THREE = c.THREE, Gm = HQV.worldgeom;
+  Gm.grid(W);   // the tiles cover W's square (8 x 8 over 2,048 m, 16 x 16 over the v5 Commons' 4,096 m)
+  var NT = Gm.NT, TILE = Gm.TILE, ORIGIN = Gm.ORIGIN;
   var quality = opts.quality != null ? clamp(opts.quality|0, 0, 2) : 2, lodScale = LOD_SCALE[quality], shadowsOn = quality > 0;
   var wb = {root: new THREE.Group()}, destroyed = false, nextId = 1, readyLeft = NT*NT;
   wb.root.name = "worldbuild";

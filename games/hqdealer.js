@@ -232,10 +232,18 @@ function layout(F, items, flagship){
       cells.push({x: gx + GRID_W/2, z: hall.z0 + GAL_BACK + GRID_D/2, y: gal.y, r: GRID_W/2 - 0.1, rx: GRID_W/2 - 0.1, rz: GRID_D/2 - 0.2, grid: true, i: i});
       gx += GRID_W; continue;
     }
-    if(full) continue;
     var cs = list[i] && list[i].kind === "bike" ? BIKE_CELL : CAR_CELL;
-    if(x + cs > hall.x1 - m){ x = hall.x0 + m; z -= rowD; rowD = 0; }
-    if(z - cs < hall.z0 + m){ full = true; continue; }   // the hall is full: the rest stay in the catalogue
+    if(!full){
+      if(x + cs > hall.x1 - m){ x = hall.x0 + m; z -= rowD; rowD = 0; }
+      if(z - cs < hall.z0 + m) full = true;              // the hall is full: the rest stay in the catalogue
+    }
+    if(full){
+      // ...but a bike the floor has no room for turns on the gallery, beside the grid, while its deck lasts
+      if(gal && cs === BIKE_CELL && gx + cs <= hall.x1 - m){
+        cells.push({x: gx + cs/2, z: hall.z0 + GAL_BACK + GRID_D/2, y: gal.y, r: cs/2 - 0.35, i: i}); gx += cs;
+      }
+      continue;
+    }
     cells.push({x: x + cs/2, z: z - cs/2, r: cs/2 - 0.35, i: i});
     x += cs; rowD = Math.max(rowD, cs);
   }

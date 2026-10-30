@@ -44,8 +44,8 @@ impl City {
         let cells = landuse::zone(&land, &airport, hub, port);
         let centres = roads::centres(hub, port, &airport, &rail, &cells);
         let arterials = roads::arterials(&land, &mut space, &centres);
-        let mut buildings = landuse::build(&land, hub, &cells, &mut space);
-        let mut streets = roads::locals(&land, &mut space, hub, &buildings, &arterials);
+        let (mut buildings, frames) = landuse::build(&land, hub, &cells, &arterials, &mut space);
+        let mut streets = roads::locals(&land, &mut space, hub, &buildings, &frames, &arterials);
         // every building reachable: a street network that could not be joined to the arterials goes, with the buildings
         // only it serves (their space stays empty)
         let comps = roads::components(&arterials, &streets);
@@ -54,7 +54,7 @@ impl City {
         streets.retain(|_| { k += 1; comps.get(k - 1).copied() == main });
         let near = |q: P| arterials.iter().chain(&streets).any(|r| r.points.iter().any(|p| (p[0] - q.0).pow(2) + (p[2] - q.1).pow(2) <= 5_000i64.pow(2)));
         buildings.retain(|b| near(b.c));
-        let landuse = landuse::LandUse { hub, port, cells, buildings };
+        let landuse = landuse::LandUse { hub, port, cells, buildings, frames };
         let metro = metro::plan(&land, &landuse, &airport, &mut space);
         Ok(City { land, space, airport, hub, port, rail, centres, arterials, streets, landuse, metro })
     }

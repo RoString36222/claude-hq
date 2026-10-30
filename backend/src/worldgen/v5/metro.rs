@@ -4,8 +4,10 @@
 //!      industry into the port's and the airport's, and the airport's terminal; destinations nearer than `MERGE_CM`
 //!      are one;
 //!   2. lines through the hub: the destination farthest round is paired with the one most nearly opposite it, a line
-//!      from one through the hub to the other; one left over gets a branch; a gap over `INFILL_CM` between stations
-//!      gets one at its middle;
+//!      from one through the hub to the other, at most `HUB_LINES` of them (every hall-to-platform stair within
+//!      `DROP_CM`); a destination left over gets a branch, a line from it to the nearest station of a line already
+//!      laid (not the hub), a level under that line there; a gap over `INFILL_CM` between stations gets one at its
+//!      middle;
 //!   3. each station on a straight platform `PLATFORM_CM` long, along its line (its chord: from the station before to
 //!      the one after); between platforms the track is a curve (align::connect), so no line has a corner anywhere;
 //!   4. each line at its own depth under the ground, `TOP_CM` and then `LEVEL_GAP_CM` below the line before at every
@@ -32,6 +34,10 @@ pub const COVER_CM: i64 = 300;
 /// A ticket hall's floor under the street, and the most its platforms' stairs go down from it (cm).
 pub const HALL_CM: i64 = 800;
 pub const DROP_CM: i64 = 2_300;
+/// The most lines through the hub: lines crossing there are a tunnel's height and a margin apart (`TUNNEL_UP_CM` + 50),
+/// the hall over the highest one's tunnel (+ 100), so n lines put the deepest platform (n - 1) * 750 + 690 under the
+/// hall: three within `DROP_CM`, four not.
+pub const HUB_LINES: usize = 3;
 /// A platform's top over its rail (cm).
 const FLOOR_CM: i64 = 110;
 pub const TUNNEL_HW_CM: i64 = 450;
@@ -121,11 +127,30 @@ pub fn destinations(lu: &LandUse, ap: &Airport) -> Vec<P> {
     merged
 }
 
-/// The lines' station sequences (points), each through the hub.
+/// The lines' station sequences (points): `HUB_LINES` at most through the hub, then the branches, each from a
+/// destination left over to the nearest station (not the hub) of a line before it, its last.
 pub fn routes(hub: P, dests: &[P]) -> Vec<Vec<P>> {
     let mut left: Vec<P> = dests.to_vec();
-    let mut out = Vec::new();
+    let mut out: Vec<Vec<P>> = Vec::new();
+    let infill = |seq: Vec<P>| {
+        let mut full = vec![seq[0]];
+        for w in seq.windows(2) {
+            if d(w[0], w[1]) > INFILL_CM {
+                full.push(((w[0].0 + w[1].0) / 2, (w[0].1 + w[1].1) / 2));
+            }
+            full.push(w[1]);
+        }
+        full
+    };
     while !left.is_empty() {
+        if out.len() >= HUB_LINES {
+            // a branch: the destination farthest out first, to the nearest station off the hub
+            let (i, _) = left.iter().enumerate().max_by_key(|(_, &q)| (d(q, hub), q)).unwrap();
+            let a = left.remove(i);
+            let to = out.iter().flatten().copied().filter(|&q| d(q, hub) >= 2_000).min_by_key(|&q| (d(q, a), q));
+            out.push(infill(vec![a, to.unwrap_or(hub)]));
+            continue;
+        }
         // the farthest destination, paired with the one most nearly opposite it across the hub
         let (i, _) = left.iter().enumerate().max_by_key(|(_, &q)| (d(q, hub), q)).unwrap();
         let a = left.remove(i);
@@ -139,14 +164,7 @@ pub fn routes(hub: P, dests: &[P]) -> Vec<Vec<P>> {
             seq.push(left.remove(k));
         }
         // infill: a station mid-way where two are more than INFILL_CM apart
-        let mut full = vec![seq[0]];
-        for w in seq.windows(2) {
-            if d(w[0], w[1]) > INFILL_CM {
-                full.push(((w[0].0 + w[1].0) / 2, (w[0].1 + w[1].1) / 2));
-            }
-            full.push(w[1]);
-        }
-        out.push(full);
+        out.push(infill(seq));
     }
     out
 }
@@ -168,8 +186,11 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
         (o.poly.clone(), (xs.clone().min().unwrap_or(0), zs.clone().min().unwrap_or(0), xs.max().unwrap_or(0), zs.max().unwrap_or(0)), o.y0, o.y1)
     }).collect();
     for (li, seq) in routes(lu.hub, &destinations(lu, ap)).into_iter().enumerate() {
-        let below = TOP_CM + LEVEL_GAP_CM * li as i64;
-        let rail_y = datum - below;
+        // its depth: a level under the line before it at the hub; a branch's a level under the line it meets
+        let meets = (!seq.contains(&lu.hub)).then(|| seq[seq.len() - 1]);
+        let host = meets.and_then(|q| stations.iter().find(|s| d(s.c, q) < 2_000)).and_then(|s| s.rail_y.iter().copied().min().map(|y| land.height(s.c) - y));
+        let below = host.map_or(TOP_CM + LEVEL_GAP_CM * li as i64, |h| h + LEVEL_GAP_CM);
+        let rail_y = meets.map_or(datum, |q| land.height(q)) - below;
         // the rail at each station, its depth under that station's ground
         let mut ys: Vec<f64> = seq.iter().map(|&q| (land.height(q) - below) as f64).collect();
         // within GRADE between platforms (their ends `gap` apart): the higher of two too far apart goes deeper
@@ -345,10 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn every_line_passes_the_hub_and_lines_cross_at_their_own_depths() {
+    fn every_line_passes_the_hub_or_branches_off_one_and_lines_cross_at_their_own_depths() {
         let (_, lu, _, m) = commons();
         let hub = m.stations.iter().position(|s| d(s.c, lu.hub) < 2_000).expect("a hub station");
-        assert!(m.lines.iter().all(|l| l.stations.contains(&hub)));
+        let through = m.lines.iter().filter(|l| l.stations.contains(&hub)).count();
+        assert!((1..=HUB_LINES).contains(&through), "{through} lines through the hub");
+        for l in m.lines.iter().filter(|l| !l.stations.contains(&hub)) {
+            let end = *l.stations.last().unwrap();
+            assert!(m.lines.iter().any(|o| o.id < l.id && o.stations.contains(&end)), "M{} branches off a line before it", l.id + 1);
+        }
         let mut ys: Vec<i64> = m.lines.iter().map(|l| l.rail_y).collect();
         ys.dedup();
         assert_eq!(ys.len(), m.lines.len(), "each line its own depth");
@@ -371,6 +397,18 @@ mod tests {
         for s in &m.stations {
             let g = land.height(s.c);
             assert!(s.rail_y.iter().all(|&y| g - y >= TOP_CM), "metro:{}: a platform {} m under its ground", s.id, s.rail_y.iter().map(|&y| (g - y) / 100).min().unwrap_or(0));
+        }
+    }
+
+    /// Every platform can be walked up to its hall: the stairs drop at most DROP_CM (Central's interchange too).
+    #[test]
+    fn every_platform_is_within_a_stair_of_its_hall() {
+        let (_, _, _, m) = commons();
+        for s in &m.stations {
+            for &y in &s.rail_y {
+                let drop = s.hall_y - (y + FLOOR_CM);
+                assert!((0..=DROP_CM).contains(&drop), "metro:{}: a {} cm stair from the hall ({} lines)", s.id, drop, s.lines.len());
+            }
         }
     }
 

@@ -57,7 +57,8 @@ class Engines(unittest.TestCase):
             E = v["E"]
             first, top = E["red"]/E["k"][0]*3.6, E["red"]/E["k"][-1]*3.6
             self.assertGreater(top, v["top"]*0.85, (v["id"], top))
-            self.assertTrue(25 < first < 260, (v["id"], first))
+            if len(E["k"]) > 1 or not E.get("coupling"):     # one fixed reduction only behind a slipping coupling (KDD)
+                self.assertTrue(25 < first < 260, (v["id"], first))
             self.assertAlmostEqual(v["gears"][-1]*3.6, top, delta=1, msg=v["id"])   # gear speeds from the same gearing
 
     def test_famous_redlines(self):
@@ -406,3 +407,85 @@ class InsaneVehicles(unittest.TestCase):
         vfx = open(os.path.join(ROOT, "games", "hqvfx.js")).read()
         self.assertNotIn("Math.random", vfx)
         self.assertNotIn("innerHTML", vfx)
+
+
+KOENIG = r"""
+const fs = require('fs'), path = require('path'), R0 = process.argv[1];
+global.window = {HQV: {}}; eval(fs.readFileSync(path.join(R0, 'games', 'hqvehiclephys.js'), 'utf8'));
+const P = window.HQV.hqVehiclePhys, cat = JSON.parse(fs.readFileSync(path.join(R0, 'games/vehicles/catalogue.json'), 'utf8'));
+const E = id => P.engineFor(cat.vehicles.find(x => x.id === id).spec, 'car', 'v8tt'), dt = 1/60, out = {};
+['koenigsegg-jesko-absolut', 'koenigsegg-agera-rs', 'koenigsegg-one-1', 'koenigsegg-regera'].forEach(id => {
+  const e = E(id); out[id] = {E: e, kmh: e.k.map(k => e.red/k*3.6)}; });
+// flat out from 100 km/h in the automatic: the lowest drive just after each upshift (a torque gap or none)
+function run(id){ const e = E(id), G = P.gearState(e); G.gear = 2; let v = 28, minD = 9, ups = 0;
+  for (let i = 0; i < 1200; i++){ const o = P.gearStep(G, {thr: 1, speed: v, mode: 'sport', top: 140}, e, dt);
+    if (o.events.includes('up')) ups++; if (ups && !o.limiter) minD = Math.min(minD, o.drive); v = Math.min(o.cap, v + 6*dt); }
+  return {ups, minD}; }
+out.jeskoRun = run('koenigsegg-jesko-absolut'); out.ageraRun = run('koenigsegg-agera-rs');
+// UPOD: cruising in 9th at 180 km/h, floor it: one shift straight down several gears (the Agera: one at a time)
+function kick(id, g0){ const e = E(id), G = P.gearState(e); G.gear = g0; const v = 180/3.6;
+  for (let i = 0; i < 40; i++) P.gearStep(G, {thr: 0.3, speed: v, mode: 'sport'}, e, dt);
+  const seq = [G.gear]; for (let i = 0; i < 20; i++){ const o = P.gearStep(G, {thr: 1, speed: v, mode: 'sport'}, e, dt); if (o.events.includes('down')) seq.push(G.gear); }
+  return seq; }
+out.upod = kick('koenigsegg-jesko-absolut', 9); out.noUpod = kick('koenigsegg-agera-rs', 7);
+// the Regera: launch control holds the coupling's 2,250; at 40 km/h flat out the coupling holds the revs over the
+// wheels'; at 300 km/h it is locked (revs = road speed x 2.73); the downshift paddle flares, the gear stays
+{ const e = E('koenigsegg-regera'), G = P.gearState(e); let o;
+  for (let i = 0; i < 90; i++) o = P.gearStep(G, {thr: 1, brake: true, speed: 0}, e, dt); out.rLaunch = o.rpm;
+  for (let i = 0; i < 60; i++) o = P.gearStep(G, {thr: 1, speed: 40/3.6}, e, dt); out.rSlip = [o.rpm, 40/3.6*e.k[0]];
+  for (let i = 0; i < 60; i++) o = P.gearStep(G, {thr: 1, speed: 300/3.6}, e, dt); out.rLocked = [o.rpm, 300/3.6*e.k[0]];
+  G.manual = true; for (let i = 0; i < 30; i++) o = P.gearStep(G, {thr: 0, speed: 150/3.6}, e, dt); const r0 = o.rpm;
+  o = P.gearStep(G, {thr: 0, speed: 150/3.6, down: true}, e, dt); const ev = o.events.slice(); let peak = 0, eb = 0;
+  for (let i = 0; i < 12; i++){ o = P.gearStep(G, {thr: 0, speed: 150/3.6}, e, dt); peak = Math.max(peak, o.rpm); eb = Math.max(eb, o.engineBrake); }
+  for (let i = 0; i < 60; i++) o = P.gearStep(G, {thr: 0, speed: 150/3.6}, e, dt);
+  out.rFlare = {ev, gear: G.gear, r0, peak, after: o.rpm, eb, ebAfter: o.engineBrake}; }
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class Koenigsegg(unittest.TestCase):
+    """[3.38] the four Koenigseggs' researched gearing and boxes: the Jesko's 9-speed LST (seamless, UPOD), the Agera RS
+    and One:1's 7-speed single-input-shaft box (a torque dip), the Regera's Direct Drive (one 2.73 reduction, HydraCoup)."""
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, "-e", KOENIG, ROOT], capture_output=True, text=True, timeout=60)
+        if r.returncode:
+            raise AssertionError(r.stderr[-3000:])
+        cls.o = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_gearing(self):
+        j, a, o1, r = (self.o["koenigsegg-" + k] for k in ("jesko-absolut", "agera-rs", "one-1", "regera"))
+        self.assertEqual(len(j["E"]["k"]), 9); self.assertEqual(j["E"]["limit"], 8500)
+        self.assertAlmostEqual(j["kmh"][0], 71, delta=4); self.assertAlmostEqual(j["kmh"][-1], 513, delta=10)
+        for v in (a, o1):
+            self.assertEqual(len(v["E"]["k"]), 7); self.assertEqual(v["E"]["limit"], 8250)
+            self.assertAlmostEqual(v["kmh"][0], 103, delta=4); self.assertAlmostEqual(v["kmh"][-1], 472, delta=10)
+        self.assertEqual(len(r["E"]["k"]), 1); self.assertEqual(r["E"]["coupling"], 2250)
+        self.assertAlmostEqual(r["kmh"][0], 395, delta=10)            # 8,250 rpm on 2.73 (403 km/h reported)
+        self.assertTrue(j["E"]["qs"] and j["E"]["upod"] and j["E"]["shift"] == 0.025)
+        self.assertFalse(a["E"]["qs"] or o1["E"]["qs"])
+
+    def test_the_lst_is_seamless_the_agera_dips(self):
+        self.assertGreater(self.o["jeskoRun"]["ups"], 2); self.assertGreater(self.o["ageraRun"]["ups"], 1)
+        self.assertEqual(self.o["jeskoRun"]["minD"], 1, "no torque gap on the LST")
+        self.assertLess(self.o["ageraRun"]["minD"], 1, "a short dip on the Agera's box")
+
+    def test_upod_skips_gears(self):
+        u, n = self.o["upod"], self.o["noUpod"]          # the gear held, then each gear the kickdown lands in
+        self.assertEqual(len(u), 2, u)
+        self.assertGreaterEqual(u[0] - u[1], 2, ("one shift straight past the next gear down", u))
+        self.assertGreaterEqual(len(n), 2, n)
+        self.assertTrue(all(a - b == 1 for a, b in zip(n, n[1:])), ("the Agera: one gear at a time", n))
+
+    def test_regera_direct_drive(self):
+        self.assertEqual(self.o["rLaunch"], 2250)
+        rpm, wheel = self.o["rSlip"]
+        self.assertGreater(rpm, wheel + 1000); self.assertAlmostEqual(rpm, 2250, delta=60)
+        rpm, wheel = self.o["rLocked"]
+        self.assertAlmostEqual(rpm, wheel, delta=30)
+        f = self.o["rFlare"]
+        self.assertEqual(f["ev"], ["flare"]); self.assertEqual(f["gear"], 1)
+        self.assertGreater(f["peak"], f["r0"] + 1000); self.assertAlmostEqual(f["after"], f["r0"], delta=50)
+        self.assertGreater(f["eb"], f["ebAfter"])
+

@@ -213,6 +213,20 @@ class VehicleModels(unittest.TestCase):
         self.assertLessEqual(sweep(cars), const("games/hqdealer.js", "CAR_CELL"))
         self.assertLessEqual(sweep(bikes), const("games/hqdealer.js", "BIKE_CELL"))
 
+    def test_each_koenigsegg_its_own_body(self):
+        # [3.38] four bespoke bodies (koenigBody): none shares another's geometry or the generic hypercar's, all in budget
+        ks = {r["id"]: r for r in self.o["cat"] if r["id"].startswith("koenigsegg-")}
+        self.assertEqual(sorted(ks), ["koenigsegg-agera-rs", "koenigsegg-jesko-absolut", "koenigsegg-one-1", "koenigsegg-regera"])
+        sig = {(r["tris"], tuple(round(x, 2) for x in r["size"])) for r in ks.values()}
+        self.assertEqual(len(sig), 4)
+        chiron = next(r for r in self.o["cat"] if r["id"] == "bugatti-chiron-super-sport")
+        self.assertTrue(all(r["tris"] != chiron["tris"] for r in ks.values()))
+        for r in ks.values():
+            self.assertLess(r["tris"], 6000, r["id"]); self.assertLessEqual(r["dc"], 16, r["id"])
+            self.assertAlmostEqual(r["size"][1]/r["shown"]["heightM"], 1, delta=0.06, msg=(r["id"], "wing, fins and scoop within the real height"))
+        # the Jesko Absolut is the longest (its extended tail), the Agera RS the shortest
+        self.assertGreater(ks["koenigsegg-jesko-absolut"]["size"][2], max(r["size"][2] for i, r in ks.items() if i != "koenigsegg-jesko-absolut"))
+
     def test_wheels_on_the_wheelbase_and_the_ground(self):
         for r in self.o["rows"]:
             W = r["wheels"]

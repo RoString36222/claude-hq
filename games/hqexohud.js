@@ -1,12 +1,15 @@
 /* Claude HQ: the exosuit's visor HUD (HQV.hqExoHud, HQ Exosuit) -- one 2D canvas over the 3D view.
  *
- *   create(container) -> {draw(state, cam, targets, frameId, tint), show(on), boot(), destroy()}
+ *   create(container) -> {draw(state, cam, targets, frameId, tint, wp), show(on), boot(), destroy()}
  * The canvas fills the container (DPR capped at 2, refitted when the container's size changes) and redraws at most
  * 30 times a second. state is an HQV.hqExoRide state; cam a THREE camera (targets are projected with Vector3.project
  * when window.THREE exists); targets [{x, y, z, label}]; tint a CSS colour. It draws the visor vignette, the pitch ladder
  * rolled with the horizon, the roll arc, heading, speed and altitude tapes, vertical speed, the thrust and boost rings,
  * the frame's name, the suit status outline, the radar, brackets on the targets with their distance and a lock on the
  * nearest centred one (display only: nothing fires), PULL UP when low and sinking, and, after boot(), the diagnostics.
+ * wp (optional, a Go to while suited): {x, y, z, label, dist, bearing (deg, 0 north, the tape's compass), top (px: the
+ * nav banner's bottom, the heading tape moves below it)}: a diamond on the waypoint with its distance, a caret on the
+ * heading tape at its bearing, and an arrow at the visor's edge when it is behind you or out of view.
  */
 (function(){
 "use strict";
@@ -19,6 +22,7 @@ var FONT = "11px 'IBM Plex Mono', monospace";
 
 function now(){ return G.performance && G.performance.now ? G.performance.now() : Date.now(); }
 function n0(v){ v = +v; return isFinite(v) ? v : 0; }
+function fmtM(m){ return m >= 1000 ? (m/1000).toFixed(1) + " KM" : Math.round(m) + " M"; }
 
 function create(container){
   var doc = G.document, cv = doc.createElement("canvas"), cx = cv.getContext("2d");
@@ -36,7 +40,7 @@ function create(container){
     W = w; Hh = hh; dpr = d; cv.width = Math.round(w*d); cv.height = Math.round(hh*d);
   }
 
-  function draw(S, cam, targets, frameId, tint){
+  function draw(S, cam, targets, frameId, tint, wp){
     var tn = now();
     if(!on || !S || tn - last < 1000/30 - 0.5) return;
     var dt = Math.min(0.2, Math.max(0, (tn - last)/1000)); last = tn;
@@ -73,14 +77,20 @@ function create(container){
     cx.beginPath(); cx.arc(cxm, cym, Hh*.36, -PI*.72, -PI*.28); cx.globalAlpha = .4*bk; cx.stroke(); cx.globalAlpha = .95*bk;
     var ra = -PI/2 - roll; cx.beginPath(); cx.moveTo(cxm + Math.cos(ra)*Hh*.36, cym + Math.sin(ra)*Hh*.36);
     cx.lineTo(cxm + Math.cos(ra)*Hh*.33, cym + Math.sin(ra)*Hh*.33); cx.lineWidth = 3; cx.stroke(); cx.lineWidth = 1.3;
-    // heading tape
-    var hdg = ((-yaw*DEG) % 360 + 360) % 360; cx.textAlign = "center";
+    // heading tape (below the nav banner when one shows), a caret at the waypoint's bearing
+    var hdg = ((-yaw*DEG) % 360 + 360) % 360, tY = wp && n0(wp.top) > 20 ? Math.min(Hh*.3, n0(wp.top) - 20) : 0; cx.textAlign = "center";
+    cx.save(); cx.translate(0, tY);
+    if(wp && isFinite(+wp.bearing)){
+      var wd0 = ((+wp.bearing - hdg) % 360 + 540) % 360 - 180, wx = cxm + Math.max(-W*.2, Math.min(W*.2, wd0*4.2));
+      cx.beginPath(); cx.moveTo(wx - 6, 14); cx.lineTo(wx + 6, 14); cx.lineTo(wx, 23); cx.closePath(); cx.fill();
+    }
     for(var hd = -50; hd <= 50; hd += 5){
       var v = Math.round(hdg/5)*5 + hd, x = cxm + (v - hdg)*4.2; if(Math.abs(x - cxm) > W*.2) continue;
       cx.fillRect(x, 26, 1, v % 15 ? 5 : 9);
       if(!(v % 15)){ var vv = (v + 360) % 360; cx.fillText(String({0: "N", 90: "E", 180: "S", 270: "W"}[vv] || vv), x, 50); }
     }
     cx.strokeRect(cxm - 22, 54, 44, 17); cx.fillText(("00" + Math.round(hdg) % 360).slice(-3), cxm, 67);
+    cx.restore();
     // speed (left) and altitude (right) tapes
     function tape(x, val, stp, unit, left){
       var hh = Hh*.42, tp = cym - hh/2; cx.globalAlpha = .35*bk; cx.beginPath(); cx.moveTo(x, tp); cx.lineTo(x, tp + hh); cx.stroke(); cx.globalAlpha = .85*bk;
@@ -122,6 +132,19 @@ function create(container){
       }
     });
     cx.globalAlpha = .95*bk;
+    // the waypoint: a diamond where it is, else an arrow at the visor's edge pointing round to it
+    if(wp && T && cam && T.Vector3){
+      V3 = V3 || new T.Vector3(); var q = V3.set(n0(wp.x), n0(wp.y) + 3, n0(wp.z)).project(cam), wl = (wp.dist != null ? fmtM(n0(wp.dist)) : "") + (wp.label ? " " + String(wp.label).toUpperCase() : "");
+      var bh = q.z > 1, qx = bh ? -q.x : q.x, qy = bh ? -q.y : q.y;
+      if(!bh && Math.abs(q.x) < .92 && Math.abs(q.y) < .88 && isFinite(q.x) && isFinite(q.y)){
+        var px = cxm + q.x*W/2, py = cym - q.y*Hh/2; cx.beginPath(); cx.moveTo(px, py - 10); cx.lineTo(px + 8, py); cx.lineTo(px, py + 10); cx.lineTo(px - 8, py); cx.closePath();
+        cx.lineWidth = 2; cx.stroke(); cx.lineWidth = 1.3; cx.textAlign = "center"; cx.fillText(wl, px, py + 24);
+      } else if(isFinite(qx) && isFinite(qy)){
+        var an = Math.atan2(-qy, qx || 1e-6), ex = cxm + Math.cos(an)*W*.42, ey = cym + Math.sin(an)*Hh*.4;
+        cx.save(); cx.translate(ex, ey); cx.rotate(an); cx.beginPath(); cx.moveTo(12, 0); cx.lineTo(-6, -8); cx.lineTo(-6, 8); cx.closePath(); cx.fill(); cx.restore();
+        cx.textAlign = "center"; cx.fillText(wl, ex - Math.cos(an)*26, ey - Math.sin(an)*18 + 4);
+      }
+    }
     // bottom left: thrust and boost rings, the frame
     var bx = 70, by = Hh - 66; cx.globalAlpha = .3*bk; cx.beginPath(); cx.arc(bx, by, 30, 0, 7); cx.stroke(); cx.globalAlpha = .95*bk; cx.lineWidth = 4;
     cx.beginPath(); cx.arc(bx, by, 30, -PI/2, -PI/2 + 6.283*Math.max(0, Math.min(1, Math.abs(spd)/(top*1.8)))); cx.stroke();

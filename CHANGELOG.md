@@ -3,6 +3,19 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.37.1 — The exosuit fits your own character.**
+  - **Armour over your avatar.** The suit is no longer a separate tall body: a helmet and faceplate over your
+    character's big head (its hat or halo hides under it), a chest plate and core, shoulder pads, gauntlets, shins and
+    boots, each sized from the skin on its bone so it fits all six base characters, plus each frame's extras (Abyss's
+    dome and tanks, Stratos's wings, Bulwark's bigger plates and fists, Strider's fins, Flux's big core, Sentinel's
+    pack). Your own walk, sprint and idle keep playing; in the air the suit tilts and poses your character. Bulwark
+    makes you 1.3x. At most 4 draw calls and 2k triangles.
+  - **Customise suit** in the HQ side panel opens the customiser from anywhere; the kiosk's panel now sits above the
+    page's overlays.
+  - **Go to by air.** Suited, the route is a straight line to a light beacon: the banner shows the distance, bearing
+    (its arrow turned toward it) and an ETA at your frame's cruise speed, and the visor marks the waypoint (a diamond,
+    a caret on the heading tape, an edge arrow when it is behind you). The heading tape moves below the nav banner.
+
 - **3.37.0 — HQ Exosuit.**
   - **Six suit frames.** Sentinel (all-rounder), Strider (speed), Bulwark (a 1.45x giant), Abyss (swims and dives),
     Stratos (no height cap) and Flux (nanite). Original designs on familiar armour types. Each is a human-proportioned

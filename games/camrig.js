@@ -63,7 +63,7 @@ var VEHICLE = {
   dino:    {backMul: 1.7, upMul: 1.3, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 2.6, 0.2]}, roll: 0},
   serpent: {backMul: 2.0, upMul: 1.2, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.6, 0.4]}, roll: 0.2},
   // [exo] flying an exosuit (games/hqexoride.js): a little further back and up, the horizon banking with you; first person is
-  // the helmet's view (games/hqexohud.js draws the visor over it); exobig is the 1.45x Bulwark
+  // the helmet's view (games/hqexohud.js draws the visor over it); exobig is the 1.3x Bulwark
   exo:     {backMul: 1.5, upMul: 1.15, sideMul: 1, fovSpeedKick: 1.2, fpAnchor: {seat: [0, 0.55, 0.12]}, roll: 0.35},
   exobig:  {backMul: 2.0, upMul: 1.4, sideMul: 1, fovSpeedKick: 1, fpAnchor: {seat: [0, 1.25, 0.2]}, roll: 0.3},
   // [3.17] the tank (games/hqtank.js): well back and up, over its turret; first person from the driver's hatch

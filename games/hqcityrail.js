@@ -263,6 +263,7 @@ function view(c, sim, opts){
   var K = PT.kit(THREE), at = H.at, PLAT_TOP = H.PLAT_TOP, W = opts.W || null, WD = HQV.world;
   var root2 = new THREE.Group(); root2.name = "cityline";
   var ground = typeof opts.ground === "function" ? opts.ground : function(x, z){ return W && WD && WD.groundAt ? WD.groundAt(W, x, z) : 0; };
+  var free = H.roadFree ? H.roadFree(W) : null, frames = 0;   // [rail fix] where a pier may stand (no road there); portal frames drawn
   var parts = [], boards = [], O = {x: 0, z: 0}, pierLog = [], lit = [];   // (lit: [3.34] parts lit at night, merged last)
   var GIRDER = [[-4.3, -0.35], [4.3, -0.35], [4.3, -0.8], [2.7, -2.4], [-2.7, -2.4], [-4.3, -0.8]];
   var lines = sim.lines();
@@ -303,9 +304,20 @@ function view(c, sim, opts){
       last = s;
       var p = at(R, s), g = ground(p.x, p.z); if(!isFinite(g)) g = p.y - 9;
       if(p.y - 2.4 - g < 0.6) continue;
-      parts.push(K.cyl(0.9, 1.1, p.y - 2.4 - g, 12, p.x, g, p.z, 0xa7abae));
-      parts.push(K.box(6.2, 0.8, 2.2, p.x, p.y - 2.8, p.z, 0xa7abae, p.yaw));
-      pierLog.push({line: l.id, x: p.x, z: p.z, y0: g, y1: p.y - 2.4});
+      // [rail fix] never on a road: moved along or aside onto free ground, else a portal frame over it (hqRail.pierAt);
+      // the next one counts from where this one stands
+      var q = H.pierAt ? H.pierAt(R, s, free, O) : {s: s, x: p.x, y: p.y, z: p.z, yaw: p.yaw, legs: [[p.x, p.z, 0]]};
+      if(!q) continue;
+      last = Math.max(last, q.s);
+      var lo = -3.1, hi = 3.1, qc = Math.cos(q.yaw), qs = Math.sin(q.yaw);
+      q.legs.forEach(function(L){
+        var gl = ground(L[0], L[1]); if(!isFinite(gl)) gl = q.y - 9;
+        parts.push(K.cyl(0.9, 1.1, Math.max(0.3, q.y - 2.4 - gl), 12, L[0], gl, L[1], 0xa7abae));
+        lo = Math.min(lo, L[2] - 1.2); hi = Math.max(hi, L[2] + 1.2);
+        pierLog.push({line: l.id, x: L[0], z: L[1], y0: gl, y1: q.y - 2.4, frame: q.legs.length > 1 ? frames : -1});
+      });
+      parts.push(K.box(hi - lo, 0.8, 2.2, q.x + qc*(lo + hi)/2, q.y - 2.8, q.z - qs*(lo + hi)/2, 0xa7abae, q.yaw));
+      if(q.legs.length > 1) frames++;
     }
     for(var b = 0; b < R.n - 1; b++){                                     // the bridge truss: chords and diagonals every 10 m
       if(R.k[b] !== KC.bridge) continue;
@@ -432,7 +444,7 @@ function view(c, sim, opts){
     drawCalls: function(){ return (stat ? 1 : 0) + (boardMesh ? 1 : 0) + trains.drawCalls() + inside.drawCalls() + riders.drawCalls(); },
     tools: {
       // the piers drawn [{line, x, z, y0, y1}] (m: foot to the girder's soffit): the doc's, else the view's own every 30 m
-      piers: function(){ return pierLog.map(function(q){ return {line: q.line, x: q.x, z: q.z, y0: q.y0, y1: q.y1}; }); },
+      piers: function(){ return pierLog.map(function(q){ var o = {line: q.line, x: q.x, z: q.z, y0: q.y0, y1: q.y1}; if(q.frame >= 0) o.frame = q.frame; return o; }); },   // (frame: a portal frame's legs share it)
       // [3.34] the static mesh's lit vertices (aLit = 1) and the night switch's value
       lit: function(){ var a = stat && stat.geometry.attributes.aLit, n = 0; if(a) for(var i = 0; i < a.count; i++) if(a.array[i] > 0.5) n++; return {verts: n, on: litU.value, plain: nPlain}; },
       shotCam: function(name){

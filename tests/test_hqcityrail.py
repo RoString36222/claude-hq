@@ -180,11 +180,21 @@ class CityLinePiersTest(unittest.TestCase):
         self.assertIsNone(n["simPiers"])
         P = n["drawn"]
         self.assertGreater(len(P), 5)
-        # today's loop: every 30 m along the track (60 m over a bridge), never from the doc
+        # today's loop: every 30 m along the track (60 m over a bridge), never from the doc; [rail fix] each moved off a
+        # road (hqRail.pierAt: along the line 8 m at most, or a portal frame, its two legs sharing a `frame`), so 30 m
+        # less two slides apart at the least, and none skipped but where no ground is free
         import math
-        gaps = [math.hypot(b["x"] - a["x"], b["z"] - a["z"]) for a, b in zip(P, P[1:])]
-        self.assertTrue(all(g >= 29 for g in gaps), gaps)
-        self.assertGreaterEqual(len(P), int((n["len"] - 12) // 31))
+        G = []
+        for p in P:
+            if "frame" in p and G and G[-1].get("frame") == p["frame"]:
+                G[-1]["n"] += 1
+                G[-1]["x"] += (p["x"] - G[-1]["x"]) / G[-1]["n"]
+                G[-1]["z"] += (p["z"] - G[-1]["z"]) / G[-1]["n"]
+            else:
+                G.append({"x": p["x"], "z": p["z"], "n": 1, "frame": p.get("frame")})
+        gaps = [math.hypot(b["x"] - a["x"], b["z"] - a["z"]) for a, b in zip(G, G[1:])]
+        self.assertTrue(all(g >= 30 - 2 * 8 - 1 for g in gaps), gaps)
+        self.assertGreaterEqual(len(G), int((n["len"] - 12) // 31) * 3 // 4)
         self.assertNotEqual([(round(p["x"], 2), round(p["z"], 2)) for p in P],
                             [(round(p["x"], 2), round(p["z"], 2)) for p in self.o["with"]["drawn"]])
 

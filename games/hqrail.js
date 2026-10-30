@@ -423,6 +423,8 @@ var SEA_OUT = 300, SEA_MARGIN = 150, SEA_WAY = 400, SEA_R = 900, SEA_FILL = 20;
 var SEA_R_LEAVE = 600, SEA_OUT_MAX = 2500;
 // corners closer than SEA_MERGE m that turn the same way are merged into one (seaPlan)
 var SEA_MERGE = 700;
+// an end laid without its doc turns its abutment this far (rad) at a time, either way, until its crossing is clear (linkRoute)
+var LEG_TURN = Math.PI/9;
 function hull2(P){
   var A = P.slice().sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; }), lo = [], hi = [], i;
   function cr(o, a, b){ return (a[0] - o[0])*(b[1] - o[1]) - (a[1] - o[1])*(b[0] - o[0]); }
@@ -456,13 +458,13 @@ function cutsPoly(O, p, q, tol){
 }
 function insidePoly(O, x, z){ return cutsPoly(O, [x, z], [x + 1e-3, z], 0.5); }
 // the obstacles of one end (archipelago m): its coast's hull and its keep-out polygons, each {B: grown SEA_MARGIN (what
-// blocks), Wp: grown SEA_WAY (where the route may turn)}
+// blocks), Wp: grown SEA_WAY (where the route may turn), H: the hull itself, keep: a keep-out (else the coast)}
 function seaObstacles(W, ox, oz){
   var out = [], R = railView(W), c = W && W.island && W.island.coast;
-  function add(H){ out.push({B: grow2(H, SEA_MARGIN), Wp: grow2(H, SEA_WAY)}); }
+  function add(H, keep){ out.push({B: grow2(H, SEA_MARGIN), Wp: grow2(H, SEA_WAY), H: H, keep: !!keep}); }
   if(c && c.length >= 3) add(hull2(c.map(function(p){ return [p[0]/100 + ox, p[1]/100 + oz]; })));
   else { var r = coastR(W), ring = []; for(var i = 0; i < 24; i++){ var a = i*Math.PI/12; ring.push([ox + Math.cos(a)*r, oz + Math.sin(a)*r]); } add(ring); }
-  ((R && R.keepOut) || []).forEach(function(P){ if(P.length >= 3) add(hull2(P.map(function(p){ return [p[0] + ox, p[1] + oz]; }))); });
+  ((R && R.keepOut) || []).forEach(function(P){ if(P.length >= 3) add(hull2(P.map(function(p){ return [p[0] + ox, p[1] + oz]; })), true); });
   return out;
 }
 // the plan [[x, z], ...] from abutment ea (front fa) to eb (front fb), past `obs`, run straight out at least outA / outB m
@@ -472,6 +474,8 @@ function seaPlan(ea, fa, eb, fb, obs, outA, outB){
   function free(p){ return !BL.some(function(O){ return insidePoly(O, p[0], p[1]); }); }
   // straight out along the front: at least d0 m and clear of every obstacle (the coast hull holds the abutment), but never
   // on through one (then the last clear point before it)
+  // (no clear point at all: the plan is not ok, Q.ok false)
+  var outOk = true;
   function outOf(e, f, d0){
     var first = null, last = null;
     for(var d = SEA_OUT; d <= d0 + 3000; d += 50){
@@ -479,6 +483,7 @@ function seaPlan(ea, fa, eb, fb, obs, outA, outB){
       if(first && blocked(first, p)) return last;
       if(free(p)){ if(!first) first = p; last = p; if(d >= d0) return p; }
     }
+    if(!last) outOk = false;
     return last || [e[0] + f[0]*SEA_OUT, e[1] + f[1]*SEA_OUT];
   }
   var S = outOf(ea, fa, outA || SEA_OUT), E = outOf(eb, fb, outB || SEA_OUT), N = [S, E];
@@ -503,6 +508,7 @@ function seaPlan(ea, fa, eb, fb, obs, outA, outB){
   var way = [];
   if(dist[1] < Infinity){ for(var k = 1; k >= 0; k = prev[k]) way.unshift(N[k]); } else way = [S, E];
   var Q = [[ea[0], ea[1]]].concat(way, [[eb[0], eb[1]]]);
+  Q.ok = outOk && dist[1] < Infinity;
   // two corners close together turning the same way are one bend: they become one corner where the legs either side
   // meet, when that is clear (else a curve between them could be no wider than half the gap)
   for(var again = true, guard = 0; again && guard < 50; guard++){
@@ -577,6 +583,27 @@ function seaCurve(Q, clear){
   line(pos, Q[n - 1]);
   out.pop();                                                            // the far abutment is the caller's
   return out;
+}
+// [rail fix] the sea crossing from abutment pa (front fa) to pb (front fb) past `obs`: the plan (seaPlan, its runs out
+// long enough for each end's first curve: a longer run can change that curve, so until it holds, three passes at most)
+// and its curve (seaCurve). ok: the plan found its way (a clear point straight out from each abutment, a way round
+// between them); bad: the curve's points inside a keep-out's hull, or a coast's beyond either run out (where the line
+// is still leaving its own coast)
+function seaWay(pa, fa, pb, fb, obs){
+  var Q = seaPlan(pa, fa, pb, fb, obs), lA = SEA_OUT, lB = SEA_OUT;
+  for(var pass = 0; pass < 3; pass++){
+    var nA = Math.max(lA, seaLeave(Q, 1)), nB = Math.max(lB, seaLeave(Q, Q.length - 2));
+    if(nA === lA && nB === lB) break;
+    lA = nA; lB = nB; Q = seaPlan(pa, fa, pb, fb, obs, lA, lB);
+  }
+  var BL = obs.map(function(o){ return o.B; });
+  var C = seaCurve(Q, function(p){ return !BL.some(function(O){ return insidePoly(O, p[0], p[1]); }); });
+  var n = Q.length, rA = hyp(Q[1][0] - pa[0], Q[1][1] - pa[1]) + 1, rB = hyp(Q[n - 2][0] - pb[0], Q[n - 2][1] - pb[1]) + 1, bad = 0;
+  C.forEach(function(p){
+    var leaving = hyp(p[0] - pa[0], p[1] - pa[1]) < rA || hyp(p[0] - pb[0], p[1] - pb[1]) < rB;
+    for(var k = 0; k < obs.length; k++) if((obs[k].keep || !leaving) && insidePoly(obs[k].H, p[0], p[1])){ bad++; break; }
+  });
+  return {Q: Q, C: C, ok: !!Q.ok, bad: bad};
 }
 function inside(P, x, z){
   if(!P || P.length < 3) return false;
@@ -800,25 +827,32 @@ function linkRoute(I, C, o){
   var Ix = +I.x || 0, Iz = +I.z || 0, Cx = +C.x || 0, Cz = +C.z || 0, dx = Cx - Ix, dz = Cz - Iz, l = hyp(dx, dz) || 1;
   dx /= l; dz /= l;
   var seaI = I.sea != null ? +I.sea || 0 : seaLevelOf(I.W), seaC = C.sea != null ? +C.sea || 0 : seaLevelOf(C.W);
-  var a = ilOf(I.W) || fallbackLeg(I.W, dx, dz, seaI), b = ilOf(C.W) || fallbackLeg(C.W, -dx, -dz, seaC);
+  // the sea crossing: leaving the abutment along its front and arriving along the junction's, laid out round both
+  // coasts and what the generator keeps the line off (seaWay; HQ 3.36). An end whose doc is not here (hqtransit lays
+  // the far end without it) has a nominal leg to its coast facing the other end; where that abutment's way out is shut
+  // (an island beside the Commons' runway: straight on is the airfield, and no way round would leave it), the leg turns
+  // LEG_TURN at a time either way until the crossing keeps off every keep-out and coast; else the least bad
+  var obs = seaObstacles(I.W, Ix, Iz).concat(seaObstacles(C.W, Cx, Cz));
+  var a0 = ilOf(I.W), b0 = ilOf(C.W), best = null, turns = [0], t;
+  for(t = 1; t*LEG_TURN <= Math.PI + 1e-9; t++){ turns.push(t*LEG_TURN); if(t*LEG_TURN < Math.PI - 1e-9) turns.push(-t*LEG_TURN); }
+  for(t = 0; t < turns.length; t++){
+    if(t && a0 && b0) break;
+    var ta = !a0 ? turns[t] : 0, tb = a0 && !b0 ? turns[t] : 0, ca = Math.cos(ta), sa = Math.sin(ta), cb = Math.cos(tb), sb = Math.sin(tb);
+    var a = a0 || fallbackLeg(I.W, dx*ca - dz*sa, dx*sa + dz*ca, seaI), b = b0 || fallbackLeg(C.W, -(dx*cb - dz*sb), -(dx*sb + dz*cb), seaC);
+    var al = a.P[a.P.length - 1], bl = b.P[b.P.length - 1];
+    var fa = a.sea && a.sea.front ? a.sea.front : [dx, dz], fb = b.sea && b.sea.front ? b.sea.front : [-dx, -dz];
+    var way = seaWay([al[0] + Ix, al[2] + Iz], fa, [bl[0] + Cx, bl[2] + Cz], fb, obs);
+    if(!best || (way.ok && !best.way.ok) || (way.ok === best.way.ok && way.bad < best.way.bad)) best = {a: a, b: b, way: way};
+    if(way.ok && !way.bad) break;
+  }
+  a = best.a; b = best.b;
   var V = [], KK = [], i;
   a.P.forEach(function(p, j){ V.push([p[0] + Ix, p[1], p[2] + Iz]); KK.push(a.K[Math.min(j, a.K.length - 1)]); });
-  var iA = V.length - 1, ea = V[iA], bl = b.P[b.P.length - 1], eb = [bl[0] + Cx, bl[1], bl[2] + Cz];
+  var iA = V.length - 1, ea = V[iA];
+  bl = b.P[b.P.length - 1];
+  var eb = [bl[0] + Cx, bl[1], bl[2] + Cz];
   KK[iA] = K_SEA;
-  // the sea crossing: leaving the abutment along its front and arriving along the junction's, laid out round both
-  // coasts and what the generator keeps the line off (seaPlan, seaCurve; HQ 3.36)
-  var fa = a.sea && a.sea.front ? a.sea.front : [dx, dz], fb = b.sea && b.sea.front ? b.sea.front : [-dx, -dz];
-  var obs = seaObstacles(I.W, Ix, Iz).concat(seaObstacles(C.W, Cx, Cz));
-  var pa = [ea[0], ea[2]], pb = [eb[0], eb[2]], Q = seaPlan(pa, fa, pb, fb, obs), lA = SEA_OUT, lB = SEA_OUT;
-  // then the runs out long enough for each end's first curve (seaLeave): a longer run can change that curve, so until it
-  // holds (three passes at most)
-  for(var pass = 0; pass < 3; pass++){
-    var nA = Math.max(lA, seaLeave(Q, 1)), nB = Math.max(lB, seaLeave(Q, Q.length - 2));
-    if(nA === lA && nB === lB) break;
-    lA = nA; lB = nB; Q = seaPlan(pa, fa, pb, fb, obs, lA, lB);
-  }
-  var BL = obs.map(function(o){ return o.B; });
-  seaCurve(Q, function(p){ return !BL.some(function(O){ return insidePoly(O, p[0], p[1]); }); }).forEach(function(p){ V.push([p[0], NaN, p[1]]); KK.push(K_SEA); });
+  best.way.C.forEach(function(p){ V.push([p[0], NaN, p[1]]); KK.push(K_SEA); });
   var iB = V.length;
   for(var j = b.P.length - 1; j >= 0; j--){ var q = b.P[j]; V.push([q[0] + Cx, q[1], q[2] + Cz]); KK.push(j > 0 ? b.K[Math.min(j - 1, b.K.length - 1)] : K_GRADE); }
   // the sea viaduct's height: SEA_UP over the water, eased from and to the abutments at GRADE
@@ -830,6 +864,25 @@ function linkRoute(I, C, o){
     var ss = S[i] - sA, tg = seaI + (seaC - seaI)*ss/Ls + SEA_UP;
     var ea1 = rA > 0 ? Math.max(0, 1 - ss/rA) : 0, eb1 = rB > 0 ? Math.max(0, 1 - (Ls - ss)/rB) : 0;
     V[i][1] = tg + (ya - (seaI + SEA_UP))*ea1 + (yb - (seaC + SEA_UP))*eb1;
+  }
+  // [rail fix] over land (an abutment short of the coast: the Commons' IL ends on a river's bank, the city goes on to the
+  // shore) never lower than DECK_UP over the ground (its streets, a road deck), and down to the sea from there at GRADE
+  var WD = WDo(), ends = [[I.W, Ix, Iz], [C.W, Cx, Cz]].filter(function(e){ return e[0] && e[0].half > 0 && e[0].terrain; });
+  if(WD && WD.groundAt && ends.length){
+    var lift = false;
+    for(i = iA + 1; i < iB; i++){
+      var fl = -Infinity;
+      ends.forEach(function(e){
+        var lx = V[i][0] - e[1], lz = V[i][2] - e[2];
+        if(Math.abs(lx) < e[0].half && Math.abs(lz) < e[0].half){ var g = +WD.groundAt(e[0], lx, lz); if(isFinite(g)) fl = Math.max(fl, g + DECK_UP); }
+      });
+      if(fl > V[i][1]){ V[i][1] = fl; lift = true; }
+    }
+    // (raised only: each point at most a GRADE's fall from its neighbours, the abutments as they are)
+    if(lift) for(var sw = 0; sw < 2; sw++){
+      for(i = iA + 1; i < iB; i++) V[i][1] = Math.max(V[i][1], V[i - 1][1] - GRADE*(S[i] - S[i - 1]));
+      for(i = iB - 1; i > iA; i--) V[i][1] = Math.max(V[i][1], V[i + 1][1] - GRADE*(S[i + 1] - S[i]));
+    }
   }
   var RS = resample3(V, KK, STEP), P = RS.P, KO = RS.K, m = P.length;
   var s = new Float64Array(m);
@@ -1032,6 +1085,7 @@ function linkService(o){
     },
     route: function(lineId, d){ var l = lineById(lineId); return l ? routeOf(l, d || dir) : null; },
     origin: function(){ return {x: hp.x, z: hp.z}; },
+    world: function(){ return W; },
     spawn: function(){ return linkSpawn(W, here, isC ? null : here, platList); }
   };
   return sim;
@@ -1046,7 +1100,7 @@ HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, de
   // live ids
   commonsId: commonsId, isCommonsId: isCommonsId, canon: canon, sameWorld: sameWorld, islandIdOf: islandIdOf, WORLD_RE: WORLD_RE,
   // the Island Link
-  link: link, linkService: linkService, linkRoute: linkRoute, seaPlan: seaPlan, seaCurve: seaCurve, seaObstacles: seaObstacles, seaLeave: seaLeave, linkSpawn: linkSpawn, linkDepartures: linkDepartures, linkNext: linkNext,
+  link: link, linkService: linkService, linkRoute: linkRoute, seaPlan: seaPlan, seaCurve: seaCurve, seaWay: seaWay, roadFree: roadFree, pierAt: pierAt, PIER_CLEAR: PIER_CLEAR, seaObstacles: seaObstacles, seaLeave: seaLeave, linkSpawn: linkSpawn, linkDepartures: linkDepartures, linkNext: linkNext,
   linkPlatform: linkPlatform, linkOff: linkOff, railView: railView, ilOf: ilOf, underAt: underAt, kAt: kAt, timing: timing, radii: radii,
   SEATS: SEATS, STAND: STAND, SEAT_UP: SEAT_UP, DOOR_Z: DOOR_Z, LINK_EVERY: LINK_EVERY, LINK_PLATS: LINK_PLATS, LINK_COLOR: LINK_COLOR,
   K: {GRADE: K_GRADE, TUNNEL: K_TUNNEL, PORTAL: K_PORTAL, VIADUCT: K_VIADUCT, BRIDGE: K_BRIDGE, SEA: K_SEA}};
@@ -1057,6 +1111,87 @@ HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, de
 var DRAW_R = 2600;           // m: a city draws the track this near its centre (the rest is far behind the haze)
 var PIER_EVERY = 25, SLEEPER_EVERY = 0.65, MAST_EVERY = 50;
 var DECK = [[-3.85, 0.55], [-3.6, 0.55], [-3.6, -0.35], [3.6, -0.35], [3.6, 0.55], [3.85, 0.55], [3.85, -0.9], [2.3, -1.9], [-2.3, -1.9], [-3.85, -0.9]];
+
+// [rail fix] a rail pier never stands on a road (its carriageway or its pavements: the width, a tunnel's road aside, since
+// that is under the ground; its median, where there is one wide enough, is where a pier may stand) nor in a building:
+// roadFree(W) -> free(x, z) (the world's frame, m), no road's footprint and no lot (its polygon, else its rectangle: every
+// lot holds a building) within PIER_CLEAR m.
+// pierAt(R, s, free, o) puts the pier due at s onto free ground: moved along the line up to PIER_SLIDE m, or out to one
+// side under a longer cap up to PIER_SIDE m (the nearest that is free, a side step counting double); none: a portal
+// frame, a leg each side on the nearest free ground (PIER_BENT m out at most) under a crossbeam; none of that, null (the
+// span runs on to the next). -> {s, x, y, z, yaw (the deck there, o's frame), legs: [[x, z, lateral (+ left)]]}
+var PIER_CLEAR = 1.6, PIER_SLIDE = 8, PIER_SIDE = 4, PIER_BENT = 24, PIER_CELL = 40;
+var PIER_TRY = (function(){
+  var L = [];
+  for(var ds = -PIER_SLIDE; ds <= PIER_SLIDE; ds++) for(var lt = -PIER_SIDE; lt <= PIER_SIDE + 1e-9; lt += 0.5) L.push([ds, lt]);
+  L.sort(function(a, b){ return (Math.abs(a[0]) + 2*Math.abs(a[1])) - (Math.abs(b[0]) + 2*Math.abs(b[1])) || a[0] - b[0] || a[1] - b[1]; });
+  return L;
+})();
+var FREE_MEMO = typeof WeakMap === "function" ? new WeakMap() : null;
+function roadFree(W){
+  if(!W || typeof W !== "object") return function(){ return true; };
+  if(FREE_MEMO && FREE_MEMO.has(W)) return FREE_MEMO.get(W);
+  var G = {}, E = W.edges || (W.layers && W.layers.roads && W.layers.roads.edges) || [];
+  E.forEach(function(e){
+    if(!e || e.under === "tunnel") return;
+    var h = Math.max(0, +e.width || 0)/200, P = [];
+    if(e.pts) for(var i = 0; i + 2 < e.pts.length; i += 3) P.push([e.pts[i]/100, e.pts[i + 2]/100]);
+    else (e.points || []).forEach(function(q){ if(q && q.length >= 3) P.push([q[0]/100, q[2]/100]); });
+    for(var k = 0; k + 1 < P.length; k++){
+      var a = P[k], b = P[k + 1], r = h + PIER_CLEAR, sg = [a[0], a[1], b[0], b[1], h, Math.max(0, +e.median || 0)/200];
+      for(var cz = Math.floor((Math.min(a[1], b[1]) - r)/PIER_CELL); cz <= Math.floor((Math.max(a[1], b[1]) + r)/PIER_CELL); cz++)
+        for(var cx = Math.floor((Math.min(a[0], b[0]) - r)/PIER_CELL); cx <= Math.floor((Math.max(a[0], b[0]) + r)/PIER_CELL); cx++) (G[cx + "," + cz] = G[cx + "," + cz] || []).push(sg);
+    }
+  });
+  // the lots: [polygon (m), x0, z0, x1, z1] by cell
+  var LG = {};
+  (W.lots || (W.layers && W.layers.lots) || []).forEach(function(l){
+    if(!l) return;
+    var P = Array.isArray(l.poly) && l.poly.length >= 3 ? l.poly.map(function(q){ return [q[0]/100, q[1]/100]; })
+          : [[(l.x - l.w/2)/100, (l.z - l.d/2)/100], [(l.x + l.w/2)/100, (l.z - l.d/2)/100], [(l.x + l.w/2)/100, (l.z + l.d/2)/100], [(l.x - l.w/2)/100, (l.z + l.d/2)/100]];
+    if(!P.every(function(q){ return isFinite(q[0]) && isFinite(q[1]); })) return;
+    var b = [Infinity, Infinity, -Infinity, -Infinity];
+    P.forEach(function(q){ b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[0]); b[3] = Math.max(b[3], q[1]); });
+    var e = [P, b[0] - PIER_CLEAR, b[1] - PIER_CLEAR, b[2] + PIER_CLEAR, b[3] + PIER_CLEAR];
+    for(var cz = Math.floor(e[2]/PIER_CELL); cz <= Math.floor(e[4]/PIER_CELL); cz++)
+      for(var cx = Math.floor(e[1]/PIER_CELL); cx <= Math.floor(e[3]/PIER_CELL); cx++) (LG[cx + "," + cz] = LG[cx + "," + cz] || []).push(e);
+  });
+  function segD(x, z, ax, az, bx, bz){ var dx = bx - ax, dz = bz - az, l2 = dx*dx + dz*dz, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax)*dx + (z - az)*dz)/l2)) : 0; return hyp(x - ax - dx*t, z - az - dz*t); }
+  function free(x, z){
+    var key = Math.floor(x/PIER_CELL) + "," + Math.floor(z/PIER_CELL), L = G[key], B = LG[key], i;
+    // (a median is where a pier may stand: one wide enough to hold it with PIER_CLEAR - 0.5 m either side)
+    if(L) for(i = 0; i < L.length; i++){ var q = L[i], dq = segD(x, z, q[0], q[1], q[2], q[3]); if(dq < q[4] + PIER_CLEAR && !(dq <= q[5] - PIER_CLEAR + 0.5)) return false; }
+    if(B) for(i = 0; i < B.length; i++){
+      var e = B[i], P = e[0];
+      if(x < e[1] || x > e[3] || z < e[2] || z > e[4]) continue;
+      if(inside(P, x, z)) return false;
+      for(var k = 0; k < P.length; k++){ var a = P[k], c = P[(k + 1) % P.length]; if(segD(x, z, a[0], a[1], c[0], c[1]) < PIER_CLEAR) return false; }
+    }
+    return true;
+  }
+  if(FREE_MEMO) FREE_MEMO.set(W, free);
+  return free;
+}
+function pierAt(R, s, free, o){
+  o = o || {x: 0, z: 0};
+  function deck(ss){ var p = at(R, Math.max(0, Math.min(R.len, ss))); return {s: Math.max(0, Math.min(R.len, ss)), x: p.x - o.x, y: p.y, z: p.z - o.z, yaw: p.yaw}; }
+  function side(q, lt){ return [q.x + Math.cos(q.yaw)*lt, q.z - Math.sin(q.yaw)*lt, lt]; }
+  if(typeof free !== "function"){ var d0 = deck(s); d0.legs = [[d0.x, d0.z, 0]]; return d0; }
+  for(var i = 0; i < PIER_TRY.length; i++){
+    var q = deck(s + PIER_TRY[i][0]), L = side(q, PIER_TRY[i][1]);
+    if(free(L[0], L[1])){ q.legs = [L]; return q; }
+  }
+  for(var ds = 0; ds <= PIER_SLIDE; ds = ds > 0 ? -ds : -ds + 4){
+    var b = deck(s + ds), lo = null, hi = null;
+    for(var lt = PIER_SIDE; lt <= PIER_BENT && (lo === null || hi === null); lt += 0.5){
+      if(hi === null && free(side(b, lt)[0], side(b, lt)[1])) hi = lt;
+      if(lo === null && free(side(b, -lt)[0], side(b, -lt)[1])) lo = -lt;
+    }
+    if(lo !== null && hi !== null){ b.legs = [side(b, lo), side(b, hi)]; return b; }
+    if(ds < 0 && -ds >= PIER_SLIDE) break;
+  }
+  return null;
+}
 
 function merge(THREE, parts){
   var pos = [], nor = [];
@@ -1600,6 +1735,7 @@ function linkView(c, sim, opts){
   var underF = typeof opts.under === "function" ? opts.under : function(){ return false; };
   var parts = [], tube = [], seaY = typeof opts.seaY === "number" ? opts.seaY : 0;
   var ground = typeof opts.ground === "function" ? opts.ground : function(){ return seaY - 6; };
+  var free = roadFree(opts.W || (sim && sim.world ? sim.world() : null)), pierLog = [];
   function near(p){ return hyp(p.x - o.x, p.z - o.z) < DRAW_R; }
   lines.forEach(function(l){
     var R = sim.route(l.id, "out"); if(!R) return;
@@ -1635,12 +1771,21 @@ function linkView(c, sim, opts){
         }
       } else {
         parts.push(K.extrude(S, DECK, true, 0xb9bcbf));
+        // [rail fix] each on free ground (pierAt: never on a road), its cap out over a leg stepped aside, or a crossbeam
+        // over a portal frame's two legs
         var piers = samples(R, Math.ceil(r.a/PIER_EVERY)*PIER_EVERY, r.b, PIER_EVERY, o);
-        piers.forEach(function(p){
-          var gy = ground(p.x, p.z); if(!isFinite(gy) || gy < seaY - 0.2) gy = seaY - 6;
-          var h = Math.max(0.5, p.y - 1.9 - gy);
-          parts.push(K.cyl(0.85, 1.05, h, 10, p.x, gy, p.z, 0xa9adb1));
-          parts.push(K.box(5.4, 0.9, 2.4, p.x, p.y - 2.3, p.z, 0xa9adb1, p.yaw));
+        piers.forEach(function(p0){
+          var p = pierAt(R, p0.s, free, o); if(!p) return;
+          // (the islands' routes share the Commons' leg: one pier where another line's already stands)
+          if(pierLog.some(function(q){ return hyp(q.x - p.x, q.z - p.z) < PIER_EVERY*0.4; })) return;
+          var lo = -2.7, hi = 2.7, cx = Math.cos(p.yaw), sx = Math.sin(p.yaw);
+          p.legs.forEach(function(L){
+            var gy = ground(L[0], L[1]); if(!isFinite(gy) || gy < seaY - 0.2) gy = seaY - 6;
+            parts.push(K.cyl(0.85, 1.05, Math.max(0.5, p.y - 1.9 - gy), 10, L[0], gy, L[1], 0xa9adb1));
+            lo = Math.min(lo, L[2] - 1.2); hi = Math.max(hi, L[2] + 1.2);
+          });
+          parts.push(K.box(hi - lo, 0.9, 2.4, p.x + cx*(lo + hi)/2, p.y - 2.3, p.z - sx*(lo + hi)/2, 0xa9adb1, p.yaw));
+          pierLog.push({line: l.id, x: p.x, z: p.z, legs: p.legs.map(function(L){ return [L[0], L[1]]; })});
         });
       }
       samples(R, Math.ceil(r.a/MAST_EVERY)*MAST_EVERY + 12, r.b, MAST_EVERY, o).forEach(function(p){
@@ -1685,7 +1830,8 @@ function linkView(c, sim, opts){
     focus: function(id){ focusId = id || null; if(!focusId) inside.set(null); },
     focused: function(){ return focusId; },
     drawCalls: function(){ return (surf && surf.visible ? 1 : 0) + (tun && tun.visible ? 1 : 0) + trains.drawCalls() + inside.drawCalls() + riders.drawCalls(); },
-    tools: {shotCam: function(name){
+    tools: {piers: function(){ return pierLog.map(function(q){ return {line: q.line, x: q.x, z: q.z, legs: q.legs.map(function(L){ return L.slice(); })}; }); },   // [rail fix] each pier drawn: the deck point and its legs (o's frame, m)
+      shotCam: function(name){
       var l = lines[0], R = l && sim.route(l.id, "out"); if(!R) return null;
       if(name === "link-viaduct"){ var s1 = (R.seaA + Math.min(R.seaB, R.seaA + 400))/2, p = at(R, s1); var cx = Math.cos(p.yaw), sx = Math.sin(p.yaw);
         return {pos: {x: p.x - o.x + cx*60, y: p.y + 14, z: p.z - o.z - sx*60}, look: {x: p.x - o.x, y: p.y, z: p.z - o.z}, fov: 55}; }

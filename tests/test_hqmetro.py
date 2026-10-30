@@ -214,9 +214,10 @@ out.pass = (() => {
   const ds = v ? sim.doorsOf(v) : [], st2 = Lay.byId["metro:2"], side = sim.platformSide("metro:2");
   const lats = ds.map(d => { const cp = sim.carPose(v, d.car); return (d.x - cp.x)*Math.cos(cp.yaw) - (d.z - cp.z)*Math.sin(cp.yaw); });
   const ru = v ? sim.runOf(v) : null, trd = v ? sim.trip(v.line, "metro:2", ru.last === "metro:2" ? "metro:0" : ru.last, T0 + v.t*1000) : null;
-  return {gu: S.gu, lanes: S.lanes.length, feet: feet, machines: S.machines.length,
-    lane: g(S.gu, S.lanes[2]), cabinet: g(S.gu, S.lanes[2] + 0.55), glass: g(-S.gu, S.hw - 1), off: g(S.gu - 2, 0), up: g(S.gu, S.lanes[2], S.hallY + 1.5),
-    paidMid: paid(0, 0), paidEnd: paid(S.gu + 1.5, 0), paidPlat: Lay.paidAt(p0.r.cx, p0.y0 + 0.1, p0.r.cz), paidNone: Lay.paidAt(5000, 0, 5000),
+  const GP = S.gates.filter(q => q.u > 0 && q.e > 0)[0].u, GM = S.gates.filter(q => q.u < 0 && q.e < 0)[0].u;
+  return {gu: GP, gm: GM, su: S.su, lanes: S.lanes.length, feet: feet, machines: S.machines.length,
+    lane: g(GP, S.lanes[2]), cabinet: g(GP, S.lanes[2] + 0.55), glass: g(GM, S.hw - 1), off: g(GP - 2, 0), up: g(GP, S.lanes[2], S.hallY + 1.5),
+    paidMid: paid(0, 0), paidEnd: paid(GP + 1.5, 0), paidPlat: Lay.paidAt(p0.r.cx, p0.y0 + 0.1, p0.r.cz), paidNone: Lay.paidAt(5000, 0, 5000),
     doors: ds.length, lats: lats, side: side, doorY: ds.length ? ds[0].y - (sim.carPose(v, 0).y + H.FLOOR) : null,
     runLast: ru && ru.last, sameVeh: trd ? trd.vehicle === v.id : null, dep: trd ? trd.stops.every(q => q.dep - q.at === H.DWELL*1000) : null,
     plat: [sim.platNo("metro:1", "M1", "o"), sim.platNo("metro:1", "M1", "b"), sim.platNo("metro:1", "M2", "o"), sim.platNo("metro:1", "M2", "b")],
@@ -267,7 +268,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   V.update(T0 + 2000, 0.5, {x: cst.x, y: cst.hallY + 1.7, z: cst.z});
   out.central = {draws: V.drawCalls(), tris: V.triangles(), chunks: V.stats().chunks, stations: V.stats().stations};
   // the walker at a gate line: it opens (Calm: at once) with a beep
-  const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw); return {x: h.cx + s*cst.gu + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*cst.gu - s*(-4.4 + 0.55)}; })();   // [transit pass] the gate line sits at the station's gu
+  const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw), gu = cst.gates.filter(q => q.u > 0)[0].u; return {x: h.cx + s*gu + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*gu - s*(-4.4 + 0.55)}; })();   // [transit pass] on the hall's + gate line
   avatar = {x: gate.x, z: gate.z, hy: cst.hallY};
   sounds.length = 0; calm = true;
   V.update(T0 + 2500, 0.016, {x: cst.x, y: cst.hallY + 1.7, z: cst.z});
@@ -481,10 +482,10 @@ class MetroTransitPass(unittest.TestCase):
         p = self.o
         self.assertEqual(p["lanes"], 8)
         self.assertEqual(p["machines"], 4)
-        self.assertGreaterEqual(p["gu"], 10)
-        self.assertLessEqual(p["gu"], 14.5)
+        self.assertGreaterEqual(p["gu"], 6)
+        self.assertLessEqual(p["gu"], p["su"] - 2.5)                # [stations] room past the gates before the stair head
         for f in p["feet"]:
-            self.assertLess(f, p["gu"])                             # every foot in the hall lands on the street side
+            self.assertLess(f, min(p["gu"], -p["gm"]) - 2.5)        # every foot in the hall lands on the street side, with room
 
     def test_gate_at(self):
         p = self.o

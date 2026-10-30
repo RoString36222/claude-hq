@@ -13,6 +13,8 @@ pub mod evo;
 pub mod ext;
 pub mod fatigue;
 pub mod gp;
+pub mod mcdesk;
+pub mod mcops;
 pub mod handlers;
 pub mod music;
 pub mod notch;

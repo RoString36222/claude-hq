@@ -70,7 +70,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
         if(bi && (p || fin || g)) continue;                    // every look on the first model, every frame on all six
         var ch = glb(file), ok = X.wear(T, ch, {f: fi, p: p, fin: fin, g: g}); out.built++;
         if(!ok){ out.bad.push(file + "/" + F.id + ": did not fit"); continue; }
-        var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 4 || s.tris > 4000) out.over.push([file, F.id, p, fin, g, s]);
+        var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 4 || s.tris > 2500) out.over.push([file, F.id, p, fin, g, s]);
         if(p === 0 && g === 0 && fin === 0){
           posed(ch, file + "/" + F.id);
           var A = box(ch, "A"), hb = new T.Box3().setFromBufferAttribute(ch.o.getObjectByName("head-mesh").geometry.attributes.position);
@@ -124,6 +124,26 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     .forEach(function(a){ if(X.decode(a) === null) out.refused++; });
   out.styles = X.FRAMES.map(function(F, i){ return [F.id, X.styleFor(i, "bay"), X.styleFor(i, "city")]; });
   out.wanted = [X.wanted("you:me"), X.peer("u1", [2, 0, 0, 0, 4]) && X.wanted("peer:u1"), X.peer("u1", null), X.wanted("peer:u1")];
+  // ---- [3.38.0] docking on the roof: the reverse onto the gantry, the parked suit, park / unpark with odd inputs ----
+  var store = {}; window.localStorage = {getItem: function(k){ return k in store ? store[k] : null; }, setItem: function(k, v){ store[k] = String(v); }};
+  out.dock = {odd: [X.park(T, null), X.park(T, {}), X.park(T, glb(FILES[0])), X.unpark(null), X.unpark({}) === undefined].map(function(v){ return v == null || v === true; }), runs: []};
+  X.FRAMES.forEach(function(F, fi){
+    var ch = glb(FILES[fi % 6]); X.wear(T, ch, {f: fi, g: fi % 5}); clip(ch, 0.7); ch.o.updateMatrixWorld(true);
+    var P = X.park(T, ch), to = new T.Vector3(3, 0.2, -2), S = X.seq(T, ch, "gantry", {reverse: true, to: to, rdur: 2.2}), r = null, n = 0, eyes = [];
+    for(; n < 2000; n++){ r = X.seqStep(S, n % 9 ? 1/60 : NaN); eyes.push(r.eyes); if(r.done) break; }
+    var fin2 = true; P.meshes.forEach(function(m){ var a = m.geometry.attributes.position.array; for(var i = 0; i < a.length; i++) if(!isFinite(a[i])) fin2 = false; });
+    var root = ch.o.getObjectByName("root"), posed = false; ch.o.traverse(function(o){ if(o.name.indexOf("exo") === 0) posed = true; });
+    var s = X.parkStats(P); X.unpark(P); X.unpark(P);
+    out.dock.runs.push({f: F.id, done: !!(r && r.done), steps: n, stripped: !ch._exo, left: S.g.parent ? 1 : 0, draws: s.draws, finite: fin2 && finite(ch),
+      fade: eyes[0] > 0.9 && eyes[eyes.length - 1] < 0.05, tilt: root.quaternion.w < 0.999, posed: posed, scale: ch.o.scale.x, after: X.parkStats(P).draws});
+  });
+  var rig = X.dockRig(T), rd = 0; rig.traverse(function(o){ if(o.isMesh) rd++; }); out.dock.rig = rd;
+  out.dock.pk = [X.parked(), X.setParked(1.25), (X.save({f: 2}), X.parked()), X.load().f, X.setParked(NaN), X.setParked("x"), X.setParked(null), X.setParked(Infinity), X.load().f];
+  // the auto-dock's path: from below and far off it climbs over the roof and lands on the dock; a cancel is just dropping A
+  var st = {x: -50, y: 20, z: 30, yaw: 0}, A = X.dockPlan(st, {x: 4, y: 40, z: -3}), top = -1e9, k = 0;
+  for(; k < 2000 && !X.dockStep(A, st, k % 5 ? 1/60 : NaN); k++) top = Math.max(top, st.y);
+  out.dock.auto = {done: A.done, mode: st.mode, off: Math.hypot(st.x - 4, st.z + 3, st.y - 40), top: top, steps: k, plan: [X.dockPlan(null, {}), X.dockPlan({x: NaN, y: 0, z: 0}, {x: 0, y: 0, z: 0})],
+                   again: X.dockStep(A, st, 1), none: X.dockStep(null, st, 1)};
   console.log(JSON.stringify(out));
 }).catch(function(e){ console.error(e && e.stack || e); process.exit(1); });
 """
@@ -162,7 +182,7 @@ class ExoBudget(unittest.TestCase):
         self.assertEqual(sorted(o["budget"]), ["abyss", "bulwark", "flux", "sentinel", "stratos", "strider"])
         for k, s in o["budget"].items():
             self.assertLessEqual(s["draws"], 4, k)
-            self.assertLessEqual(s["tris"], 4000, k)
+            self.assertLessEqual(s["tris"], 2500, k)
         self.assertEqual(o["budget"]["abyss"]["draws"], 4, "abyss alone has the glass dome")
         self.assertEqual(o["budget"]["sentinel"]["draws"], 3)
 
@@ -176,7 +196,7 @@ class ExoBudget(unittest.TestCase):
         self.assertTrue(70 * deg <= g["fast"]["tilt"] <= 80 * deg, g["fast"]["tilt"])
         self.assertGreater(g["boost"]["tilt"], 84 * deg, "boost: nearly flat")
         self.assertLessEqual(g["boost"]["tilt"], 90 * deg)
-        self.assertLess(g["cruise"]["splay"], 0.03, "cruise: legs together")
+        self.assertTrue(0.03 < g["cruise"]["splay"] < 0.09, "cruise: legs parted a little, so both read")
         self.assertLess(g["cruise"]["armSw"], 0, "cruise: arms swept back")
         self.assertEqual(g["boost"]["lead"], 1, "boost: the leading arm forward")
         self.assertEqual(g["landed"]["crouch"], 1)
@@ -239,6 +259,35 @@ class ExoBudget(unittest.TestCase):
             self.assertTrue(s["shown"], k + ": the merged armour shows once the pieces land")
             self.assertGreater(s["locks"], 3, k)
             self.assertLess(s["steps"], 400, k)
+
+    def test_docking_parks_the_suit_and_unsuits_you(self):
+        d = self.o["dock"]
+        self.assertTrue(all(d["odd"]), "park / unpark with nothing worn or nothing at all: null, no crash")
+        self.assertEqual(len(d["runs"]), 6)
+        for r in d["runs"]:
+            self.assertTrue(r["done"] and r["stripped"], r["f"] + ": the reverse completes and the layer comes off")
+            self.assertLess(r["steps"], 400, r["f"])
+            self.assertEqual(r["left"], 0, r["f"] + ": its pieces are gone")
+            self.assertTrue(1 <= r["draws"] <= 4, r["f"] + ": the parked suit is the armour layer, 4 draws at most")
+            self.assertEqual(r["after"], 0, r["f"] + ": unpark frees it (twice is fine)")
+            self.assertTrue(r["finite"] and r["fade"], r["f"] + ": finite, and the eyes fade")
+            self.assertFalse(r["tilt"] or r["posed"], r["f"] + ": nothing left posed or tilted")
+            self.assertAlmostEqual(r["scale"], 2.1, places=5)
+        self.assertLessEqual(d["rig"], 2, "the gantry: 2 draws")
+        self.assertEqual(d["pk"], [None, 1.25, 1.25, 2, None, None, None, None, 2], "parked: kept beside the look, odd values clear it")
+        a = d["auto"]
+        self.assertTrue(a["done"] and a["mode"] == "landed", "the auto-dock lands")
+        self.assertLess(a["off"], 1e-6, "on the dock")
+        self.assertGreaterEqual(a["top"], 46 - 1e-6, "climbs over the roof first")
+        self.assertEqual(a["plan"], [None, None])
+        self.assertTrue(a["again"])
+        self.assertFalse(a["none"])
+        s = read("games", "hq3d.js")
+        self.assertIn('if(EXO.auto && (inp.fwd || inp.back || inp.left || inp.right)) exoAutoCancel(', s, "WASD hands it back")
+        self.assertIn('if(EXO.auto && e.key === "Escape")', s, "and Esc")
+        self.assertIn("exoLand(); avatar.hy = A.R.dock.y;", s)
+        self.assertIn("    exoDock(A.R);", s, "landed by the auto-dock: docked, and unsuited")
+        self.assertIn("XO.me.on = false;", s)
 
     def test_styles_presence_and_who_wears_a_suit(self):
         o = self.o

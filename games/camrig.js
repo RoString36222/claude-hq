@@ -65,11 +65,14 @@ var VEHICLE = {
   // [exo] flying an exosuit (games/hqexoride.js): a little further back and up, the horizon banking with you; first person is
   // the helmet's view (games/hqexohud.js draws the visor over it); exobig is the 1.3x Bulwark
   // headLag: it trails a turn a little; roll x lean x 0.5: the horizon leans 30% of the suit's bank (fp 10%, fpRoll), capped
-  // at rollMax rad; boostBack / boostFov: a boost pulls the camera back by that share and widens the view by those degrees
-  exo:     {backMul: 1.5, upMul: 1.15, sideMul: 1, fovSpeedKick: 1.2, fpAnchor: {seat: [0, 0.55, 0.12]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
-            headLag: 4.5, boostBack: 0.35, boostFov: 9},
-  exobig:  {backMul: 2.0, upMul: 1.4, sideMul: 1, fovSpeedKick: 1, fpAnchor: {seat: [0, 1.25, 0.2]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
-            headLag: 4.5, boostBack: 0.3, boostFov: 8},
+  // at rollMax rad; boostBack / boostFov: a boost pulls the camera back by that share and widens the view by those degrees;
+  // sideOff: the chase sits that share of its distance off to the right of straight behind (and a little higher, upMul), so
+  // the flying body reads in three-quarter profile instead of foreshortened from dead behind; boostShake: m of a gentle
+  // shake on a boost, the only shake in flight (none with reduced motion)
+  exo:     {backMul: 1.6, upMul: 1.45, sideMul: 1, sideOff: 0.3, fovSpeedKick: 1.2, fpAnchor: {seat: [0, 0.55, 0.12]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
+            headLag: 4.5, boostBack: 0.35, boostFov: 9, boostShake: 0.045},
+  exobig:  {backMul: 2.1, upMul: 1.65, sideMul: 1, sideOff: 0.28, fovSpeedKick: 1, fpAnchor: {seat: [0, 1.25, 0.2]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
+            headLag: 4.5, boostBack: 0.3, boostFov: 8, boostShake: 0.06},
   // [3.17] the tank (games/hqtank.js): well back and up, over its turret; first person from the driver's hatch
   tank:    {backMul: 2.0, upMul: 1.35, sideMul: 1, fovSpeedKick: 0.4, fpAnchor: {seat: [0.75, 2.35, 2.05]}, roll: 0},
   // planes (games/hqplane.js, HQ 3.2): well behind and above (the seaplane is 16 m long), the horizon banking a little;
@@ -423,7 +426,7 @@ function chasePose(s, mode, T, dt, q){
   // a boost (T.boost 0..1, a vehicle with boostBack): sprung, the camera drops back and the view widens
   if(_.bst == null){ _.bst = 0; _.bstV = 0; }
   var bq = spring(_.bst, _.bstV, V && V.boostBack ? T.boost : 0, 3, dt); _.bst = bq[0]; _.bstV = bq[1];
-  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale*(1 + (V && V.boostBack || 0)*_.bst), baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
+  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale*(1 + (V && V.boostBack || 0)*_.bst), baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1) + (V && V.sideOff ? V.sideOff*back : 0);
   _.upOff = clamp(_.upOff + _.lift*LIFT*dt, 0.6 - baseUp, 2*baseUp);
   var up = baseUp + _.upOff;
   // The orbit offset on top of the heading: Q/R swing eased in and out (exact exponential), right-drag adds
@@ -495,6 +498,10 @@ function chasePose(s, mode, T, dt, q){
   var gs = spring(_.gnd.y, _.gnd.v, g, M.lag, dt); _.gnd.y = gs[0]; _.gnd.v = gs[1];
   var want = v3(px, Math.max(P.y - LOOK_H, _.gnd.y) + h, pz);
   var pv = v3(P.x, P.y, P.z), pos = chaseCollide(s, pv, want, M.collide, dt, q);
+  // a boost's gentle shake (V.boostShake m, on the sprung boost share, two incommensurate sines: smooth, not jitter)
+  _.shk = ((_.shk || 0) + dt) % 1000;
+  if(V && V.boostShake && !red && _.bst > 0.01){ var sa = V.boostShake*clamp(_.bst, 0, 1);
+    pos.x += sa*Math.sin(_.shk*37.0)*0.7; pos.y += sa*Math.sin(_.shk*29.0 + 1.3); pos.z += sa*Math.sin(_.shk*41.0 + 2.1)*0.5; }
   var lk = v3(P.x + A.x, P.y, P.z + A.z);
   var kick = red ? 0 : Math.min(10, T.speed*0.5)*(V ? V.fovSpeedKick : 1);
   var p = basePose(mode);

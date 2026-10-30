@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.38.0",
+      "title": "Mission Control ops and Exosuit polish",
+      "body": "Mission Control's server now gathers what its ops wall will show: the latest CI runs per branch for the repos your sessions are in (through your own gh CLI, cached, and quiet without it), plus each session's repo, branch and last tool. The suits get detailing: panel lines, rivets, worn edges, a glowing trim line and a decal of their own on each frame, two slanted glowing eyes instead of a single slit, plus ear vents, chest rings, knee cops and knuckle plates. In flight the legs read bent and slightly apart, the boot jets angle away from the camera and the chase camera sits off to one side. The thrusters get layered flames, a short trail ribbon, downwash rings over the ground and a spark burst on boost. Flying feels smoother, with throttle spool, an air brake, banked turns that keep their momentum and gentle auto-levelling. The Suit-Up Centre now has a live 3D preview of you in the suit, with a Fly pose. Dock your suit at your own HQ roof: a new docking platform off the deck, F on your pad parks the suit on its gantry (and F there puts it back on), and flying within 60 m of your roof F auto-docks you."
+    },
+    {
       "version": "3.37.2",
       "title": "The exosuit really flies",
       "body": "In the air your suited character now flies like it: upright with palms down in a hover, near-horizontal with legs trailing and arms swept back in a cruise, flat out with the leading arm forward on a boost, and a crouch for take-off and landing. Jets of light burn from both boot soles and both palms in your glow colour (short and flickering in a hover, long in a cruise, pulsing shock diamonds on a boost), and other players see them too. Turns bank up to 60 degrees and ease in and out, the body pitches with your climb, drifts a little at speed, and a double-tap of A or D in a cruise does a barrel roll. The chase camera lags into turns, leans with the bank and pulls back on a boost; first person keeps a steadier horizon."

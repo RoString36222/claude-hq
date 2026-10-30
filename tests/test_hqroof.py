@@ -93,6 +93,18 @@ for(var i = 0; i < LD.length; i++) for(var j = i + 1; j < LD.length; j++) pairs.
 out.lobbyDoors = {views: LD.map(d => [d.view, d.kind || null, d.label || null]), pairs: pairs, spawns: Object.keys(lw.spawnFrom).map(k => [k, LD.map(d => [d.view, +Math.hypot(d.front.x - lw.spawnFrom[k].x, d.front.z - lw.spawnFrom[k].z).toFixed(2)])])};
 out.lobby = {roof: lw.doors.filter(d => d.view === "@roof").map(d => d.kind), spawnRoof: lw.spawnFrom.roof, studio: lw.hits.some(h => h.userData.door && h.userData.door.kind === "studio"),
   b1: lw.doors.some(d => d.view === "@basement" && d.kind === "lift"), mission: lw.doors.filter(d => d.view === "@mission").length};
+
+// [3.38.0] your roof's suit dock: a platform off the deck, walkable (onDeck), clear of the pad; nobody else's roof has one
+out.dock = (function(){
+  var l = CW.lots.filter(l => l.kind === "hq")[0], p = C3.placeLot(l), g = C3.grandOf(l, p), M = T.massing(50, g, 0, C3.roomOf(l, p));
+  var B = {pad: () => M.pad, roofDeck: () => T.roofDeck(M), roofLift: () => null};
+  var R = RF.roofOf({x: p.x, y: p.y, z: p.z, rot: p.rot, h: {userId: "u", isYou: true}}, B, C3.toWorld), D = R.dock;
+  var F = RF.roofOf({x: p.x, y: p.y, z: p.z, rot: p.rot, h: {userId: "f"}}, B, C3.toWorld);
+  var edge = Math.hypot(D.sx - R.deck.x, D.sz - R.deck.z);
+  return {has: !!D, friend: !!F.dock, spot: RF.onDeck(R, D.sx, D.sz) && RF.onDock(R, D.sx, D.sz), past: edge > R.deck.r, padClear: Math.hypot(D.sx - R.pad.x, D.sz - R.pad.z) > R.pad.r + 0.5,
+          walk: [0.2, 0.4, 0.6, 0.8, 1].every(k => RF.onDeck(R, R.deck.x + (D.sx - R.deck.x)*k, R.deck.z + (D.sz - R.deck.z)*k)),
+          beyond: RF.onDeck(R, D.sx + (D.sx - R.deck.x)/edge*3, D.sz + (D.sz - R.deck.z)/edge*3), y: D.y - R.deck.y};
+})();
 """
 
 
@@ -150,6 +162,17 @@ class HqRoofs(unittest.TestCase):
         self.assertGreater(lc["door"], lc["r"], "the roof lift's door off the pad")
         self.assertGreater(lc["house"], lc["r"], "the roof lift's head house off the pad")
         self.assertTrue(lc["doorOnDeck"])
+
+    def test_your_roof_has_a_walkable_suit_dock(self):
+        d = self.out["dock"]
+        self.assertTrue(d["has"] and not d["friend"], "your roof only")
+        self.assertTrue(d["spot"], "a point on the platform counts as on-deck")
+        self.assertTrue(d["past"], "it is off the deck's edge (cantilevered)")
+        self.assertTrue(d["padClear"], "the helipad stays clear")
+        self.assertTrue(d["walk"], "you walk from the deck onto it")
+        self.assertFalse(d["beyond"], "its railing holds you on it")
+        self.assertEqual(d["y"], 0)
+        self.assertIn("roofDock(myRoof);", open(os.path.join(ROOT, "games", "hqcity3d.js"), encoding="utf-8").read())
 
     def test_landing_assist(self):
         L = self.out["landing"]

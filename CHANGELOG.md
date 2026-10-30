@@ -3,6 +3,39 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.38.0 — Mission Control ops and Exosuit polish.**
+  - **Dock your suit at your HQ roof.** Your own HQ's roof gets a cantilevered docking platform off its deck, with a
+    railing and a lit top rail, walkable from the pad, holding the docking gantry, so the helipad stays clear. Suited on
+    your pad, F docks the suit: the pieces lift off onto the gantry, the eyes fade, the camera circles, and you step out
+    with the suit parked there in its frame, paint and glow (kept across reloads). F at it suits you up again; U anywhere
+    else takes it from the roof. Flying within 60 m of your roof, F auto-docks: an eased path over the roof and down
+    onto the platform, then the docking; WASD or Esc hands control back. Others don't see the parked suit yet.
+  - **Mission Control ops (server side).** A new `GET /api/mc/ops` builds the ops wall's CI board: the latest GitHub
+    Actions run of each workflow on each branch (pass, fail, running) and the names of failing jobs, for this HQ's repo
+    and the repos your live sessions are in. It runs your own `gh` CLI with its existing login, never reads or sends a
+    token, caches for 90 s, and stays quiet without `gh` or a network. Each session in `/api/sessions` now carries `git`
+    (repo, GitHub slug, branch, read straight from `.git`, cached) and `lastTool` (its last tool target) for the desk
+    holograms. Later: the 3D ops wall, desk holograms, repo link lines and usage gauges in Mission Control, and messaging
+    a session from its desk.
+  - **Approve from the desk.** Walk up to a crew member in Mission Control: a panel shows its pending permission
+    request (tool and command) with Approve and Deny, answered over the HQ Notch relay's line protocol on its own
+    socket (HQNotch/desk.sock), behind the existing Host, CSRF token and Origin gates. Never auto-approves; without the
+    hook it shows how to install it. The message box is there but disabled (no supported way to reach a running session yet).
+  - **Detailing in the shader.** Panel lines with rivets, worn bare edges, a glow-colour trim line and a decal per frame
+    (Sentinel chevrons, Strider racing stripe, Bulwark hazard stripes, Abyss rivet rows, Stratos quilting, Flux liquid
+    sheen), bumped through screen derivatives and fading with distance. Two slanted glowing eyes with a soft halo replace
+    the single slit; ear vents, chest core rings, knee cops and knuckle plates. Still at most 4 draw calls, under 2.5k triangles.
+  - **Legs that read in flight.** An angled shin and boot fake a knee bend, the legs part a little at cruise, the boot jets
+    lean down and out, and the chase camera sits higher and off to one side for a three-quarter view.
+  - **Thrust.** Layered flames (soft outer cone, white-hot core, nozzle glow ring) with two-octave flicker and shock
+    diamonds, a short fading ribbon behind each boot at cruise and boost, ground downwash rings in a low hover and a spark
+    burst when boost kicks in. Still two draw calls, pooled, no per-frame allocation.
+  - **Flying.** A spooled throttle and tapered top speed, an air brake that hands over to the hover, cruise hysteresis,
+    banked turns that keep their momentum, gentle auto-levelling; breathing, head into turns, arms countering the bank;
+    a gentle camera shake on boost only.
+  - **Live preview in the suit terminal.** Your own character wearing the picked frame, paint, finish and glow on a small
+    renderer of its own: it turns slowly, drags to turn, has a Fly pose with lit thrusters, and is disposed on close.
+
 - **3.37.2 — The exosuit really flies.**
   - **Flight poses.** Upright with palms down in a hover; near-horizontal, legs trailing and arms swept back in a
     cruise; flat out with the leading arm forward on a boost; a crouch for take-off and landing. No walking in the air.

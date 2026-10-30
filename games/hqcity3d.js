@@ -1076,6 +1076,7 @@ HQV.hqWorlds.city3d = function(c, w){
     roofsBuild();                                                                // [hq revamp] the towers' roofs and their lifts' doors
     var myRoof = roofs.filter(function(r){ return r.own; })[0];
     var rh = roofHeli(myRoof); if(rh && bikes.indexOf(rh) < 0) bikes.push(rh);     // [3.13.4] your helicopter, parked on your pad
+    roofDock(myRoof);                                                            // [3.38.0] the suit dock off your roof's deck
     if(myRoof && myRoof.lift) w.spawnFrom.roof = {x: myRoof.lift.x, y: myRoof.deck.y, z: myRoof.lift.z, yaw: myRoof.rot, camYaw: myRoof.rot + PI + 0.55};
     if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
     w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
@@ -3785,6 +3786,33 @@ HQV.hqWorlds.city3d = function(c, w){
     return b;
   }
   w.roofHeli = function(){ return roofHeliP; };
+  // [3.38.0] the suit dock (games/hqroof.js R.dock): a cantilevered platform off your own roof's deck, with a railing on
+  // its three open sides and a lit strip along the top rail (2 draws, merged), and the docking gantry (hqexo dockRig: 2
+  // draws). The helipad stays clear; hq3d parks your suit at the gantry (sx, sz).
+  var roofDockG = null;
+  function roofDock(R){
+    if(roofDockG){ hqG.remove(roofDockG); disposeTree(roofDockG); roofDockG = null; }
+    if(!R || !R.dock) return null;
+    var D = R.dock, g = new THREE.Group(), steel = new THREE.MeshStandardMaterial({color: 0x6b737c, metalness: 0.6, roughness: 0.5}),
+        lit = new THREE.MeshStandardMaterial({color: 0x10202a, emissive: 0x9fe6ff, emissiveIntensity: 1.6});
+    function bx(w, h, d, m, x, y, z){ var me = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); me.position.set(x, y, z); me.castShadow = me.receiveShadow = m === steel; g.add(me); return me; }
+    var hw = D.hw, hd = D.hd, o = D.s*hw;                                    // local +x*s: the open (outer) end
+    bx(hw*2, 0.22, hd*2, steel, 0, -0.11, 0);                                // the slab, its top at the deck
+    bx(0.3, 0.5, hd*2, steel, -o*0.7, -0.45, 0);                             // the cantilever's bracket under it
+    [[o, 0, 0.06, hd*2], [0, hd, hw*2, 0.06], [0, -hd, hw*2, 0.06]].forEach(function(r){
+      bx(r[2], 0.06, r[3], steel, r[0], 1.0, r[1]); bx(r[2], 0.04, r[3], steel, r[0], 0.5, r[1]);
+      bx(r[2] > 0.1 ? r[2] : 0.03, 0.03, r[3] > 0.1 ? r[3] : 0.03, lit, r[0], 1.045, r[1]);
+      [-0.95, 0, 0.95].forEach(function(k){ bx(0.06, 1.0, 0.06, steel, r[0] + (r[2] > 0.1 ? k*hw : 0), 0.5, r[1] + (r[3] > 0.1 ? k*hd : 0)); });
+    });
+    g.position.set(D.x, D.y, D.z); g.rotation.y = D.rot;
+    if(HQV.hqMerge && HQV.hqMerge.mergeStatic) try { HQV.hqMerge.mergeStatic(THREE, g); } catch(e){}
+    var XO = HQV.hqExo;
+    if(XO && XO.dockRig){ var rig = XO.dockRig(THREE); rig.position.set(D.sx, D.y, D.sz); rig.rotation.y = Math.atan2(R.deck.x - D.sx, R.deck.z - D.sz); rig.updateMatrixWorld(true);
+      g.updateMatrixWorld(true); var inv = new THREE.Matrix4().copy(g.matrixWorld).invert(); rig.applyMatrix4(inv); g.add(rig); }
+    g.name = "hq-roof-dock"; hqG.add(g); roofDockG = g;
+    return g;
+  }
+  w.roofDock = function(){ return roofDockG; };
   // you stand on a roof deck: up at its height (or arriving: stopFeet's 1e9) and inside its railing
   function roofHere(){
     var a = c.avatar(); if(!a || !roofs.length) return null;
@@ -3983,6 +4011,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(Math.hypot(rx - x, rz - z) > 42 + rr + 4) continue;
       // same as webHit: the walk height is the TOP of the slab (see above)
       boxes.push({id: "deck:" + ri, min: {x: rx - rr, y: ry - 0.2, z: rz - rr}, max: {x: rx + rr, y: ry, z: rz + rr}});
+      if(R0.dock){ var dk = R0.dock, dr = Math.max(dk.hw, dk.hd); boxes.push({id: "dock:" + ri, min: {x: dk.x - dr, y: ry - 0.2, z: dk.z - dr}, max: {x: dk.x + dr, y: ry, z: dk.z + dr}}); }
     }
     // the amusement park's rides and the landmarks' towers (hqspectacle)
     try {

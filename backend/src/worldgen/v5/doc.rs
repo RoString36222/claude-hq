@@ -23,10 +23,9 @@ pub const JOIN_CM: i64 = 1_500;
 const HASH_CM: i64 = 4_000;
 /// A floor's height (cm).
 const FLOOR_CM: i64 = 350;
-/// A metro entrance's stair well: across, along (cm); the concourse under the street (cm).
+/// A metro entrance's stair well: across, along (cm).
 const ENT_W_CM: i64 = 400;
 const ENT_D_CM: i64 = 1_200;
-const HALL_CM: i64 = 800;
 
 fn q16(dx: f64, dz: f64) -> [i64; 2] {
     let l = dx.hypot(dz).max(1e-9);
@@ -454,7 +453,7 @@ fn metro_layer(mt: &super::metro::Metro, land: &super::land::Land) -> m3::Metro 
         out.stations.push(m3::Station {
             id: sid(k), x: s.c.0, y: s.rail_y.first().copied().unwrap_or(g - 2_000), z: s.c.1, along: q16(s.heading.cos(), s.heading.sin()),
             len: super::metro::PLATFORM_CM as i64, platform: "island", lines: s.lines.iter().map(|l| format!("M{}", l + 1)).collect(),
-            hall_y: g - HALL_CM, entrances: ents,
+            hall_y: s.hall_y, entrances: ents,
         });
     }
     for l in &mt.lines {

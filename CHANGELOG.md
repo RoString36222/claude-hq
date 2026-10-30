@@ -3,7 +3,14 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
-- **3.38.0 — Exosuit polish.**
+- **3.38.0 — Mission Control ops and Exosuit polish.**
+  - **Mission Control ops (server side).** A new `GET /api/mc/ops` builds the ops wall's CI board: the latest GitHub
+    Actions run of each workflow on each branch (pass, fail, running) and the names of failing jobs, for this HQ's repo
+    and the repos your live sessions are in. It runs your own `gh` CLI with its existing login, never reads or sends a
+    token, caches for 90 s, and stays quiet without `gh` or a network. Each session in `/api/sessions` now carries `git`
+    (repo, GitHub slug, branch, read straight from `.git`, cached) and `lastTool` (its last tool target) for the desk
+    holograms. Later: the 3D ops wall, desk holograms, repo link lines and usage gauges in Mission Control, and approving
+    or messaging a session from its desk.
   - **Detailing in the shader.** Panel lines with rivets, worn bare edges, a glow-colour trim line and a decal per frame
     (Sentinel chevrons, Strider racing stripe, Bulwark hazard stripes, Abyss rivet rows, Stratos quilting, Flux liquid
     sheen), bumped through screen derivatives and fading with distance. Two slanted glowing eyes with a soft halo replace

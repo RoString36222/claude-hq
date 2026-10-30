@@ -61,7 +61,7 @@ function land(R, assist){
 var L1 = land(fr, true), L0 = land(fr, false);
 out.landing = {assisted: {ground: L1.ground, off: L1.off, dy: L1.dy, cues: L1.cues}, plain: {off: L0.off}, toasts: toasts.slice()};
 land(fr, true); out.landing.toastsAgain = toasts.length;                        // the same approach: not said again
-// out on the pad: onto the deck; walking there; the railing; the roof lift's door
+// out on the pad: onto the deck; walking there; the railing (holds you in — a jump leaves); the roof lift's door
 var spot = wc.heliLand(L1.st);
 out.exit = spot ? {onDeck: RF.onDeck(fr, spot.x, spot.z), y: +(spot.y - fr.deck.y).toFixed(3)} : null;
 avatar = {x: spot.x, z: spot.z, hy: spot.y};
@@ -171,8 +171,12 @@ class HqRoofs(unittest.TestCase):
         self.assertTrue(w["onRoof"])
         self.assertEqual(w["ground"], 0)
         self.assertFalse(w["here"])
-        self.assertTrue(w["railing"], "the railing keeps you on the deck")
+        # the railing HOLDS you on the deck: walking never falls off the roof.
+        # A jump is what leaves it (hq3d's air path ignores walls above the
+        # surface), and the lift house stays solid.
+        self.assertTrue(w["railing"], "walking must not fall off the HQ roof — the railing is a wall on the deck")
         self.assertTrue(w["house"])
+        self.assertFalse(w["here"], "the deck you stand on is open ground")
         self.assertFalse(w["street"])
         self.assertTrue(self.out["spawnRoof"]["onDeck"])
 

@@ -17,11 +17,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "3.36.0";
+pub const APP_VERSION: &str = "3.36.7";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
-pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
-pub static HANDLE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{1,64}$").unwrap());
+pub static RID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
+pub static HANDLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{1,64}$").unwrap());
 
 /// _UUID_RE.fullmatch(s)
 pub fn is_uuid(s: &str) -> bool {
@@ -75,7 +77,8 @@ impl Paths {
             here: here.to_path_buf(),
             projects_dir: home.join(".claude/projects"),
             cursor_projects_dir: home.join(".cursor/projects"),
-            cursor_state_db: home.join("Library/Application Support/Cursor/User/globalStorage/state.vscdb"),
+            cursor_state_db: home
+                .join("Library/Application Support/Cursor/User/globalStorage/state.vscdb"),
             config: here.join("config.json"),
             meta: here.join("sessions-meta.json"),
             meals: here.join("meals.json"),
@@ -107,7 +110,10 @@ pub type FileKey = (i128, u64);
 pub fn file_key(p: &Path) -> Option<FileKey> {
     let m = fs::metadata(p).ok()?;
     use std::os::unix::fs::MetadataExt;
-    Some((m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128, m.size()))
+    Some((
+        m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128,
+        m.size(),
+    ))
 }
 
 pub type AgentsFn = Arc<dyn Fn() -> (Vec<Value>, Option<String>) + Send + Sync>;
@@ -214,8 +220,15 @@ impl App {
                 return Some(a.clone());
             }
         }
-        let agg = Arc::new(if self.is_cursor(path) { scan::scan_cursor(path) } else { scan::scan_claude(path) });
-        self.scan_cache.lock().unwrap().insert(path.to_path_buf(), (key, agg.clone()));
+        let agg = Arc::new(if self.is_cursor(path) {
+            scan::scan_cursor(path)
+        } else {
+            scan::scan_claude(path)
+        });
+        self.scan_cache
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), (key, agg.clone()));
         Some(agg)
     }
 
@@ -235,7 +248,10 @@ impl App {
 
     /// Claude transcripts only (the Arena publish reads these).
     pub fn claude_transcript_paths(&self) -> Vec<PathBuf> {
-        glob_dirs(&self.paths.projects_dir).iter().flat_map(|d| glob_files(d, ".jsonl")).collect()
+        glob_dirs(&self.paths.projects_dir)
+            .iter()
+            .flat_map(|d| glob_files(d, ".jsonl"))
+            .collect()
     }
 
     /// Locate the JSONL for a UUID-shaped session id.
@@ -269,8 +285,12 @@ impl App {
         if let Some(s) = g.as_ref() {
             return s.clone();
         }
-        static SALT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]{8,64}$").unwrap());
-        let s = fs::read(&self.paths.dex_seed).ok().map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        static SALT_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^[0-9a-f]{8,64}$").unwrap());
+        let s = fs::read(&self.paths.dex_seed)
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
         let mut s = py::strip(&s).to_string();
         if !SALT_RE.is_match(&s) {
             s = py::token_hex(8);
@@ -289,7 +309,10 @@ impl App {
     // ----------------------------------------------------------------------
 
     pub fn load_config(&self) -> Obj {
-        validate_config(&state::load_json_guarded(&self.paths.config).unwrap_or_else(|| json!({})), None)
+        validate_config(
+            &state::load_json_guarded(&self.paths.config).unwrap_or_else(|| json!({})),
+            None,
+        )
     }
 
     /// Merge `patch` into the current config, validate, persist, return it.
@@ -343,22 +366,37 @@ impl App {
     // ----------------------------------------------------------------------
 
     fn read_meal_entries(&self, now: f64) -> Vec<Meal> {
-        let Some(Value::Object(raw)) = state::load_json_plain(&self.paths.meals) else { return Vec::new() };
-        let Some(Value::Array(items)) = raw.get("meals") else { return Vec::new() };
+        let Some(Value::Object(raw)) = state::load_json_plain(&self.paths.meals) else {
+            return Vec::new();
+        };
+        let Some(Value::Array(items)) = raw.get("meals") else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for m in items {
             let Value::Object(m) = m else { continue };
-            let (Some(sid), Some(kind), Some(rid)) = (py::get_str(m, "sessionId"), py::get_str(m, "kind"), py::get_str(m, "requestId")) else {
+            let (Some(sid), Some(kind), Some(rid)) = (
+                py::get_str(m, "sessionId"),
+                py::get_str(m, "kind"),
+                py::get_str(m, "requestId"),
+            ) else {
                 continue;
             };
             if !is_uuid(sid) || !fatigue::is_food(kind) || !is_rid(rid) {
                 continue;
             }
-            let Some(at) = m.get("at").and_then(py::number) else { continue };
+            let Some(at) = m.get("at").and_then(py::number) else {
+                continue;
+            };
             if !(at.is_finite() && now - MEALS_KEEP_SECS <= at && at <= now + 60.0) {
                 continue;
             }
-            out.push(Meal { request_id: rid.into(), session_id: sid.into(), kind: kind.into(), at });
+            out.push(Meal {
+                request_id: rid.into(),
+                session_id: sid.into(),
+                kind: kind.into(),
+                at,
+            });
         }
         out
     }
@@ -376,22 +414,43 @@ impl App {
     }
 
     pub fn find_meal(&self, rid: &str) -> Option<Meal> {
-        self.read_meal_entries(py::now_ts()).into_iter().find(|m| m.request_id == rid)
+        self.read_meal_entries(py::now_ts())
+            .into_iter()
+            .find(|m| m.request_id == rid)
     }
 
     /// Record one meal (idempotent by requestId across all sessions).
-    pub fn record_meal(&self, rid: &str, sid: &str, kind: &str, at: f64, now: Option<f64>) -> io::Result<Meal> {
+    pub fn record_meal(
+        &self,
+        rid: &str,
+        sid: &str,
+        kind: &str,
+        at: f64,
+        now: Option<f64>,
+    ) -> io::Result<Meal> {
         let _g = self.meals_lock.lock().unwrap();
         self.record_meal_locked(rid, sid, kind, at, now)
     }
 
-    pub(crate) fn record_meal_locked(&self, rid: &str, sid: &str, kind: &str, at: f64, now: Option<f64>) -> io::Result<Meal> {
+    pub(crate) fn record_meal_locked(
+        &self,
+        rid: &str,
+        sid: &str,
+        kind: &str,
+        at: f64,
+        now: Option<f64>,
+    ) -> io::Result<Meal> {
         let now = now.unwrap_or_else(py::now_ts);
         let mut entries = self.read_meal_entries(now);
         if let Some(m) = entries.iter().find(|m| m.request_id == rid) {
             return Ok(m.clone());
         }
-        let entry = Meal { request_id: rid.into(), session_id: sid.into(), kind: kind.into(), at };
+        let entry = Meal {
+            request_id: rid.into(),
+            session_id: sid.into(),
+            kind: kind.into(),
+            at,
+        };
         entries.push(entry.clone());
         let fz_lo = now - fatigue::WINDOW_SECS;
         let mut sorted = entries.clone();
@@ -413,8 +472,14 @@ impl App {
             }
         }
         kept.reverse();
-        let body = json!({"version": 1, "meals": kept.iter().map(Meal::to_json).collect::<Vec<_>>()});
-        let dir = self.paths.meals.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let body =
+            json!({"version": 1, "meals": kept.iter().map(Meal::to_json).collect::<Vec<_>>()});
+        let dir = self
+            .paths
+            .meals
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
         state::atomic_write_prefixed(&self.paths.meals, &dir, ".meals-", &pyjson::dumps(&body))?;
         Ok(entry)
     }
@@ -440,7 +505,13 @@ impl App {
             return Err(SaveError::Bad("save too large".into()));
         }
         let _g = self.games_lock.lock().unwrap();
-        state::atomic_write_prefixed(&self.paths.games_save, &self.paths.here, ".games-save.", &blob).map_err(SaveError::Io)?;
+        state::atomic_write_prefixed(
+            &self.paths.games_save,
+            &self.paths.here,
+            ".games-save.",
+            &blob,
+        )
+        .map_err(SaveError::Io)?;
         Ok(json!({"ok": true, "bytes": blob.chars().count()}))
     }
 }
@@ -471,7 +542,9 @@ impl Meal {
 
 /// Non-hidden subdirectories of `dir`, in directory order (glob "*/").
 pub fn glob_dirs(dir: &Path) -> Vec<PathBuf> {
-    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
     rd.filter_map(|e| e.ok())
         .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
         .map(|e| e.path())
@@ -481,7 +554,9 @@ pub fn glob_dirs(dir: &Path) -> Vec<PathBuf> {
 
 /// Non-hidden entries of `dir` whose name ends with `suffix` (glob "*<suffix>").
 pub fn glob_files(dir: &Path, suffix: &str) -> Vec<PathBuf> {
-    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
     rd.filter_map(|e| e.ok())
         .filter(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
@@ -496,7 +571,15 @@ pub fn glob_files(dir: &Path, suffix: &str) -> Vec<PathBuf> {
 // --------------------------------------------------------------------------
 
 pub const KNOWN_THEMES: [&str; 4] = ["aurora", "midnight", "forest", "mono"];
-pub const KNOWN_CREATURE_PACKS: [&str; 7] = ["monsters", "pokemon", "pokemon3d", "aniimo", "village", "animals", "faces"];
+pub const KNOWN_CREATURE_PACKS: [&str; 7] = [
+    "monsters",
+    "pokemon",
+    "pokemon3d",
+    "aniimo",
+    "village",
+    "animals",
+    "faces",
+];
 pub const TRAINER_MAX: [i64; 9] = [6, 8, 8, 8, 8, 7, 5, 8, 4];
 pub const CHARACTER_MAX: [i64; 10] = [5, 7, 9, 9, 2, 5, 3, 1, 4, 1];
 /// Claude Cabs classes the phone may default to (HQ 3.15, config cabClass).
@@ -577,7 +660,13 @@ pub fn validate_config(raw: &Value, base: Option<&Obj>) -> Obj {
         }
     }
     if let Some(Value::String(tn)) = raw.get("trainerName") {
-        cfg.insert("trainerName".into(), Value::from(py::take_chars(&py::collapse_ws(&py::printable_only(tn)), 32)));
+        cfg.insert(
+            "trainerName".into(),
+            Value::from(py::take_chars(
+                &py::collapse_ws(&py::printable_only(tn)),
+                32,
+            )),
+        );
     }
     if let Some(ta) = raw.get("trainerAvatar") {
         match ta {
@@ -603,7 +692,11 @@ pub fn validate_config(raw: &Value, base: Option<&Obj>) -> Obj {
     }
     if let Some(Value::String(au)) = raw.get("arenaUrl") {
         let au = py::strip(au);
-        let v = if au.starts_with("http://") || au.starts_with("https://") { py::take_chars(au, 256) } else { String::new() };
+        let v = if au.starts_with("http://") || au.starts_with("https://") {
+            py::take_chars(au, 256)
+        } else {
+            String::new()
+        };
         cfg.insert("arenaUrl".into(), Value::from(v));
     }
     if let Some(Value::String(mc)) = raw.get("musicCookies") {
@@ -611,14 +704,27 @@ pub fn validate_config(raw: &Value, base: Option<&Obj>) -> Obj {
             cfg.insert("musicCookies".into(), Value::from(mc.clone()));
         }
     }
-    for key in ["arenaEnabled", "arenaShareCost", "arenaAccountBoard", "creatureFatigue", "musicShare"] {
+    for key in [
+        "arenaEnabled",
+        "arenaShareCost",
+        "arenaAccountBoard",
+        "creatureFatigue",
+        "musicShare",
+    ] {
         if let Some(v) = raw.get(key) {
             cfg.insert(key.into(), Value::Bool(py::truthy(v)));
         }
     }
     // HQ 3.15 phone: nearby chat and calls are opt-in egress; transit announcements, the clock and the cab
     // class are local. Only real booleans (and a known class) change them, as workSignals.
-    for key in ["workSignals", "workSignalsPRs", "phoneNear", "phoneCalls", "transitVoice", "phoneClock24"] {
+    for key in [
+        "workSignals",
+        "workSignalsPRs",
+        "phoneNear",
+        "phoneCalls",
+        "transitVoice",
+        "phoneClock24",
+    ] {
         if let Some(Value::Bool(b)) = raw.get(key) {
             cfg.insert(key.into(), Value::Bool(*b));
         }
@@ -710,62 +816,148 @@ mod tests {
     #[test]
     fn allowlists_and_ranges() {
         let c = v(json!({"theme": "forest", "creaturePack": "animals"}));
-        assert_eq!((c["theme"].as_str(), c["creaturePack"].as_str()), (Some("forest"), Some("animals")));
+        assert_eq!(
+            (c["theme"].as_str(), c["creaturePack"].as_str()),
+            (Some("forest"), Some("animals"))
+        );
         let c = v(json!({"theme": "neon", "creaturePack": "dragons"}));
-        assert_eq!((c["theme"].as_str(), c["creaturePack"].as_str()), (Some("aurora"), Some("pokemon3d")));
+        assert_eq!(
+            (c["theme"].as_str(), c["creaturePack"].as_str()),
+            (Some("aurora"), Some("pokemon3d"))
+        );
         let c = v(json!({"refreshMs": 999, "stuckMinutes": 999, "dailyBudgetUSD": -5}));
-        assert_eq!((c["refreshMs"].clone(), c["stuckMinutes"].clone(), c["dailyBudgetUSD"].clone()), (json!(5000), json!(15), json!(0)));
+        assert_eq!(
+            (
+                c["refreshMs"].clone(),
+                c["stuckMinutes"].clone(),
+                c["dailyBudgetUSD"].clone()
+            ),
+            (json!(5000), json!(15), json!(0))
+        );
         let c = v(json!({"refreshMs": 3000, "stuckMinutes": 30, "dailyBudgetUSD": 12.5}));
-        assert_eq!((c["refreshMs"].clone(), c["stuckMinutes"].clone(), c["dailyBudgetUSD"].clone()), (json!(3000), json!(30), json!(12.5)));
-        assert_eq!(pyjson::dumps(&v(json!({"dailyBudgetUSD": 25}))["dailyBudgetUSD"]), "25.0");
+        assert_eq!(
+            (
+                c["refreshMs"].clone(),
+                c["stuckMinutes"].clone(),
+                c["dailyBudgetUSD"].clone()
+            ),
+            (json!(3000), json!(30), json!(12.5))
+        );
+        assert_eq!(
+            pyjson::dumps(&v(json!({"dailyBudgetUSD": 25}))["dailyBudgetUSD"]),
+            "25.0"
+        );
     }
 
     #[test]
     fn trainer_name_and_urls() {
-        assert_eq!(v(json!({"trainerName": "  Swastik \u{7}  Tripathi  "}))["trainerName"], "Swastik Tripathi");
-        assert_eq!(v(json!({"trainerName": "x".repeat(50)}))["trainerName"].as_str().unwrap().len(), 32);
+        assert_eq!(
+            v(json!({"trainerName": "  Swastik \u{7}  Tripathi  "}))["trainerName"],
+            "Swastik Tripathi"
+        );
+        assert_eq!(
+            v(json!({"trainerName": "x".repeat(50)}))["trainerName"]
+                .as_str()
+                .unwrap()
+                .len(),
+            32
+        );
         assert_eq!(v(json!({"trainerName": 123}))["trainerName"], "");
-        assert_eq!(v(json!({"arenaUrl": "https://example.fly.dev"}))["arenaUrl"], "https://example.fly.dev");
+        assert_eq!(
+            v(json!({"arenaUrl": "https://example.fly.dev"}))["arenaUrl"],
+            "https://example.fly.dev"
+        );
         assert_eq!(v(json!({"arenaUrl": "file:///etc/passwd"}))["arenaUrl"], "");
-        assert_eq!(v(json!({"arenaUrl": "javascript:alert(1)"}))["arenaUrl"], "");
+        assert_eq!(
+            v(json!({"arenaUrl": "javascript:alert(1)"}))["arenaUrl"],
+            ""
+        );
     }
 
     #[test]
     fn flags() {
         let c = v(json!({"arenaEnabled": 1, "arenaShareCost": ""}));
-        assert_eq!((c["arenaEnabled"].clone(), c["arenaShareCost"].clone()), (json!(true), json!(false)));
+        assert_eq!(
+            (c["arenaEnabled"].clone(), c["arenaShareCost"].clone()),
+            (json!(true), json!(false))
+        );
         assert_eq!(v(json!({"creatureFatigue": 0}))["creatureFatigue"], false);
         let mut off = default_config();
         off.insert("creatureFatigue".into(), json!(false));
-        assert_eq!(validate_config(&json!({"theme": "forest"}), Some(&off))["creatureFatigue"], false);
-        assert_eq!(validate_config(&json!({"creatureFatigue": "yes"}), Some(&off))["creatureFatigue"], true);
+        assert_eq!(
+            validate_config(&json!({"theme": "forest"}), Some(&off))["creatureFatigue"],
+            false
+        );
+        assert_eq!(
+            validate_config(&json!({"creatureFatigue": "yes"}), Some(&off))["creatureFatigue"],
+            true
+        );
         assert!(!v(json!({"fatigue": true})).contains_key("fatigue"));
         let on = v(json!({"workSignals": true, "workSignalsPRs": true}));
-        let kept = validate_config(&json!({"workSignals": "yes", "workSignalsPRs": 1}), Some(&on));
-        assert_eq!((kept["workSignals"].clone(), kept["workSignalsPRs"].clone()), (json!(true), json!(true)));
+        let kept = validate_config(
+            &json!({"workSignals": "yes", "workSignalsPRs": 1}),
+            Some(&on),
+        );
+        assert_eq!(
+            (kept["workSignals"].clone(), kept["workSignalsPRs"].clone()),
+            (json!(true), json!(true))
+        );
         assert_eq!(v(json!({"musicShare": false}))["musicShare"], false);
         assert_eq!(v(json!({"musicShare": "yes"}))["musicShare"], true);
-        assert_eq!(v(json!({"musicCookies": "safari"}))["musicCookies"], "safari");
+        assert_eq!(
+            v(json!({"musicCookies": "safari"}))["musicCookies"],
+            "safari"
+        );
         assert_eq!(v(json!({"musicCookies": "evil"}))["musicCookies"], "");
     }
 
     #[test]
     fn phone_settings() {
         let d = default_config();
-        for (k, want) in [("phoneNear", false), ("phoneCalls", false), ("transitVoice", true), ("phoneClock24", false)] {
+        for (k, want) in [
+            ("phoneNear", false),
+            ("phoneCalls", false),
+            ("transitVoice", true),
+            ("phoneClock24", false),
+        ] {
             assert_eq!(d[k], json!(want), "{k} default");
         }
         assert_eq!(d["cabClass"], "go");
-        let on = v(json!({"phoneNear": true, "phoneCalls": true, "transitVoice": false, "phoneClock24": true, "cabClass": "lux"}));
-        assert_eq!((on["phoneNear"].clone(), on["phoneCalls"].clone(), on["transitVoice"].clone(), on["phoneClock24"].clone()),
-                   (json!(true), json!(true), json!(false), json!(true)));
+        let on = v(
+            json!({"phoneNear": true, "phoneCalls": true, "transitVoice": false, "phoneClock24": true, "cabClass": "lux"}),
+        );
+        assert_eq!(
+            (
+                on["phoneNear"].clone(),
+                on["phoneCalls"].clone(),
+                on["transitVoice"].clone(),
+                on["phoneClock24"].clone()
+            ),
+            (json!(true), json!(true), json!(false), json!(true))
+        );
         assert_eq!(on["cabClass"], "lux");
         // only real booleans and a known class change them; anything else keeps what was there
-        let kept = validate_config(&json!({"phoneNear": "yes", "phoneCalls": 0, "transitVoice": null, "phoneClock24": 1, "cabClass": "heli"}), Some(&on));
-        assert_eq!((kept["phoneNear"].clone(), kept["phoneCalls"].clone(), kept["transitVoice"].clone(), kept["phoneClock24"].clone()),
-                   (json!(true), json!(true), json!(false), json!(true)));
+        let kept = validate_config(
+            &json!({"phoneNear": "yes", "phoneCalls": 0, "transitVoice": null, "phoneClock24": 1, "cabClass": "heli"}),
+            Some(&on),
+        );
+        assert_eq!(
+            (
+                kept["phoneNear"].clone(),
+                kept["phoneCalls"].clone(),
+                kept["transitVoice"].clone(),
+                kept["phoneClock24"].clone()
+            ),
+            (json!(true), json!(true), json!(false), json!(true))
+        );
         assert_eq!(kept["cabClass"], "lux");
-        for bad in [json!("GO"), json!("go "), json!(1), json!(null), json!("../x")] {
+        for bad in [
+            json!("GO"),
+            json!("go "),
+            json!(1),
+            json!(null),
+            json!("../x"),
+        ] {
             assert_eq!(v(json!({"cabClass": bad}))["cabClass"], "go", "{bad}");
         }
         for c in CAB_CLASSES {
@@ -776,11 +968,20 @@ mod tests {
     #[test]
     fn character_and_trainer_specs() {
         assert!(default_config()["character"].is_null());
-        assert_eq!(v(json!({"character": [5, 7, 9, 9, 2, 5, 3, 1, 4, 1]}))["character"], json!([5, 7, 9, 9, 2, 5, 3, 1, 4, 1]));
-        assert_eq!(v(json!({"character": [6, -1, "x"]}))["character"], json!([0, 7, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(
+            v(json!({"character": [5, 7, 9, 9, 2, 5, 3, 1, 4, 1]}))["character"],
+            json!([5, 7, 9, 9, 2, 5, 3, 1, 4, 1])
+        );
+        assert_eq!(
+            v(json!({"character": [6, -1, "x"]}))["character"],
+            json!([0, 7, 0, 0, 0, 0, 0, 0, 0, 0])
+        );
         assert!(v(json!({"character": null}))["character"].is_null());
         assert!(v(json!({"character": "evil"}))["character"].is_null());
-        assert_eq!(v(json!({"trainerAvatar": [7, -1]}))["trainerAvatar"], json!([0, 8, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(
+            v(json!({"trainerAvatar": [7, -1]}))["trainerAvatar"],
+            json!([0, 8, 0, 0, 0, 0, 0, 0, 0])
+        );
     }
 
     #[test]
@@ -803,8 +1004,13 @@ mod tests {
 
     #[test]
     fn meta_entries_are_cleaned() {
-        let e = clean_meta_entry(&json!({"pinned": 1, "tags": [" a ", 5, "", "b".repeat(30)], "note": 7, "name": "  x  "}));
-        assert_eq!(e, json!({"pinned": true, "tags": ["a", "b".repeat(24)], "note": "", "name": "x"}));
+        let e = clean_meta_entry(
+            &json!({"pinned": 1, "tags": [" a ", 5, "", "b".repeat(30)], "note": 7, "name": "  x  "}),
+        );
+        assert_eq!(
+            e,
+            json!({"pinned": true, "tags": ["a", "b".repeat(24)], "note": "", "name": "x"})
+        );
     }
 
     const SID_A: &str = "11111111-1111-4111-8111-111111111111";
@@ -818,22 +1024,43 @@ mod tests {
     #[test]
     fn meals_are_idempotent_private_and_bounded() {
         let (d, app) = app();
-        let first = app.record_meal(&rid(1), SID_A, "berry", NOW - 10.0, Some(NOW)).unwrap();
-        let again = app.record_meal(&rid(1), SID_B, "bento", NOW - 5.0, Some(NOW)).unwrap();
+        let first = app
+            .record_meal(&rid(1), SID_A, "berry", NOW - 10.0, Some(NOW))
+            .unwrap();
+        let again = app
+            .record_meal(&rid(1), SID_B, "bento", NOW - 5.0, Some(NOW))
+            .unwrap();
         assert_eq!(first, again);
-        assert_eq!(app.load_meals(Some(NOW)).get(SID_A).unwrap(), &vec![(NOW - 10.0, "berry".to_string())]);
+        assert_eq!(
+            app.load_meals(Some(NOW)).get(SID_A).unwrap(),
+            &vec![(NOW - 10.0, "berry".to_string())]
+        );
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(&app.paths.meals).unwrap().permissions().mode() & 0o777, 0o600);
-        let names: Vec<String> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(
+            fs::metadata(&app.paths.meals).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let names: Vec<String> = fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
         assert!(!names.iter().any(|n| n.starts_with(".meals-")));
         // corrupt / invalid entries read as empty
         fs::write(&app.paths.meals, "{not json").unwrap();
         assert!(app.load_meals(Some(NOW)).is_empty());
-        let good = json!({"requestId": rid(1), "sessionId": SID_A, "kind": "berry", "at": NOW - 60.0});
+        let good =
+            json!({"requestId": rid(1), "sessionId": SID_A, "kind": "berry", "at": NOW - 60.0});
         let mut bad = vec![good.clone()];
-        for (k, val) in [("sessionId", json!("../etc/passwd")), ("sessionId", json!(format!("{}\n", SID_A))), ("kind", json!("pizza")),
-                         ("requestId", json!("short")), ("at", json!(true)), ("at", json!("1790000000")),
-                         ("at", json!(NOW - MEALS_KEEP_SECS - 1.0)), ("at", json!(NOW + 61.0))] {
+        for (k, val) in [
+            ("sessionId", json!("../etc/passwd")),
+            ("sessionId", json!(format!("{}\n", SID_A))),
+            ("kind", json!("pizza")),
+            ("requestId", json!("short")),
+            ("at", json!(true)),
+            ("at", json!("1790000000")),
+            ("at", json!(NOW - MEALS_KEEP_SECS - 1.0)),
+            ("at", json!(NOW + 61.0)),
+        ] {
             let mut x = good.clone();
             x[k] = val;
             if k != "requestId" {
@@ -841,8 +1068,15 @@ mod tests {
             }
             bad.push(x);
         }
-        fs::write(&app.paths.meals, pyjson::dumps(&json!({"version": 1, "meals": bad}))).unwrap();
-        assert_eq!(app.load_meals(Some(NOW)).get(SID_A).unwrap(), &vec![(NOW - 60.0, "berry".to_string())]);
+        fs::write(
+            &app.paths.meals,
+            pyjson::dumps(&json!({"version": 1, "meals": bad})),
+        )
+        .unwrap();
+        assert_eq!(
+            app.load_meals(Some(NOW)).get(SID_A).unwrap(),
+            &vec![(NOW - 60.0, "berry".to_string())]
+        );
         assert_eq!(app.load_meals(Some(NOW)).len(), 1);
     }
 
@@ -851,8 +1085,13 @@ mod tests {
         let (_d, app) = app();
         let old = NOW - fatigue::WINDOW_SECS - 1000.0;
         let entries: Vec<Value> = (0..30).map(|i| json!({"requestId": rid(i), "sessionId": SID_A, "kind": "berry", "at": old + i as f64})).collect();
-        fs::write(&app.paths.meals, pyjson::dumps(&json!({"version": 1, "meals": entries}))).unwrap();
-        app.record_meal(&rid(99), SID_A, "bento", NOW, Some(NOW)).unwrap();
+        fs::write(
+            &app.paths.meals,
+            pyjson::dumps(&json!({"version": 1, "meals": entries})),
+        )
+        .unwrap();
+        app.record_meal(&rid(99), SID_A, "bento", NOW, Some(NOW))
+            .unwrap();
         let meals = app.load_meals(Some(NOW))[SID_A].clone();
         assert_eq!(meals.len(), MEALS_PER_SID);
         assert_eq!(meals.last().unwrap(), &(NOW, "bento".to_string()));
@@ -860,17 +1099,29 @@ mod tests {
 
         let lo = NOW - fatigue::WINDOW_SECS;
         let mut entries: Vec<Value> = (0..5).map(|i| json!({"requestId": rid(i), "sessionId": SID_A, "kind": "berry", "at": lo - 5000.0 + i as f64})).collect();
-        entries.push(json!({"requestId": rid(10), "sessionId": SID_A, "kind": "tonic", "at": lo + 60.0}));
+        entries.push(
+            json!({"requestId": rid(10), "sessionId": SID_A, "kind": "tonic", "at": lo + 60.0}),
+        );
         entries.extend((0..MEALS_PER_SID + 4).map(|i| json!({"requestId": rid(20 + i), "sessionId": SID_A, "kind": "berry", "at": lo + 120.0 + i as f64})));
-        fs::write(&app.paths.meals, pyjson::dumps(&json!({"version": 1, "meals": entries}))).unwrap();
-        app.record_meal(&rid(99), SID_A, "berry", NOW, Some(NOW)).unwrap();
+        fs::write(
+            &app.paths.meals,
+            pyjson::dumps(&json!({"version": 1, "meals": entries})),
+        )
+        .unwrap();
+        app.record_meal(&rid(99), SID_A, "berry", NOW, Some(NOW))
+            .unwrap();
         let meals = app.load_meals(Some(NOW))[SID_A].clone();
         assert_eq!(meals.len(), MEALS_PER_SID + 6);
         assert_eq!(meals[0], (lo + 60.0, "tonic".to_string()));
 
         let many: Vec<Value> = (0..600).map(|i| json!({"requestId": rid(1000 + i), "sessionId": format!("{:08}-0000-4000-8000-000000000000", i), "kind": "berry", "at": NOW - 600.0 + i as f64})).collect();
-        fs::write(&app.paths.meals, pyjson::dumps(&json!({"version": 1, "meals": many}))).unwrap();
-        app.record_meal(&rid(5000), SID_B, "tonic", NOW, Some(NOW)).unwrap();
+        fs::write(
+            &app.paths.meals,
+            pyjson::dumps(&json!({"version": 1, "meals": many})),
+        )
+        .unwrap();
+        app.record_meal(&rid(5000), SID_B, "tonic", NOW, Some(NOW))
+            .unwrap();
         let raw = state::load_json_plain(&app.paths.meals).unwrap();
         let data = raw["meals"].as_array().unwrap();
         assert_eq!(data.len(), MEALS_MAX);
@@ -907,7 +1158,11 @@ mod tests {
     fn find_transcript_validates_ids() {
         let (_d, app) = app();
         let sid = "22222222-2222-4222-8222-222222222222";
-        let p = app.paths.projects_dir.join("proj").join(format!("{}.jsonl", sid));
+        let p = app
+            .paths
+            .projects_dir
+            .join("proj")
+            .join(format!("{}.jsonl", sid));
         write_jsonl(&p, &[json!({"type": "user"})]);
         assert_eq!(app.find_transcript(sid), Some(p));
         for bad in ["*", "2222*", "../proj/x", &format!("{}\n", sid), ""] {

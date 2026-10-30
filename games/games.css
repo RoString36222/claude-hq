@@ -24,6 +24,30 @@
 .vg-stage-head{display:flex;align-items:center;gap:12px}
 .vg-stage-head h3{margin:0;font-size:16px}
 .vg-body{display:flex;flex-direction:column;gap:10px}
+/* SkyStrike: city only — no chrome buttons, the 3D stage fills the view */
+html.vg-sky-plain .vg-stage{padding:0;border:0;border-radius:0;gap:0;height:calc(100vh - 86px);min-height:360px}
+html.vg-sky-plain .vg-stage-head{display:none}
+html.vg-sky-plain .vg-body{flex:1;min-height:0;gap:0}
+html.vg-sky-plain .vg-wait,
+html.vg-sky-plain .hqhud-gear,
+html.vg-sky-plain .hqhud-settings,
+html.vg-sky-plain .hqnavui-panel,
+html.vg-sky-plain .hqnavui-banner,
+html.vg-sky-plain .hqnavui-arrived,
+html.vg-sky-plain .hq3d-minimap-bar,
+html.vg-sky-plain .hqhud-speed,
+html.vg-sky-plain .hq3d-talk,
+html.vg-sky-plain .hq3d-ride,
+html.vg-sky-plain .hq3d-skate,
+html.vg-sky-plain .hq3d-home,
+html.vg-sky-plain .hq3d-stats,
+html.vg-sky-plain .vg-watch{display:none !important}
+.vg-sky-stage{position:relative;width:100%;flex:1;min-height:360px;height:100%;
+  border:0;overflow:hidden;background:var(--bg)}
+.vg-sky-stage .hq3d-canvas{position:absolute;inset:0;width:100%;height:100%}
+.vg-sky-note{position:absolute;left:12px;bottom:12px;z-index:6;margin:0;pointer-events:none;
+  font-size:11px;color:var(--muted);background:color-mix(in srgb,var(--panel) 80%,transparent);
+  padding:4px 8px;border-radius:999px}
 .vg-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .vg-muted{color:var(--muted);font-size:13px}
 .vg-msg{margin:0;font-weight:600;min-height:1.3em}

@@ -3,6 +3,96 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.36.7 — SkyStrike: wall crawl looks like a crawl, not flying.**
+  - **Upright spider cling.** The wall pose used to tip the root ~40° nose-down (a dive silhouette), so crawling from
+    the ground read as floating / swimming above the surface. Crawl is now an upright crouch on the face: chest into
+    the wall, hips dropped, head up the climb, contralateral limb plant (idle = static spider crouch; Shift runs
+    bigger/faster). Body pull-in is tighter (~0.20 m) so hands sit on the facade.
+  - **Privacy / egress:** no new network calls — pose is local only. **Third-party assets:** none.
+
+- **3.36.6 — SkyStrike: swing into a wall stays a swing.**
+  - **Crawl is ground-only.** Swinging, diving, or falling into a face used to start a wall crawl mid-air — that clung
+    and broke the swing. Contact in the air now only stops you (bodyBlock); a crawl starts when you walk into a
+    building from the ground. Idle cling/slide still works after a ground grab; Space still kicks off.
+  - **Privacy / egress:** no new network calls — collision is local only. **Third-party assets:** none.
+
+- **3.36.5 — SkyStrike: stop floating when you walk past a building.**
+  - **No more auto-cling.** Hopping or falling beside a facade used to latch a wall grip with no keys and slide you
+    around the tower. A grip now needs intent: walk into the face with a direction key from the ground, or already
+    be inside the mass. Idle after a deliberate grab still clings and slides down.
+  - **Privacy / egress:** no new network calls — collision is local only. **Third-party assets:** none.
+
+- **3.36.4 — SkyStrike: oriented city lots are solid again.**
+  - **No more sailing through rotated building corners.** Walk collision used each lot's oriented footprint, but the air
+    solids used the axis-aligned lot rect — the visual corners stuck out with nothing to hit. Air solids now use the same
+    footprint (and bodyBlock stops on the oriented face, not the fat AABB).
+  - **Privacy / egress:** no new network calls — collision is local geometry only. **Third-party assets:** none.
+
+- **3.36.3 — SkyStrike: no more freeze mid-air, no more through the building.**
+  - **Wall cling no longer freezes you.** With no keys on a face the body used to zero velocity forever —
+    stuck in the dive silhouette half-inside the facade, unable to swing. Idle now slowly slides down the
+    face; a fresh Shift press soft-pushes off and fires a web; Space still jumps away.
+  - **Intersecting a tower grabs and pushes out.** A stalled swing or a dive that ends inside / against a
+    face plants you on the contact plane and starts the crawl pose (dive cleared instantly), instead of
+    hanging in the air.
+  - **Privacy / egress:** no new network calls — collision and the pose are local only. **Third-party assets:** none.
+
+- **3.36.2 — SkyStrike sticks, climbs, and looks the part.**
+  - **No more mid-air wall latch.** The grip used to grab a tower face from 6 m away (it returned a "lead" face even when
+    nothing was in reach), drop it the next frame, and flicker wall↔fall forever — that is why crawl and wall-run felt
+    glitchy and why a dive into a building never stuck. The grip now only latches a face that is actually within reach,
+    and a jump-away cooldown is honoured by the fall collision too.
+  - **Paper-thin facade panes no longer steal the crawl.** Window decorations in the solid list passed a height check and
+    confused the leave-probe; a crawlable wall must have real thickness. Diving into a stepped tower (podium + storey)
+    sticks, climbs past the cornice onto the taller face, and never enters the mass.
+  - **The hero matches the concept sheet** — matte charcoal suit, larger angular neon lenses, draped hood, sharp strike
+    chest emblem with a soft glow rim, neon circuitry on the ribs.
+  - **Privacy / egress:** no new network calls — collision and the pose are local only. **Third-party assets:** none.
+
+- **3.36.1 — Crawl the wall: hands and feet on the face, not floating beside it.**
+  - **Walk into a building and climb it.** The ground grip used the camera heading, so a chase camera that had
+    drifted sideways made W mean "along the wall" instead of "into it" and the hero stood stiff beside the
+    building. The grip now uses the body's own facing — the direction you walked in.
+  - **Keys on a face are wall-local.** W climbs up, S climbs down, A / D crawl along it, wherever the camera is.
+    A sideways crawl used to slide down the face because gravity bled on every key press; it now only bleeds
+    against an actual climb.
+  - **A body near a wall grabs it.** Free fall beside a face with keys held into it, and a web zip coming to rest
+    1.25 m short of its anchor, both used to hover off the surface — the "floating near them" bug. The grip finds
+    the face from further away and draws the body onto it at contact distance. Walking past a wall on the ground
+    still does not snap onto it.
+  - **A jump-away stays away.** Space off a wall no longer re-grabs the face on the next frame.
+  - **You climb the face, you do not fly along it.** The grip turns the body to face the wall (`yaw =
+    atan2(-nx, -nz)`) and holds it at contact distance, so the chase camera settles behind you and W climbs.
+    The hold measures the gap ALONG the grip's outward normal (never the nearest of four faces — on a wide
+    podium that wrapped round to the FAR face and pulled the body across the building) and prefers the face
+    that still rises above the head, so the crawl is on the tower, not a low panel beside it.
+  - **The grip does not drop you the frame it starts.** The old release probe only reached 0.44 m into the
+    wall, so a grip that started from the zip's 1.25 m stand-off — or one still pulling onto the face — never
+    found the surface and dropped the same frame ("still floating in air"). It now keeps the grip while the
+    gap along the normal is under 2.2 m (covering the stand-off and the pull-in) and lets go only when the body
+    is genuinely off the side (a 2 m yank releases on the first frame).
+  - **A ledge mount never plants you inside a building.** At a cornice the crawl steps up onto the low roof and
+    onto the taller face behind it. The step lands OUTSIDE that face, at contact distance along the outward
+    normal — the old `coord - n*0.44` put the body inside the box, which is how it crossed a tower and came out
+    the other side. One mount per grip; sweeps sample every 1.2 m so a fast move cannot skip a thin solid.
+  - **The pose is a crawl, not a hover.** Body plastered to the face, head up, hands and feet stepping in a
+    diagonal crawl (one arm and the opposite leg reach, then the other pair; cadence 4.6 crawl / 8.5 run).
+    The old all-arms-up balance read as flying beside the building.
+  - **Space is the ground jump, not the climb.** Contact + W alone starts the crawl; you do not press Space
+    to begin climbing.
+  - **A roof is ground, not a hover.** The city's `groundY` is street level, so a body standing on a tower
+    roof at y=34 was never "on ground" — the air state kept it flying in the dive silhouette and the crest
+    flickered wall↔fall as it slid along the top. A body resting on a solid top the city's groundY does not
+    know about is now standing there (`roofRest`): the pose is the walk, not the dive, and the feet stay on
+    the roof instead of being snapped down to the street. Proven at runtime: standing on a 34 m roof is
+    `mode: ground` with 0 flips over 120 frames; the 20 m crest walk-off is 1 flip and `mode: ground`; the
+    podium seam (20 m tower on a 6 m podium) is 1 flip and `mode: ground`.
+  - **A crest is a walk-off, not a flicker.** When a crawl tops out and no taller face stands in front, the
+    body steps onto the roof and drops the grip — one top-out per roofline, not the 176-flip bundle. The
+    walk owns the body again the same frame.
+  - No new network calls — collision, wall grips and the climb are local geometry and local physics only. No
+    third-party assets.
+
 - **3.36.0 — The city rebuilt: the Metro, the skyline and the parks.**
   - **Metro:**
     - No more teleports at stations: walk down the stairs, or ride the lift between the street and the hall.
@@ -23,6 +113,25 @@ recent releases.
     - Trees in the suburbs, campuses, civic and old-town land, and on the open ground between roads.
   - **Travel:** fast travel is gone from the travel menu. Every trip crosses the sea.
   - The new worlds (the park ground, tunnel footways and the skyline) need the Arena redeployed.
+- **3.35.1 — Jump off the HQ roof again, and a wall that runs instead of shakes.**
+  - **Jump works on the HQ roof.** The roof deck's solid top sat 0.35 m above its walk height, so every resting
+    body was inside the slab. The collision then pushed it down through the roof (the nearest exit from inside a
+    thin slab is the underside) and killed the jump's upward velocity against that bogus downward normal. The
+    deck solid's top is now the walk height, and a body standing on a thin floor is always pushed out the top,
+    never down through it. Landing on the deck stops on its top face.
+  - **Space always jumps.** The jump runs before the ground wall-grip handoff, so pressing Space while walking
+    into a building leaves the ground instead of starting a grip and eating the press. A jump's first frame is
+    never clipped by the floor it just left.
+  - **Space escapes a wall, it does not zip into it.** Free-fall Space near a face jumps away into free fall
+    (then W dives or Shift swings). Space while already gripped does the same. A wall genuinely in front at hand
+    height still fires the web zip — the escape rule only applies to a face you are on or pressed against
+    (closer than 2.4 m).
+  - **Wall crawl and run move smoothly.** The old suction pushed into the face every frame and `bodyBlock` pushed
+    straight back out — a ~1 cm ping-pong that read as stiff and shaking (measured: 26 of 30 frames reversed in
+    x). The grip now never adds speed into the face and only bleeds speed carrying the body off it.
+  - **Privacy / egress:** no new network calls — collision, wall grips and the jump are local geometry and local
+    physics only. No third-party assets.
+
 - **3.35.0 — City Gen v4 final: sound and settings, HQ spacing and tram desire lines.**
   - **Sound and settings:**
     - The **Ambient sounds** slider in Settings runs from 0 to 100% (0% is off). It scales thunder, rain,

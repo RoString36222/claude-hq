@@ -53,6 +53,10 @@ var BOGIE_R = 0.6;          // its footprint radius (leg and wheels)
 var RATE = 0.6;             // 1/s: bridge easing
 var DOOR = [1.95, 2.5, 14.6];   // hqaircraft's forward left door: model x (left), sill y, z
 var NIGHT_PX = 5;
+// the security gate (a planned airport's airside entrance): its boom lifts for a vehicle heading for it within
+// BOOM_NEAR m or within BOOM_HOLD m of it, and comes down BOOM_AFTER s after the last has gone; it swings in BOOM_MOVE s
+// (faster when a vehicle would otherwise reach it first), and stops a vehicle while it is below BOOM_PASS of the way up
+var BOOM_NEAR = 30, BOOM_HOLD = 9, BOOM_AFTER = 2.5, BOOM_MOVE = 2.2, BOOM_FAST = 8, BOOM_PASS = 0.6, BOOM_H = 1.0;
 
 /* ---------- the site frame ---------- */
 function frameOf(L){
@@ -193,7 +197,49 @@ function plan(L){
   [cp.u0 + 0.4, cp.u0 + 6, cp.u0 + 25, cp.u0 + 44, cp.u1 - 0.4].forEach(function(cu){
     for(var cv = 0; cv < 8; cv++){ var vv = cp.v0 + 0.4 + (cp.v1 - cp.v0 - 0.8)*cv/7; blk("carpark", cu - 0.35, cu + 0.35, vv - 0.35, vv + 0.35, ys - 1, ys + 3.2); }
   });
+  // ---- a planned airport's security gate on its airside entrance (L.airside): the boom across the road just short of
+  // the platform's land edge (pivot a on the guard post's side, its rest b), its posts, and the guard post beside the
+  // pivot, its floor at the road's level y on a plinth from the land (pg)
+  var AS = L.airside;
+  if(AS && AS.gate && AS.gate.a && AS.gate.b && AS.post){
+    var ga = toF(F, AS.gate.a[0], AS.gate.a[1]), gb = toF(F, AS.gate.b[0], AS.gate.b[1]), gp = rectOf(F, AS.post), gy = +AS.gate.y || Ly;
+    P.checkpoint = {a: ga, b: gb, y: gy, ya: AS.gate.ga != null ? +AS.gate.ga : gy - 0.3, yb: AS.gate.gb != null ? +AS.gate.gb : gy - 0.3, post: gp,
+                    pg: AS.gate.pg != null ? +AS.gate.pg : gy - 0.3, c: [(AS.gate.a[0] + AS.gate.b[0])/2, (AS.gate.a[1] + AS.gate.b[1])/2]};
+    blk("guard", gp.u0, gp.u1, gp.v0, gp.v1, Math.min(gy, P.checkpoint.pg) - 1, gy + 3.2);
+    circ("guard", ga[0], ga[1], 0.35, Math.min(gy, P.checkpoint.ya) - 1, gy + 1.4); circ("guard", gb[0], gb[1], 0.2, Math.min(gy, P.checkpoint.yb) - 1, gy + 1.1);
+  }
   return P;
+}
+
+// the boom's motion (pure): st {k: 0 down .. 1 up, hold}; cars [{x, z, yaw, speed}] the vehicles about (world m);
+// snap: Calm or reduced motion, the boom only snaps open and shut
+function boomStep(st, P, dt, cars, snap){
+  st = st || {k: 0, hold: 0};
+  var K = P && P.checkpoint; if(!K) return st;
+  dt = Math.max(0, Math.min(1, +dt || 0));
+  var need = false, fast = 1;
+  (cars || []).forEach(function(s){
+    if(!s || !isFinite(+s.x) || !isFinite(+s.z)) return;
+    var dx = K.c[0] - s.x, dz = K.c[1] - s.z, d = Math.hypot(dx, dz), v = Math.abs(+s.speed || 0);
+    var toward = Math.sin(+s.yaw || 0)*dx + Math.cos(+s.yaw || 0)*dz > 0;
+    if(d < BOOM_HOLD) need = true;
+    if(d < BOOM_NEAR && toward && v > 0.5){
+      need = true;
+      var eta = Math.max(0.2, (d - 3)/v), left = (1 - st.k)*BOOM_MOVE;
+      if(left > eta) fast = Math.max(fast, Math.min(BOOM_FAST, left/eta));
+    }
+  });
+  st.hold = need ? BOOM_AFTER : Math.max(0, (+st.hold || 0) - dt);
+  var goal = need || st.hold > 0 ? 1 : 0, k = clamp01(st.k);
+  st.k = snap ? goal : goal ? Math.min(1, k + dt*fast/BOOM_MOVE) : Math.max(0, k - dt/BOOM_MOVE);
+  return st;
+}
+// is (x, z) on the boom while it is down (or not yet up far enough to pass under)?
+function boomAt(P, st, x, z){
+  var K = P && P.checkpoint; if(!K || (st && clamp01(st.k) >= BOOM_PASS)) return false;
+  var q = toF(P.F, +x || 0, +z || 0), a = K.a, b = K.b, du = b[0] - a[0], dv = b[1] - a[1], l2 = du*du + dv*dv;
+  var t = l2 > 0 ? Math.max(0, Math.min(1, ((q[0] - a[0])*du + (q[1] - a[1])*dv)/l2)) : 0;
+  return Math.hypot(q[0] - a[0] - du*t, q[1] - a[1] - dv*t) <= 0.4;
 }
 
 function floorY(f, u){
@@ -339,6 +385,7 @@ function create(c, L, o){
   function cell(key, text, fg, bg, px){ if(cellOf[key] != null) return; cellOf[key] = CELLS.length; CELLS.push({text: String(text), fg: fg, bg: bg, px: px}); }
   P.bridges.forEach(function(b){ cell("vdgs:" + b.stand, b.stand, "#ffd23a", "#05070a", 46); cell("gate:" + b.stand, "GATE " + b.stand, "#ffffff", "#123a6b", 30); });
   cell("gate:bus", "GATES 21-23", "#ffffff", "#123a6b", 20); cell("fire", "FIRE STATION", "#ffffff", "#9e1f1f", 18);
+  if(P.checkpoint) cell("security", "SECURITY", "#ffffff", "#1d2b3a", 26);
   cell("park", "P  PARKING", "#ffffff", "#1f4f9e", 22); cell("hangar", "HANGAR", "#1b1f24", "#f2c230", 28); cell("fuel", "FUEL", "#ffffff", "#2e7d4a", 30);
   var atlas = c.canvasTex(512, 512, function(gx){
     CELLS.forEach(function(e, i){
@@ -637,6 +684,43 @@ function create(c, L, o){
     lampPts.push([u2, lv[3] + 5, v2]);
   });
 
+  /* ---- the security gate (P.checkpoint): the guard post (a booth glazed all round, its roof, a lamp over its door and
+     a sign to the road), the boom's posts (its pivot's drive box with a red and a green lamp) and the boom ---- */
+  var CK = P.checkpoint, boomLift = null, boomRed = null, boomGreen = null, boomSt = {k: 0, hold: 0};
+  if(CK){
+    var gp = CK.post, gv = (gp.v0 + gp.v1)/2, gw = 0.12, py = CK.y;
+    fbox(gp.u0, gp.u1, gp.v0, gp.v1, Math.min(CK.pg, py) - 0.3, py + 0.25, concrete);              // its plinth, up from the land
+    fbox(gp.u0 + 0.15, gp.u1 - 0.15, gp.v0 + 0.15, gp.v1 - 0.15, py + 0.25, py + 1.05, white);   // the walls to the sill
+    fbox(gp.u0 + 0.22, gp.u1 - 0.22, gp.v0 + 0.22, gp.v1 - 0.22, py + 1.05, py + 2.3, glassTmp);  // the windows, all round
+    [[gp.u0 + 0.15, gp.v0 + 0.15], [gp.u1 - 0.15 - gw, gp.v0 + 0.15], [gp.u1 - 0.15 - gw, gp.v1 - 0.15 - gw], [gp.u0 + 0.15, gp.v1 - 0.15 - gw]].forEach(function(q){
+      fbox(q[0], q[0] + gw, q[1], q[1] + gw, py + 1.05, py + 2.3, white); });
+    fbox(gp.u0 + 0.15, gp.u1 - 0.15, gp.v0 + 0.15, gp.v1 - 0.15, py + 2.3, py + 2.6, white);    // the lintel
+    fbox(gp.u0 - 0.45, gp.u1 + 0.45, gp.v0 - 0.45, gp.v1 + 0.45, py + 2.6, py + 2.85, roofM);    // the roof, overhanging
+    fbox(gp.u1 - 0.16, gp.u1 - 0.1, gv - 0.5, gv + 0.5, py + 0.25, py + 2.2, doorM);              // the door, away from the road
+    fbox(gp.u1 + 0.02, gp.u1 + 0.3, gv - 0.22, gv + 0.22, py + 2.36, py + 2.5, lamp);              // its lamp
+    fbox(gp.u0 - 0.3, gp.u0 - 0.22, gv - 1.6, gv + 1.6, py + 2.85, py + 3.45, metal);              // the sign's board on the roof
+    sign("security", 3.1, 0.55, gp.u0 - 0.32, py + 3.15, gv, -1, 0);
+    var a = CK.a, b = CK.b;
+    fbox(a[0] - 0.18, a[0] + 0.18, a[1] - 0.18, a[1] + 0.18, CK.ya - 0.3, CK.y + BOOM_H - 0.2, white);   // the pivot's post
+    fbox(a[0] - 0.3, a[0] + 0.3, a[1] - 0.25, a[1] + 0.25, CK.y + BOOM_H - 0.35, CK.y + BOOM_H + 0.3, metal);   // its drive box
+    fbox(b[0] - 0.09, b[0] + 0.09, b[1] - 0.09, b[1] + 0.09, CK.yb - 0.3, CK.y + BOOM_H - 0.1, white);  // the rest post
+    fbox(b[0] - 0.14, b[0] + 0.14, b[1] - 0.14, b[1] + 0.14, CK.y + BOOM_H - 0.1, CK.y + BOOM_H - 0.04, red);
+    // the lamps on the drive box: red while the boom is down, green when it is up (their own group: not merged)
+    var lg = new THREE.Group(); lg.userData.anim = true; near.add(lg);
+    boomRed = new THREE.MeshStandardMaterial({color: 0x5a0d0a, emissive: new THREE.Color(0xff2a1a), emissiveIntensity: 2, roughness: 0.4}); mats.boomRed = boomRed;
+    boomGreen = new THREE.MeshStandardMaterial({color: 0x0a3a14, emissive: new THREE.Color(0x2bff6a), emissiveIntensity: 0, roughness: 0.4}); mats.boomGreen = boomGreen;
+    fbox(a[0] - 0.36, a[0] + 0.36, a[1] - 0.09, a[1] + 0.09, CK.y + BOOM_H + 0.3, CK.y + BOOM_H + 0.5, boomRed, lg);
+    fbox(a[0] - 0.36, a[0] + 0.36, a[1] - 0.09, a[1] + 0.09, CK.y + BOOM_H + 0.5, CK.y + BOOM_H + 0.7, boomGreen, lg);
+    // the boom: a yaw group at the pivot turning its local -x to the rest post, and in it the lift about the boom's
+    // own horizontal axis; red and white bands, a counterweight behind the pivot
+    var yawG = new THREE.Group(), du = b[0] - a[0], dv = b[1] - a[1], bl = Math.hypot(du, dv) || 1;
+    yawG.userData.anim = true; yawG.position.set(a[0], CK.y + BOOM_H, -a[1]); yawG.rotation.y = Math.atan2(-dv/bl, -du/bl); near.add(yawG);
+    boomLift = new THREE.Group(); boomLift.userData.anim = true; yawG.add(boomLift);
+    var arm = bl - 0.25, nb2 = Math.max(4, Math.round(arm/0.8));
+    for(var bi = 0; bi < nb2; bi++) add(new THREE.BoxGeometry(arm/nb2, 0.11, 0.08), bi % 2 ? white : red, -(arm/nb2)*(bi + 0.5), 0, 0, boomLift);
+    add(new THREE.BoxGeometry(0.5, 0.3, 0.22), metal, 0.45, 0, 0, boomLift);
+  }
+
   /* ---- merge the near group; swap the glass back in ---- */
   // the plain opaque paints (concrete, white, doors, red, floors, seats) become one vertex-coloured material first,
   // so they merge into one draw; metal, the roofs, the lit and glass ones and the signs keep their own
@@ -732,6 +816,7 @@ function create(c, L, o){
   if(fbA) fbox(fbA.a[0] - 3, fbA.a[0] + 5, CP.v0 + 0.3, CP.v0 + 6, lv[0], lv[3] + 2.6, farL);
   lampPts.forEach(function(p){ fbox(p[0] - 0.1, p[0] + 0.1, p[2] - 0.1, p[2] + 0.1, lv[3], lv[3] + 5, farD); fbox(p[0] - 0.35, p[0] + 0.35, p[2] - 0.35, p[2] + 0.35, lv[3] + 5, lv[3] + 5.2, farL); });
   if(P.depot) fbox(P.depot.shed.u0, P.depot.shed.u1, P.depot.shed.v0, P.depot.shed.v1, Ly, Ly + 4.5, farL);
+  if(CK) fbox(CK.post.u0, CK.post.u1, CK.post.v0, CK.post.v1, Math.min(CK.pg, CK.y) - 0.3, CK.y + 2.85, farL);
   if(HQV.hqMerge && HQV.hqMerge.mergeStatic) HQV.hqMerge.mergeStatic(THREE, far);
   tgt = near;
 
@@ -751,6 +836,7 @@ function create(c, L, o){
   lampPts.forEach(function(p){ pt(p[0], p[1] - 0.1, p[2], 0xffb060); });
   for(var l2 = 1; l2 < 4; l2++) for(var q2 = 0; q2 < 6; q2++) pt(CP.u0 + 6 + (q2 % 3)*18, lv[l2] - 0.4, CP.v0 + 14 + Math.floor(q2/3)*28, 0xe8f4ff);
   P.bridges.forEach(function(b){ var w = toF(F, b.rot[0], b.rot[1]); pt(w[0], b.y0 + 3.9, w[1], 0xffe2b0); });
+  if(CK) pt(CK.post.u1 + 0.2, CK.y + 2.4, (CK.post.v0 + CK.post.v1)/2, 0xffc070);                // the guard post's door lamp
   var pos = new Float32Array(pts.length*3), col = new Float32Array(pts.length*3);
   pts.forEach(function(p, i){ pos[i*3] = p.x; pos[i*3 + 1] = p.y; pos[i*3 + 2] = p.z; col[i*3] = p.c.r; col[i*3 + 1] = p.c.g; col[i*3 + 2] = p.c.b; });
   var pg2 = new THREE.BufferGeometry(); pg2.setAttribute("position", new THREE.BufferAttribute(pos, 3)); pg2.setAttribute("color", new THREE.BufferAttribute(col, 3));
@@ -797,6 +883,18 @@ function create(c, L, o){
       if(on !== blinkOn){ blinkOn = on; blink.forEach(function(i){ var p = pts[i], s = on ? 1 : 0.08; C2.setXYZ(i, p.c.r*s, p.c.g*s, p.c.b*s); }); C2.needsUpdate = true; }
       if(fl !== beaconPh){ beaconPh = fl; C2.setXYZ(beaconI, fl === 0 ? 1 : fl === 1 ? 0.17 : 0.05, fl === 0 ? 1 : fl === 1 ? 1 : 0.07, fl === 0 ? 1 : fl === 1 ? 0.48 : 0.05); C2.needsUpdate = true; }
     },
+    // the security gate's boom: cars [{x, z, yaw, speed}] the vehicles about it (world m), snap: Calm / reduced motion
+    // (it only snaps open and shut); boomAt(x, z) whether the boom, down, stands there; boom() its state
+    updateBoom: function(dt, cars, snap){
+      if(!CK) return null;
+      boomStep(boomSt, P, dt, cars, !!snap);
+      var k = boomSt.k, e = k*k*(3 - 2*k);
+      boomLift.rotation.z = -(PI/2 - 0.04)*e;
+      boomRed.emissiveIntensity = k < BOOM_PASS ? 2 : 0; boomGreen.emissiveIntensity = k >= 1 ? 2 : 0;
+      return {k: k, hold: boomSt.hold};
+    },
+    boomAt: function(x, z){ return boomAt(P, boomSt, x, z); },
+    boom: function(){ return CK ? {k: boomSt.k, hold: boomSt.hold, open: boomSt.k >= BOOM_PASS} : null; },
     // the cab door's sill (world) from the drawn instance, for tests and tools
     bridgeDoor: function(id){
       var i = bIndex[String(id)]; if(i == null) return null;
@@ -821,6 +919,7 @@ function create(c, L, o){
 }
 
 HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, hallAt: hallAt, roofAt: roofAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create,
+  boomStep: boomStep, boomAt: boomAt, BOOM: {NEAR: BOOM_NEAR, HOLD: BOOM_HOLD, AFTER: BOOM_AFTER, MOVE: BOOM_MOVE, PASS: BOOM_PASS},
   NAVE: NAVE, toFrame: function(L, x, z){ return toF(frameOf(L), x, z); }, toWorld: function(L, u, v){ return toW(frameOf(L), u, v); },
   K: {DRUM_OUT: DRUM_OUT, DRUM_BACK: DRUM_BACK, DRUM_R: DRUM_R, COL_R: COL_R, CAB_D: CAB_D, CAB_W: CAB_W, BOGIE_R: BOGIE_R, BOGIE_BACK: BOGIE_BACK, RET_LEN: RET_LEN, DOOR: DOOR}};
 })();

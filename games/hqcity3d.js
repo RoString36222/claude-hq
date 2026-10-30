@@ -1176,6 +1176,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     var fy = apGroundY(x, z); if(fy != null) return fy;                    // AIR: the airfield's platform, the terminal, the gallery
     var ly = apL ? AF.landsideAt(apL, x, z) : null; if(ly != null) return WD.heightAt(W, x, z) + ly;   // AIR: the landside's roads and curb walk, as drawn
+    var ay2 = apL && AF.airsideY ? AF.airsideY(apL, x, z, apHeight) : null; if(ay2 != null) return ay2;   // AIR: the airside entrance, up its causeway
     var gy = dy != null ? dy : WD.groundAt(W, x, z, false, deckLevel(x, z)), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
     return sy != null && sy > gy ? sy : gy;
   }
@@ -1975,7 +1976,9 @@ HQV.hqWorlds.city3d = function(c, w){
   // ride: the caller's (hq3d bodyHits), else whether you ride now
   var AP_FENCE_R = 0.6;
   function apRideBlocked(x, z, ride){
-    var hit = !!(apP && ABL.hallAt && ABL.hallAt(apP, x, z, 0.3)) || apFenceAt(x, z);
+    var hit = !!(apP && ABL.hallAt && ABL.hallAt(apP, x, z, 0.3)) || apFenceAt(x, z)
+      || !!(apB && apB.boomAt && apB.boomAt(x, z))                                          // the security gate's boom, down
+      || !!(AF.airsideWall && AF.airsideWall(apL, x, z, apHeight));              // the entrance causeway's parapets
     return hit && (ride != null ? !!ride : riding());
   }
   var apFence = null, apFenceOf = null;
@@ -2014,6 +2017,11 @@ HQV.hqWorlds.city3d = function(c, w){
     if(c.prewarm) [ap3, apB, apV, apFleet && apFleet.jet, apFleet && apFleet.commuter].forEach(function(m){ if(m && m.g) c.prewarm(m.g); });
   }
   function apErr(e){ if(window.console) console.warn("airport:", e); w.airportErr = String((e && e.stack) || e); }
+  function apHeight(x, z){ return WD.heightAt(W, x, z); }
+  function apCalm(){
+    if(c.E && c.E.calm && c.E.calm()) return true;
+    try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch(e){ return false; }
+  }
   function apNight(n){
     if(ap3) ap3.setNight(n); if(apB) apB.setNight(n); if(apV) apV.setNight(n);
     if(apFleet){ apFleet.jet.setNight(n); apFleet.commuter.setNight(n); }
@@ -2085,6 +2093,11 @@ HQV.hqWorlds.city3d = function(c, w){
       apB.setBridge(id, out ? 1 : 0);
     });
     if(apB) apB.update(dt, t, 1);
+    // the security gate's boom: up for your vehicle heading for it (Calm or reduced motion: it snaps open and shut)
+    if(apB && apB.updateBoom){
+      var mo = c.motion && c.motion(), me = c.avatar && c.avatar();
+      apB.updateBoom(dt, mo && mo.ride && !mo.air && me ? [{x: me.x, z: me.z, yaw: mo.yaw, speed: mo.speed}] : [], apCalm());
+    }
     // [Sound PR B] with the parked jets as drawn (yours is heard on its own) and this frame's offset: their APUs on the stands
     ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null, {parked: apParkedList(tr, hp)}, hp);
     apParked(tr, hp);

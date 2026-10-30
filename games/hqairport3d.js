@@ -49,6 +49,9 @@ var LAMP_OFF = [0.07, 0.07, 0.07];
 var PAPI_DEG = [3.5, 3.17, 2.83, 2.5];
 var DAY_LAMP = 0.35;
 var MASTS_H = 25, SOCK_POLE = 6, SOCK_LEN = 3.6;
+// the pier (a planned airport's platform over the sea, L.pier): its deck's depth under the surface and its edge beam
+// and headstocks below that (m), the piles' grid, their size, and the cell the sea wall under it follows the coast in
+var PIER_DECK = 0.9, PIER_BEAM = 0.8, PIER_STEP = 20, PIER_PILE = 1.0, PIER_CELL = 5;
 
 /* ---------- small pure helpers ---------- */
 function num(v, d){ v = +v; return isFinite(v) ? v : d; }
@@ -183,7 +186,7 @@ function digits(list, str, o, up, right, h, w, s, gap, y, grow){
 function plan(L, opts){
   L = L || {}; opts = opts || {};
   if(!L.ok || !L.runway || !L.frame) return null;
-  var F = frameOf(L), RU = F.RU, y0 = num(L.y, 0), sea = num(L.sea, -4), ySite = num(L.ySite, y0);
+  var F = frameOf(L), RU = F.RU, y0 = num(L.y, 0), sea = num(L.sea, -4), ySite = num(L.ySite, y0), pier = !!L.pier;
   var ground = typeof opts.ground === "function" ? opts.ground : null;
   var gAt = function(x, z){ var h = ground ? +ground(x, z) : NaN; return isFinite(h) ? h : null; };
   var yLand = function(p){ var h = gAt(p[0], p[1]); return (h != null ? h : ySite) + 0.15; };
@@ -300,7 +303,40 @@ function plan(L, opts){
     });
   }
 
-  /* ----- the platform's edge: rock revetment + parapet over water, a retaining wall + fence over land ----- */
+  /* ----- a planned airport's airside entrance (L.airside): on the land as the landside's roads, then up its ramp on a
+     walled causeway (a parapet each side where it stands over AS_RAISED above the land) to the platform's edge, and
+     on the platform the service road's asphalt to its corner ----- */
+  var AS = L.airside, AFd = HQV.hqAirfield, airLine = null;
+  if(AS && AS.road && AS.road.length > 2 && AFd && AFd.airsideY){
+    var asW = num(AS.roadW, 8), asE = num(AS.sEdge, 0), asLand = [AS.road[0]], acc = 0;
+    for(var ak = 1; ak < AS.road.length - 1; ak++){ acc += Math.hypot(AS.road[ak][0] - AS.road[ak - 1][0], AS.road[ak][1] - AS.road[ak - 1][1]); if(acc <= asE + 0.01) asLand.push(AS.road[ak]); }
+    var asD = densify(asLand, 2), asG = function(p){ var h = gAt(p[0], p[1]); return h != null ? h : ySite; };
+    var asY = function(p){ var y = AFd.airsideY(L, p[0], p[1], asG(p)); return y != null ? y : asG(p) + 0.15; };
+    var aq = []; ribbon(aq, asD, asW - 0.02, 0, asY); aq.forEach(function(x){ surf(x, COL.road); });
+    dashes(PW.white, asD, 0.15, 0, 3, 6, function(p){ return asY(p) + 0.02; });
+    // its sides: a face down to the land wherever it stands above it; a parapet AS_WALL wide where it stands higher
+    var aIn = edges(asD, asW), aOut = edges(asD, asW + 2*num(AFd.AS_WALL, 0.45)), rz = num(AFd.AS_RAISED, 0.3);
+    for(var ai2 = 0; ai2 + 1 < asD.length; ai2++){
+      [0, 1].forEach(function(sd){
+        var a = aIn[ai2][sd], b = aIn[ai2 + 1][sd], oa = aOut[ai2][sd], ob = aOut[ai2 + 1][sd];
+        var ya = asY(a), yb = asY(b), ga = asG(a), gb = asG(b);
+        if(Math.max(ya - ga, yb - gb) < 0.03) return;
+        if(ya - ga > rz && yb - gb > rz){
+          var ta = ya + 0.7, tb = yb + 0.7;
+          surf(quad(oa, ob, ob, oa, ta, tb, asG(ob) - 0.3, asG(oa) - 0.3), COL.wall, true);
+          surf(quad(a, b, b, a, ta, tb, yb, ya), COL.parapet, true);
+          surf(quad(a, b, ob, oa, ta, tb, tb, ta), COL.parapet);
+        } else surf(quad(a, b, b, a, ya, yb, gb - 0.3, ga - 0.3), COL.wall, true);
+      });
+    }
+    var onP = AS.road.slice(asLand.length - 1), pq = [];
+    ribbon(pq, onP, asW, P.y.road); pq.forEach(function(x){ surf(x, COL.road); });
+    airLine = AS.road;
+  }
+  var nearAir = function(x, z, r){ return !!airLine && distPoly(x, z, airLine) < r; };
+
+  /* ----- the platform's edge: rock revetment + parapet over water (on a planned airport, L.pier, the pier deck's
+     edge beam over the water instead), a retaining wall + fence over land ----- */
   var plats = [], seen = {};
   (L.platform || []).forEach(function(p){ var k = JSON.stringify(p); if(!seen[k] && p.length > 2){ seen[k] = 1; plats.push(p); } });
   var inAny = function(x, z){ return plats.some(function(p){ return inPoly(p, x, z); }); };
@@ -338,12 +374,13 @@ function plan(L, opts){
     var ao = [a[0] + n[0]*6, a[1] + n[1]*6], bo = [b[0] + n[0]*6, b[1] + n[1]*6];
     if(e.water){
       P.edges.water++;
-      surf(quad(a, b, bo, ao, y0, y0, sea - 1.5, sea - 1.5), COL.rock, true);
+      if(pier) surf(quad(a, b, b, a, y0, y0, y0 - PIER_DECK - PIER_BEAM, y0 - PIER_DECK - PIER_BEAM), COL.wall, true);   // the deck's edge beam
+      else surf(quad(a, b, bo, ao, y0, y0, sea - 1.5, sea - 1.5), COL.rock, true);
       var ai = [a[0] - n[0]*0.4, a[1] - n[1]*0.4], bi = [b[0] - n[0]*0.4, b[1] - n[1]*0.4], yt = y0 + Y.shoulder + 1;
       surf(flat(ai, bi, b, a, yt), COL.parapet);
       surf(quad(a, b, b, a, yt, yt, y0, y0), COL.parapet, true);
       surf(quad(ai, bi, bi, ai, yt, yt, y0, y0), COL.parapet, true);
-      [a, b].forEach(function(p){ var ck = Math.round(p[0]*10) + ":" + Math.round(p[1]*10); (corners[ck] = corners[ck] || {p: p, n: []}).n.push(n); });
+      if(!pier) [a, b].forEach(function(p){ var ck = Math.round(p[0]*10) + ":" + Math.round(p[1]*10); (corners[ck] = corners[ck] || {p: p, n: []}).n.push(n); });
     } else {
       P.edges.land++;
       var bot = Math.min(e.g != null ? e.g : y0, y0) - 0.5, top = y0 + 0.1, ao5 = [a[0] + n[0]*0.5, a[1] + n[1]*0.5], bo5 = [b[0] + n[0]*0.5, b[1] + n[1]*0.5];
@@ -351,7 +388,8 @@ function plan(L, opts){
         surf(quad(ao5, bo5, bo5, ao5, top, top, bot, bot), COL.wall, true);
         surf(flat(a, b, bo5, ao5, top), COL.wall);
       }
-      if(!e.conc){
+      // (none across the airside entrance: its security gate closes the gap)
+      if(!e.conc && !nearAir((a[0] + b[0])/2, (a[1] + b[1])/2, num(AS && AS.roadW, 8)/2 + 0.6)){
         // 0.25 m out, on the wall's top; an end that meets another platform polygon (a concave corner) stops short of it
         var fa = [a[0] + n[0]*0.25, a[1] + n[1]*0.25], fb = [b[0] + n[0]*0.25, b[1] + n[1]*0.25], fd = unit(fb[0] - fa[0], fb[1] - fa[1]);
         var touch = function(q){ return plats.some(function(o){ return o !== e.poly && (inPoly(o, q[0], q[1]) || distPoly(q[0], q[1], o.concat([o[0]])) < 0.1); }); };
@@ -370,6 +408,53 @@ function plan(L, opts){
     surf(quad(p, o1, om, p, y0, sea - 1.5, sea - 1.5, y0), COL.rock, true);
     surf(quad(p, om, o2, p, y0, sea - 1.5, sea - 1.5, y0), COL.rock, true);
   });
+  /* ----- the pier (L.pier): the deck's underside, its piles and headstocks every PIER_STEP m where it stands over the
+     sea, and the sea wall under it where the land meets the water (the coast's line under the deck, by marching squares
+     on a PIER_CELL m grid) ----- */
+  if(pier && plats.length){
+    var pr = [Infinity, -Infinity, Infinity, -Infinity], ySof = y0 - PIER_DECK;
+    plats.forEach(function(p){ var r = rectF(F, p); pr[0] = Math.min(pr[0], r[0]); pr[1] = Math.max(pr[1], r[1]); pr[2] = Math.min(pr[2], r[2]); pr[3] = Math.max(pr[3], r[3]); });
+    var inF = function(u, v){ var w = F.w(u, v); return inAny(w[0], w[1]); };
+    var gF = function(u, v){ var w = F.w(u, v), h = gAt(w[0], w[1]); return h != null ? h : sea - 12; };
+    plats.forEach(function(p){ if(p.length === 4) surf(flat(p[0], p[1], p[2], p[3], ySof), COL.deck, true); });
+    for(var pv = pr[2] + PIER_STEP/2; pv < pr[3]; pv += PIER_STEP){
+      var run = [];
+      for(var pu = pr[0] + 3; pu <= pr[1] - 3 + 1e-6; pu += PIER_STEP){
+        var gp = gF(pu, pv);
+        if(!inF(pu, pv) || gp > sea - 0.3){ pierRow(run, pv); run = []; continue; }
+        pile(pu, pv, Math.max(gp, sea - 12) - 0.5, ySof - PIER_BEAM);
+        run.push(pu);
+      }
+      pierRow(run, pv);
+    }
+    var nu = Math.ceil((pr[1] - pr[0])/PIER_CELL), nv = Math.ceil((pr[3] - pr[2])/PIER_CELL), gv = [];
+    for(var iu = 0; iu <= nu; iu++){ gv.push([]); for(var iv = 0; iv <= nv; iv++) gv[iu].push(gF(pr[0] + iu*PIER_CELL, pr[2] + iv*PIER_CELL) - sea); }
+    for(iu = 0; iu < nu; iu++) for(var iv2 = 0; iv2 < nv; iv2++){
+      var u0 = pr[0] + iu*PIER_CELL, v0 = pr[2] + iv2*PIER_CELL;
+      if(!inF(u0 + PIER_CELL/2, v0 + PIER_CELL/2)) continue;
+      var cs = [[0, 0, gv[iu][iv2]], [1, 0, gv[iu + 1][iv2]], [1, 1, gv[iu + 1][iv2 + 1]], [0, 1, gv[iu][iv2 + 1]]], hits = [];
+      for(var ce = 0; ce < 4; ce++){
+        var c0 = cs[ce], c1 = cs[(ce + 1) % 4];
+        if((c0[2] > 0) === (c1[2] > 0)) continue;
+        var t = c0[2]/(c0[2] - c1[2]);
+        hits.push(F.w(u0 + (c0[0] + (c1[0] - c0[0])*t)*PIER_CELL, v0 + (c0[1] + (c1[1] - c0[1])*t)*PIER_CELL));
+      }
+      for(var hk = 0; hk + 1 < hits.length; hk += 2) surf(quad(hits[hk], hits[hk + 1], hits[hk + 1], hits[hk], ySof, ySof, sea - 2.5, sea - 2.5), COL.wall, true);
+    }
+  }
+  // a square pile (frame u, v) from yb up to its headstock at yt
+  function pile(u, v, yb, yt){
+    var h = PIER_PILE/2, c = [F.w(u - h, v - h), F.w(u + h, v - h), F.w(u + h, v + h), F.w(u - h, v + h)];
+    for(var i = 0; i < 4; i++){ var a = c[i], b = c[(i + 1) % 4]; surf(quad(a, b, b, a, yt, yt, yb, yb), COL.pile); }
+  }
+  // the headstock across a row of piles at v (their u's): a beam under the deck
+  function pierRow(us, v){
+    if(!us.length) return;
+    var h = PIER_PILE*0.75, ua = us[0] - 1.5, ub = us[us.length - 1] + 1.5, yt = y0 - PIER_DECK, yb = yt - PIER_BEAM;
+    var a0 = F.w(ua, v - h), b0 = F.w(ub, v - h), b1 = F.w(ub, v + h), a1 = F.w(ua, v + h);
+    surf(quad(a0, b0, b0, a0, yt, yt, yb, yb), COL.pile, true); surf(quad(a1, b1, b1, a1, yt, yt, yb, yb), COL.pile, true);
+    surf(flat(a0, b0, b1, a1, yb), COL.pile, true);
+  }
   // fence posts every piece (<= 5 m) on the wall's top
   P.fence.forEach(function(f){ cyl(f[0][0], f[0][1], P.fenceY, P.fenceY + 2.45, 0.05, 0.05, 6, COL.galv); });
 

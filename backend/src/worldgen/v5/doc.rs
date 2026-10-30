@@ -63,7 +63,7 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     }
     // (an edge whose end the graph moved onto a neighbour's, now on the airport's box: dropped)
     {
-        let a = super::airport::footprint(ap.c, ap.dir, ap.len, ap.side);
+        let a = ap.poly.clone();
         let claim = |p: P, q: P, clear: i64| {
             let n = a.len();
             super::super::organic::geom::inside(p, &a) || super::super::organic::geom::inside(q, &a)

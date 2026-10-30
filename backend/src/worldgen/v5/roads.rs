@@ -8,7 +8,10 @@
 //!     and only after 80 m straight (no sharp turn, ever: two turns close together are one), paying for slope and turns; then simplified and its corners rounded into arcs of
 //!     `R_ART_CM` (less only where its legs are short), checked in the volume again (a tighter `R_MIN_CM` curve if the
 //!     wide one meets something, the grid's own path only if that does too);
-//!   - carved at the ground's level: roads may meet roads (a junction), nothing else.
+//!   - carved at the ground's level: roads may meet roads (a junction), nothing else;
+//!   - Central a circus: a ring of `RING_CM` round the plaza (the metro's hub under it), laid first; no route crosses
+//!     it or the plaza, an avenue to Central ends on a spoke, its last `SPOKE_CM` straight and square to the ring (one
+//!     spoke for avenues whose bearings are within `SPOKE_SEP` of each other), its turn onto the spoke rounded.
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, BTreeMap};
 
@@ -35,6 +38,11 @@ const SLOPE_COST_PM: i64 = 20;
 const SIMPLIFY_CM: f64 = 1_500.0;
 /// An arterial's point this near (cm) one laid before rides on it.
 const SHARED_CM: f64 = 1_000.0;
+/// Central's circus: the ring's centre line (cm from the hub), the spokes' straight run square to it, the least angle
+/// (radians) between two spokes (their junctions on the ring over 30 m apart).
+pub const RING_CM: f64 = 4_800.0;
+const SPOKE_CM: f64 = 6_000.0;
+const SPOKE_SEP: f64 = 1.2;
 const DIRS: [(i64, i64); 8] = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)];
 
 #[derive(Clone, Debug)]
@@ -181,6 +189,16 @@ impl Grid {
                         if (a, b) == (0, 0) { self.road[k] = true; } else { self.beside[k] = true; }
                     }
                 }
+            }
+        }
+    }
+    /// Shuts the cells within `r` (cm) of q: no route enters them.
+    fn shut(&mut self, q: P, r: f64) {
+        let side = 2 * self.n + 1;
+        for k in 0..(side * side) as usize {
+            let (i, j) = (k as i64 / side - self.n, k as i64 % side - self.n);
+            if ((i * GRID_CM - q.0) as f64).hypot((j * GRID_CM - q.1) as f64) <= r {
+                self.free[k] = false;
             }
         }
     }
@@ -342,16 +360,59 @@ fn clear(land: &Land, space: &Space, pts: &[(f64, f64)], hw: i64) -> bool {
     })
 }
 
-/// The arterials between the centres, carved in the volume.
+/// Central's ring (closed: its last point its first), every ~4 m round `hub`.
+fn ring(hub: P) -> Vec<(f64, f64)> {
+    let n = (std::f64::consts::TAU * RING_CM / 400.0).ceil() as usize;
+    (0..=n).map(|k| { let a = std::f64::consts::TAU * (k % n) as f64 / n as f64; (hub.0 as f64 + a.cos() * RING_CM, hub.1 as f64 + a.sin() * RING_CM) }).collect()
+}
+
+/// Where no route goes round Central's ring (cm from the hub): the ring, the plaza inside it, a cell's room beyond.
+const RING_SHUT_CM: f64 = RING_CM + ART_HW_CM as f64 + GRID_CM as f64;
+
+/// The arterials between the centres, carved in the volume: Central's ring first (when it is clear), then the links.
 pub fn arterials(land: &Land, space: &mut Space, cs: &[P]) -> Vec<Road> {
     let mut grid = Grid::new(land, space);
     let mut out = Vec::new();
+    let hub = cs.first().copied().unwrap_or((0, 0));
+    let circus = !cs.is_empty() && clear(land, space, &ring(hub), ART_HW_CM);
+    if circus {
+        let points = carve(land, space, &ring(hub));
+        out.push(Road { class: "arterial", from: 0, to: 0, points, min_r: RING_CM, fallback: false });
+        // (out to the spokes' ends: inside them a route is a spoke, straight)
+        grid.shut(hub, RING_CM + SPOKE_CM - GRID_CM as f64);
+    }
+    // the spokes' bearings so far
+    let mut spokes: Vec<f64> = Vec::new();
     for (i, j) in links(cs) {
-        let (Some(a), Some(b)) = (grid.snap(cs[i]), grid.snap(cs[j])) else { continue };
+        // a link to Central (on a circus) runs to its spoke: the spoke's outer end, then straight in to the ring
+        let spoke = (circus && (i == 0 || j == 0)).then(|| {
+            let o = cs[if i == 0 { j } else { i }];
+            let a = ((o.1 - hub.1) as f64).atan2((o.0 - hub.0) as f64);
+            let off = |b: f64| (a - b + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            let a = spokes.iter().copied().filter(|&b| off(b).abs() < SPOKE_SEP).min_by(|x, y| off(*x).abs().total_cmp(&off(*y).abs())).unwrap_or(a);
+            if !spokes.contains(&a) {
+                spokes.push(a);
+            }
+            let at = |r: f64| (hub.0 as f64 + a.cos() * r, hub.1 as f64 + a.sin() * r);
+            (o, at(RING_CM + SPOKE_CM), at(RING_CM))
+        });
+        let (p, q) = match spoke { Some((o, s, _)) => (o, (s.0 as i64, s.1 as i64)), None => (cs[i], cs[j]) };
+        let (Some(a), Some(b)) = (grid.snap(p), grid.snap(q)) else { continue };
         let Some(cells) = route(land, &grid, a, b) else { continue };
         grid.lay(&cells);
-        let raw: Vec<(f64, f64)> = cells.iter().map(|c| ((c.0 * GRID_CM) as f64, (c.1 * GRID_CM) as f64)).collect();
-        let simple = simplify(&raw, SIMPLIFY_CM);
+        let mut raw: Vec<(f64, f64)> = cells.iter().map(|c| ((c.0 * GRID_CM) as f64, (c.1 * GRID_CM) as f64)).collect();
+        let simple = match spoke {
+            // (the snapped cell is the spoke's end, exactly; the spoke itself kept whole by the simplifying)
+            Some((_, s, r)) => {
+                raw.pop();
+                raw.push(s);
+                let mut v = simplify(&raw, SIMPLIFY_CM);
+                v.push(r);
+                raw.push(r);
+                v
+            }
+            None => simplify(&raw, SIMPLIFY_CM),
+        };
         let (mut pts, mut min_r) = round(&simple, R_ART_CM);
         let mut fallback = false;
         if !clear(land, space, &pts, ART_HW_CM) {
@@ -362,16 +423,17 @@ pub fn arterials(land: &Land, space: &mut Space, cs: &[P]) -> Vec<Road> {
         }
         // where it rides an arterial already laid, that one is the road: only the runs off it are kept, each from the
         // point it leaves that road (moved onto it), so a shared trunk is one road and a branch peels off it on its curve
-        let near = |q: (f64, f64)| -> Option<(f64, f64)> {
+        let foot = |q: (f64, f64)| -> Option<(f64, f64)> {
             out.iter().flat_map(|r: &Road| r.points.windows(2)).map(|w| {
                 let (c, e) = ((w[0][0] as f64, w[0][2] as f64), (w[1][0] as f64, w[1][2] as f64));
                 let (ex, ez) = (e.0 - c.0, e.1 - c.1);
                 let t = (((q.0 - c.0) * ex + (q.1 - c.1) * ez) / (ex * ex + ez * ez).max(1.0)).clamp(0.0, 1.0);
                 (c.0 + t * ex, c.1 + t * ez)
             }).min_by(|a, b| (a.0 - q.0).hypot(a.1 - q.1).total_cmp(&(b.0 - q.0).hypot(b.1 - q.1)))
-            .filter(|f| (f.0 - q.0).hypot(f.1 - q.1) < SHARED_CM)
         };
-        let on: Vec<Option<(f64, f64)>> = pts.iter().map(|&q| near(q)).collect();
+        let feet: Vec<Option<(f64, f64)>> = pts.iter().map(|&q| foot(q)).collect();
+        let within = |k: usize, r: f64| feet[k].is_some_and(|f| (f.0 - pts[k].0).hypot(f.1 - pts[k].1) < r);
+        let on: Vec<Option<(f64, f64)>> = (0..pts.len()).map(|k| feet[k].filter(|_| within(k, SHARED_CM))).collect();
         let mut k = 0;
         while k < pts.len() {
             if on[k].is_some() { k += 1; continue; }
@@ -380,7 +442,9 @@ pub fn arterials(land: &Land, space: &mut Space, cs: &[P]) -> Vec<Road> {
             let mut run: Vec<(f64, f64)> = pts[k0..k].to_vec();
             if let Some(f) = k0.checked_sub(1).and_then(|j| on[j]) { run.insert(0, f); }
             if let Some(f) = on.get(k).copied().flatten() { run.push(f); }
-            if run.len() < 2 { continue; }
+            // (a run between two stretches on a laid road that never leaves its carriageway runs beside it: the
+            // laid road is the road there)
+            if run.len() < 2 || (k0 > 0 && k < pts.len() && (k0..k).all(|x| within(x, 2.0 * ART_HW_CM as f64))) { continue; }
             let points = carve(land, space, &run);
             out.push(Road { class: "arterial", from: i, to: j, points, min_r, fallback });
         }
@@ -398,8 +462,13 @@ fn carve(land: &Land, space: &mut Space, pts: &[(f64, f64)]) -> Vec<[i64; 3]> {
     let points: Vec<[i64; 3]> = pts.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
     for w in points.windows(2) {
         let (a, b) = ((w[0][0] as f64, w[0][2] as f64), (w[1][0] as f64, w[1][2] as f64));
-        let g = deck(land, a, b, w[0][1].min(w[1][1]));
-        space.put("road", "arterial", box_of(a, b, ART_HW_CM), g - 200, g + ROAD_UP_CM);
+        let mut g = deck(land, a, b, w[0][1].min(w[1][1]));
+        let bx = box_of(a, b, ART_HW_CM);
+        // (a box that only grazes the water's cells at a low bank: up over them too)
+        while let Some(k) = space.blocker(&bx, g - 200, g + ROAD_UP_CM, 0).filter(|&k| space.solids[k as usize].kind == "water") {
+            g = space.solids[k as usize].y1 + 200;
+        }
+        space.put("road", "arterial", bx, g - 200, g + ROAD_UP_CM);
     }
     points
 }
@@ -426,6 +495,32 @@ mod tests {
             assert!(!r.fallback, "arterial {} - {}: no curve fitted", r.from, r.to);
             assert!(r.min_r >= 3_000.0, "arterial {} - {}: a {:.0} m curve", r.from, r.to, r.min_r / 100.0);
         }
+    }
+
+    #[test]
+    fn central_is_a_circus_its_avenues_square_to_the_ring() {
+        let c = super::super::commons();
+        let hub = c.centres[0];
+        let r = |p: &[i64; 3]| ((p[0] - hub.0) as f64).hypot((p[2] - hub.1) as f64);
+        let ring = c.arterials.iter().find(|a| (a.from, a.to) == (0, 0)).expect("Central's ring");
+        assert!(ring.points.iter().all(|p| (r(p) - super::RING_CM).abs() < 100.0) && ring.points.first() == ring.points.last());
+        let mut spokes = 0;
+        for a in c.arterials.iter().filter(|a| (a.from, a.to) != (0, 0)) {
+            // nothing crosses the ring or the plaza
+            assert!(a.points.iter().all(|p| r(p) > super::RING_CM - 100.0), "arterial {} - {} inside the ring", a.from, a.to);
+            for (e, f) in [(&a.points[0], &a.points[a.points.len().min(4) - 1]), (a.points.last().unwrap(), &a.points[a.points.len().saturating_sub(4)])] {
+                if (r(e) - super::RING_CM).abs() > 100.0 {
+                    continue;
+                }
+                // its last 12 m on the ring square to it (within 10 degrees of the radius)
+                spokes += 1;
+                let (dx, dz) = ((f[0] - e[0]) as f64, (f[2] - e[2]) as f64);
+                let (rx, rz) = ((e[0] - hub.0) as f64, (e[2] - hub.1) as f64);
+                let cos = (dx * rx + dz * rz) / (dx.hypot(dz) * rx.hypot(rz)).max(1.0);
+                assert!(cos > 10f64.to_radians().cos(), "arterial {} - {} meets the ring askew", a.from, a.to);
+            }
+        }
+        assert!(spokes >= 3, "{spokes} spokes");
     }
 
     #[test]
@@ -556,6 +651,10 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
     for r in arterials {
         let cells: Vec<(i64, i64)> = r.points.iter().map(|p| grid.cell((p[0], p[2]))).collect();
         grid.lay(&cells);
+    }
+    // (Central's ring, its from and to both Central: no link crosses it or the plaza)
+    if arterials.iter().any(|r| (r.from, r.to) == (0, 0)) {
+        grid.shut(hub, RING_SHUT_CM);
     }
     for pass in 0..6 {
     let comps = components(arterials, &out);

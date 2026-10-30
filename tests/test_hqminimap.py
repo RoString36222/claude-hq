@@ -271,6 +271,41 @@ out.big = {cls: clsOpen, scrim: scrimOpen, small: sm, span: VB.span, w: VB.w, ro
 mm.destroy(); mm2.destroy();
 out.destroyed = {children: stage.children.length, clickL: (cv.listeners.click || []).length, resize: (winL.resize || []).length};
 mm.frame({x: 0, z: 0, yaw: 0});
+
+// [lot marks] locality: seeded neighbourhood names (the same twice, none alike, "Central" in the middle), the land use
+// and the nearest named road; the strip (textContent, a polite live region written only on a change); the lots drawn
+const nb = M.neighbourhoods(at2), nb2 = M.neighbourhoods(WD.pack(gz(AT2)));
+const e0 = at2.edges.find(e => e.name && e.pts.length >= 6), rx = e0.pts[0]/100, rz = e0.pts[2]/100;
+out.loc = {n: nb.length, same: JSON.stringify(nb) === JSON.stringify(nb2), unique: new Set(nb.map(s => s.name)).size === nb.length,
+  central: nb.filter(s => s.name === 'Central').length, enumerable: Object.keys(at2).includes('nbhoods'),
+  road: M.locality(at2, rx, rz, {}), roadName: e0.name, sea: M.locality(at2, rx, rz, {sea: true}), air: M.locality(at2, rx, rz, {area: 'Airport'}),
+  none: M.locality(null, 0, 0), uses: Object.keys(M.USE_NAME).length >= at2.districts.legend.length};
+const stage3 = new El('div'), mm3 = M.mount(stage3, {});
+const r3 = stage3.children[0]; r3.clientWidth = 200; r3.clientHeight = 200;
+const a3 = r3.all(), by3 = c => a3.find(e => e.className.split(' ').includes(c));
+const live = by3('hq3d-minimap-place-live'), lotEl = by3('hq3d-minimap-place-lot'), placeEl = by3('hq3d-minimap-place');
+const pl = {hiddenFirst: placeEl.hidden, aria: [live.getAttribute('aria-live'), live.getAttribute('aria-atomic')]};
+pl.c1 = mm3.setPlace({area: 'Larkfield', use: 'Residential', street: 'Cedar Street', lot: null});
+pl.c2 = mm3.setPlace({area: 'Larkfield', use: 'Residential', street: 'Cedar Street', lot: null});
+pl.text = [by3('hq3d-minimap-place-area').textContent, by3('hq3d-minimap-place-use').textContent, by3('hq3d-minimap-place-street').textContent];
+pl.lotHidden = lotEl.hidden;
+pl.c3 = mm3.setPlace({area: 'Larkfield', use: 'Residential', street: 'Cedar Street', lot: {text: 'Your lot · Lot 3', mine: true}});
+pl.lot = [lotEl.textContent, lotEl.hidden, lotEl.getAttribute('data-mine')];
+pl.xss = (mm3.setPlace({area: '<img src=x onerror=alert(1)>', street: 'x'}), by3('hq3d-minimap-place-area').textContent);
+pl.empty = (mm3.setPlace({}), placeEl.hidden);
+out.place = pl;
+mm3.setWorld(at2, 5, {});
+const sq = (x, z, h) => [[x - h, z - h], [x + h, z - h], [x + h, z + h], [x - h, z + h]];
+out.lots = {n: mm3.setLots([{id: 1, n: 1, poly: sq(0, 0, 18), mine: true, owned: true}, {id: 2, n: 2, poly: sq(40, 0, 18), owned: true},
+                            {id: 3, n: 3, poly: sq(-40, 0, 18)}, {id: 4, poly: [[0, 0], [1, 1]]}, null])};
+const og3 = r3.all().find(e => e.tagName === 'CANVAS').getContext('2d');
+og3.fills = []; og3.log = {};
+mm3.frame({x: 0, z: 0, yaw: 0, speed: 0, lot: 1});
+out.lots.fills = og3.fills.filter(f => f === '#ffb347').length;
+out.lots.texts = og3.log.fillText || 0;
+out.lots.layers = mm3.layers().lots;
+mm3.setLots(null); out.lots.cleared = mm3.layers().lots;
+mm3.destroy();
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -417,6 +452,41 @@ class MinimapTest(unittest.TestCase):
 
     def test_destroy(self):
         self.assertEqual(self.o["destroyed"], {"children": 0, "clickL": 0, "resize": 0})
+
+    def test_locality(self):
+        o = self.o["loc"]
+        self.assertGreater(o["n"], 3)
+        self.assertTrue(o["same"], "the same names for the same world")
+        self.assertTrue(o["unique"])
+        self.assertEqual(o["central"], 1)
+        self.assertFalse(o["enumerable"], "memoised on the world, never sent with it")
+        self.assertEqual(o["road"]["street"], o["roadName"])
+        self.assertTrue(o["road"]["area"])
+        self.assertEqual(o["sea"], {"area": "Open sea", "use": "", "street": ""})
+        self.assertEqual(o["air"]["area"], "Airport")
+        self.assertEqual(o["none"], {"area": "", "use": "", "street": ""})
+        self.assertTrue(o["uses"])
+
+    def test_place_strip(self):
+        p = self.o["place"]
+        self.assertTrue(p["hiddenFirst"])
+        self.assertEqual(p["aria"], ["polite", "true"])
+        self.assertTrue(p["c1"])
+        self.assertFalse(p["c2"], "the same words: the live region is not written again")
+        self.assertEqual(p["text"], ["Larkfield", " · Residential", "Cedar Street"])
+        self.assertTrue(p["lotHidden"])
+        self.assertTrue(p["c3"])
+        self.assertEqual(p["lot"], ["Your lot · Lot 3", False, "true"])
+        self.assertEqual(p["xss"], "<img src=x onerror=alert(1)>", "textContent: shown as text, never parsed")
+        self.assertTrue(p["empty"])
+
+    def test_lots_drawn(self):
+        o = self.o["lots"]
+        self.assertEqual(o["n"], 3, "the malformed ones left out")
+        self.assertEqual(o["layers"], 3)
+        self.assertEqual(o["fills"], 1, "yours filled amber")
+        self.assertGreaterEqual(o["texts"], 4, "the three numbers (zoomed in on foot) and the N")
+        self.assertEqual(o["cleared"], 0)
 
     def test_source_rules(self):
         src = read(JS)

@@ -66,4 +66,21 @@ html.hq-calm .hq3d-minimap,html.hq-calm .hq3d-minimap-scrim,html.hq-calm .hq3d-m
 html.hq-calm .hq3d-minimap.hq3d-minimap-big::after{animation:none}
 /* underground (games/hqminimap.js opts.under()): the map dims the surface and brings the metro up; the box says so too */
 .hq3d-minimap[data-under="true"]{border-color:var(--brand);box-shadow:0 0 0 1px color-mix(in srgb,var(--brand) 45%,transparent),var(--shadow-lg)}
+/* where you are, along the map's foot: the lot you stand on (yours in the brand colour), the neighbourhood and its land
+   use, the street; clicks go through to the map; hidden on the big map, whose legend sits there */
+.hq3d-minimap-place{position:absolute;left:34px;right:6px;bottom:6px;display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+  pointer-events:none;font:600 11px/1.25 var(--font);color:var(--ink)}
+.hq3d-minimap-place[hidden],.hq3d-minimap-place [hidden]{display:none}
+.hq3d-minimap-place-lot{max-width:100%;padding:2px 7px;border-radius:999px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:var(--ink);background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line)}
+.hq3d-minimap-place-lot[data-mine="true"]{color:var(--on-brand);background:var(--brand);border-color:var(--brand)}
+.hq3d-minimap-place-live{max-width:100%;padding:3px 7px;border-radius:8px;background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);box-shadow:var(--shadow)}
+.hq3d-minimap-place-live:empty{display:none}
+.hq3d-minimap-place-area{font-weight:700}
+.hq3d-minimap-place-use{color:var(--muted)}
+.hq3d-minimap-place-street{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-weight:600}
+.hq3d-minimap-big .hq3d-minimap-place{display:none}
+@media (max-width:699.98px){ .hq3d-minimap-place{left:30px;font-size:10px} }
+@container hq3d (max-height: 440px){ .hq3d-minimap-place{left:30px;font-size:10px} }
 /* ==== end of the 3D City minimap ==== */

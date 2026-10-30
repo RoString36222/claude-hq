@@ -368,6 +368,26 @@ function snapShadow(p, dir, texel){
 // what is part of an HQ's look (its building is rebuilt when it changes); crew counts are not
 function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou, h.garage || null]); }   // [3.33] a moved garage too
 function crewText(h){ var crew = (h && h.crew) || {}; return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them"; }
+// [lot marks] An HQ lot's number (its rank + 1, the same for everyone), its owner's display name (as typed: canvas text and
+// textContent only), what the HUD says as you step onto it, and the line the minimap shows while you stand on it
+function lotNo(lot){ return ((lot && lot.rank) | 0) + 1; }
+function ownerName(h){ var s = h && (h.trainerName || h.displayName || h.handle); return typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, 28) : ""; }
+function lotNotice(lot, h){
+  var n = lotNo(lot);
+  if(h && h.isYou) return "Your lot (Lot " + n + ")";
+  if(h) return "You are on " + (ownerName(h) || "someone") + "'s lot (Lot " + n + ")";
+  return "Lot " + n + " is available";
+}
+function lotLine(lot, h){
+  var n = lotNo(lot);
+  return h && h.isYou ? "Your lot · Lot " + n : h ? "Lot " + n + " · " + (ownerName(h) || "Taken") : "Lot " + n + " · Available";
+}
+// what stands on a lot's finish (hqcityparts dressPlan) as keep boxes [x, z, hx, hz] (the lot's frame), for the plaque
+function dressKeep(D){
+  return ((D && D.plan) || []).filter(function(o){ return o && o.kind !== "lawn" && o.kind !== "forecourt"; }).map(function(o){
+    var r = o.kind === "fountain" ? (o.r || 1.8) + 0.3 : o.kind === "lamp" || o.kind === "flag" ? 0.3 : 0.6;   // as dressBlocked's, a little more
+    return o.kind === "car" ? [o.x, o.z, 2.15, 1.0] : [o.x, o.z, r, r]; });
+}
 // A mesh mergeStatic must leave alone: doors and anything tagged animated or fading, materials
 // something changes later (lit by night, blinking, scrolling, a canvas), see-through ones, and
 // several materials on one mesh. Plain opaque stone, steel and paint merge.
@@ -699,6 +719,7 @@ HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorl
   COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, garagePlace: garagePlace, garageFits: garageFits, garageOf: garageOf, garageStored: garageStored, garageLocal: garageLocal,
   toGarage: toGarage, garageR: garageR, lotKeep: lotKeep, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  lotNo: lotNo, ownerName: ownerName, lotNotice: lotNotice, lotLine: lotLine, dressKeep: dressKeep,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats, citySound: citySound};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -777,7 +798,7 @@ HQV.hqWorlds.city3d = function(c, w){
   paveT.t.wrapS = paveT.t.wrapT = THREE.RepeatWrapping; paveT.t.repeat.set(7, 5);
 
   var staticG = new THREE.Group(), hqG = new THREE.Group();
-  var hqs = [], views = [], civic = [], freeLots = [];   // placed things (entries below)
+  var hqs = [], views = [], civic = [], freeLots = [], freeMarks = [];   // placed things (entries below); freeMarks: the free lots' marks
   var lampGlows = [], parkBikes = [], bikes = [], cars = [];
   var fount = null, skate = null, plaza = {x: 0, y: 0, z: 0}, sig = null;
   var bIdx = null;                                      // building lots by 64 m bucket: [{id, min, max}]
@@ -926,8 +947,6 @@ HQV.hqWorlds.city3d = function(c, w){
 
   /* ---------- the HQs: one rebuilt only when its look, level, cos or isYou changes ---------- */
   var slabM = new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9});
-  var freeT = c.canvasTex(256, 64, function(g){ g.fillStyle = "#0b1622"; g.fillRect(0, 0, 256, 64); g.fillStyle = "#e9eff3"; g.font = "700 34px system-ui, sans-serif";
-    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("FREE LOT", 128, 34); });
   var lotsG = null, lotsSig = null, forceYou = false;
   // HQV.hqMerge.mergeStatic (games/hqmerge.js) on g, sub-groups and all, when it is loaded.
   // roots: what stays as it is (with everything under it); B: a building whose animate() moves
@@ -980,7 +999,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(o.geometry) keep[o.geometry.uuid] = 1;
       mats(o).forEach(function(m){ keep[m.uuid] = 1; texOf(m).forEach(function(t){ keep[t.uuid] = 1; }); });
     });
-    [paveT.t, freeT.t, slabM].forEach(function(t){ keep[t.uuid] = 1; });
+    [paveT.t, slabM].forEach(function(t){ keep[t.uuid] = 1; });
     function drop(x){ if(x && !keep[x.uuid]) gone[x.uuid] = x; }
     g.traverse(function(o){
       if(o.geometry && !o.isSprite) drop(o.geometry);          // a sprite's geometry is three's shared quad
@@ -1029,6 +1048,9 @@ HQV.hqWorlds.city3d = function(c, w){
     // the lot's finish by its owner's level (lawns, trees, lamps; forecourt, fountain, flags; marble, gold, valet cars)
     E.dress = R && R.length >= 3 && parts.lotDress ? parts.lotDress(c, g, R, h.level | 0, h.userId, lotKeep(B.grand, E.garage), night) : null;
     if(E.dress) E.glows = E.glows.concat(E.dress.glows);
+    // [lot marks] its kerb all round and its plaque at the street: the lot's number and its owner (yours amber)
+    E.marks = R && R.length >= 3 && parts.lotMarks ? parts.lotMarks(c, g, R, {n: lotNo(E.lot), owner: ownerName(h) || name, mine: !!h.isYou,
+      keep: lotKeep(B.grand, E.garage).concat(dressKeep(E.dress)), night: false}) : null;   // unlit until merged (below)
     (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
     if(X.move){ hits.push(X.move); B.hits.push(X.move); }                          // [3.33] your bay's Move garage plate
     (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
@@ -1038,6 +1060,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var roots = {}; roots[B.g.uuid] = 1; X.items.forEach(function(b){ roots[b.g.uuid] = 1; });
     merge(g, roots);
     tagFade(E);
+    if(E.marks) E.marks.setNight(night);
   }
   // an HQ's crew changed: its windows and the line under its name, not its building
   function crewUpdate(E, h){
@@ -1104,7 +1127,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(island()) return assignIsland(list, owner, me, W);
     return assignRows ? assignRanks(list, assignRows, W) : assign(list, W);
   }
-  // every HQ lot's paved slab (one draw call), the empty ones' "Free lot" signs and the City's
+  // every HQ lot's paved slab (one draw call), the empty ones' marks ("Available" plaques) and the City's
   // name: rebuilt when which lots are taken changes
   function buildLots(){
     var taken = {}; hqs.forEach(function(E){ taken[E.lot.id] = 1; });
@@ -1123,19 +1146,18 @@ HQV.hqWorlds.city3d = function(c, w){
       if(!taken[l.id]) freeLots.push(l);
     });
     slabs.count = V2 ? 0 : lots.length; slabs.receiveShadow = true; if(!V2) lotsG.add(slabs);   // v2: the lots' own ground
-    if(freeLots.length){
-      var plate = new THREE.InstancedMesh(new THREE.BoxGeometry(2.4, 0.6, 0.08), new THREE.MeshBasicMaterial({map: freeT.t, toneMapped: false}), freeLots.length);
-      var post = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), mat(0x2b3a48, {metalness: 0.6}), freeLots.length);
-      var up = new THREE.Vector3(0, 1, 0);
-      freeLots.forEach(function(l, n){
-        var f = turn(l), y = ((l.door || [])[1] || 0)/100 + PAD_UP, xf = l.x/100, zf = l.z/100 + f.s*(l.d/200 - 1.5), rot = f.rot;
-        if(V2 && l.front){ var fv = frontOf(l), dd = Math.max(1, Math.min(l.w, l.d)/200 - 1.5); xf = l.x/100 + fv[0]*dd; zf = l.z/100 + fv[1]*dd; rot = Math.atan2(fv[0], fv[1]); }
-        q.setFromAxisAngle(up, rot);
-        m4.compose(new THREE.Vector3(xf, y + 1.05, zf), q, one); plate.setMatrixAt(n, m4);
-        m4.compose(new THREE.Vector3(xf, y + 0.45, zf), q, one); post.setMatrixAt(n, m4);
-      });
-      lotsG.add(plate); lotsG.add(post);
-    }
+    // [lot marks] each free lot: its kerb and an "Available" plaque with its number (the kerbs and bases merged into a few
+    // draws; the plaques, each its own texture, drawn only near the camera: lotsStep)
+    freeMarks = [];
+    if(parts.lotMarks) freeLots.forEach(function(l){
+      var p = placeLot(l), R = lotRing(l, p);
+      if(!R || R.length < 3) return;
+      var fg = new THREE.Group(); fg.position.set(p.x, p.y + PAD_UP, p.z); fg.rotation.y = p.rot; lotsG.add(fg);
+      var M = parts.lotMarks(c, fg, R, {n: lotNo(l), owner: "", mine: false, keep: [[0, HQ_DOOR + 6, 1.6, 6]], night: false});
+      freeMarks.push({x: p.x, z: p.z, rot: p.rot, g: fg, marks: M});
+    });
+    merge(lotsG);                                          // built unlit, so every kerb merges; then lit as the hour is
+    freeMarks.forEach(function(F){ F.marks.setNight(night); });
     var nb = hqs.length;
     var cname = !V2 ? "Arena City" : island() ? String((cityState && cityState.name) || "An island").slice(0, 32) : "The Commons";
     var cityL = c.label(cname + (V2 && island() ? "" : " · " + nb + " HQ" + (nb === 1 ? "" : "s")), HEX.amber, 1.3); cityL.position.set(plaza.x, plaza.y + 6.4, plaza.z); lotsG.add(cityL);
@@ -1149,7 +1171,8 @@ HQV.hqWorlds.city3d = function(c, w){
   }
 
   function applyTime(){
-    hqs.concat(views).forEach(function(E){ if(E.B) E.B.setNight(night); });
+    hqs.concat(views).forEach(function(E){ if(E.B) E.B.setNight(night); if(E.marks) E.marks.setNight(night); });
+    freeMarks.forEach(function(F){ F.marks.setNight(night); });                       // [lot marks] the kerbs glow a little by night
     lampGlows.forEach(function(g){ g.material.opacity = night ? 0.85 : 0.08; });
   }
   // ride (optional): whether the body asking is a vehicle (hq3d bodyHits); without it, whether you ride now
@@ -1188,6 +1211,13 @@ HQV.hqWorlds.city3d = function(c, w){
         if(HQV.hqLotExtraBlocked(q.x, q.z, !L.car || L.car.g.visible, k && {x: k.x, z: k.z, yaw: L.car.g.rotation.y*(GP.s === -1 ? -1 : 1)})) return true;
       }
       if(L.dress && parts.dressBlocked(L.dress, lx, lz)) return true;                // its lot's trees, lamps, fountain, planters, flags, valet cars
+      if(L.marks && parts.dressBlocked(L.marks, lx, lz)) return true;                // [lot marks] its plaque
+    }
+    for(var fi = 0; fi < freeMarks.length; fi++){                                     // [lot marks] a free lot's plaque
+      var FM = freeMarks[fi], fx0 = x - FM.x, fz0 = z - FM.z;
+      if(Math.abs(fx0) > 30 || Math.abs(fz0) > 30) continue;
+      var fc = Math.cos(-FM.rot), fsn = Math.sin(-FM.rot);
+      if(parts.dressBlocked(FM.marks, fx0*fc + fz0*fsn, -fx0*fsn + fz0*fc)) return true;
     }
     for(var j = 0; j < civic.length; j++){
       var C = civic[j];
@@ -3576,8 +3606,40 @@ HQV.hqWorlds.city3d = function(c, w){
     if(info) info.dest = route.label;
     if(nui) nui.banner(info);
     if(fx) fx.update(dt, me0, cam);
+    whereStep(me0, m);
     if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, view: m && m.view != null ? m.view : null, speed: m ? m.speed : 0, route: pts,
-                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt});
+                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt, lot: whereAt.lot ? whereAt.lot.id : null});
+  }
+  // [lot marks] Where you are, four times a second: the HQ lot you stand on (the HUD says so once as you step onto one,
+  // once it has held for WHERE_HOLD ms, never again for the same lot within WHERE_AGAIN ms: a kerb walked along), and the
+  // neighbourhood and street for the minimap's strip (HQV.hqminimap.locality)
+  var WHERE_EVERY = 250, WHERE_HOLD = 400, WHERE_AGAIN = 8000;
+  var whereAt = {at: 0, lot: null, h: null, cand: null, since: 0, said: {}}, lotEnt = null, lotEntKey = null;
+  function lotEntries(){
+    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id) + ":" + (E.h.isYou ? 1 : 0); }).join(",") + "|" + tier + "|" + (W && W.id);
+    if(key === lotEntKey && lotEnt) return lotEnt;
+    var by = {}; hqs.forEach(function(E){ if(E.lot) by[E.lot.id] = E.h; });
+    lotEntKey = key;
+    lotEnt = hqLots(W).filter(function(l){ return l.min_tier == null || (l.min_tier | 0) <= tier; }).map(function(l){ return {lot: l, h: by[l.id] || null}; });
+    return lotEnt;
+  }
+  function whereStep(me0, m){
+    var now = Date.now();
+    if(!W || now - whereAt.at < WHERE_EVERY) return;
+    whereAt.at = now;
+    var under = !!(transit && transit.under()), air = !!(m && m.air);
+    var hit = under || air ? null : pickAt(lotEntries(), me0.x, me0.z), id = hit ? hit.lot.id : null;
+    if(id !== (whereAt.cand && whereAt.cand.lot.id)){ whereAt.cand = hit; whereAt.since = now; }
+    if(id !== (whereAt.lot && whereAt.lot.id) && now - whereAt.since >= WHERE_HOLD){
+      whereAt.lot = hit ? hit.lot : null; whereAt.h = hit ? hit.h : null;
+      if(hit && !(now - (whereAt.said[id] || 0) < WHERE_AGAIN)){ whereAt.said[id] = now; say(lotNotice(hit.lot, hit.h)); }
+    }
+    if(whereAt.lot) whereAt.said[whereAt.lot.id] = now;                 // standing on it keeps it said
+    if(!mm || !mm.setPlace || !HQV.hqminimap.locality) return;
+    var onAir = apL && AF && AF.floorAt && AF.floorAt(apL, me0.x, me0.z) != null;
+    var L = HQV.hqminimap.locality(W, me0.x, me0.z, {sea: !onAir && !!(sea && sea.land && !sea.land(me0.x, me0.z)), y: me0.y, area: onAir ? "Airport" : ""});
+    if(under){ L.use = "Underground"; L.street = ""; }
+    mm.setPlace({area: L.area, use: L.use, street: L.street, lot: whereAt.lot ? {text: lotLine(whereAt.lot, whereAt.h), mine: !!(whereAt.h && whereAt.h.isYou)} : null});
   }
   // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)
   function navRefresh(){
@@ -3585,6 +3647,9 @@ HQV.hqWorlds.city3d = function(c, w){
     var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id); }).join(",");
     if(key === navSig) return; navSig = key;
     try { mm.setWorld(W, navTier, {places: navPlaces()}); } catch(e){}
+    // [lot marks] the HQ lots as outlines: yours amber, the free ones dashed
+    if(mm.setLots) try { mm.setLots(lotEntries().map(function(e){ var l = e.lot;
+      return {id: l.id, n: lotNo(l), poly: lotRing(l, {x: 0, z: 0, rot: 0}), mine: !!(e.h && e.h.isYou), owned: !!e.h}; })); } catch(e){}
   }
   function typingIn(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || !!(t && t.isContentEditable); }
   // While a stop's or a terminal's menu or the Go to panel is open, no key reaches the page's shortcuts (W is not
@@ -3952,6 +4017,11 @@ HQV.hqWorlds.city3d = function(c, w){
       var d = Math.hypot(E.x - cam.x, E.z - cam.z), vis = mode === "map" || (E.g.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
       if(E.g.visible !== vis) E.g.visible = vis;
       if(vis && E.B && E.B.setLod) E.B.setLod(mode === "map" || (E.B.lod() ? d > HQ_LOD - HQ_FAR_HYST : d > HQ_LOD));   // [hq revamp] far: its masses only
+    });
+    if(cam && cam.x != null) freeMarks.forEach(function(F){                     // [lot marks] a free lot's plaque, near the camera only
+      var P = F.marks.panel; if(!P) return;
+      var d = Math.hypot(F.x - cam.x, F.z - cam.z), vis = mode !== "map" && (P.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
+      if(P.visible !== vis) P.visible = vis;
     });
     // the sun's shadow box follows you (the whole map in map mode), on its texel grid
     var me = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0}, map = mode === "map", R = map ? 1024 : 60, D = map ? 1500 : 120;

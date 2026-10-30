@@ -37,6 +37,12 @@
  *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, dt?})   view: the camera's heading (heading-up turns
  *                    by it; default yaw); yaw: where you face (the arrow)
  *     mm.setMode("heading" | "north"), mm.mode(), mm.zoom(+1 | -1), mm.view(), mm.destroy()
+ *     mm.setLots([{id, n, poly: [[x, z]...] m, mine, owned}])   the HQ lots, outlined over the map (free ones dashed, yours
+ *                    amber); frame's f.lot (a lot id) is the one you stand on, drawn bold
+ *     mm.setPlace({area, use, street, lot: {text, mine} | null})   the strip along the map's foot: the lot you are on, the
+ *                    neighbourhood, its land use and the street (aria-live polite; written only on a change)
+ *   HQV.hqminimap.locality(W, x, z, {sea, y, area}) -> {area, use, street}: the neighbourhood (seeded names per world,
+ *                    neighbourhoods(W)), the district's land use and the nearest named road (pure)
  * Clicks and taps call onPick with the world point (the host snaps it to a road); the wheel and the
  * +/- buttons zoom; one button toggles heading-up / north-up, another calls onExpand (the full map).
  * Keys inside the minimap never reach the dashboard or the avatar (stopPropagation + preventDefault).
@@ -80,12 +86,12 @@ var PAL = {
          station: "#ffffff",
          road: {highway: "#c99a4a", ring: "#b08a50", arterial: "#8d939c", avenue: "#8d939c", local: "#5d636b", street: "#5d636b"},
          casing: "#0b0d10", bridge: "#d8d2c4", route: "#e2805e", routeCase: "#3a1c10", you: "#ffffff", youEdge: "#e2805e",
-         pin: "#e2805e", rim: "#ecebe8", other: "#5fd3e6"},
+         pin: "#e2805e", rim: "#ecebe8", other: "#5fd3e6", lot: "#5fd3e6", lotFree: "#8d939c", lotMine: "#ffb347", lotHere: "#ffffff"},
   light: {sea: "#a9cfe6", land: "#eef0e6", landEdge: "#c9d3bf", water: "#8cc0e0", bank: "#6aa3c8", quay: "#8f897c", pier: "#9a7b4a",
           station: "#ffffff",
           road: {highway: "#e3a64a", ring: "#d6a35c", arterial: "#ffffff", avenue: "#ffffff", local: "#fbfbf8", street: "#fbfbf8"},
           casing: "#b9b4aa", bridge: "#7b7466", route: "#b64e2b", routeCase: "#ffffff", you: "#1d1c1a", youEdge: "#ffffff",
-          pin: "#b64e2b", rim: "#1d1c1a", other: "#1f7a8c"}
+          pin: "#b64e2b", rim: "#1d1c1a", other: "#1f7a8c", lot: "#1f7a8c", lotFree: "#8f897c", lotMine: "#c46a12", lotHere: "#1d1c1a"}
 };
 
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -141,6 +147,83 @@ function sitePlaces(W, tier){
     if(s.tier != null && tier != null && s.tier > tier) return;
     out.push({id: s.id, kind: s.kind, label: s.kind, x: (s.x|0)/100, z: (s.z|0)/100});
   });
+  return out;
+}
+
+// ---- locality: the neighbourhood, its land use and the street you are on ---------------------
+// The doc names its roads but not its neighbourhoods, so each world gets its own, deterministic from its seed: one seed
+// point per NB_CELL m cell of land (jittered by mulberry32), named from the word lists below (no two alike); a point
+// belongs to its nearest seed. The seed nearest the middle is "Central" (the metro's Central station stands there).
+var NB_CELL = 520;
+var NB_PRE = ["Ash", "Bram", "Cole", "Fen", "Hart", "Lark", "Mill", "Rook", "Thorn", "Wil", "Bell", "Briar", "Clay", "Dale",
+              "Elder", "Fair", "Glen", "Hazel", "Kings", "Lynd", "Marsh", "Orch", "Pen", "Quarry", "Red", "Salt", "Stone",
+              "Tide", "Wren", "Yarrow", "Amber", "Bay", "Cinder", "Dove", "Fox", "Gold", "Heron", "Ivy", "Juniper", "Kestrel"];
+var NB_SUF = ["field", "moor", "gate", "ford", "wick", "ley", "brook", "hill", "side", "stead", "ton", "worth", "mere",
+              "vale", "cross", "haven", "bury", "wood", "dene", "shaw"];
+// the district legend's land uses, as the label says them ("" says nothing)
+var USE_NAME = {wild: "", farmland: "Farmland", forest: "Woods", plaza: "Plaza", civic: "Civic", hq: "HQ Row",
+  commercial: "Shops", residential: "Residential", park: "Park", industrial: "Industrial", street: "", oldtown: "Old Town",
+  downtown: "Downtown", suburb: "Suburbs", office: "Offices", tech: "Tech park", studio: "Studios",
+  finance: "Finance", biotech: "Science park", media: "Media", logistics: "Logistics", farm: "Farm", water: "Waterside"};
+function hashStr(s){
+  var h = 2166136261 >>> 0; s = String(s);
+  for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+function mulberry32(a){
+  a = a >>> 0 || 1;
+  return function(){ a = (a + 0x6D2B79F5) >>> 0; var t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0)/4294967296; };
+}
+function ringHas(P, x, z){   // P: [[x, z]...] in cm; x, z in m
+  var inside = false, xc = x*100, zc = z*100;
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){
+    var xi = +P[i][0], zi = +P[i][1], xj = +P[j][0], zj = +P[j][1];
+    if((zi > zc) !== (zj > zc) && xc < (xj - xi)*(zc - zi)/(zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// [{name, x, z}] (m) for a packed world, memoised on it (not enumerable: never sent or cached with it)
+function neighbourhoods(W){
+  if(!W || typeof W !== "object") return [];
+  if(W.nbhoods) return W.nbhoods;
+  var half = num(W.half, 1024), coast = W.island && Array.isArray(W.island.coast) && W.island.coast.length > 2 ? W.island.coast : null;
+  var seed = String(W.seed || W.id || "world"), n = Math.max(1, Math.ceil(2*half/NB_CELL)), out = [], used = {};
+  for(var j = 0; j < n; j++) for(var i = 0; i < n; i++){
+    var R = mulberry32(hashStr(seed + ":nb:" + i + ":" + j));
+    var x = -half + (i + 0.5)*NB_CELL + (R() - 0.5)*0.6*NB_CELL, z = -half + (j + 0.5)*NB_CELL + (R() - 0.5)*0.6*NB_CELL;
+    if(Math.abs(x) > half || Math.abs(z) > half || (coast && !ringHas(coast, x, z))) continue;
+    var name = "";
+    for(var k = 0; k < 12 && (!name || used[name]); k++) name = NB_PRE[Math.floor(R()*NB_PRE.length) % NB_PRE.length] + NB_SUF[Math.floor(R()*NB_SUF.length) % NB_SUF.length];
+    if(used[name]) name += " " + (out.length + 1);
+    used[name] = 1;
+    out.push({name: name, x: x, z: z});
+  }
+  var mid = null;
+  out.forEach(function(s){ if(!mid || s.x*s.x + s.z*s.z < mid.x*mid.x + mid.z*mid.z) mid = s; });
+  if(mid) mid.name = "Central";
+  try { Object.defineProperty(W, "nbhoods", {value: out, enumerable: false, configurable: true, writable: true}); } catch(e){}
+  return out;
+}
+// Where (x, z) (m) is: {area, use, street}. o: {sea: true (off the land), y: your height for the road's level,
+// area: a name that wins (the airport's platform)}. The street is the nearest named road within 40 m.
+function locality(W, x, z, o){
+  o = o || {}; x = num(x, 0); z = num(z, 0);
+  var out = {area: "", use: "", street: ""};
+  if(!W) return out;
+  var WD = HQV.world;
+  if(typeof o.area === "string" && o.area) out.area = o.area.slice(0, 40);
+  else if(o.sea) out.area = "Open sea";
+  else {
+    var best = null, bd = Infinity;
+    neighbourhoods(W).forEach(function(s){ var d = (s.x - x)*(s.x - x) + (s.z - z)*(s.z - z); if(d < bd){ bd = d; best = s; } });
+    out.area = best ? best.name : "";
+    if(WD && WD.districtAt && W.districts && W.districts.k){
+      try { var u = USE_NAME[WD.districtAt(W, x, z).name]; out.use = u || ""; } catch(e){}
+    }
+  }
+  if(!o.sea && WD && WD.nearestRoad && W.edges){
+    try { var r = WD.nearestRoad(W, x, z, 40, o.y != null && isFinite(+o.y) ? +o.y : null); if(r) out.street = String(r.name || "").slice(0, 48); } catch(e){}
+  }
   return out;
 }
 
@@ -491,6 +574,20 @@ function mount(el, opts){
   var bExp = btn("hq3d-minimap-expand", "⤢", "Open the big map (M)");
   var legend = mk("div", "hq3d-minimap-legend");
   legend.textContent = "Click to set a waypoint · drag to pan · wheel to zoom · M or Esc to close";
+  // where you are, along the map's foot: the lot you stand on (announced by the host as you step on), then the
+  // neighbourhood, its land use and the street (a polite live region, written only when the words change)
+  var place = mk("div", "hq3d-minimap-place");
+  var placeLot = mk("div", "hq3d-minimap-place-lot", place);
+  placeLot.hidden = true;
+  var placeLive = mk("div", "hq3d-minimap-place-live", place);
+  placeLive.setAttribute("aria-live", "polite");
+  placeLive.setAttribute("aria-atomic", "true");
+  var placeArea = mk("span", "hq3d-minimap-place-area", placeLive);
+  var placeUse = mk("span", "hq3d-minimap-place-use", placeLive);
+  var placeStreet = mk("span", "hq3d-minimap-place-street", placeLive);
+  place.hidden = true;
+  var placeKey = "", lotKey = "";
+  var lots = [];                                  // the HQ lots: [{id, n, poly: [[x, z]...] m, x, z, r, mine, owned}]
   function syncMode(){
     var north = mode === "north";
     bMode.textContent = north ? "N" : "↑";
@@ -632,6 +729,74 @@ function mount(el, opts){
     places.sort(function(a, b){ return a.i - b.i; });
   }
 
+  // Where you are (locality(): {area, use, street}, plus lot: {text, mine} | null), as text only; the DOM is touched
+  // only when the words change, so the live region speaks once per change. -> true when it changed.
+  function setPlace(p){
+    p = p || {};
+    function str(v, n){ return typeof v === "string" ? v.slice(0, n) : ""; }
+    var area = str(p.area, 40), use = str(p.use, 32), st = str(p.street, 48), changed = false;
+    var key = area + "|" + use + "|" + st;
+    if(key !== placeKey){
+      placeKey = key; changed = true;
+      placeArea.textContent = area;
+      placeUse.textContent = use ? (area ? " · " : "") + use : "";
+      placeStreet.textContent = st;
+      placeStreet.hidden = !st;
+    }
+    var L = p.lot && typeof p.lot.text === "string" && p.lot.text ? p.lot : null, lk = L ? (L.mine ? "1" : "0") + str(L.text, 60) : "";
+    if(lk !== lotKey){
+      lotKey = lk; changed = true;
+      placeLot.textContent = L ? str(L.text, 60) : "";
+      placeLot.hidden = !L;
+      placeLot.setAttribute("data-mine", L && L.mine ? "true" : "false");
+    }
+    place.hidden = !(area || use || st || L);
+    return changed;
+  }
+  // The HQ lots drawn over the map: [{id, n (its number), poly: [[x, z]...] (m), mine, owned}]
+  function setLots(list){
+    lots = [];
+    (Array.isArray(list) ? list : []).forEach(function(l){
+      if(!l || !Array.isArray(l.poly) || l.poly.length < 3) return;
+      var P = l.poly.filter(function(q){ return Array.isArray(q) && isFinite(+q[0]) && isFinite(+q[1]); }).map(function(q){ return [+q[0], +q[1]]; });
+      if(P.length < 3) return;
+      var x = 0, z = 0, r = 0;
+      P.forEach(function(q){ x += q[0]/P.length; z += q[1]/P.length; });
+      P.forEach(function(q){ r = Math.max(r, Math.hypot(q[0] - x, q[1] - z)); });
+      lots.push({id: l.id, n: l.n | 0, poly: P, x: x, z: z, r: r, mine: !!l.mine, owned: !!l.owned});
+    });
+    lots.sort(function(a, b){ return (a.mine ? 1 : 0) - (b.mine ? 1 : 0); });   // yours drawn last, on top
+    return lots.length;
+  }
+  // the lots in view: outlines (dashed when free), yours filled amber, the one you stand on bold; the number once a lot
+  // is big enough on screen to hold it
+  function drawLots(s, c, n, ax, ay, here){
+    if(!lots.length) return;
+    var lim = Math.max(cssW, cssH);
+    function P(q){ var u = -(q[0] - V.x)*s, v = -(q[1] - V.z)*s; return [ax + u*c + v*n, ay - u*n + v*c]; }
+    g.lineJoin = "miter";
+    for(var i = 0; i < lots.length; i++){
+      var L = lots[i], m0 = P([L.x, L.z]), rp = L.r*s;
+      if(m0[0] < -rp || m0[1] < -rp || m0[0] > lim + rp || m0[1] > lim + rp) continue;
+      var cur = here != null && L.id === here;
+      g.beginPath();
+      L.poly.forEach(function(q, k){ var p = P(q); if(k) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); });
+      g.closePath();
+      if(L.mine){ g.globalAlpha = 0.35; g.fillStyle = pal.lotMine; g.fill(); g.globalAlpha = 1; }
+      g.setLineDash && g.setLineDash(L.owned || L.mine ? [] : [3, 2]);
+      if(cur){ g.lineWidth = 4.5; g.strokeStyle = pal.casing; g.stroke(); }
+      g.lineWidth = cur ? 2.5 : L.mine ? 2 : 1.2;
+      g.strokeStyle = cur ? pal.lotHere : L.mine ? pal.lotMine : L.owned ? pal.lot : pal.lotFree;
+      g.stroke();
+      g.setLineDash && g.setLineDash([]);
+      if(L.n > 0 && (big || rp > 15)){
+        g.font = "700 " + (cur ? 11 : 10) + "px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+        g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(String(L.n), m0[0], m0[1]);
+        g.fillStyle = L.mine ? pal.lotMine : pal.rim; g.fillText(String(L.n), m0[0], m0[1]);
+      }
+    }
+  }
+
   // the airfield: on the world it was laid out for (an L without a world id goes on any)
   function airHere(){ return !!(airL && W && (!airL.world || !W.id || airL.world === W.id)); }
   function setAirfield(L){
@@ -712,6 +877,7 @@ function mount(el, opts){
     }
     g.globalAlpha = 1;
     drawLines(s, c, n, ax, ay, under);
+    if(!under) drawLots(s, c, n, ax, ay, f.lot);
     // the route: a cased line through every point (m)
     var R = f.route;
     if(R && R.length >= 4){
@@ -828,21 +994,21 @@ function mount(el, opts){
     if(ro){ try { ro.disconnect(); } catch(e){} ro = null; }
     if(root.parentNode) root.parentNode.removeChild(root);
     if(scrim.parentNode) scrim.parentNode.removeChild(scrim);
-    stat = null; atlas = null; W = null; places = []; airL = null; lines = [];
+    stat = null; atlas = null; W = null; places = []; airL = null; lines = []; lots = [];
   }
 
   return {
     el: root, canvas: cv,
-    setWorld: setWorld, setAirfield: setAirfield, frame: frame, setMode: setMode, zoom: zoom, expand: expand, destroy: destroy,
+    setWorld: setWorld, setAirfield: setAirfield, setPlace: setPlace, setLots: setLots, frame: frame, setMode: setMode, zoom: zoom, expand: expand, destroy: destroy,
     isBig: function(){ return big; },
     mode: function(){ return mode; },
     view: function(){ return {x: V.x, z: V.z, rot: V.rot, span: V.span, w: V.w, h: V.h, ay: V.ay}; },
     // for tests and the integrator: the cached static layer (null before setWorld)
-    layers: function(){ return {static: stat && stat.cv, atlas: atlas && atlas.cv, places: places.length, lines: lines.length}; },
+    layers: function(){ return {static: stat && stat.cv, atlas: atlas && atlas.cv, places: places.length, lines: lines.length, lots: lots.length}; },
     under: function(){ return wasUnder; }
   };
 }
 
 HQV.hqminimap = {mount: mount, toMini: toMini, fromMini: fromMini, zoomFor: zoomFor, viewFor: viewFor,
-                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, POI: POI, AIR_COL: AIR_COL, transitLines: transitLines, LINE_COL: LINE_COL};
+                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, locality: locality, neighbourhoods: neighbourhoods, USE_NAME: USE_NAME, POI: POI, AIR_COL: AIR_COL, transitLines: transitLines, LINE_COL: LINE_COL};
 })();

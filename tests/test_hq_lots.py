@@ -51,6 +51,24 @@ out.turned = {grand: tg, garage: !!tgar, rot: tp.rot, x: [Math.min(...xs), Math.
   same: JSON.stringify(R.map(q => q.map(v => Math.round(v*10)))) === JSON.stringify(tR.map(q => q.map(v => Math.round(v*10)))),
   pickIn: !!C3.pickAt([{lot: tl}], (corner[0] - 100*(fx + ax))/100, (corner[1] - 100*(fz + az))/100),
   pickOut: !!C3.pickAt([{lot: tl}], 100 + 17.5, 200 + 16.5)};   // (inside the lot's unturned w x d box, outside the lot)
+// [lot marks] the kerb a little inside the outline, the plaque at the street edge clear of everything on the lot, its words,
+// and what the HUD and the minimap say about the lot you stand on
+out.marks = [];
+[1, 10, 25, 40, 60].forEach(L => {
+  const D = P.dressPlan(R, L, "user-a", keep, rngOf), K = keep.concat(C3.dressKeep({plan: D})), M = P.markPlan(R, K), q = M.plaque;
+  const bw = P.PLAQUE.w/2 + 0.1, bd = P.PLAQUE.base/2 + 0.1;
+  out.marks.push({L, outer: M.kerb[0], inner: M.kerb[1], plaque: q, inside: [[-bw, -bd], [bw, -bd], [bw, bd], [-bw, bd]].every(([a, b]) => inRing(q.x + a*Math.cos(q.rot) + b*Math.sin(q.rot), q.z - a*Math.sin(q.rot) + b*Math.cos(q.rot))),
+    hits: K.some(k => Math.abs(q.x - k[0]) < bw + k[2] && Math.abs(q.z - k[1]) < bd + k[3]), front: Math.max(...R.map(r => r[1])) - q.z});
+});
+out.markFree = P.markPlan(R, [[0, C3.HQ_DOOR + 6, 1.6, 6]]).plaque;
+const tR2 = C3.lotRing(tl, tp), tm = P.markPlan(tR2, C3.lotKeep(tg, tgar));
+out.markTurned = {plaque: tm.plaque, inner: tm.kerb[1]};
+out.words = {theirs: P.plaqueText(12, "Grace Hopper", false), yours: P.plaqueText(3, "Ada", true), free: P.plaqueText(7, "", false),
+  long: P.plaqueText(2, "  A  very\tlong name that goes on and on and on  ", false).name,
+  notice: [C3.lotNotice({rank: 11}, {trainerName: "Grace"}), C3.lotNotice({rank: 2}, {isYou: true}), C3.lotNotice({rank: 6}, null),
+           C3.lotNotice({rank: 0}, {displayName: "  "})],
+  line: [C3.lotLine({rank: 11}, {displayName: "Grace"}), C3.lotLine({rank: 2}, {isYou: true}), C3.lotLine({rank: 6}, null)],
+  owner: [C3.ownerName({trainerName: "T", displayName: "D"}), C3.ownerName({displayName: "D", handle: "h"}), C3.ownerName({handle: "h"}), C3.ownerName(null)]};
 console.log(JSON.stringify(out));
 """
 
@@ -118,6 +136,38 @@ class HqLots(unittest.TestCase):
         self.assertTrue(t["garage"])
         self.assertTrue(t["pickIn"], "a tap just inside the turned lot's corner picks it")
         self.assertFalse(t["pickOut"], "a tap in its unturned box, off the lot, does not")
+
+    def test_lot_marks_kerb_inside_the_outline(self):
+        for m in self.out["marks"]:
+            with self.subTest(level=m["L"]):
+                xs = [q[0] for q in m["outer"]]; zs = [q[1] for q in m["outer"]]
+                self.assertAlmostEqual(min(xs), -18 + 0.3, places=3)        # 0.3 m inside each edge
+                self.assertAlmostEqual(max(xs), 18 - 0.3, places=3)
+                self.assertAlmostEqual(max(zs), 15 - 0.3, places=3)
+                ix = [q[0] for q in m["inner"]]
+                self.assertAlmostEqual(min(ix), -18 + 0.7, places=3)        # and 0.4 m wide
+        t = self.out["markTurned"]
+        self.assertAlmostEqual(min(q[0] for q in t["inner"]), -18 + 0.7, places=2, msg="the same kerb on a turned lot")
+
+    def test_lot_marks_plaque_at_the_street_clear_of_the_lot(self):
+        for m in self.out["marks"]:
+            with self.subTest(level=m["L"]):
+                self.assertTrue(m["inside"], "the plaque stands on its own lot")
+                self.assertFalse(m["hits"], "clear of the building, its walk, the garage and the finish")
+                self.assertLess(m["front"], 2.0, "just inside the street edge")
+                self.assertAlmostEqual(m["plaque"]["rot"], 0, places=3, msg="facing the street")
+        self.assertGreater(abs(self.out["markFree"]["x"]), 1.6 + 1.4, "off the walk to the door")
+        self.assertIsNotNone(self.out["markTurned"]["plaque"])
+
+    def test_lot_words(self):
+        w = self.out["words"]
+        self.assertEqual(w["theirs"], {"num": "LOT 12", "name": "Grace Hopper", "tag": "HQ LOT"})
+        self.assertEqual(w["yours"], {"num": "LOT 3", "name": "Ada", "tag": "YOUR LOT"})
+        self.assertEqual(w["free"], {"num": "LOT 7", "name": "Available", "tag": "HQ LOT"})
+        self.assertEqual(w["long"], "A very long name that goes o")
+        self.assertEqual(w["notice"], ["You are on Grace's lot (Lot 12)", "Your lot (Lot 3)", "Lot 7 is available", "You are on someone's lot (Lot 1)"])
+        self.assertEqual(w["line"], ["Lot 12 · Grace", "Your lot · Lot 3", "Lot 7 · Available"])
+        self.assertEqual(w["owner"], ["T", "D", "h", ""])
 
     def test_deterministic_per_owner(self):
         self.assertTrue(self.out["same"])

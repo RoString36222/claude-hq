@@ -2138,6 +2138,7 @@ function mount(el, api){
     movedHere = true;                       // you are somewhere now: a street rebuild must not put you back at your door
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     E.sfx(kind === "bike" ? "bell" : car ? "door" : kind === "skate" ? "jump" : "go");
+    if(B.doorsPlay) B.doorsPlay("in", {calm: E.calm()});              // [3.39] its door opens as you climb in, shuts behind you
     if(kind !== "skate") driveHud(kind);
     drvMount();                                                        // [3.12] its lights, damage (games/hqdrive.js)
     rideUiSync(true);
@@ -2613,6 +2614,8 @@ function mount(el, api){
       // a vehicle from a garage stays where you leave it; the rack's bikes and the boards go home
       if(b.stay && !force){ parked[b.id] = {x: avatar.x, z: avatar.z, yaw: avatar.yaw}; placeProp(b, avatar.x, avatar.z, avatar.yaw); ownMoved(b); ownLeft(b); }
       b.g.visible = true;
+      var br = b.rig || (b.g.children[0] && b.g.children[0].userData.rig);           // [3.39] the parked one: its door opens, you step out, it shuts
+      if(!force && br && br.doorsPlay) br.doorsPlay("out", {calm: E.calm()});
     }
     if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
     if(ride.kind !== "skate"){

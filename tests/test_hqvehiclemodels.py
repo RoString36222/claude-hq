@@ -3,7 +3,8 @@
 node builds every body type with the vendored three.js; the Python side checks the budgets (triangles, draw
 calls), the size against the catalogue's dims, the rig the 3D City rides (wheels on the wheelbase and on the
 ground, the steering, the rider's anchors), the paint, shared geometry, the starters (hq3d's own car and
-motorbike, untouched) and the glTF hook (a real model swapped in once it has loaded).
+motorbike, untouched), the glTF hook (a real model swapped in once it has loaded) and [3.39] the doors (each
+catalogue car's researched door type, the door its own piece on a pivot, opened and shut round getting in and out).
 Skipped when node is not installed. Stdlib only."""
 import json
 import re
@@ -83,6 +84,24 @@ out.cat = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
   return {id: v.id, kind: r.kind, size: s.toArray(), seatY: r.seat.getWorldPosition(v3()).y, tris: V.triangles(r), dc: V.drawCalls(r), shown: V.shown(v)};
 });
 out.SCALE = V.SCALE;
+// [3.39] the doors: each car's door pieces shut and open (both sides), and a play's timeline (calm: no swing)
+const box = o => { o.updateWorldMatrix(true, true); return new THREE.Box3().setFromObject(o); };
+out.doors = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
+  const r = V.build(THREE, v, 0x3366cc), d = r.g.getObjectByName("door-r"), row = {id: v.id, kind: r.kind, door: v.door, type: r.doorType, n: r.doors.length};
+  if(!d) return row;
+  r.g.updateMatrixWorld(true);
+  const b0 = box(d), c0 = b0.getCenter(v3()); r.setDoors(1, "both"); const b1 = box(d), c1 = b1.getCenter(v3());
+  const l1 = r.g.getObjectByName("door-l").rotation.toArray().slice(0, 3);
+  Object.assign(row, {dx: c1.x - c0.x, dy: c1.y - c0.y, top0: b0.max.y, top1: b1.max.y, rotR: d.rotation.toArray().slice(0, 3), rotL: l1,
+    mats: [...new Set(r.doors.flatMap(q => q.g.children.filter(m => m.isMesh).map(m => m.userData.mk)))].sort()});
+  r.setDoors(0, "both");
+  const t = r.doorsPlay("in", {}), s0 = r.doors.map(q => q.f), tl = [];
+  for(const f of [0.25, 0.5, 0.75, 1.01]){ r.doorTick(performance.now()/1000 + t*f); tl.push(r.doors.map(q => +q.f.toFixed(3))); }
+  const tc = r.doorsPlay("out", {calm: true}), cl = [];
+  for(const f of [0.05, 0.5, 0.95, 1.01]){ r.doorTick(performance.now()/1000 + tc*f); cl.push(r.doors.map(q => +q.f.toFixed(3))); }
+  Object.assign(row, {t, s0, tl, cl, hooked: r.doors.every(q => q.g.children.some(m => m.isMesh && typeof m.onBeforeRender === "function"))});
+  return row;
+});
 // shared geometry: two copies of one entry, different paints
 const a = V.build(THREE, ENTRIES[0], 0x111111), b2 = V.build(THREE, ENTRIES[0], 0xeeeeee);
 const ga = a.meshes.map(m => m.geometry.uuid).sort().join(), gb = b2.meshes.map(m => m.geometry.uuid).sort().join();
@@ -135,10 +154,12 @@ class VehicleModels(unittest.TestCase):
             body = sum(1 for k in r["mats"] if k in ("paint", "trim", "glass", "light", "tail"))
             self.assertLessEqual(body, 5, (r["id"], r["mats"]))
             # a mesh per material per rigid piece; a car's calipers ride its four wheel holders
-            self.assertLessEqual(r["dc"], 16 if r["kind"] == "car" else 12, (r["id"], r["mats"]))
+            # ([3.39] a car 18: its two doors are each a piece of their own, the paint and the side pane, so they can open)
+            self.assertLessEqual(r["dc"], 18 if r["kind"] == "car" else 12, (r["id"], r["mats"]))
         for r in self.o["cat"]:
-            self.assertLess(r["tris"], 6000, r["id"])
-            self.assertLessEqual(r["dc"], 16 if r["kind"] == "car" else 12, r["id"])
+            # ([3.39] a Koenigsegg under 7k: its lofted shell carries the scoops, a door skin inside and out and real lamps)
+            self.assertLess(r["tris"], 7000 if r["id"].startswith("koenigsegg-") else 6000, r["id"])
+            self.assertLessEqual(r["dc"], 18 if r["kind"] == "car" else 12, r["id"])
 
     def test_size_matches_dims(self):
         for r in self.o["rows"]:
@@ -222,7 +243,7 @@ class VehicleModels(unittest.TestCase):
         chiron = next(r for r in self.o["cat"] if r["id"] == "bugatti-chiron-super-sport")
         self.assertTrue(all(r["tris"] != chiron["tris"] for r in ks.values()))
         for r in ks.values():
-            self.assertLess(r["tris"], 6000, r["id"]); self.assertLessEqual(r["dc"], 16, r["id"])
+            self.assertLess(r["tris"], 7000, r["id"]); self.assertLessEqual(r["dc"], 18, r["id"])   # ([3.39] doors, scoops, lamps)
             self.assertAlmostEqual(r["size"][1]/r["shown"]["heightM"], 1, delta=0.06, msg=(r["id"], "wing, fins and scoop within the real height"))
         # the Jesko Absolut is the longest (its extended tail), the Agera RS the shortest
         self.assertGreater(ks["koenigsegg-jesko-absolut"]["size"][2], max(r["size"][2] for i, r in ks.items() if i != "koenigsegg-jesko-absolut"))
@@ -309,6 +330,52 @@ class VehicleModels(unittest.TestCase):
         self.assertEqual(g["paint2"], [0x0000ff], "each vehicle its own paint")
         self.assertEqual(g["repaint"], [0xabcdef])
         self.assertEqual(g["sceneUntouched"], 0x888888, "the loaded scene's material is copied, not changed")
+
+
+    def test_doors(self):
+        # [3.39] every catalogue vehicle names how its doors open, researched from the real car
+        D = {r["id"]: r for r in self.o["doors"]}
+        for r in self.o["doors"]:
+            self.assertIn(r["door"], ("hinged", "scissor", "butterfly", "dihedral", "autoskin", "gullwing", "none"), r["id"])
+            self.assertEqual(r["type"], r["door"], r["id"])
+            if r["kind"] == "bike" or r["id"].startswith("f1-"):
+                self.assertEqual((r["door"], r["n"]), ("none", 0), r["id"])
+                continue
+            self.assertEqual(r["n"], 2, r["id"])
+            self.assertEqual(r["mats"], ["glass", "paint"], r["id"])               # a door: its skin and its pane, no more
+            self.assertTrue(r["hooked"], r["id"])                                  # it steps itself as it draws
+            # in: shut, opening, open (held), shutting, shut; calm: open at once, shut at the end, nothing between
+            self.assertEqual(r["s0"][0] if r["door"] == "autoskin" else min(r["s0"]), 0)
+            mid = [max(f) for f in r["tl"]]
+            self.assertTrue(0 < mid[0] < 1 and mid[1] == 1 and 0 < mid[2] < 1 and mid[3] == 0, (r["id"], r["tl"]))
+            self.assertEqual([max(f) for f in r["cl"]], [1, 1, 1, 0], r["id"])
+            # the driver's door only (right-hand drive: -x), except the Regera's Autoskin, which opens both
+            self.assertEqual([f > 0 for f in r["tl"][1]], [True, True] if r["door"] == "autoskin" else [False, True], r["id"])
+        for k in ("koenigsegg-jesko-absolut", "koenigsegg-agera-rs", "koenigsegg-one-1"):
+            self.assertEqual(D[k]["door"], "dihedral")
+        self.assertEqual(D["koenigsegg-regera"]["door"], "autoskin")
+        self.assertEqual(D["lamborghini-revuelto"]["door"], "scissor")
+        self.assertEqual(D["lamborghini-countach-lp400"]["door"], "scissor")
+        self.assertEqual(D["lamborghini-temerario"]["door"], "hinged")
+        self.assertEqual(D["bugatti-tourbillon"]["door"], "butterfly")
+        self.assertEqual(D["bugatti-chiron-super-sport"]["door"], "hinged")
+        for r in self.o["doors"]:
+            if not r["n"]:
+                continue
+            t = r["door"]
+            if t in ("dihedral", "autoskin"):
+                # synchro-helix: out from the body and turned a quarter up about the front of the sill
+                self.assertAlmostEqual(r["rotR"][0], 3.14159/2, places=3, msg=r["id"])
+                self.assertLess(r["dx"], -0.2, r["id"])                         # out (the right door: -x)
+                self.assertGreater(r["top1"], r["top0"] + 0.3, r["id"])          # standing up over the roof line
+            elif t == "hinged":
+                self.assertEqual(r["rotR"][0], 0, r["id"])
+                self.assertGreater(r["rotR"][1], 0.9, r["id"]); self.assertLess(r["rotL"][1], -0.9, r["id"])   # each swings out
+                self.assertLess(r["dx"], -0.2, r["id"])
+                self.assertAlmostEqual(r["top1"], r["top0"], delta=0.05, msg=r["id"])
+            elif t in ("scissor", "butterfly"):
+                self.assertGreater(r["rotR"][0], 0.9, r["id"])                   # up about its front
+                self.assertGreater(r["top1"], r["top0"] + 0.3, r["id"])
 
 
 if __name__ == "__main__":

@@ -1206,6 +1206,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z, deckLevel(x, z))) return true;                 // [3.29] a flyover's piers below it, its parapets on it
+    if(HQV.hqPortals && HQV.hqPortals.blocked(W, x, z)) return true;         // [v5] a tunnel mouth's fence, walls and headwall
     if(wb && wb.furnitureAt && wb.furnitureAt(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [city life] benches, stalls, cafe tables ([play-street] a table, bin or stall you drive into fast goes over)
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
@@ -3017,6 +3018,13 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit && transit.under() && transit.floorAt){ var d = underDeck(x, z); if(d) return d.y; }
     var ty = tunnelLevel();
     if(ty != null && WD.tunnelAt(W, x, z, ty)) return WD.groundAt(W, x, z, false, ty);   // [3.30] in the tunnel: its road, never the land over it
+    // below the street: the station floor under the camera, never above your feet (the street's height put the chase
+    // camera over the hall's ceiling, looking at nothing)
+    if(transit && transit.under && transit.under()){
+      var ua = c.avatar && c.avatar(), uf = ua && ua.hy != null && isFinite(ua.hy) ? +ua.hy : null, ug = transit.ground(x, z);
+      if(uf != null && (ug == null || !isFinite(ug) || ug > uf + 0.8)) ug = uf;
+      if(ug != null && isFinite(ug)) return ug;
+    }
     var g = groundY(x, z);
     if(sea && sea.surface && (!W || Math.abs(x) > W.half || Math.abs(z) > W.half || !sea.boat.land(x, z))) g = Math.max(g, sea.surface(x, z) + 0.5);
     return g;

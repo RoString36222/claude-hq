@@ -201,6 +201,7 @@ html.hq-large-text .hqphone-iname{font-size:13px}
 /* settings */
 .hp-setsec{display:flex;flex-direction:column;gap:6px}
 .hp-setsec h3{margin:4px 0 0;font-size:.95em}
+.hp-subhead{margin:10px 0 4px;font-size:.95em}
 .hp-setrow{display:flex;flex-direction:column;gap:1px}
 .hp-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600}
 

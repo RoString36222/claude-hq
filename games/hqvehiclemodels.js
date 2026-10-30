@@ -406,6 +406,12 @@ Builder.prototype.bar = function(node, mk, col, a, b, w, d, round){
   this.m.compose(this.v, this.q, this.one); geo.applyMatrix4(this.m);
   return this.put(node, mk, geo, col);
 };
+// [3.39] a flat part (built facing +z) laid at p facing along n
+Builder.prototype.face = function(node, mk, col, geo, p, n){
+  var T = this.T; this.q.setFromUnitVectors(new T.Vector3(0, 0, 1), new T.Vector3(n[0], n[1], n[2]).normalize()); this.v.set(p[0], p[1], p[2]);
+  this.m.compose(this.v, this.q, this.one); geo.applyMatrix4(this.m);
+  return this.put(node, mk, geo, col);
+};
 // a side profile (a shape in (z, y)) extruded across the width w, centred on x 0
 Builder.prototype.side = function(node, mk, col, pts, w, bevel, curve, segs){
   var T = this.T, s = shapeOf(T, pts), b = bevel || 0;
@@ -630,6 +636,83 @@ function kCap(B, node, mk, col, P, z, dir){
   var g = new T.BufferGeometry(); g.setAttribute("position", new T.BufferAttribute(new Float32Array(V), 3)); g.computeVertexNormals();
   return B.put(node, mk, g, col);
 }
+/* ---------- [3.39] doors: each its own piece on a pivot, opened before you climb in and shut after ----------
+   entry.door (the catalogue, researched from the real cars): hinged (a front hinge, the door swings out), scissor (a
+   hinge at the front, the door turns straight up), butterfly (hinged on the A pillar: up and out), dihedral (a
+   Koenigsegg's synchro-helix: the door pushes out from the body and turns up 90 degrees about the front of the sill),
+   autoskin (the Regera's robotised dihedral doors: both open themselves), gullwing (hinged at the roof), none (bikes,
+   an open-wheeler). A door is a node "door-l" (+x) or "door-r" (-x, the driver's: right-hand drive) at its pivot. */
+var DOOR_TYPES = {hinged: 1, scissor: 1, butterfly: 1, dihedral: 1, autoskin: 1, gullwing: 1, none: 1};
+function doorType(entry, st){
+  var t = entry && entry.door;
+  if(DOOR_TYPES[t] === 1) return t;
+  if(st.kind === "bike" || st.type === "formula") return "none";
+  if(st.brand === "koenigsegg") return /Regera/.test(String(entry.model || "")) ? "autoskin" : "dihedral";
+  return "hinged";
+}
+// a door's pose at f (0 shut .. 1 open) on side sx: [dx, dy, dz, rx, ry, rz] off its pivot (rotations applied y, then x)
+function doorPose(type, f, sx){
+  f = Math.max(0, Math.min(1, +f || 0));
+  var e = f*f*(3 - 2*f);
+  if(type === "scissor") return [sx*0.03*e, 0, 0, 1.2*e, -sx*0.1*e, 0];
+  if(type === "butterfly") return [sx*0.05*e, 0, 0, 0.95*e, -sx*0.5*e, -sx*0.35*e];
+  if(type === "dihedral" || type === "autoskin"){                      // out first (the helix), turning up all the way
+    var out = Math.min(1, e*2.4);
+    return [sx*0.3*out, 0, 0.03*out, PI/2*e, -sx*0.12*Math.sin(PI*e), 0];
+  }
+  if(type === "gullwing") return [0, 0, 0, 0, 0, sx*1.2*e];
+  if(type === "none") return [0, 0, 0, 0, 0, 0];
+  return [0, 0, 0, 0, -sx*1.1*e, 0];                                  // hinged
+}
+// how long a door takes to open (s): a robotised one is slower and smooth, a big dihedral door a touch slower than a hinge
+var DOOR_S = {hinged: 0.45, scissor: 0.6, butterfly: 0.6, dihedral: 0.7, autoskin: 0.95, gullwing: 0.6};
+// a Koenigsegg's doors: each a piece of the lofted shell from the door's shut lines (zF to zR, over the sill to the
+// shoulder), its side pane (the canopy's side band from the screen's foot back) and its mirror, on a pivot at the front
+// of the sill; the shell under each door dark (the opening)
+function kDoors(B, body, type, sec, canSec, o){
+  var s0 = 0.8, s1 = 4.55, zR = o.zR, zF = o.zF, zG = Math.max(o.zGl, zR + 0.02), root = body.parent;
+  kDecal(B, body, "trim", COL.black, sec, zF, zR, s0, s1, 3, 3, 0.004);
+  [1, -1].forEach(function(sx){
+    var q = kAt(sec(zF), 1.1, 0), piv = [sx*q[0], q[1], zF], dn = B.node(root, sx > 0 ? "door-l" : "door-r", piv[0], piv[1], piv[2]);
+    var rel = function(x, y, z){ return [x - piv[0], y - piv[1], z - piv[2]]; };
+    var nz = 5, ns = 5, at = function(i, j, off){ var z = zF + (zR - zF)*i/nz, p = kAt(sec(z), s0 + (s1 - s0)*j/ns, off); return rel(sx*p[0], p[1], z); };
+    kGrid(B, dn, "paint", null, nz + 1, ns + 1, function(i, j){ return at(i, j, 0.01); }, [sx, 0.3, 0], false);      // the skin
+    kGrid(B, dn, "paint", null, nz + 1, ns + 1, function(i, j){ return at(i, j, -0.025); }, [-sx, -0.3, 0], false);  // its inside
+    kGrid(B, dn, "paint", null, nz + 1, 2, function(i, j){ return at(i, 0, j ? 0.01 : -0.025); }, [0, -1, 0], false); // its foot
+    if(o.zA > zG + 0.05) kGrid(B, dn, "glass", null, 5, 3, function(i, j){                                          // the pane
+      var z = o.zA - 0.004 + (zG - o.zA + 0.004)*i/4, c = canSec(z)[j]; return rel(sx*c[0], c[1], z); }, [sx, 0.3, 0], false);
+    var mz = o.zMir, my = o.belt + 0.11, x0 = o.fP(mz)*o.hw, mx = sx*(x0*0.86 + 0.16);                            // the mirror
+    B.bar(dn, "paint", null, rel(sx*x0*0.8, o.belt + 0.02, mz + 0.06), rel(mx, my, mz), 0.022, 0.06);
+    var mp = rel(mx + sx*0.03, my + 0.02, mz);
+    B.box(dn, "paint", null, 0.16, 0.075, 0.1, mp[0], mp[1], mp[2] - 0.01, 0, -sx*0.12, 0);
+    B.box(dn, "glass", null, 0.14, 0.06, 0.01, mp[0], mp[1], mp[2] - 0.062, 0, -sx*0.12, 0);
+  });
+}
+// a point on a lofted surface at (z, s), lifted by off, and its outward normal there: {p, n} (the +x half)
+function kFrame(sec, z, s, off){
+  var a = kAt(sec(z), s, off), b = kAt(sec(z - 0.02), s, off), c = kAt(sec(z), s + 0.08, off), o = kAt(sec(z), s, off + 1);
+  var u = [b[0] - a[0], b[1] - a[1], -0.02], v = [c[0] - a[0], c[1] - a[1], 0];
+  var n = [u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]], l = Math.hypot(n[0], n[1], n[2]) || 1;
+  if(n[0]*(o[0] - a[0]) + n[1]*(o[1] - a[1]) < 0) l = -l;
+  return {p: [a[0], a[1], z], n: [n[0]/l, n[1]/l, n[2]/l]};
+}
+// [3.39] an aerofoil section (a wing, a canard, a fin's profile): chord c along -z from its leading edge at z 0, thickness
+// t (most of it a third of the way back, a round nose, a sharp tail), camber k, n stations a side (default 7), extruded w
+// across x, centred on x 0
+function aeroGeo(T, c, t, w, k, n){
+  var U = [], Lo = [];
+  n = n || 7;
+  for(var i = 0; i <= n; i++){
+    var x = i/n, th = 5*t*(0.2969*Math.sqrt(x) - 0.126*x - 0.3516*x*x + 0.2843*x*x*x - 0.1036*x*x*x*x), cm = k*c*4*x*(1 - x);
+    U.push([-x*c, cm + th]); Lo.push([-x*c, cm - th]);
+  }
+  var s = new T.Shape(); s.moveTo(U[0][0], U[0][1]);
+  for(var j = 1; j <= n; j++) s.lineTo(U[j][0], U[j][1]);
+  for(var m = n - 1; m >= 1; m--) s.lineTo(Lo[m][0], Lo[m][1]);
+  var g = new T.ExtrudeGeometry(s, {depth: w, bevelEnabled: false, curveSegments: 1});
+  g.rotateY(-PI/2); g.translate(w/2, 0, 0);
+  return g;
+}
 function tyreR(t){ return (t[2]*0.0254 + 2*t[0]*t[1]/100000)/2; }
 /* C = buildCar's frame {L, W, H, gc, zf, zr, G}. -> {Rf, Rr, twf, twr (the staggered tyres), yb, yt, zA, zAr, zCr, zC (the
    belt, the deck, the windscreen's foot and top, the roof's end, the canopy's tail: buildCar's cabin and tuning parts
@@ -667,12 +750,22 @@ function koenigBody(T, B, body, ks, C){
     return y;
   };
   var xinAt = function(z){ return Math.abs(z - zf) < Math.abs(z - zr) ? xinF : xinR; };
+  // [3.39] the side intake behind the door: a real scoop pressed into the flank (its mouth open forward at iz1, deepest
+  // at its back wall iz0 just ahead of the rear wheel; the Regera's shallower and lower); the door runs from it to dz0
+  var dz0 = zf - af - 0.05, iz0 = zr + arr + (regera ? 0.08 : 0.03), iz1 = iz0 + (regera ? 0.4 : jesko ? 0.5 : 0.52), zW = iz0 + 0.012;
+  var REC = jesko ? [0.13, [0.25, 1, 1, 0.85, 0]] : regera ? [0.075, [0, 0.45, 1, 0.55, 0]] : [0.12, [0.15, 1, 1, 0.72, 0]];
+  var recAt = function(z){
+    if(z <= iz0 || z >= iz1) return 0;
+    return z < zW ? (z - iz0)/(zW - iz0) : Math.pow((iz1 - z)/(iz1 - zW), 0.6);
+  };
   // the half section at z: the sill tucked under, the flank (widest a little under half way up), the shoulder rolling
   // over to the crest, down the fender's inside to the centre
   var shellSec = function(z, edge){
     var x = fP(z)*hw, ys = fS(z), yc = fCr(z), ym = Math.min(fC(z), yc + 0.01), xc = fX(z), r = yc - ys;
     var P = [[x*0.9, ys], [x*0.982, ys + r*0.2], [x, ys + r*0.47], [x*0.99, ys + r*0.72], [x*0.952, ys + r*0.9], [x*xc, yc],
              [x*(xc - 0.24), ym + (yc - ym)*0.3], [x*0.26, ym + 0.006], [0, ym]];
+    var rd = recAt(z)*REC[0];
+    if(rd) for(var k = 0; k < 5; k++) P[k][0] -= rd*REC[1][k];
     var e = Math.max(0, (Math.abs(z) - (zN - 0.16))/0.16);  // the ends roll in (a rounded nose and tail, not a cut)
     if(e > 0){ var yo = ys + r*0.35; e = e*e; P.forEach(function(q){ q[0] *= 1 - 0.07*e; q[1] = yo + (q[1] - yo)*(1 - (z > 0 ? 0.3 : 0.1)*e); }); }
     var ay = archAt(z, edge), xi = xinAt(z);
@@ -683,7 +776,9 @@ function koenigBody(T, B, body, ks, C){
   // ---- the stations: even along the body, close round each arch (its edges twice: the step down to the sill), close
   // at the nose and the tail
   var zs = [], arches = [[zf, af], [zr, arr]];
-  for(var z0 = zT + 0.16; z0 < zN - 0.16; z0 += 0.3) if(arches.every(function(A){ return Math.abs(z0 - A[0]) > A[1] + 0.07; })) zs.push({z: z0});
+  for(var z0 = zT + 0.16; z0 < zN - 0.7; z0 += 0.3) if(arches.every(function(A){ return Math.abs(z0 - A[0]) > A[1] + 0.07; }) && (z0 < iz0 - 0.06 || z0 > iz1 + 0.06)) zs.push({z: z0});
+  [iz0, zW, zW + 0.05, mix(zW, iz1, 0.4), mix(zW, iz1, 0.75), iz1].forEach(function(z){ zs.push({z: z}); });   // the scoop
+  [0.16, 0.25, 0.36, 0.5, 0.66].forEach(function(d){ if(zN - d > zf + af + 0.05) zs.push({z: zN - d}); });         // the lamps' fender fronts
   [0, 0.015, 0.045, 0.09].forEach(function(d){ zs.push({z: zT + d}, {z: zN - d}); });
   arches.forEach(function(A){
     zs.push({z: A[0] - A[1]}, {z: A[0] - A[1], e: 1, brk: 1}, {z: A[0] + A[1], e: 1}, {z: A[0] + A[1], brk: 1});
@@ -741,8 +836,11 @@ function koenigBody(T, B, body, ks, C){
     var I = []; cz.forEach(function(z, i){ if(z <= za + 1e-6 && z >= zb - 1e-6) I.push(i); });
     if(I.length > 1) kGrid(B, body, mk, col, I.length, j1 - j0 + 1, function(i, j){ var q = csec[I[i]][j0 + j]; return [q[0], q[1], cz[I[i]]]; }, [0.6, 1, 0]);
   };
-  piece("glass", null, zA, zAr, 0, 5);                                                     // the visor
-  piece("glass", null, zAr, Math.max(zSw, zE), 0, 2);                                       // the side windows
+  // [3.39] the side panes ride the doors (kDoors below); the screen and any side glass behind the doors stay
+  var DT = C.door && C.door !== "none" ? C.door : null, zDR = iz1 + 0.06, zGl = Math.max(zSw, zE);
+  piece("glass", null, zA, zAr, DT ? 2 : 0, 5);                                             // the visor
+  if(!DT) piece("glass", null, zAr, zGl, 0, 2);                                             // the side windows
+  else if(zDR > zGl + 0.03) kGrid(B, body, "glass", null, 3, 3, function(i, j){ var z = mix(zDR, zGl, i/2), q = canSec(z)[j]; return [q[0], q[1], z]; }, [1, 0.3, 0]);
   if(G.two === 1) B.t("tone2");
   piece("paint", null, zAr, zE, 2, 5);                                                     // the solid roof (its rail down each side), on down the tail
   if(zSw > zE) piece("paint", null, zSw, zE, 0, 2);
@@ -769,54 +867,76 @@ function koenigBody(T, B, body, ks, C){
     }, [1, 0.5, 0]);
     B.t("honey").box(body, "trim", 0xffffff, 0.3, H - Hr - 0.008, 0.008, 0, (H + Hr)/2 - 0.012, s0 + 0.004);
   }
-  // ---- the flanks: the door's shut lines, the big intake behind it (the Regera's smaller and softer), the carbon skirt
-  var dz0 = zf - af - 0.05, iz0 = zr + arr + (regera ? 0.08 : 0.03), iz1 = iz0 + (regera ? 0.4 : jesko ? 0.5 : 0.52);
+  // ---- the flanks: the door's shut lines, the scoop behind it (its back wall a dark mesh), the carbon skirt
   kDecal(B, body, "trim", COL.black, sec, dz0, dz0 - 0.012, 0.7, 4.7, 1, 3, 0.008);
-  kDecal(B, body, "trim", COL.black, sec, iz1 + 0.06, iz1 + 0.048, 0.7, 4.75, 1, 3, 0.008);
-  // the intake: its front edge raking forward up the flank, the opening widest at the top (a dark mesh)
-  // (a wedge: deep at the haunch, pointing forward along the shoulder)
-  kDecal(B, body, "trim", COL.black, sec, iz0, iz1, function(t){ return regera ? 2.2 + t*1.2 : 1.5 + t*1.9; },
-         function(t){ return (regera ? 4.1 : 4.6) - t*0.15; }, 2, 2, 0.012);
-  kDecal(B, body, "trim", COL.carbon, sec, iz0 - 0.004, iz0 - 0.03, regera ? 2.2 : 1.5, regera ? 4.1 : 4.6, 1, 2, 0.014);
-  kDecal(B, body, "trim", jesko || regera ? COL.carbon : COL.carbon, sec, zr + arr + 0.02, zf - af - 0.02, 0, 0.75, 4, 1, 0.01);   // the skirt
+  kDecal(B, body, "trim", COL.black, sec, zDR, zDR - 0.012, 0.7, 4.7, 1, 3, 0.008);
+  kDecal(B, body, "trim", COL.black, sec, zW + 0.004, mix(zW, iz1, 0.8), 0.85, function(t){ return 3.1 - t*1.1; }, 3, 2, 0.003);   // the scoop's shadowed inside
+  [1, -1].forEach(function(sx){                                                                              // its back wall: a mesh
+    var A = shellSec(iz0), Z = shellSec(zW);
+    B.t("honey"); kGrid(B, body, "trim", 0x8a8a8a, 2, 4, function(i, j){ var k = j + 1, t = 0.12 + i*0.76, a = A[k], z2 = Z[k];
+      return [sx*(a[0] + (z2[0] - a[0])*t), a[1] + (z2[1] - a[1])*t, mix(iz0, zW, t) + 0.004]; }, [0, 0, 1], false);
+  });
+  kDecal(B, body, "trim", COL.carbon, sec, zr + arr + 0.02, zf - af - 0.02, 0, 0.75, 4, 1, 0.01);       // the skirt
   if(agera) for(var o = 0; o < 3; o++) kDecal(B, body, "trim", COL.black, sec, zf - af - 0.05 - o*0.045, zf - af - 0.08 - o*0.045, 2.6, 4.3, 1, 1, 0.01);   // its outlets
-  if(one) kDecal(B, body, "trim", COL.orange, sec, zr + arr + 0.1, zf - af - 0.02, 3.55, 3.68, 4, 1, 0.01);       // the pinstripe
-  // the mirrors: a pod on a slim stalk off the door's front corner
+  if(one) kDecal(B, body, "trim", COL.orange, sec, zW + 0.02, iz1 - 0.01, 3.05, 3.2, 3, 1, 0.006);       // the pinstripe round the scoop
+  if(DT) kDoors(B, body, DT, sec, canSec, {zF: dz0 - 0.006, zR: zDR - 0.006, zA: zA, zGl: zGl, zMir: zA - 0.2, belt: h.belt, fP: fP, hw: hw});
+  // ---- [3.39] the nose, each its own (from photos): the lamps' dark lenses laid over the fender fronts with their
+  // projectors and LED rows, the mouth in the low nose, the side intakes under the lamps, the splitter, canards
+  //   jesko   small slim swept lamps (a DRL line down the outer edge), one very wide low mouth in a carbon frame, slots at
+  //           the corners, a crease up the middle of the nose, a deep splitter with a centre blade
+  //   agera   big teardrop lamps (a round projector at the outer end, a row of LEDs along the bottom), a mouth split by a
+  //           tall centre strake, a side intake under each lamp, one canard a corner, a track splitter, a bonnet vent
+  //   one     the Agera's face, a deeper splitter, three canards a corner, louvres over the front wheels
+  //   regera  smooth: long slim lamps reaching back up the fenders, a wide smile with rounded corners, small corner intakes,
+  //           no strake, a slim lip
+  var nw = p.nose*hw, noseY = function(f){ return h.noseSill + (h.noseTop - h.noseSill)*f; }, zF0 = zN + 0.004;
+  var L1 = jesko ? {z0: 0.06, z1: 0.38, a0: 4.25, a1: 5.0, b0: 4.95, b1: 5.35}
+         : regera ? {z0: 0.04, z1: 0.62, a0: 3.9, a1: 4.85, b0: 5.0, b1: 5.35}
+         : {z0: 0.02, z1: 0.5, a0: 3.3, a1: 4.9, b0: 5.0, b1: 5.45};
+  var lS0 = function(t){ return L1.a0 + (L1.b0 - L1.a0)*Math.pow(t, 0.8); }, lS1 = function(t){ return L1.a1 + (L1.b1 - L1.a1)*t*t; };
+  kDecal(B, body, "trim", COL.black, sec, zN - L1.z0, zN - L1.z1, lS0, lS1, 4, 3, 0.012);                     // the lens
+  B.t("ledcell"); kDecal(B, body, "light", jesko ? COL.drl : 0xffffff, sec, zN - L1.z0 - 0.03, zN - mix(L1.z0, L1.z1, 0.75),
+    function(t){ return lS0(t*0.75) + 0.04; }, function(t){ return lS0(t*0.75) + (jesko ? 0.16 : 0.2); }, 3, 1, 0.018);   // its LED row
   [1, -1].forEach(function(sx){
-    var mz = zA - 0.2, my = h.belt + 0.11, mx = sx*(fP(mz)*hw*0.86 + 0.16);
-    B.bar(body, "trim", COL.carbon, [sx*fP(mz)*hw*0.8, h.belt + 0.02, mz + 0.06], [mx, my, mz], 0.022, 0.06);
-    B.box(body, "paint", null, 0.16, 0.075, 0.1, mx + sx*0.03, my + 0.02, mz - 0.01, 0, -sx*0.12, 0);
-    B.box(body, "trim", COL.dark, 0.14, 0.06, 0.01, mx + sx*0.03, my + 0.02, mz - 0.062, 0, -sx*0.12, 0);
+    var pr = [[0.13, 0.62, jesko ? 0.034 : 0.058]];                                                         // projectors: [t along, across, r]
+    if(agera || one) pr.push([0.3, 0.55, 0.036]);
+    if(regera) pr = [[0.1, 0.55, 0.045], [0.24, 0.5, 0.032]];
+    pr.forEach(function(q){
+      var t = q[0], z = zN - mix(L1.z0, L1.z1, t), sA = lS0(t), sB = lS1(t), F = kFrame(sec, z, sA + (sB - sA)*q[1], 0.02);
+      B.t("bikehead").face(body, "light", COL.head, new T.CircleGeometry(q[2], 12), [sx*F.p[0], F.p[1], F.p[2]], [sx*F.n[0], F.n[1], F.n[2]]);
+      B.face(body, "trim", COL.chrome, new T.RingGeometry(q[2], q[2] + 0.012, 12, 1), [sx*F.p[0], F.p[1], F.p[2]], [sx*F.n[0], F.n[1], F.n[2]]);
+    });
+    var Fa = kFrame(sec, zN - L1.z0 - 0.02, L1.a0 - 0.15, 0.012);                                           // the indicator
+    B.face(body, "light", COL.amber, new T.PlaneGeometry(jesko ? 0.05 : 0.08, 0.025), [sx*Fa.p[0], Fa.p[1], Fa.p[2]], [sx*Fa.n[0], Fa.n[1], Fa.n[2]]);
   });
-  // ---- the nose: the lamps on the fender tips, the intake, the splitter, canards
-  var lz0 = zN - 0.05, lz1 = zN - (jesko ? 0.36 : regera ? 0.42 : 0.48);
-  if(jesko){                                                                               // small, slim, swept
-    kDecal(B, body, "trim", COL.black, sec, lz0, lz1, function(t){ return 4.5 + t*0.4; }, function(t){ return 6.2 - t*0.5; }, 3, 2, 0.012);
-    kDecal(B, body, "light", COL.head, sec, lz0 - 0.06, lz1 + 0.12, function(t){ return 4.9 + t*0.2; }, function(t){ return 5.5 - t*0.2; }, 2, 1, 0.02);
-    kDecal(B, body, "light", COL.drl, sec, lz0 - 0.01, lz1 + 0.04, 4.35, 4.55, 3, 1, 0.016);
-  } else if(regera){                                                                       // Constellation: dots in a dark lens
-    kDecal(B, body, "trim", COL.black, sec, lz0, lz1, function(t){ return 4.4 + t*0.3; }, function(t){ return 6.3 - t*0.5; }, 3, 2, 0.012);
-    B.t("ledcell"); kDecal(B, body, "light", 0xffffff, sec, lz0 - 0.03, lz0 - 0.16, 4.8, 5.9, 2, 2, 0.02);
-    kDecal(B, body, "light", COL.head, sec, lz0 - 0.22, lz1 + 0.06, 5, 5.5, 2, 1, 0.02);
-  } else {                                                                                 // the Agera family's long teardrop units
-    kDecal(B, body, "trim", COL.black, sec, lz0, lz1, function(t){ return 4.25 + t*0.6; }, function(t){ return 6.4 - t*0.6; }, 3, 2, 0.012);
-    kDecal(B, body, "light", COL.head, sec, lz0 - 0.08, lz1 + 0.16, function(t){ return 4.8 + t*0.3; }, function(t){ return 5.6 - t*0.2; }, 2, 1, 0.02);
-    kDecal(B, body, "light", COL.drl, sec, lz0 - 0.01, lz1 + 0.1, 4.3, 4.45, 3, 1, 0.02);
+  if(jesko) kDecal(B, body, "light", COL.drl, sec, zN - 0.07, zN - 0.34, 4.27, 4.38, 3, 1, 0.02);            // the Jesko's DRL edge
+  // the mouth and the side intakes (dark rims round honeycomb), on the low nose's face
+  var mw = jesko ? nw*1.5 : regera ? nw*0.95 : nw*0.78, my0 = gc + 0.05, my1 = noseY(jesko ? 0.72 : regera ? 0.62 : 0.8);
+  var mr = regera ? 0.09 : jesko ? 0.03 : 0.05, mcy = (my0 + my1)/2, mh = my1 - my0;
+  B.plate(body, "trim", jesko ? COL.carbon : COL.black, mw + 0.05, mh + 0.04, 0.03, mr + 0.02, 0, mcy, zF0);
+  B.t("honey").plate(body, "trim", 0xffffff, mw, mh, 0.03, mr, 0, mcy, zF0 + 0.006);
+  B.box(body, "trim", COL.black, W*0.86, h.noseSill - gc, 0.08, 0, (h.noseSill + gc)/2 + 0.01, zN - 0.04);           // the chin under it
+  if(!jesko) [1, -1].forEach(function(sx){
+    var sw = regera ? 0.2 : 0.22, sh = (regera ? 0.55 : 0.62)*(my1 - my0), scx = sx*Math.min(nw*0.93 - sw/2, mw/2 + 0.07 + sw/2);
+    B.plate(body, "trim", COL.black, sw + 0.03, sh + 0.03, 0.03, 0.04, scx, my0 + sh/2, zF0, sx*(regera ? 0 : 0.18));
+    B.t("honey").plate(body, "trim", 0xffffff, sw, sh, 0.03, 0.035, scx, my0 + sh/2, zF0 + 0.006, sx*(regera ? 0 : 0.18));
+  });
+  else [1, -1].forEach(function(sx){ B.t("honey").plate(body, "trim", 0xffffff, 0.06, (my1 - my0)*0.9, 0.03, 0.02, sx*(nw*0.86), mcy, zN - 0.02); });   // corner slots
+  if(aglike) B.side(body, "trim", COL.carbon, [[zN + 0.1, gc + 0.03], [zN + 0.1, gc + 0.07], [zN - 0.01, my1 + 0.02], [zN - 0.06, my1 + 0.02], [zN - 0.06, gc + 0.03]], 0.024, 0, 1);   // the strake
+  if(jesko){
+    kDecal(B, body, "trim", COL.dark, sec, zN - 0.005, zf + 0.1, 7.95, 8, 3, 1, 0.003);                    // the crease up the nose
+    B.box(body, "trim", COL.carbon, 0.04, 0.03, 0.2, 0, gc + 0.045, zN + 0.02);                            // the splitter's centre blade
   }
-  var noseY = function(f){ return h.noseSill + (h.noseTop - h.noseSill)*f; }, nh = h.noseTop - h.noseSill, nw = p.nose*hw;
-  [1, -1].forEach(function(sx){ B.box(body, "light", COL.amber, 0.08, 0.025, 0.02, sx*nw*0.78, noseY(0.72), zN + 0.004); });
-  // the intake: the Jesko's low wide slot, the Agera's big mouth (the One:1's split by a strake), the Regera's smile
-  var iw = jesko ? nw*1.25 : regera ? nw*1.35 : nw*0.95, ih = (jesko ? 0.38 : regera ? 0.42 : 0.55)*nh, iy = noseY(jesko ? 0.32 : regera ? 0.36 : 0.42);
-  B.plate(body, "trim", COL.black, iw + 0.05, ih + 0.04, 0.02, regera ? ih*0.5 : 0.04, 0, iy, zN + 0.004);
-  B.t("honey").plate(body, "trim", 0xffffff, iw, ih, 0.02, regera ? ih*0.45 : 0.03, 0, iy, zN + 0.01);
-  if(one) B.box(body, "trim", COL.carbon, 0.03, ih + 0.08, 0.1, 0, iy, zN + 0.02);
-  if(!regera) [1, -1].forEach(function(sx){ B.t("honey").plate(body, "trim", 0xffffff, nw*0.32, nh*0.32, 0.02, 0.03, sx*nw*0.8, noseY(0.3), zN + 0.004); });
-  var spw = W*(one ? 0.98 : agera ? 0.94 : 0.84), spd = one ? 0.3 : agera ? 0.22 : jesko ? 0.12 : 0.08;
-  B.box(body, "trim", COL.carbon, spw, 0.024, spd, 0, gc + 0.03, zN - spd/2 + (aglike ? 0.1 : 0.03));
-  if(aglike) [1, -1].forEach(function(sx){                 // canards: one a corner on the RS, three stacked on the One:1
-    for(var q = 0; q < (one ? 3 : 1); q++) B.box(body, "trim", COL.carbon, 0.16, 0.012, 0.2, sx*(nw + 0.06 - q*0.01), noseY(0.25 + q*0.24), zN - 0.1 - q*0.03, 0.12, -sx*0.25, -sx*0.2);
+  var spw = W*(one ? 0.98 : agera ? 0.94 : jesko ? 0.9 : 0.84), spd = one ? 0.36 : agera ? 0.3 : jesko ? 0.24 : 0.14, spo = one ? 0.12 : agera ? 0.1 : jesko ? 0.06 : 0.03;
+  B.box(body, "trim", COL.carbon, spw, 0.024, spd, 0, gc + 0.025, zN - spd/2 + spo);
+  if(aglike) [1, -1].forEach(function(sx){                 // canards: one a corner on the RS, three stacked on the One:1 (aerofoils)
+    for(var q = 0; q < (one ? 3 : 1); q++){
+      var cg = aeroGeo(T, 0.2, 0.018, 0.17, 0, 3); cg.rotateY(-sx*0.3); cg.rotateZ(-sx*0.22);
+      B.add(body, "trim", cg, COL.carbon, sx*(nw + 0.07 - q*0.015), noseY(0.15 + q*0.3), zN - 0.12 - q*0.04, 0.1, 0, 0);
+    }
   });
-  if(one) for(var v = 0; v < 2; v++) kDecal(B, body, "trim", COL.black, sec, zf + 0.05 - v*0.12, zf - 0.03 - v*0.12, 6.3, 7.3, 1, 1, 0.004);   // bonnet vents
+  if(agera || one) kDecal(B, body, "trim", COL.black, sec, zf + 0.32, zf + 0.18, 7.3, 8, 1, 1, 0.004);       // the bonnet's centre vent
+  if(one) for(var v = 0; v < 3; v++) kDecal(B, body, "trim", COL.black, sec, zf + 0.06 - v*0.09, zf + 0.01 - v*0.09, 5.4, 6.3, 1, 1, 0.004);   // louvres over the wheels
   // ---- the tail: lamps, the rear mesh, the pipe, the diffuser
   var tw0 = p.tail*hw, ty = function(f){ return h.tailSill + (h.tailTop - h.tailSill)*f; }, zB = zT - 0.004;
   var ex = function(w, hh, r, y, col, lip){                                     // one centre pipe: a ring round a dark mouth
@@ -826,8 +946,13 @@ function koenigBody(T, B, body, ks, C){
   };
   if(jesko){
     [1, -1].forEach(function(sx){                                               // thin blades at the corners, wrapping round
-      B.t("ledbar").box(body, "tail", COL.red, tw0*0.42, 0.028, 0.02, sx*tw0*0.66, ty(0.86), zB);
-      B.box(body, "tail", COL.red, 0.03, 0.028, 0.14, sx*tw0*0.9, ty(0.86), zT + 0.06);
+      // ([3.39] the Absolut's boomerang: a bar under the deck's lip, thick at the corner, tapering in, wrapping round)
+      var bs = new T.Shape(), x0 = sx*tw0*0.95, x1 = sx*tw0*0.4, yy = ty(0.86);
+      bs.moveTo(x0, yy - 0.035); bs.quadraticCurveTo(sx*tw0*0.7, yy - 0.03, x1, yy - 0.004); bs.lineTo(x1, yy + 0.008);
+      bs.quadraticCurveTo(sx*tw0*0.7, yy + 0.02, x0, yy + 0.025); bs.lineTo(x0, yy - 0.035);
+      var bg = new T.ExtrudeGeometry(bs, {depth: 0.02, bevelEnabled: false, curveSegments: 4}); bg.rotateY(PI); bg.translate(0, 0, zB + 0.01);
+      B.t("ledbar").put(body, "tail", bg, COL.red);
+      B.box(body, "tail", COL.red, 0.03, 0.05, 0.16, sx*tw0*0.97, yy - 0.005, zT + 0.07, 0, -sx*0.25, 0);
     });
     B.t("honey").plate(body, "trim", 0xffffff, tw0*0.9, (h.tailTop - h.tailSill)*0.38, 0.02, 0.03, 0, ty(0.5), zB);
     if(!G.ex) ex(0.32, 0.15, 0.07, ty(0.5), COL.inconel, COL.dark);              // one big oval pipe, mid-height
@@ -835,7 +960,8 @@ function koenigBody(T, B, body, ks, C){
   } else if(aglike){
     [1, -1].forEach(function(sx){                                               // round lamps: a ring round a red disc
       var tr = new T.TorusGeometry(0.07, 0.018, 3, 14); B.add(body, "tail", tr, COL.red, sx*tw0*0.74, ty(0.8), zB);
-      B.add(body, "tail", new T.CircleGeometry(0.04, 12), COL.red, sx*tw0*0.74, ty(0.8), zB, 0, PI, 0);
+      B.add(body, "tail", new T.CircleGeometry(0.035, 12), COL.red, sx*tw0*0.74, ty(0.8), zB, 0, PI, 0);
+      B.add(body, "trim", new T.RingGeometry(0.035, 0.05, 14, 1), COL.dark, sx*tw0*0.74, ty(0.8), zB - 0.002, 0, PI, 0);   // ([3.39] a dark ring between)
     });
     B.t("honey").plate(body, "trim", 0xffffff, tw0*1.1, (h.tailTop - h.tailSill)*0.42, 0.02, 0.03, 0, ty(0.55), zB);
     if(!G.ex) ex(one ? 0.38 : 0.3, one ? 0.12 : 0.11, 0.045, ty(0.3), one ? COL.ti : COL.steel, one ? COL.carbon : COL.dark);
@@ -861,21 +987,23 @@ function koenigBody(T, B, body, ks, C){
   if(jesko){                                                                    // two tall fins on the long deck; no wing
     [1, -1].forEach(function(sx){
       var fx = sx*W*0.3, z0 = zr - arr*0.3, z1 = zT + 0.04, y0 = surfY(z0, Math.abs(fx)), y1 = surfY(z1, Math.abs(fx));
-      var g = B.side(body, "paint", null, [[z0, y0 - 0.02], [z1, y1 - 0.02], [z1 - 0.01, y1 + 0.2], [z1 + 0.16, y1 + 0.22], [z0 - 0.15, y0 + 0.03]], 0.03, 0.01, 3, 1);
+      // ([3.39] a shark fin: a concave leading edge sweeping up from the haunch, a raked trailing edge, a rounded top; thin)
+      var g = B.side(body, "paint", null, [[z0, y0 - 0.02], [z1, y1 - 0.02], [z1 + 0.02, y1 + 0.17], [z1 + 0.06, y1 + 0.235, z1 + 0.02, y1 + 0.235],
+                                          [z1 + 0.2, y1 + 0.235], [z0, y0 + 0.01, z1 + 0.42, y1 + 0.2]], 0.022, 0.008, 4, 1);
       g.translate(fx, 0, 0);
     });
   } else if(agera){                                                             // a wing on two pylons rising off the deck
     var wz = zT + 0.3, wy = surfY(wz, 0.25) + 0.15;
-    B.box(body, "trim", COL.carbon, W*0.64, 0.03, 0.3, 0, wy, wz, -0.1, 0, 0);
+    B.add(body, "trim", aeroGeo(T, 0.3, 0.04, W*0.64, 0.05), COL.carbon, 0, wy, wz + 0.15, -0.12, 0, 0);      // ([3.39] an aerofoil, cambered)
     [1, -1].forEach(function(sx){
-      B.box(body, "trim", COL.carbon, 0.018, 0.1, 0.32, sx*W*0.32, wy - 0.02, wz);
+      B.side(body, "trim", COL.carbon, [[wz + 0.16, wy - 0.06], [wz - 0.17, wy - 0.07], [wz - 0.17, wy + 0.06], [wz + 0.08, wy + 0.04]], 0.014, 0, 1).translate(sx*W*0.325, 0, 0);
       B.bar(body, "paint", null, [sx*W*0.2, surfY(wz + 0.08, W*0.2) - 0.02, wz + 0.1], [sx*W*0.2, wy - 0.01, wz - 0.02], 0.03, 0.14);
     });
   } else if(one){                                                               // the top-hung wing: swan necks hooked over it
     var oz = zT + 0.28, oy = Math.min(H - 0.08, surfY(oz, 0.2) + 0.15);
-    B.box(body, "trim", COL.carbon, W*0.8, 0.03, 0.38, 0, oy, oz, -0.12, 0, 0);
+    B.add(body, "trim", aeroGeo(T, 0.38, 0.045, W*0.8, 0.06), COL.carbon, 0, oy, oz + 0.19, -0.14, 0, 0);    // ([3.39] an aerofoil)
     [1, -1].forEach(function(sx){
-      B.box(body, "trim", COL.carbon, 0.018, 0.17, 0.44, sx*W*0.4, oy - 0.04, oz);
+      B.side(body, "trim", COL.carbon, [[oz + 0.22, oy - 0.1], [oz - 0.22, oy - 0.14], [oz - 0.22, oy + 0.08], [oz + 0.1, oy + 0.05]], 0.014, 0, 1).translate(sx*W*0.405, 0, 0);
       var xp = sx*W*0.17, b0 = [xp, surfY(oz + 0.45, W*0.17) - 0.02, oz + 0.45], b1 = [xp, oy + 0.06, oz + 0.3], b2 = [xp, oy + 0.075, oz + 0.12], b3 = [xp, oy + 0.015, oz + 0.02];
       B.pipe(body, "trim", COL.carbon, [b0, b1, b2, b3], 0.02);
     });
@@ -899,7 +1027,7 @@ function buildCar(T, entry, st, d, G){
   // [3.9] a mid-engined car (a hypercar or a supercar) and the Lamborghini cues: trapezoid arches, Y lights, hexagons
   var sup = st.type === "super", mid = hyper || sup, lambo = brand === "lamborghini", lsup = lambo && sup;
   var sto = lambo && /\bSTO\b/.test(String(entry.model || "")), classic = lambo && /Countach/.test(String(entry.model || ""));
-  var ks = look.kseg || null, KB = null;                                       // [3.38] a Koenigsegg: koenigBody draws it
+  var ks = look.kseg || null, KB = null, dtype = doorType(entry, st);           // [3.39] how its doors open                                       // [3.38] a Koenigsegg: koenigBody draws it
   var hood = function(z){ return yn + (yb - yn)*(L/2 - 0.14 - z)/Math.max(0.1, L/2 - 0.14 - zA); };
   var deck = function(z){ return yb + (yt - yb)*(zC - z)/Math.max(0.1, zC - (-L/2 + 0.12)); };
   // the lower body: its side profile, both arches cut out; fenders swell over the wheels where the hood runs low
@@ -907,7 +1035,7 @@ function buildCar(T, entry, st, d, G){
   var arch = function(z){ return lambo ? [[z - ar*0.5, R + ar*0.866], [z + ar*0.5, R + ar*0.866], [z + ar, R]] : [arcPt(z, R, ar), [z + ar, R]]; };
   var pts;
   if(ks){
-    KB = koenigBody(T, B, body, ks, {L: L, W: W, H: H, gc: gc, zf: zf, zr: zr, G: G});
+    KB = koenigBody(T, B, body, ks, {L: L, W: W, H: H, gc: gc, zf: zf, zr: zr, G: G, door: dtype});
     pts = KB.pts; yb = KB.yb; yt = KB.yt; zA = KB.zA; zAr = KB.zAr; zCr = KB.zCr; zC = KB.zC;
   } else {
   pts = [[-L/2, gc + 0.16], [-L/2 + 0.14, gc], [zr - ar, gc], [zr - ar, R]].concat(arch(zr), [[zr + ar, gc],
@@ -1188,7 +1316,7 @@ function buildCar(T, entry, st, d, G){
     shut.forEach(function(z, i){
       // (a Lamborghini's scissor door: its front shut line leans back with the A pillar; no handles to see)
       B.box(body, "trim", COL.black, 0.012, ly1 - ly0, 0.014, x, (ly0 + ly1)/2, z, lsup && i === 0 ? 0.3 : 0, 0, 0);
-      if(i < shut.length - 1 && !lsup && !ks) B.box(body, "trim", bmw ? COL.alu : COL.dark, 0.02, 0.026, 0.13, sx*(W/2 + 0.01), yb - 0.09, shut[i + 1] + 0.16);
+      if(i < shut.length - 1 && !lsup && !ks && !(i === 0 && dtype !== "none")) B.box(body, "trim", bmw ? COL.alu : COL.dark, 0.02, 0.026, 0.13, sx*(W/2 + 0.01), yb - 0.09, shut[i + 1] + 0.16);
     });
     B.box(body, "trim", COL.black, 0.06, 0.02, 0.05, sx*(W/2 + 0.01), yb + 0.06, zA - 0.1);                // the mirror's stalk
     B.box(body, "trim", COL.dark, 0.012, 0.05, 0.11, sx*(W/2 + 0.07), yb + 0.08, zA - 0.2);               // its glass
@@ -1207,6 +1335,24 @@ function buildCar(T, entry, st, d, G){
       var rx = sx*(tw/2 - 0.08), rl = Math.max(0.4, zAr - zCr - 0.1);
       B.box(body, "trim", bmw && isM(entry) ? COL.black : COL.alu, 0.035, 0.03, rl, rx, H + 0.05, (zAr + zCr)/2);
       [zAr - 0.08, zCr + 0.12].forEach(function(z){ B.box(body, "trim", COL.black, 0.04, 0.05, 0.06, rx, H + 0.02, z); });
+    }
+  });
+  // [3.39] the front doors, each on its pivot (the rear doors of a saloon or an SUV stay shut lines): a slab between the
+  // shut lines with its handle, the side pane over the greenhouse's, the opening behind it dark
+  if(!ks && dtype !== "none") [1, -1].forEach(function(sx){
+    var zF = shut[0] - 0.01, zR = shut[1] + 0.01, xo = sx*(W/2 - 0.003), ym = (ly0 + ly1)/2;
+    var piv = dtype === "gullwing" ? [sx*tw/2, top, (zF + zR)/2] : dtype === "scissor" || dtype === "butterfly" ? [xo, yb - 0.06, zF] : [xo, ym, zF];
+    var dn = B.node(root, sx > 0 ? "door-l" : "door-r", piv[0], piv[1], piv[2]);
+    B.box(body, "trim", COL.black, 0.004, ly1 - ly0, zF - zR, sx*(W/2 + 0.002), ym, (zF + zR)/2);                          // the opening
+    B.box(dn, "paint", null, 0.03, ly1 - ly0, zF - zR, xo - piv[0], ym - piv[1], (zF + zR)/2 - piv[2]);                     // the slab
+    if(!lsup) B.box(dn, "paint", null, 0.02, 0.026, 0.13, sx*(W/2 + 0.019) - piv[0], yb - 0.09 - piv[1], zR + 0.16 - piv[2]);   // its handle
+    var bF = Math.min(zF, zA) - 0.03, bR = Math.max(zR, zC) + 0.03, tF = Math.min(zF, zAr) - 0.03, tR = Math.max(zR, zCr) + 0.03;
+    if(tF > tR + 0.08 && bF > bR + 0.08){                                                                                    // the pane
+      var xb = sx*(gw/2 + 0.012), xt = sx*(tw/2 + 0.012), y0 = yb - 0.02, y1 = top - 0.03;
+      var Q = [[xb, y0, bF], [xb, y0, bR], [xt, y1, tR], [xt, y1, tF]].map(function(v){ return [v[0] - piv[0], v[1] - piv[1], v[2] - piv[2]]; }), V = [];
+      [[0, 1, 2], [0, 2, 3], [0, 2, 1], [0, 3, 2]].forEach(function(t){ t.forEach(function(k){ V.push(Q[k][0], Q[k][1], Q[k][2]); }); });
+      var pg = new T.BufferGeometry(); pg.setAttribute("position", new T.BufferAttribute(new Float32Array(V), 3)); pg.computeVertexNormals();
+      B.put(dn, "glass", pg, null);
     }
   });
   if(!(bugatti && hyper)) B.t("plate").box(body, "trim", 0xffffff, 0.52, 0.11, 0.012, 0, gc + 0.2, L/2 + 0.035);   // the plates
@@ -1276,7 +1422,7 @@ function buildCar(T, entry, st, d, G){
   // [3.13] where a custom plate goes: over each atlas plate's face (x, y, z, turned ry / rx; w x h)
   var plates = [{p: [0, pry, -L/2 - 0.0195], ry: PI, rx: 0, w: 0.5, h: 0.1}];
   if(!(bugatti && hyper)) plates.push({p: [0, gc + 0.2, L/2 + 0.0425], ry: 0, rx: 0, w: 0.5, h: 0.1});
-  return {g: root, meta: {kind: "car", R: KB ? KB.Rr : R, radii: radii, lean: mid ? -0.04 : -0.08, riderK: riderK, plates: plates}};
+  return {g: root, meta: {kind: "car", R: KB ? KB.Rr : R, radii: radii, lean: mid ? -0.04 : -0.08, riderK: riderK, plates: plates, door: dtype}};
 }
 
 /* ---------- [3.17] a Formula 1 car (docs/plans/grand-prix-spec.md) ----------
@@ -1879,11 +2025,11 @@ function shared(T){
   var st = store(T);
   if(st.mats) return st.mats;
   var map = atlasTex(T, st);
-  // [3.5.6] the glass a lighter tint, so the cabin reads through it
+  // [3.5.6] the glass tinted so the cabin reads through it ([3.39] less see-through: the cabin in shadow)
   return (st.mats = {
     trim: new T.MeshStandardMaterial({vertexColors: true, roughness: 0.55, metalness: 0.35, map: map}),
     wheel: new T.MeshStandardMaterial({vertexColors: true, roughness: 0.62, metalness: 0.4, map: map}),
-    glass: new T.MeshStandardMaterial({color: 0x1d2a36, metalness: 0.5, roughness: 0.05, transparent: true, opacity: 0.42, depthWrite: false}),
+    glass: new T.MeshStandardMaterial({color: 0x16212b, metalness: 0.55, roughness: 0.05, transparent: true, opacity: 0.6, depthWrite: false}),   // ([3.39] darker: the cabin a shadow behind it)
     light: new T.MeshBasicMaterial({vertexColors: true, map: map})
   });
 }
@@ -2008,6 +2154,44 @@ function paintOf(entry, paint){
 }
 function isStarter(entry){ return !entry || entry.starter === true || !(entry["class"] || entry.kind || entry.type); }
 
+/* [3.39] the doors on a built rig: rig.doors [{g, sx, f}], rig.doorType (doorType above)
+     rig.setDoors(f, which)   poses them now: f 0 shut .. 1 open; which "driver" (default: -x, right-hand drive) or "both"
+     rig.doorsPlay(dir, {calm, which}) -> seconds   opens the door(s), holds while you climb in ("in") or out ("out"), shuts
+       them (the Regera's Autoskin opens both at once). Calm (Calm or reduced motion): no swing, they snap open, then shut.
+     rig.doorTick(t)   steps it (t in s, default now); the doors' own meshes call it as they draw, so a parked car shuts
+       its door with no frame hook of its own */
+function nowS(){ return (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now())/1000; }
+function doorRig(rig, type, get){
+  var doors = [], anim = null;
+  [["door-l", 1], ["door-r", -1]].forEach(function(d){ var g = get(d[0]); if(g) doors.push({g: g, sx: d[1], p0: g.position.clone(), f: 0}); });
+  rig.doors = doors; rig.doorType = type;
+  function pose(d, f){
+    var P = doorPose(type, f, d.sx); d.f = Math.max(0, Math.min(1, f));
+    d.g.position.set(d.p0.x + P[0], d.p0.y + P[1], d.p0.z + P[2]); d.g.rotation.set(P[3], P[4], P[5], "YXZ");
+  }
+  function sel(which){ return doors.filter(function(d){ return which === "both" || type === "autoskin" || d.sx < 0; }); }
+  rig.setDoors = function(f, which){ anim = null; sel(which).forEach(function(d){ pose(d, +f || 0); }); };
+  rig.doorTick = function(t){
+    if(!anim) return false;
+    var a = anim, u = (t == null ? nowS() : t) - a.t0, f;
+    if(u >= a.open*2 + a.hold){ f = 0; anim = null; }
+    else if(a.calm) f = 1;
+    else f = u < a.open ? u/a.open : u < a.open + a.hold ? 1 : 1 - (u - a.open - a.hold)/a.open;
+    a.list.forEach(function(d){ pose(d, f); });
+    return true;
+  };
+  rig.doorsPlay = function(dir, o){
+    o = o || {};
+    if(!doors.length || type === "none") return 0;
+    var open = DOOR_S[type] || 0.5, hold = dir === "out" ? 0.55 : 0.5;
+    anim = {t0: nowS(), open: open, hold: hold, calm: !!o.calm, list: sel(o.which)};
+    rig.doorTick(anim.t0);
+    return open*2 + hold;
+  };
+  doors.forEach(function(d){
+    d.g.traverse(function(m){ if(m.isMesh) m.onBeforeRender = function(){ if(anim && rig.doorTick()) d.g.updateMatrixWorld(true); }; });
+  });
+}
 function build(c, entry, paint, opts){
   opts = opts || {};
   var T = c && c.Mesh ? c : c && c.THREE;
@@ -2053,6 +2237,7 @@ function build(c, entry, paint, opts){
     ready: null
   };
   if(car){ rig.hats = false; rig.riderK = bp.meta.riderK; }
+  doorRig(rig, bp.meta.door || "none", get);
   // [3.13] tuned: a plate of its own (one more mesh, on the body: it hides with the stand-in), the materials
   rig.tuneGeo = G;
   if(tune){

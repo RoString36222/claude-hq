@@ -487,7 +487,7 @@ function islandsOf(host){
 function renderTickets(el, host, nav, arg){
   var st = {tab: (arg && arg.tab) || "plan", results: null, ms: 0, flight: null, pref: "window"};
   var root = mk("div", "hp-app", el);
-  var tabs = tabBar(root, [{id: "plan", name: "Plan"}, {id: "mine", name: "My tickets"}, {id: "air", name: "Check-in"}], st.tab, function(id){ st.tab = id; draw(); });
+  var tabs = tabBar(root, [{id: "plan", name: "Plan"}, {id: "buy", name: "Buy"}, {id: "mine", name: "My tickets"}, {id: "air", name: "Check-in"}], st.tab, function(id){ st.tab = id; draw(); });
   var pane = mk("div", "hp-pane", root);
   pane.setAttribute("role", "tabpanel");
   var R = rideOfHost(host);
@@ -496,7 +496,44 @@ function renderTickets(el, host, nav, arg){
   function draw(){
     clear(pane);
     pane.setAttribute("aria-labelledby", tabs.idOf(st.tab));
-    if(st.tab === "plan") drawPlan(); else if(st.tab === "mine") drawMine(); else drawAir();
+    if(st.tab === "plan") drawPlan(); else if(st.tab === "buy") drawBuy(); else if(st.tab === "mine") drawMine(); else drawAir();
+  }
+  // [transit pass] the metro's and the City Line's tickets, as the machines in the station halls sell them (0 coins;
+  // hqRide.wallet, on this computer only): the gates take them
+  function walletOf(){ return R && R.wallet ? R.wallet : null; }
+  function walletCards(parent, Wl, removable){
+    var list = []; try { list = Wl.list(nowOf(host)) || []; } catch(e){ list = []; }
+    if(!list.length) return 0;
+    var ul = mk("ul", "hp-list", parent); ul.setAttribute("aria-label", "Your metro tickets");
+    list.forEach(function(t){
+      var li = mk("li", "", ul), c = mk("div", "hp-card hp-ticket", li), top = mk("div", "hp-optop", c);
+      badgeEl(top, t.kind === "card" ? "Card" : t.kind === "day" ? "Day" : "1x", "metro");
+      mk("span", "hp-optsum", top, t.name);
+      mk("span", "hp-legsub", c, Wl.status(t, nowOf(host)));
+      if(removable) btn(li, "Remove", "hp-ghost", function(){ Wl.remove(t.id); say(host, t.name + " removed"); draw(); }, "Remove " + t.name);
+    });
+    return list.length;
+  }
+  function drawBuy(){
+    var Wl = walletOf();
+    if(!Wl){ mk("p", "hp-muted", pane, "Tickets are not available"); return; }
+    mk("p", "hp-hint", pane, "Metro and City Line tickets. The gates in every station hall take them; going out is always free.");
+    var ul = mk("ul", "hp-list", pane); ul.setAttribute("aria-label", "Tickets to buy");
+    Wl.ORDER.forEach(function(k){
+      var F = Wl.FARES[k], li = mk("li", "", ul), c = mk("div", "hp-card", li), top = mk("div", "hp-optop", c);
+      mk("span", "hp-optsum", top, F.name);
+      mk("span", "hp-legsub", top, "· " + Wl.fareText(F.coins));
+      mk("span", "hp-legsub", c, F.desc);
+      btn(li, "Buy " + F.name, "", function(){
+        var t = null; try { t = Wl.buy(k, nowOf(host)); } catch(e){ t = null; }
+        if(!t){ say(host, "Could not buy that"); return; }
+        say(host, t.name + " bought, " + Wl.fareText(F.coins) + ". Walk through the gates: they take it.");
+        toast(host, t.name + " · " + Wl.fareText(F.coins));
+        draw();
+      }, "Buy a " + F.name + " for " + Wl.fareText(F.coins));
+    });
+    mk("h3", "hp-subhead", pane, "In your wallet");
+    if(!walletCards(pane, Wl, false)) mk("p", "hp-muted", pane, "Nothing yet.");
   }
   function destOptions(){
     var o = [];
@@ -630,9 +667,9 @@ function renderTickets(el, host, nav, arg){
     if(S && nav.close) nav.close();
   }
   function drawMine(){
-    var T = R && R.tickets, list = [];
+    var T = R && R.tickets, list = [], Wl = walletOf(), nw = Wl ? walletCards(pane, Wl, true) : 0;
     try { list = (T && T.list && T.list()) || []; } catch(e){ list = []; }
-    if(!list.length){ mk("p", "hp-muted", pane, "No tickets yet. Plan a journey and book it: it is free."); return; }
+    if(!list.length){ mk("p", "hp-muted", pane, nw ? "No planned journeys booked." : "No tickets yet. Buy one (Buy), or plan a journey and book it: 0 coins."); return; }
     var ul = mk("ul", "hp-list", pane);
     ul.setAttribute("aria-label", "My tickets");
     var H = h24(host);
@@ -643,7 +680,7 @@ function renderTickets(el, host, nav, arg){
         var c = mk("div", "hp-card hp-ticket", li);
         var top = mk("div", "hp-optop", c); badgeEl(top, String(t.short || t.line || modeName(t.mode)), t.mode);
         mk("span", "hp-optsum", top, (t.fromName || t.from || "") + " to " + (t.toName || t.to || ""));
-        mk("span", "hp-legsub", c, (t.depart ? fmtClock(t.depart, H) : "") + (t.reach ? " - " + fmtClock(t.reach, H) : "") + " · Free");
+        mk("span", "hp-legsub", c, (t.depart ? fmtClock(t.depart, H) : "") + (t.reach ? " - " + fmtClock(t.reach, H) : "") + " · 0 coins");
       }
       btn(li, "Remove", "hp-ghost", function(){ if(T && T.remove) T.remove(t.id); say(host, "Ticket removed"); draw(); },
           "Remove ticket " + (t.toName || t.to || ""));

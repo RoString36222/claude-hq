@@ -10,8 +10,13 @@
  *   The ride: one hqRide session at a time (startRide: a Trip or a planned journey, leg after leg), its seat camera
  *     (V cycles seat, window, chase), S requests the stop, E gets off; the session holds you (carry) and owns the
  *     camera (camPose) while you ride; then cabs, the heli and the water taxi, in that order.
- *   E at a stop, station, platform or pier opens a board menu (the next departures, free); the metro's stairs are
- *     walked down and up, E at a lift rides it (HQV.hqUndergroundCtl; HQ 3.36: nothing teleports).
+ *   E at a stop, station, platform or pier opens a board menu (the next departures, 0 coins: quick travel); the metro's
+ *     stairs are walked down and up, E at a lift rides it (HQV.hqUndergroundCtl; HQ 3.36: nothing teleports).
+ *   The transit pass (below the street): the hall's ticket machines (E) sell a single, a day pass or the Claude Card
+ *     (hqRide.wallet, 0 coins); the gate lines block the walker (T.blocked) unless a ticket is held or you come from the
+ *     paid side, and take it as you walk through; on a platform E at an open door of a standing train (or stepping into
+ *     the doorway) boards it, and while riding E gets off at the stop the doors are open at. T.prompt says which.
+ *     HQV.hqTransit.cur is the City's T while it is the one you are in.
  *   HQV.hqUnderground = {under(), set(on, reason)}: the switch. set hides the city's surface (o.surface(false) and
  *     the surface views here), swaps in a dark fog and shows the metro's underground (V.underground(on)); the
  *     avatar's ground below the street comes from the metro's walkable floors (ground / blocked).
@@ -65,6 +70,7 @@ function create(c, o){
   var svc = {}, V = {}, ride = null, plan = null, rideCam = 0, lastMs = 0, ctl = null, under = false, underLight = null, cabinLight = null, hidden = [];
   var cabs = null, heli = null, taxi = null, taxiH = null, IL = null, ILv = null, tracking = null;
   var pinned = false;          // the tour holds the underground view (debug.under) whatever your feet say
+  var rideEnd = 0;             // when the last ride ended (a door you just stepped out of does not take you straight back in)
 
   function calm(){ return tryf(function(){ return !!(o.calm && o.calm()); }, false); }
   function reduced(){ return tryf(function(){ return !!(o.reduced && o.reduced()); }, false); }
@@ -110,9 +116,10 @@ function create(c, o){
   if(tsim && HQV.hqTramway) view("tramway", function(){ return HQV.hqTramway.view(cS, W, tier, {sim: tsim, parent: S, night: night}); });
   if(tsim && HQV.hqCoach) view("coach", function(){ return HQV.hqCoach.view(cS, tsim, {W: W, parent: S, calm: calm, reduced: reduced, night: night, sfx: sfxM,
                                                                            traffic: function(){ return o.traffic ? o.traffic() : null; }}); });
-  if(msim) view("metro", function(){ return HQV.hqMetro.view(cS, msim, {calm: calm, night: night, sfx: sfxM, under: function(){ return under; },
+  if(msim) view("metro", function(){ return HQV.hqMetro.view(cS, msim, {calm: calm, night: night, sfx: sfxM, under: function(){ return under; }, gateOk: function(){ return gateOk(); },
                                                                       me: function(){ var m = me(); return {x: m.x, y: m.y, z: m.z}; }}); });
   if(CL) view("cityrail", function(){ return HQV.hqCityRail.view(cS, CL, {W: W, ground: ground, night: night}); });
+  if(HQV.hqPortals) view("portals", function(){ return HQV.hqPortals.view(cS, W, {night: night}); });
   if(G1) view("gondola", function(){ return HQV.hqGondola.view(cS, G1, {ground: ground, calm: calm, reduced: reduced(), world: worldId, sfx: sfxM}); });
   if(FS) view("ferries", function(){ return HQV.hqFerries.view(cS, FS, {calm: calm, night: night, sfx: sfxM, parent: S}); });
   // the Island Link: once the archipelago is known (where the Commons and the islands are)
@@ -134,7 +141,7 @@ function create(c, o){
       fade: function(ms){ if(o.fade) tryf(function(){ o.fade(ms); }); }, set: function(on, why){ setUnder(on, why); },
       teleport: function(p){ if(o.teleport && p) o.teleport(p.x, p.y, p.z, p.yaw); }}); }, null);
   }
-  var SURFACE_VIEWS = ["tramway", "coach", "cityrail", "gondola", "ferries"];
+  var SURFACE_VIEWS = ["tramway", "coach", "cityrail", "portals", "gondola", "ferries"];
   function setUnder(on, why){
     on = !!on;
     if(on === under) return;
@@ -150,11 +157,11 @@ function create(c, o){
     if(o.onUnder) tryf(function(){ o.onUnder(on, why); });
   }
   var UG = {under: function(){ return under; }, set: function(on, why){ if(ctl && ctl.force) ctl.force(!!on, why || "set"); else setUnder(on, why); }};
-  if(active()) HQV.hqUnderground = UG;
+  if(active()){ HQV.hqUnderground = UG; HQV.hqTransit.cur = T; }
   T.activate = function(){
     if(dead) return;
     if(R && R.register) Object.keys(svc).forEach(function(k){ tryf(function(){ R.register(svc[k]); }); });
-    HQV.hqUnderground = UG;
+    HQV.hqUnderground = UG; HQV.hqTransit.cur = T;
   };
 
   /* ---------- cabs, the heli you call, the water taxi ---------- */
@@ -181,13 +188,15 @@ function create(c, o){
 
   /* ---------- riding ---------- */
   function viewFor(mode){ return {bus: V.coach, tram: V.coach, metro: V.metro, rail: V.cityrail, gondola: V.gondola, ferry: V.ferries, link: V.link}[mode] || null; }
-  function startTrip(trip, legs){
+  function startTrip(trip, legs, extra){
     if(!trip || !R || !R.session) return null;
+    extra = extra || {};
     if(ride) tryf(function(){ ride.cancel(true); });
     var Sx = null;
     // (the stop you wait at: a bus held back from a junction's box may pull up a way along from it)
     var sv = svc[trip.mode], stopAt = sv ? (tryf(function(){ return sv.stops(); }, []) || []).filter(function(st){ return st && st.id === trip.from; })[0] || null : null;
     Sx = R.session({trip: trip, stopAt: stopAt ? {x: num(stopAt.x, 0), z: num(stopAt.z, 0)} : null, view: viewFor(trip.mode), announce: announce, toast: o.toast, calm: function(){ return calm() || reduced(); }, reduced: reduced(),
+      at: extra.at || null, boardDoor: extra.boardDoor || null, hop: !!extra.hop,
       sfx: function(n, so){ sfxM(n, so); }, me: function(){ var m = me(); return {x: m.x, y: m.y, z: m.z}; }, userId: o.userId, world: worldId, seed: seed,
       announcer: ANN, now: function(){ return Date.now(); },
       under: function(){ /* the underground controller follows the ride (ctl.step riding) */ },
@@ -198,7 +207,7 @@ function create(c, o){
       },
       onEnd: function(reason){
         if(ride !== Sx) return;
-        ride = null; rideCam = 0;
+        ride = null; rideCam = 0; rideEnd = Date.now();
         var next = reason === "done" && legs && legs.length ? legs.shift() : null;
         while(next && next.mode === "walk") next = legs.length ? legs.shift() : null;
         if(next && next.trip){ startTrip(next.trip, legs); return; }
@@ -208,8 +217,8 @@ function create(c, o){
     ride = Sx;
     if(Sx){
       var at = tryf(function(){ return trip.door(num(trip.arrive, Date.now())); }, null);
-      if(at && o.showRoute){ var m = me(); tryf(function(){ o.showRoute([m.x, m.z, at.x, at.z], (MODE_WORD[trip.mode] || "Stop") + ": " + (trip.fromName || "your stop")); }); }
-      if(!under && trip.mode === "metro" && at) say("Walk to " + (trip.fromName || "the station") + ": the stairs down are by the M signs.");
+      if(at && o.showRoute && !extra.hop){ var m = me(); tryf(function(){ o.showRoute([m.x, m.z, at.x, at.z], (MODE_WORD[trip.mode] || "Stop") + ": " + (trip.fromName || "your stop")); }); }
+      if(!under && trip.mode === "metro" && at && !extra.hop) say("Walk to " + (trip.fromName || "the station") + ": the stairs down are by the M signs.");
     }
     return Sx;
   }
@@ -278,7 +287,7 @@ function create(c, o){
           cand.forEach(function(to){
             var trip = tryf(function(){ return s.trip(L.id, stopId, to, ms); }, null);
             if(trip && num(trip.depart, 0) > ms) items.push({at: num(trip.arrive, trip.depart), trip: trip,
-              text: (L.short || L.id) + " " + (MODE_WORD[s.mode] || "") + " to " + (trip.toName || stopName(s, to)) + " · " + waitText(num(trip.arrive, trip.depart) - ms) + " · free"});
+              text: (L.short || L.id) + " " + (MODE_WORD[s.mode] || "") + " to " + (trip.toName || stopName(s, to)) + " · " + waitText(num(trip.arrive, trip.depart) - ms) + " · 0 coins"});
           });
         });
       });
@@ -288,7 +297,16 @@ function create(c, o){
   };
   function openBoard(near, p){
     var st = near.stop, s = near.svc, rows = T.board(st.id, s.mode);
-    var items = rows.map(function(r){ return {text: r.text, fn: function(){ startTrip(r.trip, []); }}; });
+    var items = rows.map(function(r){ return {text: r.text, fn: function(){
+      // [transit pass] quick travel on the metro or the City Line still rides on a ticket: with none, the machine's
+      // single (0 coins) is bought and tapped for you
+      if(WL && (r.trip.mode === "metro" || r.trip.mode === "rail") && gateSide !== true){
+        var ms0 = Date.now();
+        if(!ticket(ms0)) tryf(function(){ WL.buy("single", ms0); });
+        var tp = tryf(function(){ return WL.tap(ms0); }, null); if(tp && tp.ok) announce(tp.text);
+      }
+      startTrip(r.trip, []);
+    }}; });
     if(o.openMenu) o.openMenu((MODE_WORD[s.mode] || "Stop") + ": " + (st.name || st.id), items);
     return true;
   }
@@ -311,6 +329,10 @@ function create(c, o){
     if(under){
       // [3.36] the lift before the departures (it stands in the hall, within the station's board reach)
       if(ctl && liftNear(p) && tryf(function(){ return ctl.use(lastMs || ms, {x: p.x, y: m.y, z: p.z}); }, false)) return true;
+      // [transit pass] an open train door, then a ticket machine, then the departures
+      var dn = doorNear(p, ms, DOOR_E);
+      if(dn && dn.run){ if(dn.run.last === dn.station){ say("This train terminates here: wait for one the other way."); return true; } if(hop(dn, ms)) return true; }
+      var mc = machineNear(p); if(mc) return buyMenu(mc.station);
       var nu = stopsNear(p.x, p.z, STATION_R).filter(function(n){ return n.svc.mode === "metro" || (n.stop.under && n.svc.mode !== "bus"); })[0];
       if(nu) return openBoard(nu, p);
       return false;
@@ -335,14 +357,131 @@ function create(c, o){
   }
   // the hub's E prompt
   T.prompt = function(p){
-    if(!p || ride) return null;
+    if(!p) return null;
+    var ms = lastMs || Date.now();
+    if(ride){
+      var ri = tryf(function(){ return ride.info(ms); }, null); if(!ri) return null;
+      if(ri.phase === "walk" || ri.phase === "wait") return "E  Stop waiting";
+      if(ri.phase !== "seated" && ri.phase !== "standing") return null;
+      return ri.atStop ? "E  Get off here: " + ri.atStop : "E  Get off at " + ((ri.nextStop && ri.nextStop.name) || "the next stop");
+    }
     if(liftNear(p)) return under ? "E  Lift up to the street" : "E  Lift down to the Metro";
-    if(under) return stopsNear(p.x, p.z, STATION_R).length ? "E  Departures" : null;
-    var en = MV && MV.entranceAt && tryf(function(){ return MV.entranceAt(p.x, p.z, 3.5); }, null);
-    if(en) return "Metro: walk down the stairs";
+    if(under){
+      var dn = doorNear(p, ms, DOOR_E);
+      if(dn && dn.run) return dn.run.last === dn.station ? "This train terminates here" : "E  Board " + dn.v.line + " to " + dn.run.lastName;
+      if(machineNear(p)) return "E  Ticket machine: single, day pass, card";
+      var gg = LAYM ? tryf(function(){ var y = feetY(), q = me(); return LAYM.gateAt(q.x, y, q.z) || LAYM.gateAt(p.x + 0.6*Math.sin(q.yaw || 0), y, p.z + 0.6*Math.cos(q.yaw || 0)); }, null) : null;
+      if(gg && !gateOk()) return "Gates: you need a ticket (machines by the wall)";
+      return stopsNear(p.x, p.z, STATION_R).length ? "E  Departures and quick travel" : null;
+    }
+    // [transit pass] an entrance within 10 m: which station and lines, so you know before you go down
+    var en = MV && MV.entranceAt && tryf(function(){ return MV.entranceAt(p.x, p.z, 10); }, null);
+    if(en){ var ES = LAYM && LAYM.byId[en.station]; return "Metro" + (ES ? " " + ES.name + " (" + ES.lines.join(", ") + ")" : "") + ": walk down the stairs, tickets inside"; }
     var n = stopsNear(p.x, p.z, STOP_R).filter(function(q){ return !q.stop.under; })[0];
     return n ? "E  " + (MODE_WORD[n.svc.mode] || "Stop") + " departures" : null;
   };
+
+  /* ---------- the transit pass: tickets, gates, stepping onto a standing train ---------- */
+  // A ticket costs 0 coins (D4: no money moves) but it is a ticket: the machines in the hall (or the phone's Tickets
+  // app) sell a single, a day pass or the Claude Card (hqRide.wallet, on this computer only); the gate lines across
+  // the hall open for one and take it (a single starts its 90 minutes there); going out is always free. On a
+  // platform a train standing with its doors open takes you aboard through the door you walk up to (E, or step into the
+  // doorway); while you ride E gets you off at the stop you stand at, else at the next. The quick menu stays (E away
+  // from the doors).
+  var WL = R && R.wallet ? R.wallet : null;
+  var LAYM = msim && msim.layout ? tryf(function(){ return msim.layout(); }, null) : null;
+  var MACHINE_R = 2.3, DOOR_E = 2.6, DOOR_STEP = 0.8, HOP_COOL = 4000;
+  var gateSide = null, inBand = false, gateSaid = 0, trainSaid = {}, closeSaid = {};
+  function feetY(){ var a = tryf(function(){ return c.avatar ? c.avatar() : null; }, null); return a && a.hy != null && isFinite(a.hy) ? +a.hy : null; }
+  function ticket(ms){ return WL ? tryf(function(){ return WL.best(ms || Date.now()); }, null) : {item: null, ready: true}; }
+  // may the walker pass a gate now: coming from the paid side (out) always, in only with a ticket
+  function gateOk(){ return !WL || gateSide === true || !!ticket(); }
+  T.gateOk = gateOk;
+  function machineNear(p){
+    if(!under || !LAYM) return null;
+    var y = feetY(), best = null, bd = MACHINE_R;
+    LAYM.stations.forEach(function(S){
+      if(Math.hypot(S.x - p.x, S.z - p.z) > S.ext + 2 || (y != null && Math.abs(y - S.hallY) > 1.5)) return;
+      (S.machines || []).forEach(function(M){ var d = Math.hypot(M.x - p.x, M.z - p.z); if(d < bd){ bd = d; best = {station: S, m: M}; } });
+    });
+    return best;
+  }
+  function onPlatform(p){
+    if(!under || !LAYM) return null;
+    var y = feetY(), w = tryf(function(){ return LAYM.walkable(p.x, y != null ? y + 0.2 : 1e4, p.z); }, null);
+    return w && w.kind === "platform" ? w : null;
+  }
+  // the open door of a standing metro train nearest p within r m: {v, door, d, run}
+  function doorNear(p, ms, r){
+    var w = onPlatform(p); if(!w || !msim || !msim.doorsOf) return null;
+    var y = feetY(), best = null;
+    (tryf(function(){ return msim.vehicles(ms); }, []) || []).forEach(function(v){
+      if(v.stop !== w.station || !(v.doors >= 0.5)) return;
+      (msim.doorsOf(v) || []).forEach(function(d){
+        var dd = Math.hypot(d.x - p.x, d.z - p.z);
+        if(dd <= r && (y == null || Math.abs(d.y - y) < 1.6) && (!best || dd < best.d)) best = {v: v, door: d, d: dd, station: w.station};
+      });
+    });
+    if(best) best.run = tryf(function(){ return msim.runOf(best.v); }, null);
+    return best;
+  }
+  function lineWord(id){ var L = (tryf(function(){ return msim.lines(); }, []) || []).filter(function(l){ return l.id === id; })[0]; return L ? L.short + " " + L.name : id; }
+  function hop(h, ms){
+    if(!h || !h.run || h.run.last === h.station) return false;
+    var t = tryf(function(){ return msim.trip(h.v.line, h.station, h.run.last, ms); }, null);
+    if(!t || t.vehicle !== h.v.id){ say("The doors are closing: wait for the next train."); return true; }
+    var m = me();
+    return !!startTrip(t, [], {hop: true, at: {x: m.x, z: m.z}, boardDoor: {x: h.door.x, y: h.door.y, z: h.door.z}});
+  }
+  function buyMenu(S){
+    if(!o.openMenu || !WL) return false;
+    var ms = Date.now(), F = WL.FARES, have = tryf(function(){ return WL.list(ms); }, []) || [];
+    var items = WL.ORDER.map(function(k){
+      var f = F[k], owned = k === "card" && have.some(function(t){ return t.kind === "card"; });
+      return {text: f.name + " · " + WL.fareText(f.coins) + " · " + (owned ? "you have one" : f.desc), off: owned, fn: function(){
+        var t = tryf(function(){ return WL.buy(k, Date.now()); }, null);
+        if(!t){ say("The machine could not sell that."); return; }
+        sfxM("validator", {pos: {x: me().x, y: (feetY() || 0) + 1, z: me().z}, kind: "door"});
+        say(t.name + " bought, " + WL.fareText(f.coins) + ". The gates take it: walk through.");
+        if(o.toast) tryf(function(){ o.toast("🎫 " + t.name + " · " + WL.fareText(f.coins)); });
+      }};
+    });
+    have.slice(0, 3).forEach(function(t){ items.push({text: "Your " + t.name + ": " + WL.status(t, ms), off: true, fn: function(){}}); });
+    o.openMenu("Ticket machine · " + (S && S.name ? S.name : "Metro"), items);
+    return true;
+  }
+  T.buy = function(kind){ return WL ? tryf(function(){ return WL.buy(kind, Date.now()); }, null) : null; };
+  T.wallet = function(){ return WL; };
+  // every frame below the street: which side of the gates you are on, a tap when you walk through one, the trains
+  // that open their doors at your platform, and stepping into an open doorway
+  function passStep(ms){
+    if(!under || !LAYM){ gateSide = null; inBand = false; return; }
+    var m = me(), y = feetY(), g = tryf(function(){ return LAYM.gateAt(m.x, y, m.z); }, null);
+    if(!g){
+      var paid = tryf(function(){ return LAYM.paidAt(m.x, y, m.z); }, null);
+      if(inBand && gateSide === false && paid === true && WL){
+        var r = tryf(function(){ return WL.tap(ms); }, null);
+        if(r && r.ok){ announce(r.text); sfxM("validator", {pos: {x: m.x, y: (y || 0) + 1, z: m.z}, kind: "door"}); }
+      }
+      if(paid != null) gateSide = paid;
+      inBand = false;
+    } else inBand = true;
+    if(ride) return;
+    var w = onPlatform(m); if(!w) return;
+    (tryf(function(){ return msim.vehicles(ms); }, []) || []).forEach(function(v){
+      if(v.stop !== w.station) return;
+      var ru = tryf(function(){ return msim.runOf(v); }, null), plat = tryf(function(){ return msim.platNo(w.station, v.line, ru && ru.key); }, null);
+      if(v.doors >= 0.5 && !trainSaid[v.id]){
+        trainSaid[v.id] = ms;
+        if(ru && ru.last === w.station) announce(lineWord(v.line) + (plat ? ", platform " + plat : "") + ": this train terminates here.");
+        else announce(lineWord(v.line) + " to " + (ru ? ru.lastName : "") + (plat ? ", platform " + plat : "") + ": doors open. Walk up to a door and press E to board.");
+      }
+      if(trainSaid[v.id] && v.doors < 0.5 && v.doors > 0 && !closeSaid[v.id]){ closeSaid[v.id] = 1; announce("Stand clear: the doors are closing."); }
+    });
+    Object.keys(trainSaid).forEach(function(k){ if(ms - trainSaid[k] > 120000){ delete trainSaid[k]; delete closeSaid[k]; } });
+    // stepped into an open doorway: aboard (not straight back in through the door you just came out of)
+    if(ms - rideEnd > HOP_COOL){ var h = doorNear(m, ms, DOOR_STEP); if(h && h.run && h.run.last !== h.station) hop(h, ms); }
+  }
 
   /* ---------- the ground below the street ---------- */
   function feet(x, z){ var a = tryf(function(){ return c.avatar ? c.avatar() : null; }, null); return a && Math.hypot(a.x - x, a.z - z) < 4 && a.hy != null && isFinite(a.hy) ? a.hy : null; }
@@ -361,7 +500,14 @@ function create(c, o){
   T.blocked = function(x, z){
     if(!MV || !MV.walkable || !belowStreet(x, z)) return null;
     var h = feet(x, z), y = h != null ? h : street(x, z);
-    return !tryf(function(){ return MV.walkable(x, y, z); }, null);
+    if(!tryf(function(){ return MV.walkable(x, y, z); }, null)) return true;
+    // [transit pass] the gate lines: the cabinets and glass always, a lane unless it opens for you
+    var g = under && LAYM ? tryf(function(){ return LAYM.gateAt(x, y, z); }, null) : null;
+    if(g && (g.lane < 0 || !gateOk())){
+      if(g.lane >= 0 && Date.now() - gateSaid > 15000){ gateSaid = Date.now(); say("The gate stays shut: you need a ticket. Buy one at the machines by the wall (E), or in the phone's Tickets app."); }
+      return true;
+    }
+    return false;
   };
   // [3.36] a metro entrance's stairs, its lift or its canopy (2.5 m round the street door): no vehicle goes there
   T.noVehicle = function(x, z){
@@ -402,6 +548,7 @@ function create(c, o){
     ms = ms || Date.now(); lastMs = ms;
     var m = me(), camP = cam && cam.x != null ? cam : m;
     if(ride) tryf(function(){ ride.step(ms, {x: m.x, y: m.y, z: m.z}); });
+    tryf(function(){ passStep(ms); });
     // aboard (seated or standing, above ground): the cabin's lights, a soft fill, so ceilings and undersides seen from
     // inside are not black under the sky-only hemisphere light; off when you get off
     var aboard = !!(ride && (ride.phase === "seated" || ride.phase === "standing") && !under);
@@ -470,6 +617,7 @@ function create(c, o){
     if(ride) tryf(function(){ ride.cancel(true); }); ride = null;
     if(under) setUnder(false, "dispose");
     if(HQV.hqUnderground === UG) HQV.hqUnderground = null;
+    if(HQV.hqTransit.cur === T) HQV.hqTransit.cur = null;
     if(T.unAch) tryf(T.unAch);
     Object.keys(V).forEach(function(k){ if(V[k] && V[k].dispose) tryf(function(){ V[k].dispose(); }); });
     [cabs, heli, taxi].forEach(function(m){ if(m && m.dispose) tryf(function(){ m.dispose(); }); });

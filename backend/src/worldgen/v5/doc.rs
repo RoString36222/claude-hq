@@ -4,7 +4,9 @@
 //!   ends within `JOIN_CM` one node; then seated and carved on the terrain as @3's
 //! - blocks and lots: one block per building, its lot the building's footprint (floors by its height)
 //! - sites: the spawn and fountain on the plaza, Central, the airport (its footprint, its front the apron's side), the port
-//! - metro and rail: the lines' paths and kinds, stations, entrances and their stair holes
+//! - metro and rail: the lines' paths and kinds, stations, entrances and their stair holes; each tunnel mouth a portal
+//!   (rail.portals, metro.portals with each line's depot) and its open cutting's terrain hole; rail.keep_out, the
+//!   airport's box and approaches (no line crosses them above the ground: the client routes the Island Link round them)
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::city::{Block, City as Doc, Facing, Lot, Runway, Site};
@@ -786,23 +788,76 @@ fn metro_layer(mt: &super::metro::Metro, land: &super::land::Land) -> m3::Metro 
         });
     }
     for l in &mt.lines {
-        out.lines.push(m3::Line {
-            id: format!("M{}", l.id + 1), stations: l.stations.iter().map(|&k| sid(k)).collect(), path: l.path.clone(),
-            kinds: vec!["bored"; l.path.len().saturating_sub(1)], depot: None, tier: 1,
+        let id = format!("M{}", l.id + 1);
+        // its depot: the portal (its cutting a terrain hole, from the headwall to where the rail meets the ground), the
+        // yard and its sidings
+        let depot = l.depot.as_ref().map(|dp| {
+            let (a, b) = (dp.portal.i.min(dp.portal.open), dp.portal.i.max(dp.portal.open));
+            let c: Vec<P> = l.path[a..=b].iter().map(|p| (p[0], p[2])).collect();
+            out.holes.extend(cut_holes(&c, super::metro::TRENCH_W_CM));
+            let hole = cut_ring(&c, super::metro::TRENCH_W_CM);
+            out.portals.push(m3::Portal {
+                id: format!("portal:{}", out.portals.len()), line: id.clone(), x: dp.portal.at.0, z: dp.portal.at.1, y: dp.portal.ground,
+                front: q16(dp.portal.front.0, dp.portal.front.1), w: super::metro::TRENCH_W_CM, len: dp.portal.len, hole,
+            });
+            let did = format!("depot:{}", out.depots.len());
+            out.depots.push(m3::Depot { id: did.clone(), line: id.clone(), poly: dp.poly.iter().map(|q| [q.0, q.1]).collect(), tracks: dp.tracks.clone() });
+            did
         });
+        out.lines.push(m3::Line { id, stations: l.stations.iter().map(|&k| sid(k)).collect(), path: l.path.clone(), kinds: l.kinds.clone(), depot, tier: 1 });
     }
     out
 }
 
+/// A cutting's terrain hole, `w` cm wide along its centre line `c`, as a chain of quads (each convex, the next sharing its
+/// edge: every point's edge across the line square to its neighbours' chord, as metro::band's), so the client's cut is
+/// exact however long and gently curved the cutting is.
+fn cut_holes(c: &[P], w: i64) -> Vec<Vec<[i64; 2]>> {
+    let n = c.len();
+    let side: Vec<([i64; 2], [i64; 2])> = (0..n).map(|i| {
+        let (a, b) = (c[i.saturating_sub(1)], c[(i + 1).min(n - 1)]);
+        let (dx, dz) = ((b.0 - a.0) as f64, (b.1 - a.1) as f64);
+        let l = dx.hypot(dz).max(1.0);
+        let (nx, nz) = (-dz / l * w as f64 / 2.0, dx / l * w as f64 / 2.0);
+        ([c[i].0 + nx as i64, c[i].1 + nz as i64], [c[i].0 - nx as i64, c[i].1 - nz as i64])
+    }).collect();
+    (1..n).map(|i| vec![side[i - 1].1, side[i].1, side[i].0, side[i - 1].0]).collect()
+}
+
+/// The same cutting as one ring (a portal's `hole`), through every fifth point and the last: few enough points that no
+/// three are near collinear (its centroid shows which way the cutting runs from its headwall).
+fn cut_ring(c: &[P], w: i64) -> Vec<[i64; 2]> {
+    let mut k: Vec<P> = c.iter().step_by(5).copied().collect();
+    if k.last() != c.last() {
+        k.extend(c.last().copied());
+    }
+    super::super::metro::band(&k, w)
+}
+
 fn rail_layer(lines: &[super::rail::Line], land: &super::land::Land, ap: &super::airport::Airport) -> r3::Rail {
-    let mut out = r3::Rail { lines: Vec::new(), stations: Vec::new(), sea: None, holes: Vec::new() };
+    // what no line crosses above the ground (the client routes the Island Link's sea crossing round it)
+    let keep_out = super::rail::keep_out(ap).into_iter().map(|k| k.into_iter().map(|q| [q.0, q.1]).collect()).collect();
+    let mut out = r3::Rail { keep_out, ..Default::default() };
     for l in lines {
         let n = l.path.len();
-        // per segment: a ramp is an embankment above the ground, a portal's trench below it
-        let kinds: Vec<&'static str> = (0..n.saturating_sub(1)).map(|i| match l.kinds[i] {
-            "ramp" => if l.path[i][1] >= land.height((l.path[i][0], l.path[i][2])) { "grade" } else { "portal" },
-            k => k,
+        // per segment, the less open of its ends: in a tunnel, in a portal's open cutting, on the ground, on a viaduct
+        let rank = |k: &str| match k { "tunnel" => 0, "cutting" => 1, "ramp" => 2, _ => 3 };
+        let kinds: Vec<&'static str> = (0..n.saturating_sub(1)).map(|i| {
+            let k = if rank(l.kinds[i]) <= rank(l.kinds[i + 1]) { l.kinds[i] } else { l.kinds[i + 1] };
+            match k { "cutting" => "portal", "ramp" => "grade", k => k }
         }).collect();
+        // each cutting a terrain hole, from its headwall to where the rail meets the ground; each mouth a portal
+        let centre = |i0: usize, i1: usize| -> Vec<P> { l.path[i0.min(i1)..=i0.max(i1)].iter().map(|p| (p[0], p[2])).collect() };
+        let band = |i0: usize, i1: usize| cut_ring(&centre(i0, i1), super::rail::TRENCH_W_CM);
+        for &(i0, i1) in &l.cuts {
+            out.holes.extend(cut_holes(&centre(i0, i1), super::rail::TRENCH_W_CM));
+        }
+        for pt in &l.portals {
+            out.portals.push(m3::Portal {
+                id: format!("rail-portal:{}", out.portals.len()), line: l.id.to_string(), x: pt.at.0, z: pt.at.1, y: pt.ground,
+                front: q16(pt.front.0, pt.front.1), w: super::rail::TRENCH_W_CM, len: pt.len, hole: band(pt.i, pt.open),
+            });
+        }
         let mut ids = Vec::new();
         for s in &l.stations {
             let i = (0..n).min_by_key(|&i| (l.path[i][0] - s.0).pow(2) + (l.path[i][2] - s.1).pow(2)).unwrap_or(0);

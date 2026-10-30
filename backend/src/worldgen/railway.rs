@@ -41,6 +41,11 @@ pub struct Rail {
     /// them (hqrail.js linkRoute); the generator keeps the abutment's way out to sea off them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keep_out: Vec<Vec<[i64; 2]>>,
+    /// City Gen v5 (@4): each tunnel mouth on a line (`metro::Portal`'s shape: the headwall,
+    /// its front into the tunnel, the cutting's width and length, its terrain hole). The
+    /// client draws the mouth (games/hqportals.js).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub portals: Vec<super::metro::Portal>,
 }
 
 #[derive(Serialize, Clone, Debug)]

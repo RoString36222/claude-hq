@@ -13,7 +13,13 @@
 //!   4. each line at its own depth under the ground, `TOP_CM` and then `LEVEL_GAP_CM` below the line before at every
 //!      station (lines cross without meeting), graded evenly between its stations; its tunnels,
 //!      platforms and a concourse over each station carved in the volume, and two entrances on free ground beside it
-//!      (toward each end of its platform, else anywhere round it out to 150 m).
+//!      (toward each end of its platform, else anywhere round it out to 150 m);
+//!   5. each line's depot, where one fits: from an end platform (not the hub's, not the terminal's) its track runs on in
+//!      its tunnel, curves (align::connect) and climbs at `GRADE` to the surface through a portal (the tunnel's mouth
+//!      where the rail is `MOUTH_CM` under the ground, then an open cutting `TRENCH_W_CM` wide) and into an open-air
+//!      yard of `SIDINGS` sidings on free, gently sloping, dry ground: the nearest yard (on a 25 m grid, 16 headings)
+//!      whose way there is free in the volume; its tunnel, cutting and yard carved (the line's path runs on through
+//!      them, its kinds "bored", "portal", "open").
 use super::airport::{Airport, TERMINAL_CM};
 use super::align::{connect, Pose};
 use super::land::Land;
@@ -42,6 +48,23 @@ pub const HUB_LINES: usize = 3;
 const FLOOR_CM: i64 = 110;
 pub const TUNNEL_HW_CM: i64 = 450;
 pub const TUNNEL_UP_CM: i64 = 700;
+/// The rail this far (cm) under the ground or more is in a tunnel (its height and a roof): a depot's portal opens there.
+pub const MOUTH_CM: i64 = TUNNEL_UP_CM + 100;
+/// Before a mouth the tunnel's cover thins from `COVER_CM` to its roof over this much track (cm; climbing at `GRADE`).
+pub const MOUTH_RUN_CM: f64 = (COVER_CM - (MOUTH_CM - TUNNEL_UP_CM)) as f64 / GRADE + 400.0;
+/// A portal's open cutting between its retaining walls (cm): the twin track, 7 m apart, and a walkway each side.
+pub const TRENCH_W_CM: i64 = 1_400;
+/// A depot: its yard's sidings (each `SIDING_CM` long, `SIDING_GAP_CM` apart), fanning out `FAN_CM` past the end of the
+/// approach track (`APPROACH_CM` on the ground from where the rail meets it); the yard's track on the ground, which
+/// rises or falls at most `YARD_GRADE` along it (and 1 m more); where the rail meets the ground at most `DEPOT_REACH_CM`
+/// along the track from the end platform.
+pub const SIDINGS: usize = 4;
+pub const SIDING_CM: f64 = 12_000.0;
+pub const SIDING_GAP_CM: f64 = 500.0;
+pub const FAN_CM: f64 = 4_000.0;
+pub const APPROACH_CM: f64 = 3_000.0;
+pub const YARD_GRADE: f64 = 0.015;
+pub const DEPOT_REACH_CM: f64 = 160_000.0;
 
 #[derive(Clone, Debug)]
 pub struct Station {
@@ -67,6 +90,19 @@ pub struct Line {
     pub min_r: i64,
     /// Its rail's level at the hub (cm, absolute): each line its own.
     pub rail_y: i64,
+    /// Per path segment: "bored" (in its tunnel), "portal" (a depot's open cutting) or "open" (on the ground).
+    pub kinds: Vec<&'static str>,
+    pub depot: Option<Depot>,
+}
+
+/// A line's depot: its portal (the tunnel's mouth, `portal.i` and `portal.open` index the line's path), the cutting's
+/// path indices, the yard's footprint ([x, z] cm) and its sidings ([x, y, z] cm, from the fan to the buffers).
+#[derive(Clone, Debug)]
+pub struct Depot {
+    pub portal: super::rail::Portal,
+    pub cut: (usize, usize),
+    pub poly: Vec<P>,
+    pub tracks: Vec<Vec<[i64; 3]>>,
 }
 
 pub struct Metro {
@@ -303,7 +339,8 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
                 st.heading = head[k];
             }
         }
-        lines.push(Line { id: li, stations: ids, path, min_r: min_r as i64, rail_y });
+        let kinds = vec!["bored"; path.len().saturating_sub(1)];
+        lines.push(Line { id: li, stations: ids, path, min_r: min_r as i64, rail_y, kinds, depot: None });
     }
     // each station: a concourse in the shallow level over it, two entrances on free ground beside it
     for st in stations.iter_mut() {
@@ -336,7 +373,194 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
             }
         }
     }
+    // each line's depot, where one fits (the volume as the stations left it)
+    for li in 0..lines.len() {
+        depot(land, lu, ap, space, &stations, &mut lines[li]);
+    }
     Metro { lines, stations }
+}
+
+/// The rectangle round `c` along heading `h`: `a` cm either way along it, `b` across.
+fn rect_at(c: (f64, f64), h: f64, a: f64, b: f64) -> Vec<P> {
+    let (ux, uz, vx, vz) = (h.cos() * a, h.sin() * a, -h.sin() * b, h.cos() * b);
+    vec![((c.0 - ux - vx) as i64, (c.1 - uz - vz) as i64), ((c.0 + ux - vx) as i64, (c.1 + uz - vz) as i64),
+         ((c.0 + ux + vx) as i64, (c.1 + uz + vz) as i64), ((c.0 - ux + vx) as i64, (c.1 - uz + vz) as i64)]
+}
+
+/// Lays line `l`'s depot (module doc, 5.) and runs its path on into it; nothing where none fits.
+fn depot(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space, stations: &[Station], l: &mut Line) {
+    let n = l.path.len();
+    if n < 4 {
+        return;
+    }
+    let hub = stations.iter().position(|s| d(s.c, lu.hub) < 2_000);
+    // an end platform: not the hub's, not the terminal's (in the airport), not a station another line serves
+    let ends: Vec<bool> = [(l.stations.len() - 1, true), (0, false)].into_iter().filter(|&(k, _)| {
+        let s = &stations[l.stations[k]];
+        Some(l.stations[k]) != hub && !super::super::organic::geom::inside(s.c, &ap.poly) && s.lines.len() == 1
+    }).map(|(_, last)| last).collect();
+    let step = super::align::STEP_CM;
+    // (the yard: 10 m past the buffers)
+    let yard_len = APPROACH_CM + FAN_CM + SIDING_CM + 1_000.0;
+    let half_w = (SIDINGS as f64 - 1.0) / 2.0 * SIDING_GAP_CM + 400.0;
+    let dry = |q: (f64, f64)| land.dry((q.0 as i64, q.1 as i64));
+    let gh = |q: (f64, f64)| land.height((q.0 as i64, q.1 as i64));
+    type Best = (f64, bool, Vec<[i64; 3]>, Vec<&'static str>, Depot, Vec<(&'static str, Vec<P>, i64, i64)>);
+    let mut best: Option<Best> = None;
+    for &last in &ends {
+        // the platform's end and the way out of it
+        let (a, b) = if last { (l.path[n - 2], l.path[n - 1]) } else { (l.path[1], l.path[0]) };
+        let start: Pose = (b[0] as f64, b[2] as f64, ((b[2] - a[2]) as f64).atan2((b[0] - a[0]) as f64));
+        let y0 = b[1];
+        // the yards that fit: where the rail meets the ground (q) on a grid round the platform's end, the yard on from
+        // there along one of 16 headings: free, dry and gently sloping; nearest first
+        let r = DEPOT_REACH_CM - yard_len;
+        let g = 2_500.0;
+        let nn = (r / g) as i64;
+        let mut yards: Vec<(f64, (f64, f64), f64)> = Vec::new();
+        for i in -nn..=nn {
+            for j in -nn..=nn {
+                let q = (start.0 + i as f64 * g, start.1 + j as f64 * g);
+                let dq = (q.0 - start.0).hypot(q.1 - start.1);
+                let climb = (gh(q) - y0) as f64;
+                // (far enough to climb to the ground at GRADE, and near enough)
+                if dq > r || climb <= 0.0 || dq < climb / GRADE * 0.8 || !dry(q) {
+                    continue;
+                }
+                for k in 0..16 {
+                    let h = k as f64 * std::f64::consts::TAU / 16.0;
+                    let at = |u: f64| (q.0 + h.cos() * u, q.1 + h.sin() * u);
+                    let gq = gh(q);
+                    if (1..=8).any(|t| { let u = yard_len * t as f64 / 8.0; !dry(at(u)) || (gh(at(u)) - gq).abs() as f64 > YARD_GRADE * u + 100.0 }) {
+                        continue;
+                    }
+                    let yard = rect_at(at(yard_len / 2.0), h, yard_len / 2.0, half_w);
+                    if yard.iter().any(|&c| !land.dry(c)) || space.blocker(&yard, gq - 100, gq + 800, 200).is_some() {
+                        continue;
+                    }
+                    yards.push((dq, q, h));
+                }
+            }
+        }
+        yards.sort_by(|x, y| x.0.total_cmp(&y.0));
+        // (the nearest 400 at most, and none farther than the best way found)
+        for &(_, q, h) in yards.iter().take(400) {
+            if best.as_ref().is_some_and(|bst| bst.0 <= (q.0 - start.0).hypot(q.1 - start.1)) {
+                break;
+            }
+            // the way: a curve from the platform's end to q along h, then the approach on into the yard
+            let (_, c) = connect(start, (q.0, q.1, h));
+            let mut way: Vec<Pose> = c;
+            let k = way.len() - 1;
+            let mut u = 0.0;
+            while u < APPROACH_CM {
+                u += step;
+                way.push((q.0 + u * h.cos(), q.1 + u * h.sin(), h));
+            }
+            let run: Vec<f64> = way.iter().scan((0.0, way[0]), |st, p| { st.0 += (p.0 - st.1 .0).hypot(p.1 - st.1 .1); st.1 = *p; Some(st.0) }).collect();
+            if run[k] > DEPOT_REACH_CM {
+                continue;
+            }
+            let g: Vec<i64> = way.iter().map(|p| gh((p.0, p.1))).collect();
+            let gy = g[k];
+            let climb = (gy - y0) as f64;
+            if run[k] < climb / GRADE {
+                continue;
+            }
+            // the rail level from the platform, climbing at GRADE to meet the ground at q; on the ground past it
+            let s_c = run[k] - climb / GRADE;
+            let ys: Vec<i64> = (0..way.len()).map(|i| if i >= k { g[i] } else { (y0 as f64 + GRADE * (run[i] - s_c).max(0.0)).round() as i64 }).collect();
+            // the mouth at the first point shallower than MOUTH_CM; the cutting past it no deeper (no hill to cut
+            // through) and dry; the tunnel's cover never less than COVER_CM before it but in its last MOUTH_RUN_CM
+            let Some(m) = (1..=k).find(|&i| g[i] - ys[i] < MOUTH_CM) else { continue };
+            if (0..m).any(|i| g[i] - ys[i] < TUNNEL_UP_CM + COVER_CM && run[m] - run[i] > MOUTH_RUN_CM) {
+                continue;
+            }
+            if m < 3 || (m..=k).any(|i| g[i] - ys[i] > MOUTH_CM || !dry((way[i].0, way[i].1))) || (k..way.len()).any(|i| !dry((way[i].0, way[i].1))) {
+                continue;
+            }
+            // the volume: the tunnel's boxes (past its first two steps, which meet the line's own), the cutting's open
+            // box up to its fence, the yard's
+            let mut boxes: Vec<(&'static str, Vec<P>, i64, i64)> = Vec::new();
+            let mut ok = true;
+            for i in 0..way.len() - 1 {
+                let (p, nq) = (way[i], way[i + 1]);
+                let (dx, dz) = (nq.0 - p.0, nq.1 - p.1);
+                let ll = dx.hypot(dz).max(1.0);
+                let c = ((p.0 + nq.0) / 2.0, (p.1 + nq.1) / 2.0);
+                let (kind, bx, lo, hi, gap) = if i < m {
+                    ("metro", rect_at(c, dz.atan2(dx), ll / 2.0, TUNNEL_HW_CM as f64), ys[i].min(ys[i + 1]), ys[i].max(ys[i + 1]) + TUNNEL_UP_CM, 0)
+                } else {
+                    ("cutting", rect_at(c, dz.atan2(dx), ll / 2.0, TRENCH_W_CM as f64 / 2.0 + 100.0), ys[i].min(ys[i + 1]), g[i].max(g[i + 1]) + 300, 100)
+                };
+                if i > 2 && space.blocker(&bx, lo, hi, gap).is_some() {
+                    ok = false;
+                    break;
+                }
+                boxes.push((kind, bx, lo, hi));
+            }
+            if !ok {
+                continue;
+            }
+            let yard = rect_at((q.0 + h.cos() * yard_len / 2.0, q.1 + h.sin() * yard_len / 2.0), h, yard_len / 2.0, half_w);
+            boxes.push(("depot", yard.clone(), gy - 100, gy + 800));
+            // the path on to the end of the approach; the sidings fan out from there, on the ground
+            let a_end = way.len() - 1;
+            let ext: Vec<[i64; 3]> = (1..=a_end).map(|i| [way[i].0.round() as i64, ys[i], way[i].1.round() as i64]).collect();
+            let kinds: Vec<&'static str> = (0..a_end).map(|i| if i < m { "bored" } else if i < k { "portal" } else { "open" }).collect();
+            let fan0 = (way[a_end].0, way[a_end].1);
+            let (nx, nz) = (-h.sin(), h.cos());
+            let tracks: Vec<Vec<[i64; 3]>> = (0..SIDINGS).map(|t| {
+                let o = (t as f64 - (SIDINGS as f64 - 1.0) / 2.0) * SIDING_GAP_CM;
+                let at = |u: f64, v: f64| { let p = (fan0.0 + h.cos() * u + nx * v, fan0.1 + h.sin() * u + nz * v); [p.0.round() as i64, gh(p), p.1.round() as i64] };
+                let mut tr = vec![at(0.0, 0.0)];
+                for jj in 1..=8 {
+                    let f = jj as f64 / 8.0;
+                    tr.push(at(FAN_CM * f, o * f * f * (3.0 - 2.0 * f)));
+                }
+                let ns = (SIDING_CM / step) as usize;
+                for jj in 1..=ns {
+                    tr.push(at(FAN_CM + SIDING_CM * jj as f64 / ns as f64, o));
+                }
+                tr
+            }).collect();
+            let (fx, fz) = (way[m - 1].0 - way[m].0, way[m - 1].1 - way[m].1);
+            let fl = fx.hypot(fz).max(1.0);
+            // (way indices: way[0] is the platform's end; made path indices below)
+            let portal = super::rail::Portal { at: (way[m].0 as i64, way[m].1 as i64), i: m, open: k, front: (fx / fl, fz / fl), ground: g[m], rail: ys[m],
+                                               len: (run[k] - run[m]) as i64 };
+            best = Some((run[k], last, ext, kinds, Depot { portal, cut: (m, k), poly: yard, tracks }, boxes));
+            break;
+        }
+    }
+    let Some((_, last, ext, kinds, mut dep, boxes)) = best else { return };
+    let owner = format!("M{}", l.id + 1);
+    for (kind, bx, y0, y1) in boxes {
+        space.put(kind, &owner, bx, y0, y1);
+    }
+    // the path on into the depot: after its last point (way index i is path index n - 1 + i), or before its first (way
+    // index i is path index ext.len() - i, the path reversed onto the front)
+    let m = ext.len();
+    if last {
+        l.path.extend(ext);
+        l.kinds.extend(kinds);
+        let at = |i: usize| n - 1 + i;
+        dep.portal.i = at(dep.portal.i);
+        dep.portal.open = at(dep.portal.open);
+        dep.cut = (at(dep.cut.0), at(dep.cut.1));
+    } else {
+        let mut front: Vec<[i64; 3]> = ext.into_iter().rev().collect();
+        front.append(&mut l.path);
+        l.path = front;
+        let mut k: Vec<&'static str> = kinds.into_iter().rev().collect();
+        k.append(&mut l.kinds);
+        l.kinds = k;
+        let at = |i: usize| m - i;
+        dep.portal.i = at(dep.portal.i);
+        dep.portal.open = at(dep.portal.open);
+        dep.cut = (at(dep.cut.1), at(dep.cut.0));
+    }
+    l.depot = Some(dep);
 }
 
 #[cfg(test)]
@@ -389,9 +613,21 @@ mod tests {
                 assert!(((w[1][1] - w[0][1]) as f64 / run).abs() <= GRADE + 0.005, "M{}: a {:.1}% grade at ({}, {})", l.id + 1,
                         (w[1][1] - w[0][1]) as f64 / run * 100.0, w[0][0] / 100, w[0][2] / 100);
             }
-            for p in &l.path {
+            // (in its tunnel: a depot's portal and yard are in the open)
+            let mouth = l.depot.as_ref().map(|dp| dp.portal.i);
+            for (i, p) in l.path.iter().enumerate() {
+                let bored = (i == 0 || l.kinds[i - 1] == "bored") && (i + 1 == l.path.len() || l.kinds[i] == "bored");
+                if !bored {
+                    continue;
+                }
+                // (within MOUTH_RUN_CM of a depot's mouth the cover thins to its roof)
+                let near = mouth.is_some_and(|m| {
+                    let (a, b) = (m.min(i), m.max(i));
+                    l.path[a..b].windows(2).map(|w| ((w[1][0] - w[0][0]) as f64).hypot((w[1][2] - w[0][2]) as f64)).sum::<f64>() <= MOUTH_RUN_CM + 1.0
+                });
+                let cover = if near { MOUTH_CM - TUNNEL_UP_CM } else { COVER_CM };
                 let g = land.height((p[0], p[2]));
-                assert!(p[1] + TUNNEL_UP_CM <= g - COVER_CM + 2, "M{}: {} m of cover at ({}, {})", l.id + 1, (g - p[1] - TUNNEL_UP_CM) / 100, p[0] / 100, p[2] / 100);
+                assert!(p[1] + TUNNEL_UP_CM <= g - cover + 2, "M{}: {} m of cover at ({}, {})", l.id + 1, (g - p[1] - TUNNEL_UP_CM) / 100, p[0] / 100, p[2] / 100);
             }
         }
         for s in &m.stations {
@@ -408,6 +644,56 @@ mod tests {
             for &y in &s.rail_y {
                 let drop = s.hall_y - (y + FLOOR_CM);
                 assert!((0..=DROP_CM).contains(&drop), "metro:{}: a {} cm stair from the hall ({} lines)", s.id, drop, s.lines.len());
+            }
+        }
+    }
+
+    /// The metro surfaces only at its depots: each line's track runs on from an end platform in its tunnel, out of a
+    /// portal (its mouth `MOUTH_CM` over the rail, an open cutting up to the ground) and into a yard on dry land, with
+    /// nothing in the way: no street, arterial or building over the cutting or the yard, nothing else in the volume.
+    #[test]
+    fn every_depot_is_reached_through_a_portal_and_stands_in_the_open() {
+        let c = super::super::commons();
+        let (land, m) = (&c.land, &c.metro);
+        let depots: Vec<&Line> = m.lines.iter().filter(|l| l.depot.is_some()).collect();
+        assert!(!depots.is_empty(), "no line reaches a depot");
+        for l in &m.lines {
+            // bored, then (at a depot's end) portal, then open: never back underground
+            let first_open = l.kinds.iter().position(|&k| k != "bored");
+            let open_runs = l.kinds.windows(2).filter(|w| (w[0] == "bored") != (w[1] == "bored")).count();
+            assert!(open_runs <= 1, "M{}: comes up {} times", l.id + 1, open_runs);
+            assert_eq!(first_open.is_some(), l.depot.is_some(), "M{}: in the open without a depot", l.id + 1);
+        }
+        for l in depots {
+            let dp = l.depot.as_ref().unwrap();
+            let pt = &dp.portal;
+            let depth = pt.ground - pt.rail;
+            assert!(depth > 0 && depth <= MOUTH_CM, "M{}: its mouth over a rail {} cm down", l.id + 1, depth);
+            let o = l.path[pt.open];
+            assert!((o[1] - land.height((o[0], o[2]))).abs() <= 2, "M{}: its cutting ends off the ground", l.id + 1);
+            // its front into the tunnel
+            let t = l.path[if pt.open > pt.i { pt.i - 1 } else { pt.i + 1 }];
+            assert!(((t[0] - pt.at.0) as f64 * pt.front.0 + (t[2] - pt.at.1) as f64 * pt.front.1) > 0.0, "M{}: a portal facing away from its tunnel", l.id + 1);
+            let (a, b) = (pt.i.min(pt.open), pt.i.max(pt.open));
+            let cut: Vec<P> = l.path[a..=b].iter().map(|p| (p[0], p[2])).collect();
+            let hole: Vec<P> = super::super::super::metro::band(&cut, TRENCH_W_CM).into_iter().map(|q| (q[0], q[1])).collect();
+            assert!(cut.iter().all(|&q| land.dry(q)) && dp.poly.iter().all(|&q| land.dry(q)), "M{}: its cutting or yard in the water", l.id + 1);
+            for (what, area) in [("cutting", &hole), ("yard", &dp.poly)] {
+                for r in c.arterials.iter().chain(&c.streets) {
+                    for w in r.points.windows(2) {
+                        let (p, q) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]));
+                        let hit = super::super::super::organic::geom::inside(p, area) || (0..area.len()).any(|k| super::super::super::organic::geom::seg_dist2(p, q, area[k], area[(k + 1) % area.len()]) == 0);
+                        assert!(!hit, "M{}: a road across its {} at ({}, {}) m", l.id + 1, what, p.0 / 100, p.1 / 100);
+                    }
+                }
+                for bl in &c.landuse.buildings {
+                    assert!(!super::super::space::near(&bl.poly, &dp.poly, 1) || what != "yard", "M{}: a building on its yard", l.id + 1);
+                    assert!(!bl.poly.iter().any(|&q| super::super::super::organic::geom::inside(q, area)), "M{}: a building on its {}", l.id + 1, what);
+                }
+            }
+            assert_eq!(dp.tracks.len(), SIDINGS);
+            for tr in &dp.tracks {
+                assert!(tr.iter().all(|p| super::super::super::organic::geom::inside((p[0], p[2]), &dp.poly) || d((p[0], p[2]), (l.path[dp.cut.1][0], l.path[dp.cut.1][2])) < 6_000), "M{}: a siding off its yard", l.id + 1);
             }
         }
     }

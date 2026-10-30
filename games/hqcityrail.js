@@ -98,7 +98,14 @@ function create(W, o){
   var TRAIN_L = CARS*CAR_L + (CARS - 1)*CAR_GAP, PLAT_TOP = H ? H.PLAT_TOP : 0.95, DOOR_Z = CAR_L*0.22;
   var LINES = [], STOPS = [], byStop = {};
   var RN = HQV.hqRide;
-  function nameAt(x, z, i){ try { if(RN && RN.stationName && W) return RN.stationName(W, x, z, "rail"); } catch(e){} return "Station " + (i + 1); }
+  // [transit pass] a stop beside a metro station takes its name (one place, one name: "Central", not "Harbour Avenue
+  // Square" on the City Line and "Central" on the metro for the same hall)
+  var MN = null; try { MN = HQV.hqMetro && HQV.hqMetro.stationNames ? HQV.hqMetro.stationNames(W) : null; } catch(e){ MN = null; }
+  function nameAt(x, z, i){
+    var n = null; try { n = MN ? MN.near(x, z, 200) : null; } catch(e){ n = null; }
+    if(n) return n;
+    try { if(RN && RN.stationName && W) return RN.stationName(W, x, z, "rail"); } catch(e){} return "Station " + (i + 1);
+  }
   (RV && at ? RV.lines : []).forEach(function(l){
     if(l.kind !== "city" || l.path.length < 2 || (l.tier | 0) > tier) return;
     var R = trackOf(l.path, l.kinds), st = [];
@@ -166,7 +173,7 @@ function create(W, o){
   }
   function makeTrip(L, dir, k, i, j){
     var run = L.runs[dir], D0 = dep0(L, dir, k), stops = [];
-    for(var q = i; q <= j; q++){ var sid = L.stops[run.stops[q]]; stops.push({id: sid, name: byStop[sid].name, at: Math.round(D0 + (q === i ? run.d[q] : run.a[q])*1000)}); }
+    for(var q = i; q <= j; q++){ var sid = L.stops[run.stops[q]]; stops.push({id: sid, name: byStop[sid].name, at: Math.round(D0 + (q === i ? run.d[q] : run.a[q])*1000), dep: Math.round(D0 + run.d[q]*1000)}); }   // dep: [transit pass] get off at any stop
     var from = L.stops[run.stops[i]], to = L.stops[run.stops[j]], vid = "CL:" + L.id + ":" + dir + ":" + k;
     function V(ms){ return vehAt(L, dir, k, clamp(ms, D0 - DWELL*1000, D0 + (run.T + DWELL)*1000)); }
     return {mode: "rail", line: L.id, short: "CL", vehicle: vid, from: from, to: to, fromName: byStop[from].name, toName: byStop[to].name,

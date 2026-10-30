@@ -167,6 +167,11 @@ const RIDE = {
     ].slice(0, to && to.none ? 0 : 3);
   },
   tickets: (function(){ var L = []; return {add: function(t){ t.id = t.id || "T" + (L.length + 1); L.unshift(t); return t; }, list: function(){ return L.slice(); }, remove: function(id){ L = L.filter(function(t){ return t.id !== id; }); return true; }}; })(),
+  // [transit pass] the wallet the station machines and the Buy tab sell into (0 coins)
+  wallet: (function(){ var L = [], F = {single: {name: "Single", coins: 0, desc: "One journey"}, day: {name: "Day pass", coins: 0, desc: "All day"}, card: {name: "Claude Card", coins: 0, desc: "Tap in"}};
+    return {FARES: F, ORDER: ["single", "day", "card"], list: function(){ return L.slice(); }, buy: function(k){ var t = {id: "W" + (L.length + 1), kind: k, name: F[k].name}; L.unshift(t); return t; },
+      remove: function(id){ L = L.filter(function(t){ return t.id !== id; }); return true; }, status: function(t){ return t.kind === "single" ? "not used yet" : "valid"; },
+      fareText: function(c){ return c + " coins"; }}; })(),
   achievements: {list: function(){ return [{id: "mole", name: "Mole", desc: "Ride a metro line end to end.", done: true, progress: 1},
                                             {id: "cabbie", name: "Cabbie", desc: "Drive 10 fares.", done: false, progress: 0.3}]; }}
 };
@@ -515,11 +520,17 @@ o.started = STARTED.length; o.closed = !!o.closed;
 // no destination chosen: says so
 selects[1].value = ""; find(el, "Plan journey").click();
 o.noDest = el.querySelector(".hp-results").textContent;
-// My tickets
+// [transit pass] Buy: the three tickets, 0 coins each; one bought shows in the wallet
 el.querySelectorAll("[role=tab]")[1].click();
+o.buyCards = el.querySelectorAll(".hp-card").length;
+byLabel(el, "Buy a Single for 0 coins").click();
+o.bought = RIDE.wallet.list().map(function(t){ return t.kind; });
+o.walletShown = el.querySelectorAll(".hp-ticket").length;
+// My tickets
+el.querySelectorAll("[role=tab]")[2].click();
 o.mine = el.querySelectorAll(".hp-ticket").length;
 // Check-in: window seat, a pass card with a decorative pattern
-el.querySelectorAll("[role=tab]")[2].click();
+el.querySelectorAll("[role=tab]")[3].click();
 o.flights = el.querySelectorAll(".hp-flight").map(function(f){ return f.textContent; });
 find(el, "Check in").click();
 const pass = el.querySelector(".hp-pass");
@@ -596,7 +607,10 @@ o.notes = [det.length, det[0].open, det[1].open, det[0].querySelector("summary")
 o.ids = window.HQV.hqPhone.registry.list().map(function(a){ return [a.id, a.dock, a.needsCity]; });
 console.log(JSON.stringify(o)); process.exit(0);
 """)
-        self.assertEqual(out["tabs"], [["Plan", "true"], ["My tickets", "false"], ["Check-in", "false"]])
+        self.assertEqual(out["tabs"], [["Plan", "true"], ["Buy", "false"], ["My tickets", "false"], ["Check-in", "false"]])
+        self.assertEqual(out["buyCards"], 3)
+        self.assertEqual(out["bought"], ["single"])
+        self.assertEqual(out["walletShown"], 1)
         self.assertIn("Your HQ", out["toOptions"])
         self.assertIn("City Park", out["toOptions"])
         self.assertIn("Central (Tram)", out["toOptions"])
@@ -608,7 +622,7 @@ console.log(JSON.stringify(o)); process.exit(0);
         self.assertEqual(out["started"], 1)
         self.assertTrue(out["closed"])
         self.assertIn("Choose a destination", out["noDest"])
-        self.assertEqual(out["mine"], 2)               # Book + Go both keep a free ticket
+        self.assertEqual(out["mine"], 3)               # Book + Go both keep a free ticket, and the single from Buy
         self.assertEqual(len(out["flights"]), 2)
         self.assertIn("seat", out["pass"][0])
         self.assertIn("gate C4", out["pass"][0])

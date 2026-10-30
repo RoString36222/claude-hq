@@ -204,7 +204,7 @@ plat.live = accP; plat.leaks = leaks(now); plat.platY = p0.y0;
 out.platform = plat;
 // ---- 2: the walker at a gate line: one beep, at the gate ----
 const cst = Lay.byId['metro:1'];
-const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw); return {x: h.cx + s*10 + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*10 - s*(-4.4 + 0.55)}; })();
+const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw); return {x: h.cx + s*cst.gu + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*cst.gu - s*(-4.4 + 0.55)}; })();   // [transit pass] the gate line sits at the station's gu
 avatar = {x: gate.x, z: gate.z, hy: cst.hallY};
 const gk = CALLS.length, gearE = {x: gate.x, y: cst.hallY + 1.6, z: gate.z}, gm = mk();
 check(gm, frame(T0 + 301e3, gearE, cst.hall.yaw), gearE, T0 + 301e3, {});

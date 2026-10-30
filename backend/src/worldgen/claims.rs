@@ -156,7 +156,7 @@ impl Airport {
         if let Some(r) = s.runway.as_ref().filter(|r| r.area.len() >= 3) {
             let poly: Vec<P> = r.area.iter().map(|q| (q[0], q[1])).collect();
             let bbox = poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
-            return Some(Airport { site: s.id.clone(), polys: vec![poly], corridor: Vec::new(), landside: 0, bbox });
+            return Some(Airport { site: s.id.clone(), polys: vec![poly], corridor: Vec::new(), landside: 0, bbox, approach: Vec::new() });   // (the planned footprint already holds its approaches)
         }
         let f = s.front?;
         Some(Airport::new(&s.id, (s.x, s.z), (f[0], f[1]), s.w, s.d))

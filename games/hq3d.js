@@ -3221,7 +3221,7 @@ function mount(el, api){
     var A = ride.auto, AP = HQV.hqAutopilot, r = apGoal(), x = avatar.x, z = avatar.z;
     o = o || {};
     var head = o.head != null ? o.head : (ride.head != null ? ride.head : avatar.yaw), speed = o.speed != null ? o.speed : ride.speed;
-    if(r && r.R){ if(A.src !== r.R){ A.src = r.R; A.P = AP.plan(r.R.pts); A.cruise = false; } }
+    if(r && r.R){ if(A.src !== r.R){ A.src = r.R; A.P = r.R.lane ? AP.plan(r.R.lane, 0) : AP.plan(r.R.pts); A.cruise = false; } }
     else if(!A.P || A.cruise){                                       // no route (or one finished: the plan we have runs to its end)
       if(!A.P || A.P.len - A.P.s < 90){
         var G = cur && cur.navGraph ? cur.navGraph() : null, pts = G ? AP.cruise(G, x, z, head, 260) : null;

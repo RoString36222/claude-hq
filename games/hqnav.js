@@ -9,6 +9,8 @@
  *   route(G, from, to, mode)  -> R | null  A* over the junctions, "drive" (by class speed) or "walk";
  *                                   R.pts runs from `from` to `to` with the off-road legs to and from the
  *                                   snapped road points included; R.steps are the maneuvers
+ *                                   R.lane (drive only): R.pts moved over into the lane you drive in, the kerb lane of
+ *                                   each road (laneOff), for the line drawn on the road and the autopilot
  *   progress(R, x, z, nowMs)  -> {along, left, off, next, toNext, arrived}; along never slips back more
  *                                   than BACK m, with hysteresis (state kept on R), nowMs (default Date.now()) times how
  *                                   long you have been off the route for needsReroute
@@ -252,6 +254,29 @@ function legYaw(G, L, atEnd){
   else { p = pointAt(G, L.k, L.s0); q = pointAt(G, L.k, L.s0 + dir*h); }
   return Math.atan2(q[0] - p[0], q[1] - p[1]);
 }
+// [v5] how far the kerb lane's middle is off the centre line (m): a road's lanes each way (v4 classes count them each
+// way), its median and its carriageway; a one-way ramp is driven down its middle
+function laneOff(e){
+  if(!e || e.oneway) return 0;
+  var carr = Math.max(1.5, ((e.width|0) - 2*(e.walk|0))/200), med = e.median ? e.median/200 : 0;
+  var n = e.v4 ? Math.max(1, e.lanes|0) : Math.max(1, Math.round((e.lanes|0)/2)), w = (carr - med)/n;
+  return clamp(carr - w/2, 0.8, 9);
+}
+// side(-1 the left, as games/traffic.js SIDE) x lane offsets per point -> the polyline moved over by them, each point
+// along its corner's bisector (capped for hairpins, as games/hqautopilot.js plan)
+function shift(P, O, side){
+  var n = P.length/2, out = new Float64Array(P.length);
+  for(var i = 0; i < n; i++){
+    var ax = 0, az = 0, d1 = 0, k = 1;
+    if(i > 0){ d1 = Math.hypot(P[2*i] - P[2*i-2], P[2*i+1] - P[2*i-1]) || 1; ax += (P[2*i] - P[2*i-2])/d1; az += (P[2*i+1] - P[2*i-1])/d1; }
+    if(i < n - 1){ var d2 = Math.hypot(P[2*i+2] - P[2*i], P[2*i+3] - P[2*i+1]) || 1; ax += (P[2*i+2] - P[2*i])/d2; az += (P[2*i+3] - P[2*i+1])/d2; }
+    var an = Math.hypot(ax, az) || 1; ax /= an; az /= an;
+    if(i > 0 && i < n - 1) k = 1/Math.max(0.5, ((P[2*i] - P[2*i-2])/d1)*ax + ((P[2*i+1] - P[2*i-1])/d1)*az);
+    var o = O[i]*k*side;
+    out[2*i] = P[2*i] - az*o; out[2*i+1] = P[2*i+1] + ax*o;
+  }
+  return out;
+}
 function nameOf(e){ return e ? (e.name || e.ref || "") : ""; }
 // a signed heading change (deg, + = left) and whether it turns back onto the same road -> a step kind
 function turnKind(d, back){
@@ -275,7 +300,7 @@ function route(G, from, to, mode){
   var legs = legsOf(G, A, B, mode);
   if(!legs) return null;
   legs = legs.filter(function(L){ return Math.abs(L.s1 - L.s0) > 1e-6; });
-  var xs = [from.x, from.z], steps = [], along = 0, eta = 0, vOff = mode === "walk" ? SPEED.walk : SPEED.local, W = G.W;
+  var xs = [from.x, from.z], xo = [0], steps = [], along = 0, eta = 0, vOff = mode === "walk" ? SPEED.walk : SPEED.local, W = G.W;
   function dist(ax, az, bx, bz){ return Math.hypot(bx - ax, bz - az); }
   along = A.d; eta = A.d/vOff;
   var e0 = legs.length ? W.edges[G.keep[legs[0].k]] : null;
@@ -292,17 +317,21 @@ function route(G, from, to, mode){
       if(turn) steps.push({at: along, kind: kind, road: nameOf(e), x: p0[0], z: p0[1]});
       else if(e.bridge && !pe.bridge) steps.push({at: along, kind: "bridge", road: nameOf(e), x: p0[0], z: p0[1]});
     }
+    var n0 = xs.length, lo = laneOff(e);
     emitLeg(G, L, xs);
+    for(var q = n0; q < xs.length; q += 2) xo.push(lo);
     along += len; eta += len/speedOf(G, L.k, mode);
   });
-  if(!legs.length) xs.push(A.x, A.z, B.x, B.z);
-  xs.push(to.x, to.z);
+  if(!legs.length){ xs.push(A.x, A.z, B.x, B.z); xo.push(0, 0); }
+  xs.push(to.x, to.z); xo.push(0);
   // drop repeated points, then measure the polyline (the steps' `at` were measured the same way)
-  var pts = [xs[0], xs[1]];
+  // (a junction's point, shared by two legs, takes the mean of their lanes)
+  var pts = [xs[0], xs[1]], po = [xo[0]];
   for(var i = 2; i < xs.length; i += 2){
-    if(dist(pts[pts.length - 2], pts[pts.length - 1], xs[i], xs[i+1]) > 1e-3) pts.push(xs[i], xs[i+1]);
+    if(dist(pts[pts.length - 2], pts[pts.length - 1], xs[i], xs[i+1]) > 1e-3){ pts.push(xs[i], xs[i+1]); po.push(xo[i/2]); }
+    else po[po.length - 1] = (po[po.length - 1] + xo[i/2])/2;
   }
-  if(pts.length < 4) pts.push(to.x, to.z);
+  if(pts.length < 4){ pts.push(to.x, to.z); po.push(0); }
   var cum = new Float64Array(pts.length/2);
   for(i = 1; i < cum.length; i++) cum[i] = cum[i-1] + dist(pts[2*i-2], pts[2*i-1], pts[2*i], pts[2*i+1]);
   var total = cum[cum.length - 1];
@@ -310,7 +339,8 @@ function route(G, from, to, mode){
   var eN = legs.length ? W.edges[G.keep[legs[legs.length - 1].k]] : null;
   steps.push({at: total, kind: "arrive", road: nameOf(eN), x: to.x, z: to.z});
   steps.forEach(function(s){ s.at = Math.min(s.at, total); });
-  return {pts: Float64Array.from(pts), cum: cum, len: total, eta_s: eta, steps: steps, mode: mode,
+  var T = HQV.traffic, side = T && (T.SIDE === 1 || T.SIDE === -1) ? T.SIDE : -1;
+  return {pts: Float64Array.from(pts), lane: mode === "drive" ? shift(pts, po, side) : null, cum: cum, len: total, eta_s: eta, steps: steps, mode: mode,
           to: {x: to.x, z: to.z}, st: {along: 0, offSince: {drive: -1, walk: -1}}};
 }
 
@@ -437,6 +467,6 @@ function places(W, tier, o){
 
 HQV.hqnav = {
   graph: graph, snap: snap, route: route, progress: progress, needsReroute: needsReroute, places: places,
-  SPEED: SPEED, ARRIVE: ARRIVE, OFF: OFF, OFF_S: OFF_S, turnKind: turnKind, doorOf: doorOf
+  SPEED: SPEED, ARRIVE: ARRIVE, OFF: OFF, OFF_S: OFF_S, turnKind: turnKind, doorOf: doorOf, laneOff: laneOff
 };
 })();

@@ -3436,7 +3436,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     approachShow(null);
     route.R = route.mode === "boat" ? null : HQV.hqnav.route(navGraph(), {x: me0.x, z: me0.z}, {x: route.x, z: route.z}, route.mode);
-    if(fx){ fx.setRoute(route.R ? route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
+    if(fx){ fx.setRoute(route.R ? route.R.lane || route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
   }
   function navToSite(site, label){
     if(!site || !HQV.hqnav) return;

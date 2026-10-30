@@ -8,7 +8,8 @@
 //!      gets one at its middle;
 //!   3. each station on a straight platform `PLATFORM_CM` long, along its line (its chord: from the station before to
 //!      the one after); between platforms the track is a curve (align::connect), so no line has a corner anywhere;
-//!   4. each line at its own depth, `LEVEL_GAP_CM` below the one before (lines cross without meeting); its tunnels,
+//!   4. each line at its own depth under the ground, `TOP_CM` and then `LEVEL_GAP_CM` below the line before at every
+//!      station (lines cross without meeting), graded evenly between its stations; its tunnels,
 //!      platforms and a concourse over each station carved in the volume, and two entrances on free ground beside it
 //!      (toward each end of its platform, else anywhere round it out to 150 m).
 use super::airport::{Airport, TERMINAL_CM};
@@ -22,8 +23,17 @@ pub const HOME_GROUPS: usize = 4;
 pub const MERGE_CM: i64 = 25_000;
 pub const INFILL_CM: i64 = 65_000;
 pub const PLATFORM_CM: f64 = 12_000.0;
-pub const TOP_CM: i64 = 2_000;
-pub const LEVEL_GAP_CM: i64 = 900;
+pub const TOP_CM: i64 = 1_600;
+pub const LEVEL_GAP_CM: i64 = 800;
+/// The steepest a line climbs between its platforms (3%; the curve between them is a little longer than their gap).
+pub const GRADE: f64 = 0.03;
+/// The least ground over a tunnel's roof (cm).
+pub const COVER_CM: i64 = 300;
+/// A ticket hall's floor under the street, and the most its platforms' stairs go down from it (cm).
+pub const HALL_CM: i64 = 800;
+pub const DROP_CM: i64 = 2_300;
+/// A platform's top over its rail (cm).
+const FLOOR_CM: i64 = 110;
 pub const TUNNEL_HW_CM: i64 = 450;
 pub const TUNNEL_UP_CM: i64 = 700;
 
@@ -36,6 +46,9 @@ pub struct Station {
     /// The rail's level per line (cm, absolute), and the entrances' spots on the street.
     pub rail_y: Vec<i64>,
     pub entrances: Vec<P>,
+    /// Its ticket hall's floor (cm, absolute): `HALL_CM` under the street, lower over deep platforms (at most `DROP_CM`
+    /// down to the deepest), above every line's tunnel.
+    pub hall_y: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +59,7 @@ pub struct Line {
     pub path: Vec<[i64; 3]>,
     /// Its tightest curve (cm).
     pub min_r: i64,
+    /// Its rail's level at the hub (cm, absolute): each line its own.
     pub rail_y: i64,
 }
 
@@ -145,11 +159,28 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
         if let Some(s) = stations.iter().position(|s| d(s.c, q) < 2_000) {
             return s;
         }
-        stations.push(Station { id: stations.len(), c: q, heading: 0.0, lines: Vec::new(), rail_y: Vec::new(), entrances: Vec::new() });
+        stations.push(Station { id: stations.len(), c: q, heading: 0.0, lines: Vec::new(), rail_y: Vec::new(), entrances: Vec::new(), hall_y: 0 });
         stations.len() - 1
     };
+    // what a line passes under (the water's level, the airport's box, the rail's tunnels): their boxes' bounds and bottoms
+    let under: Vec<(Vec<P>, (i64, i64, i64, i64), i64, i64)> = space.solids.iter().filter(|o| matches!(o.kind, "water" | "airport" | "rail")).map(|o| {
+        let (xs, zs) = (o.poly.iter().map(|q| q.0), o.poly.iter().map(|q| q.1));
+        (o.poly.clone(), (xs.clone().min().unwrap_or(0), zs.clone().min().unwrap_or(0), xs.max().unwrap_or(0), zs.max().unwrap_or(0)), o.y0, o.y1)
+    }).collect();
     for (li, seq) in routes(lu.hub, &destinations(lu, ap)).into_iter().enumerate() {
-        let rail_y = datum - TOP_CM - LEVEL_GAP_CM * li as i64;
+        let below = TOP_CM + LEVEL_GAP_CM * li as i64;
+        let rail_y = datum - below;
+        // the rail at each station, its depth under that station's ground
+        let mut ys: Vec<f64> = seq.iter().map(|&q| (land.height(q) - below) as f64).collect();
+        // within GRADE between platforms (their ends `gap` apart): the higher of two too far apart goes deeper
+        let gap: Vec<f64> = seq.windows(2).map(|w| (d(w[0], w[1]) as f64 - PLATFORM_CM).max(2_000.0)).collect();
+        for _ in 0..seq.len() {
+            for k in 0..gap.len() {
+                let lim = GRADE * gap[k];
+                if ys[k] - ys[k + 1] > lim { ys[k] = ys[k + 1] + lim; }
+                if ys[k + 1] - ys[k] > lim { ys[k + 1] = ys[k] + lim; }
+            }
+        }
         let ids: Vec<usize> = seq.iter().map(|&q| station_at(&mut stations, q)).collect();
         // each station's heading: along its chord (the station before to the one after)
         let head: Vec<f64> = (0..seq.len()).map(|k| {
@@ -159,6 +190,8 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
         let half = PLATFORM_CM / 2.0;
         let pose = |k: usize, s: f64| -> Pose { let q = seq[k]; (q.0 as f64 + s * half * head[k].cos(), q.1 as f64 + s * half * head[k].sin(), head[k]) };
         let mut pts: Vec<Pose> = Vec::new();
+        let mut level: Vec<f64> = Vec::new();
+        let mut plat: Vec<Option<usize>> = Vec::new();
         let mut min_r = f64::INFINITY;
         for k in 0..seq.len() {
             // the platform: straight
@@ -167,21 +200,84 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
             for i in 0..=n {
                 let t = i as f64 / n as f64;
                 pts.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, head[k]));
+                level.push(ys[k]);
+                plat.push(Some(k));
             }
             if k + 1 < seq.len() {
                 let (r, c) = connect(b, pose(k + 1, -1.0));
                 min_r = min_r.min(r);
-                pts.extend(c.into_iter().skip(1));
+                // graded evenly (by length) from this platform's level to the next one's
+                let mut run = vec![0.0];
+                for w in c.windows(2) {
+                    run.push(run[run.len() - 1] + (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1));
+                }
+                let total = run[run.len() - 1].max(1.0);
+                for (i, p) in c.into_iter().enumerate().skip(1) {
+                    pts.push(p);
+                    level.push(ys[k] + (ys[k + 1] - ys[k]) * run[i] / total);
+                    plat.push(None);
+                }
             }
         }
-        pts.dedup_by(|a, b| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0);
-        let path: Vec<[i64; 3]> = pts.iter().map(|p| [p.0.round() as i64, rail_y, p.1.round() as i64]).collect();
+        let mut at: Vec<(Pose, f64, Option<usize>)> = pts.into_iter().zip(level).zip(plat).map(|((p, y), k)| (p, y, k)).collect();
+        at.dedup_by(|a, b| (a.0 .0 - b.0 .0).abs() < 1.0 && (a.0 .1 - b.0 .1).abs() < 1.0);
+        // under a rise between stations the line goes deeper (COVER_CM over its tunnel), its platforms kept level and its
+        // grades within GRADE: each pass only lowers, until nothing moves
+        // (and under the water, the airport and the rail, and a level under every line laid before it where they cross)
+        let reach = 2 * TUNNEL_HW_CM + 100;
+        let cap: Vec<f64> = at.iter().map(|a| {
+            let q = (a.0 .0 as i64, a.0 .1 as i64);
+            let mut c = land.height(q) - TUNNEL_UP_CM - COVER_CM;
+            for l in &lines {
+                let l: &Line = l;
+                for p in &l.path {
+                    if (p[0] - q.0).abs() < reach && (p[2] - q.1).abs() < reach {
+                        c = c.min(p[1] - TUNNEL_UP_CM - 50);
+                    }
+                }
+            }
+            let foot = [(q.0 - TUNNEL_HW_CM, q.1 - TUNNEL_HW_CM), (q.0 + TUNNEL_HW_CM, q.1 - TUNNEL_HW_CM), (q.0 + TUNNEL_HW_CM, q.1 + TUNNEL_HW_CM), (q.0 - TUNNEL_HW_CM, q.1 + TUNNEL_HW_CM)];
+            // (a box wholly under the line's own level, a deep rail tunnel, it passes over)
+            for (poly, b, y0, y1) in &under {
+                if *y1 + 10 <= c.min(a.1 as i64) {
+                    continue;
+                }
+                if q.0 >= b.0 - TUNNEL_HW_CM && q.0 <= b.2 + TUNNEL_HW_CM && q.1 >= b.1 - TUNNEL_HW_CM && q.1 <= b.3 + TUNNEL_HW_CM
+                    && super::space::near(&foot, poly, 1) {
+                    c = c.min(y0 - TUNNEL_UP_CM - 100);
+                }
+            }
+            c as f64
+        }).collect();
+        let step: Vec<f64> = (0..at.len()).map(|i| if i == 0 { 0.0 } else { (at[i].0 .0 - at[i - 1].0 .0).hypot(at[i].0 .1 - at[i - 1].0 .1) }).collect();
+        for _ in 0..16 {
+            let before: f64 = at.iter().map(|a| a.1).sum();
+            for (a, &c) in at.iter_mut().zip(&cap) {
+                a.1 = a.1.min(c);
+            }
+            for k in 0..seq.len() {
+                let low = at.iter().filter(|a| a.2 == Some(k)).map(|a| a.1).fold(f64::INFINITY, f64::min);
+                at.iter_mut().filter(|a| a.2 == Some(k)).for_each(|a| a.1 = low);
+                ys[k] = low;
+            }
+            for i in 1..at.len() {
+                at[i].1 = at[i].1.min(at[i - 1].1 + GRADE * step[i]);
+            }
+            for i in (1..at.len()).rev() {
+                at[i - 1].1 = at[i - 1].1.min(at[i].1 + GRADE * step[i]);
+            }
+            if (before - at.iter().map(|a| a.1).sum::<f64>()).abs() < 1.0 {
+                break;
+            }
+        }
+        let path: Vec<[i64; 3]> = at.iter().map(|(p, y, _)| [p.0.round() as i64, y.round() as i64, p.1.round() as i64]).collect();
         // the volume: the tunnel (its own steps may touch, other lines' are a level apart)
-        let _ = space.sweep("metro", &format!("M{}", li + 1), &path, TUNNEL_HW_CM, TUNNEL_UP_CM, 0);
+        let swept = space.sweep("metro", &format!("M{}", li + 1), &path, TUNNEL_HW_CM, TUNNEL_UP_CM, 0);
+        debug_assert!(swept.is_ok(), "M{}: its tunnel meets {:?}", li + 1, swept.err().map(|b| space.solids[b as usize].kind));
         for (k, &s) in ids.iter().enumerate() {
             let st = &mut stations[s];
             st.lines.push(li);
-            st.rail_y.push(rail_y);
+            st.rail_y.push(ys[k].round() as i64);
             if st.lines.len() == 1 {
                 st.heading = head[k];
             }
@@ -197,7 +293,9 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
             vec![(c.0 + (-ux - vx) as i64, c.1 + (-uz - vz) as i64), (c.0 + (ux - vx) as i64, c.1 + (uz - vz) as i64),
                  (c.0 + (ux + vx) as i64, c.1 + (uz + vz) as i64), (c.0 + (-ux + vx) as i64, c.1 + (-uz + vz) as i64)]
         };
-        let _ = space.carve("concourse", "metro", rect(st.c, 3_000.0, 1_000.0), g - 800, g - 250, 0);
+        let (low, high) = (st.rail_y.iter().copied().min().unwrap_or(g), st.rail_y.iter().copied().max().unwrap_or(g));
+        st.hall_y = (g - HALL_CM).min(low + FLOOR_CM + DROP_CM).max(high + TUNNEL_UP_CM + 100);
+        let _ = space.carve("concourse", "metro", rect(st.c, 3_000.0, 1_000.0), st.hall_y, st.hall_y + 550, 0);
         // (the terminal's station: its ways up are inside the terminal, in the airport's box)
         let ignore: &[&str] = if super::super::organic::geom::inside(st.c, &ap.poly) { &["airport"] } else { &[] };
         for side in [1.0, -1.0] {
@@ -209,10 +307,10 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
                 let ang = st.heading + if side > 0.0 { 0.0 } else { std::f64::consts::PI } + off;
                 let q = (st.c.0 + (ang.cos() * k as f64 * 1_000.0) as i64, st.c.1 + (ang.sin() * k as f64 * 1_000.0) as i64);
                 let foot = rect(q, 400.0, 200.0);
-                (land.dry(q) && space.blocker_but(&foot, g - 800, g + 400, 300, ignore).is_none()).then_some((q, foot))
+                (land.dry(q) && space.blocker_but(&foot, st.hall_y, g + 400, 300, ignore).is_none()).then_some((q, foot))
             });
             if let Some((q, foot)) = spot {
-                space.put("entrance", "metro", foot, g - 800, g + 400);
+                space.put("entrance", "metro", foot, st.hall_y, g + 400);
                 st.entrances.push(q);
             }
         }
@@ -254,6 +352,26 @@ mod tests {
         let mut ys: Vec<i64> = m.lines.iter().map(|l| l.rail_y).collect();
         ys.dedup();
         assert_eq!(ys.len(), m.lines.len(), "each line its own depth");
+    }
+
+    #[test]
+    fn every_line_runs_under_the_ground_at_a_metro_grade() {
+        let (land, _, _, m) = commons();
+        for l in &m.lines {
+            for w in l.path.windows(2) {
+                let run = ((w[1][0] - w[0][0]) as f64).hypot((w[1][2] - w[0][2]) as f64).max(1.0);
+                assert!(((w[1][1] - w[0][1]) as f64 / run).abs() <= GRADE + 0.005, "M{}: a {:.1}% grade at ({}, {})", l.id + 1,
+                        (w[1][1] - w[0][1]) as f64 / run * 100.0, w[0][0] / 100, w[0][2] / 100);
+            }
+            for p in &l.path {
+                let g = land.height((p[0], p[2]));
+                assert!(p[1] + TUNNEL_UP_CM <= g - COVER_CM + 2, "M{}: {} m of cover at ({}, {})", l.id + 1, (g - p[1] - TUNNEL_UP_CM) / 100, p[0] / 100, p[2] / 100);
+            }
+        }
+        for s in &m.stations {
+            let g = land.height(s.c);
+            assert!(s.rail_y.iter().all(|&y| g - y >= TOP_CM), "metro:{}: a platform {} m under its ground", s.id, s.rail_y.iter().map(|&y| (g - y) / 100).min().unwrap_or(0));
+        }
     }
 
     #[test]

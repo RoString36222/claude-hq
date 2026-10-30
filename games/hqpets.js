@@ -994,8 +994,16 @@ var DR_FOLD = {root: [0.06, 0.1, 0.22], hum: [0.2, 0.6, -0.77], fore: [0.1, -0.1
                fing: [[0.08, -0.1, -0.99], [0.1, -0.15, -0.98], [0.12, -0.2, -0.97], [0.14, -0.26, -0.95]]};
 var DR_LEN = {hum: 0.15, fore: 0.24, thumb: 0.015, fing: [0.58, 0.54, 0.44, 0.32]};
 var DR_T = {value: 0}, DRM = [];
-var DR_HIDE = "vec3 wq = vWyP*72.0; vec3 wc = fract(wq) - 0.5; float we = smoothstep(0.36, 0.62, length(wc));\n" +
-  "float wh = fract(sin(dot(floor(wq), vec3(12.9898, 78.233, 37.719)))*43758.5453); diffuseColor.rgb *= (0.92 + 0.12*wh)*(1.0 - 0.2*we);\n";
+// the hide: overlapping scales (rows staggered, each raised toward its trailing edge) and, underneath, banded plates;
+// dH bumps the normal (no extra triangles) and fades out with distance, the crevices go rough
+var DR_HIDE = "vec3 wq = vWyP*vec3(72.0, 72.0, 56.0); wq.x += 0.5*floor(wq.z); vec3 wc = fract(wq) - 0.5; float we = smoothstep(0.36, 0.62, length(wc));\n" +
+  "float wh = fract(sin(dot(floor(wq), vec3(12.9898, 78.233, 37.719)))*43758.5453);\n" +
+  "float wd = (1.0 - smoothstep(0.12, 0.5, length(wc)))*(0.6 + 0.4*(wc.z + 0.5)), wbel = 1.0 - smoothstep(-0.75, -0.35, vWyN.y);\n" +
+  "wd = mix(wd, smoothstep(0.0, 0.7, abs(fract(vWyP.z*34.0) - 0.5)*2.0), wbel);\n" +
+  "float dH = wd*0.0014*(1.0 - smoothstep(3.0, 12.0, length(vViewPosition)));\n" +
+  "diffuseColor.rgb *= mix((0.9 + 0.14*wh)*(1.0 - 0.22*we)*(0.92 + 0.1*wd), 0.86 + 0.16*wd, wbel);\n";
+var DR_BUMP = "{ vec3 bx = dFdx(-vViewPosition), by = dFdy(-vViewPosition), r1 = cross(by, normal), r2 = cross(normal, bx); float bd = dot(bx, r1);\n" +
+  "  normal = normalize(abs(bd)*normal - sign(bd)*(dFdx(dH)*r1 + dFdy(dH)*r2)); }\n";
 var DR_COL = {ice: "diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.97, 1.0), 0.35*smoothstep(0.6, 0.95, wh) + 0.3*smoothstep(0.03, 0.12, vWyP.y));\n",
               crystal: "diffuseColor.rgb *= 0.9 + 0.22*wh;\n", gold: "diffuseColor.rgb *= 0.95 + 0.1*wh;\n",
               shadow: "diffuseColor.rgb *= 0.78 + 0.22*sin(vWyP.z*28.0 - uDrT*1.8 + wh*3.0);\n"};
@@ -1014,8 +1022,10 @@ function drMat(T, el, part){
   if(part === "b"){
     m.onBeforeCompile = function(sh){
       sh.uniforms.uDrT = DR_T;
-      sh.vertexShader = "varying vec3 vWyP;\n" + sh.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n  vWyP = position;");
-      sh.fragmentShader = "uniform float uDrT;\nvarying vec3 vWyP;\n" + sh.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n" + DR_HIDE + (DR_COL[el] || ""))
+      sh.vertexShader = "varying vec3 vWyP;\nvarying vec3 vWyN;\n" + sh.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n  vWyP = position; vWyN = objectNormal;");
+      sh.fragmentShader = "uniform float uDrT;\nvarying vec3 vWyP;\nvarying vec3 vWyN;\n" + sh.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n" + DR_HIDE + (DR_COL[el] || ""))
+        .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\n  roughnessFactor = clamp(roughnessFactor + 0.16*(1.0 - wd) - 0.08*wd, 0.04, 1.0);")
+        .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\n" + DR_BUMP)
         .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n" + (DR_EM[el] || ""));
     };
     m.customProgramCacheKey = function(){ return "drhide" + el; };
@@ -1201,6 +1211,7 @@ function wyvernModel(T, o, sp){
     for(var ti = 0, nt = dr ? 4 : 6; ti < nt; ti++){ var th = ti === 0 || ti === 2 ? 0.03 : 0.02; cone(Ph, s*hr*(0.17 + ti*0.18/nt), -hr*0.1 - th*0.4, hr*(1.98 - ti*1.8/nt), 0.0055, th, ivory, PI, 0, 0, 3); }
     dcone(Ph, s*hr*0.33, hr*0.68, -hr*0.45, s*0.2, dr ? 0.36 : 0.3, -1, hr*(dr ? 0.12 : 0.11), hr*(dr ? 1.5 : 1.15)*(elder ? 1.2 : 1), horn, 8);    // the swept-back horn
     if(!dr) ell(Ph, s*hr*0.46, hr*0.02, -hr*0.3, [hr*0.05, hr*0.05, hr*0.2], horn, 0.15, s*0.4, 6);      // a smooth jaw knob
+    else [0, 1].forEach(function(k){ dcone(Ph, s*hr*(0.48 + 0.04*k), hr*(0.04 - 0.14*k), -hr*(0.22 + 0.14*k), s*0.5, -0.1 - 0.25*k, -1, hr*0.05, hr*(0.5 - 0.14*k), horn, 4); });   // two swept cheek spikes
     // the eye, glowing (unlit: it shows at night), a slit pupil
     var ex = s*hr*0.47, ey = hr*0.42, ez = hr*0.44, ny = Math.sin(0.1), nx = s*Math.sin(0.8), nz = Math.cos(0.8);
     ell(Pgl, ex, ey, ez, [er, er*0.75, er*0.8], EYE, 0, s*0.8, 7);

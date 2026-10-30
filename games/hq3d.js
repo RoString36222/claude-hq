@@ -2217,7 +2217,7 @@ function mount(el, api){
     if(avatar.ch){
       setAnim(avatar.ch, "idle");
       var fy = avatar.ch._fly || (avatar.ch._fly = {});
-      fy.mode = st.mode; fy.speed = st.speed; fy.boost = !!st.boosting; fy.turn = st.yr || 0; fy.vs = st.vs; fy.agl = st.agl;
+      fy.mode = st.mode; fy.speed = st.speed; fy.boost = !!st.boosting; fy.turn = st.yr || 0; fy.vs = st.vs; fy.agl = st.agl; fy.brake = st.brake || 0;
       fy.spin = sp ? sp.d*2*PI*smooth01(sp.t/0.75) : 0;
     }
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
@@ -2313,7 +2313,7 @@ function mount(el, api){
       if(XO.me.on) exoRedress();
       else if(where || (cur && cur.camModes)) exoUp(where || "city");
       else exoSay("Saved. Suit up at the Suit-Up Centre (F on its plate), or press U out in the City.");
-    });
+    }, {spec: api.character && api.character(), seed: "you:" + (api.name || "")});      // the live preview: your own character
     return XO.panelOpen();
   }
   inst.exoPanel = function(){ return exoPanel(null); };

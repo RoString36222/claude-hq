@@ -19,6 +19,11 @@
  * Turning has momentum: the yaw rate st.yr chases the wanted rate (the bank's in a cruise, the key's in a hover) at most
  * YAW_ACC x the frame's agility in rad/s^2, through a critically damped approach (no step when A / D goes down or up),
  * so a turn eases in, carries a moment after you let go and eases out.
+ * Refinements (3.38): the throttle spools (st.thr, SPOOL /s) and thrust tapers toward the top speed (TAPER), so speed
+ * builds and settles on a curve, not a ramp; S in a cruise is an air brake (st.brake 0..1 for the pose, BRAKE x the
+ * brake's pull) that hands over to the hover below CRUISE_V, and the cruise only gives way to the hover HYST m/s under
+ * CRUISE_V (no flicker at the edge); in a banked turn the flight path (st.th) follows the nose through a lag (momentum),
+ * the speed kept; let go of the keys and the bank and pitch level out gently (LEVEL x the held rate).
  */
 (function(){
 "use strict";
@@ -33,6 +38,11 @@ var LAND_H = 0.6;        // m above the floor
 var REV = 6;             // m/s backwards in a hover
 var YAW_ACC = 4;         // rad/s^2 (x 0.5 + agility): how fast the turn rate may change
 var YAW_W = 9;           // 1/s: the rate's critically damped approach, before the limit
+var SPOOL = 2.6;         // 1/s: the throttle's spool up (and twice as fast down)
+var TAPER = 0.7;         // thrust x (1 - TAPER (v / top)^2): eases into the top speed
+var BRAKE = 2.2;         // the air brake's pull over a plain back-off
+var HYST = 3;            // m/s: a cruise holds down to CRUISE_V - HYST
+var LEVEL = 0.45;        // keys let go: the bank / pitch level at this share of the held rate
 
 var FR = [
   {id: "sentinel", n: "Sentinel", st: [65, 60, 65, 60]},
@@ -69,7 +79,7 @@ function waterOf(env, x, z){
 function newState(frameId, x, y, z, yaw){
   var f = STATS[frameId] ? frameId : "sentinel";
   return {frame: f, x: num(x, 0), y: num(y, 0), z: num(z, 0), yaw: wrapPi(yaw), pitch: 0, roll: 0, speed: 0, vs: 0,
-          mode: "landed", boost: 1, boosting: false, agl: 0, yr: 0, yra: 0, acc: 0};
+          mode: "landed", boost: 1, boosting: false, agl: 0, yr: 0, yra: 0, acc: 0, thr: 0, brake: 0, th: wrapPi(yaw)};
 }
 // the yaw rate toward `want`: an exact critically damped step (st.yra its own rate of change), clamped to the frame's limit
 function yawTo(st, want, lim, h){
@@ -79,8 +89,8 @@ function yawTo(st, want, lim, h){
 }
 
 function sane(st){
-  ["x", "y", "z", "pitch", "roll", "speed", "vs", "agl", "acc", "yr", "yra"].forEach(function(k){ st[k] = num(st[k], 0); });
-  st.yaw = wrapPi(st.yaw); st.boost = clamp(num(st.boost, 1), 0, 1);
+  ["x", "y", "z", "pitch", "roll", "speed", "vs", "agl", "acc", "yr", "yra", "thr", "brake"].forEach(function(k){ st[k] = num(st[k], 0); });
+  st.yaw = wrapPi(st.yaw); st.th = isFinite(+st.th) ? wrapPi(st.th) : st.yaw; st.thr = clamp(st.thr, 0, 1); st.brake = clamp(st.brake, 0, 1); st.boost = clamp(num(st.boost, 1), 0, 1);
   if(!STATS[st.frame]) st.frame = "sentinel";
   if(["hover", "cruise", "swim", "landed"].indexOf(st.mode) < 0) st.mode = "hover";
 }
@@ -107,22 +117,26 @@ function sub(st, I, env){
   st.boosting = I.b && st.boost > 0.02 && !under;
   st.boost = clamp(st.boost + (st.boosting ? -0.35 : 0.12)*h, 0, 1);
   var top = F.top*slow*(st.boosting ? 1.8 : 1), acc = F.acc*slow*(st.boosting ? 1.5 : 1);
-  // speed: thrust up to the top, brake / reverse, drag when neither
+  // speed: the spooled throttle up to the top (tapering), the air brake / reverse, drag when neither
+  var wantT = I.f > 0 ? I.f : 0; st.thr += (wantT - st.thr)*ease(wantT > st.thr ? SPOOL : SPOOL*2, h);
+  var wasC = st.mode === "cruise", inC = wasC && st.speed > CRUISE_V - HYST;
+  st.brake += ((I.f < 0 && inC ? 1 : 0) - st.brake)*ease(I.f < 0 ? 6 : 3, h);
   if(st.boosting && I.f >= 0) st.speed += (top - st.speed)*ease(acc/top*1.5, h);
-  else if(I.f > 0){ if(st.speed < top) st.speed = Math.min(top, st.speed + acc*I.f*h); }
-  else if(I.f < 0) st.speed = Math.max(st.speed > CRUISE_V ? 0 : -REV*slow, st.speed + acc*1.4*I.f*h);
+  else if(I.f > 0){ var vr = st.speed/top; if(st.speed < top) st.speed = Math.min(top, st.speed + acc*Math.max(0.15, st.thr)*I.f*Math.max(0.05, 1 - TAPER*vr*vr)*h); }
+  else if(I.f < 0) st.speed = Math.max(inC ? 0 : -REV*slow, st.speed + acc*1.4*(1 + (BRAKE - 1)*st.brake)*I.f*h);
   else st.speed -= st.speed*ease(st.mode === "cruise" ? 0.06/F.mass : 0.9, h);   // a cruise coasts, a hover stops
   if(st.speed > top && !st.boosting) st.speed -= (st.speed - top)*ease(0.8, h);
   if(Math.abs(st.speed) < 1e-4) st.speed = 0;
-  var cruise = st.speed > CRUISE_V && !under;
+  var cruise = (wasC ? st.speed > CRUISE_V - HYST : st.speed > CRUISE_V) && !under;
   var climb = F.climb*slow, vsT, rollT, pitchT;
   if(cruise){
     rollT = clamp(I.t*0.9, -1.1, 1.1);
     pitchT = clamp(I.v*0.45*(0.6 + F.agility/100), -0.6, 0.6);
-    st.roll += (rollT - st.roll)*ease(2.5*(0.5 + F.agility/100), h);
-    st.pitch += (pitchT - st.pitch)*ease(2/F.mass, h);
+    st.roll += (rollT - st.roll)*ease(2.5*(0.5 + F.agility/100)*(I.t ? 1 : LEVEL), h);        // let go: it levels, gently
+    st.pitch += (pitchT - st.pitch)*ease(2/F.mass*(I.v ? 1 : LEVEL), h);
     yawTo(st, st.roll*0.55*F.turn, YAW_ACC*(0.5 + F.agility/100), h);
     st.yaw = wrapPi(st.yaw + st.yr*h);
+    st.th = wrapPi(st.th + wrapPi(st.yaw - st.th)*ease(2.4 + 2.6*F.agility/100, h));    // the path follows the nose a beat late
     vsT = Math.sin(st.pitch)*st.speed;
     st.vs += (vsT - st.vs)*ease(6, h);
   } else {
@@ -130,13 +144,14 @@ function sub(st, I, env){
     st.pitch += (-I.f*0.08 - st.pitch)*ease(3, h);
     yawTo(st, I.t*F.hoverTurn*slow, YAW_ACC*1.5*(0.5 + F.agility/100), h);
     st.yaw = wrapPi(st.yaw + st.yr*h);
+    st.th = wrapPi(st.th + wrapPi(st.yaw - st.th)*ease(12, h));
     vsT = I.v*climb*(I.v < 0 ? 1.2 : 1);
     st.vs += (vsT - st.vs)*ease(4/F.mass, h);
   }
   // move
   var cp = cruise ? Math.cos(st.pitch) : 1;
-  st.x += -Math.sin(st.yaw)*cp*st.speed*h;
-  st.z += -Math.cos(st.yaw)*cp*st.speed*h;
+  st.x += -Math.sin(st.th)*cp*st.speed*h;
+  st.z += -Math.cos(st.th)*cp*st.speed*h;
   st.y += st.vs*h;
   // what it cannot go through: the floor, the water's surface (all but the abyss), the ceiling
   fl = floorOf(env, st.x, st.z); w = waterOf(env, st.x, st.z); if(w !== null && w < fl) w = null;
@@ -151,9 +166,9 @@ function sub(st, I, env){
   // the mode
   if(under) st.mode = "swim";
   else if(st.y - base < LAND_H && Math.abs(st.speed) < LAND_V && !I.up && !I.thr && st.vs <= 0.01){
-    st.mode = "landed"; st.y = base; st.vs = 0; st.pitch *= 0.9; st.roll *= 0.9; st.yr *= 0.9; st.yra = 0;
+    st.mode = "landed"; st.y = base; st.vs = 0; st.pitch *= 0.9; st.roll *= 0.9; st.yr *= 0.9; st.yra = 0; st.th = st.yaw;
   } else st.mode = cruise ? "cruise" : "hover";
 }
 
-HQV.hqExoRide = {STATS: STATS, FRAMES: FRAMES, H: H, CEILING: CEILING, CRUISE_V: CRUISE_V, newState: newState, step: step};
+HQV.hqExoRide = {STATS: STATS, FRAMES: FRAMES, H: H, CEILING: CEILING, CRUISE_V: CRUISE_V, HYST: HYST, TAPER: TAPER, newState: newState, step: step};
 })();

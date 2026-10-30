@@ -339,6 +339,8 @@ function hqRenderCrew(){
 }
 (function(){
   var b=$("hqModeBtn"); if(b) b.addEventListener("click", hqToggle);
+  // [exo] the suit's customiser from anywhere (games/hqexo.js panel; the Suit-Up Centre's kiosk opens the same one)
+  var xb=$("hqExoBtn"); if(xb) xb.addEventListener("click", function(){ if(HQ3D.inst && HQ3D.inst.exoPanel) HQ3D.inst.exoPanel(); });
   // HQ always opens on the classic dashboard (Live unless you were on another tab); the 3D HQ is one
   // H key or the header switch away. After every file of the page script has run (later files add to HQ).
   setTimeout(function(){ if(HQ_SMOKE && VIEW!=="hq"){ hqModeSave("3d"); setView("hq"); return; } hqViewChanged(VIEW); }, 0);

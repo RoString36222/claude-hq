@@ -2958,6 +2958,23 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // where to fly now: straight to the destination, or (a runway or a lane, still far out or off its line) to its final
   // approach fix first; on final, the glideslope: gs > 0 above it, < 0 below (-1..1 = +-half the slope's height)
+  // [exo] suited Go to: the bearing (0 north = -z, 90 east = +x, as the suit's visor tape), the straight-line distance and
+  // an ETA at the frame's cruise speed; w.exoGuide gives the visor its waypoint
+  var NAV_EXO_ARRIVE = 14;
+  function exoGuide(me0, m){
+    var dx = route.x - me0.x, dz = route.z - me0.z, dist = Math.hypot(dx, dz), brg = Math.round(((Math.atan2(dx, -dz)*180/Math.PI) % 360 + 360) % 360) % 360;
+    var v = m && m.exo && m.exo.v > 0 ? m.exo.v : 60, eta = dist/v, ft = HQV.hqnavui ? HQV.hqnavui.fmtDist : function(d){ return Math.round(d) + " m"; };
+    var et = HQV.hqnavui && HQV.hqnavui.fmtEta ? HQV.hqnavui.fmtEta(eta) : Math.round(eta) + " s";
+    var hdg = m ? Math.atan2(Math.sin(m.yaw || 0), -Math.cos(m.yaw || 0))*180/Math.PI : 0;     // where you face, on the same compass
+    return {dist: dist, bearing: brg, info: {step: {kind: "fly", road: "Fly " + ft(dist) + " · bearing " + ("00" + brg).slice(-3) + "° · " + et}, toNext: dist, left: dist, eta_s: eta,
+            rot: brg - hdg, quiet: true,
+            hint: dist < 120 ? "Come down slow to land by the beacon" : ""}};
+  }
+  w.exoGuide = function(){
+    var me0 = c.avatar(); if(!me0 || !route || route.done || route.mode !== "exo") return null;
+    var g = exoGuide(me0, c.motion ? c.motion() : null);
+    return {x: route.x, y: groundY(route.x, route.z), z: route.z, label: route.label, dist: g.dist, bearing: g.bearing};
+  };
   function airGuideNow(me0){
     if(!route || route.done || route.mode !== "air") return null;
     var m = c.motion ? c.motion() : null, y = m ? m.y : 0, A = route.air;
@@ -3360,7 +3377,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var mm = null, nui = null, fx = null, goBtn = null, navKeyFn = null, route = null, navTier = 5, navSig = null;
   function navMode(){
     var m = c.motion ? c.motion() : null;
-    return m && m.air ? "air" : m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
+    return m && m.exo ? "exo" : m && m.air ? "air" : m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
   }
   function navGraph(){ return HQV.hqnav.graph(W, navTier); }
   /* Calling your vehicle (games/hqcall.js, driven by games/hq3d.js): the roads it can use, where it may appear out of
@@ -3456,6 +3473,11 @@ HQV.hqWorlds.city3d = function(c, w){
       if(fx){ fx.setRoute(null, groundY); fx.setWaypoint({x: route.x, y: route.air ? route.air.y : groundY(route.x, route.z), z: route.z}); }
       return;
     }
+    if(route.mode === "exo"){                            // [exo] suited: by air, a straight line to the beacon (the pillar)
+      route.R = null; approachShow(null);
+      if(fx){ fx.setRoute(null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
+      return;
+    }
     approachShow(null);
     route.R = route.mode === "boat" ? null : HQV.hqnav.route(navGraph(), {x: me0.x, z: me0.z}, {x: route.x, z: route.z}, route.mode);
     if(fx){ fx.setRoute(route.R ? route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
@@ -3497,6 +3519,10 @@ HQV.hqWorlds.city3d = function(c, w){
           info = {step: {kind: "fly", road: "Fly " + ("00" + hd).slice(-3) + "°" + (G.via ? " to the final approach" : G.gs != null ? " down the glideslope" : "")}, toNext: G.dist, left: dd,
                   eta_s: dd/Math.max(10, mm0 ? mm0.speed : 10), hint: G.gs != null ? "On final: follow the rings down to the runway" : ""};
         }
+      } else if(mode === "exo"){
+        var ex = exoGuide(me0, m);
+        if(ex.dist < NAV_EXO_ARRIVE && !(m && m.exo && m.exo.flying)) navArrive();
+        else { pts = new Float64Array([me0.x, me0.z, route.x, route.z]); info = ex.info; }
       } else if(route.R){
         var P = HQV.hqnav.progress(route.R, me0.x, me0.z);
         if(P.arrived) navArrive();

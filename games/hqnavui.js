@@ -326,6 +326,8 @@ function mount(el, opts){
     var step = info.step || {}, kind = GLYPH[step.kind] ? String(step.kind) : "straight";
     var toNext = info.toNext, near = !(isFinite(+toNext) && +toNext >= NEAR_M);
     setText(arrow, GLYPH[kind]);
+    var rot = isFinite(+info.rot) ? "rotate(" + Math.round(+info.rot) + "deg)" : "";    // [exo] the bearing arrow, turned to the waypoint
+    if(arrow.style.transform !== rot) arrow.style.transform = rot;
     if(arrow.getAttribute("data-kind") !== kind) arrow.setAttribute("data-kind", kind);
     setText(bTo, near ? "Now" : fmtDist(toNext));
     var text = maneuverText(step, toNext);
@@ -340,7 +342,8 @@ function mount(el, opts){
     setText(bText, text);
     show(banner, true);
     // Speak a new maneuver once (kind + road), and any new hint.
-    var sig = kind + "|" + (step.road || "") + "|" + (step.at != null ? step.at : "");
+    // (info.quiet: the instruction counts down every frame, so only a new destination is spoken)
+    var sig = info.quiet ? kind + "|" + (info.dest || "") : kind + "|" + (step.road || "") + "|" + (step.at != null ? step.at : "");
     if(sig !== lastStep){ lastStep = sig; announce(text); }
     if(hint !== lastHint){ lastHint = hint; if(hint) announce(hint); }
   }

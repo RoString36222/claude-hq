@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.37.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.37.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -632,6 +632,9 @@ change.
 ## 📜 Changelog
 
 The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
+- **3.37.1 — The exosuit fits your own character.** Armour on your avatar's own bones (helmet, plates, gauntlets,
+  boots, each frame's extras) instead of a separate body; Customise suit in the side panel; suited, Go to flies by air
+  to a beacon with the bearing and ETA, and the visor marks the waypoint. No new network calls.
 - **3.37.0 — HQ Exosuit.** Six original flyable suit frames: suit up at the lobby's Suit-Up Centre or summon one with
   **U** in the City, paint it, fly it, and other players see it.
 - **3.36.7 — SkyStrike: wall crawl looks like a crawl, not flying.** Upright spider crouch on the face (not a dive tip);
@@ -813,6 +816,7 @@ The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
   - **100%** fills every road to the plan's comfortable level (at most 22 cars a km of lane).
   - **0%** leaves the roads to the buses, trams and you.
 
+- **3.37.1** — HQ Exosuit fits your own character: armour on your avatar's bones; Go to flies by air when suited.
 - **3.37.0** — HQ Exosuit: six flyable suits, the Suit-Up Centre, U to summon, a flight HUD.
 - **3.36.7** — SkyStrike: wall crawl looks like a crawl, not flying. Upright spider crouch; tighter face pull-in.
 - **3.36.6** — SkyStrike: swing into a wall stays a swing. Crawl is ground-only; air contact no longer auto-crawls.

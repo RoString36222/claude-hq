@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.37.1",
+      "title": "The exosuit fits your own character",
+      "body": "Your suit is now armour on your own character instead of a separate body: a helmet over your big head, a chest plate and core, shoulder pads, gauntlets, shins and boots, sized to fit every base character, with each frame's extras. Your own walk and idle keep playing, and in the air the suit tilts and poses you.\n\nCustomise suit in the HQ side panel opens the customiser from anywhere. Suited, Go to (N) flies you there by air: a beacon, the distance, bearing and time in the banner, and a waypoint marker on your visor."
+    },
+    {
       "version": "3.37.0",
       "title": "HQ Exosuit",
       "body": "Six flyable suits: Sentinel, Strider, Bulwark, Abyss, Stratos and Flux.\n\nSuit up at the Suit-Up Centre in your lobby (F on the plate, F at the kiosk to pick the frame, paint, finish and glow), or press U anywhere in the City to summon it; U again takes it off. Suited, Space takes off: W/S speed, A/D turn, Space/Shift up and down, hold X to boost, and it lands when you come down slow. Abyss dives under the sea; Stratos has no height cap. A visor HUD shows your flight. Everything is free, and other players see your suit.\n\nPresence carries five small numbers while you wear it. No third-party assets."

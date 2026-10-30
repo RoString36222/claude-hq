@@ -1,14 +1,15 @@
-"""HQ Exosuit (games/hqexo.js): every frame builds within budget and poses finite, whatever it is given.
+"""HQ Exosuit (games/hqexo.js): the armour fits your own character, within budget, and poses finite, whatever it is given.
 
-One node process loads the vendored three.js and games/hqexo.js and builds every frame x paint x finish x glow, and
-again with odd inputs (NaN, negative, huge, strings, missing); counts each suit's draw calls and triangles (at most 6
-and 6k); poses each on foot (idle, walk, sprint, sit, the page's loco blend) and in the air (hover, cruise, boost,
-swim) through odd clocks (NaN, a step back, a long stall, a zero step) and checks every bone stays finite; runs every
-suit-up style forward and in reverse to the end (and its pieces land on the body); and round-trips presence `ex`
-(encode / decode, and decode refusing anything out of range). Then the wiring, by reading the files: the scripts load,
-hq3d builds the suit for you and for peers, U summons it, the lobby has the Suit-Up Centre, presence `ex` goes out only
-where the Arena lists "exo", and the Arena keeps it (backend/src/valley/hq.rs). Skipped when node is not installed.
-Stdlib only."""
+One node process loads the vendored three.js and games/hqexo.js, reads the six Kenney Mini Character GLBs (games/golf,
+their skeleton, inverse bind matrices and skinned meshes, parsed here: no loader needed) and puts every frame x paint x
+finish x glow on every base model, and again with odd looks (NaN, negative, huge, strings, missing); counts the armour's
+draw calls and triangles (at most 4 and 4k); checks the helmet covers the big head and the boots sit on the feet; poses
+each in the air (hover, cruise, boost, swim) and on foot through odd clocks (NaN, a step back, a long stall) after the
+"clips" have moved the bones, and checks every bone stays finite; runs every suit-up style forward and in reverse (the
+reverse strips the layer: the character's own scale, update and headwear back); and round-trips presence `ex`. Then the
+wiring, by reading the files: the scripts load, hq3d wears the suit on you and on peers, U summons it, the lobby has the
+Suit-Up Centre, presence `ex` goes out only where the Arena lists "exo", and the Arena keeps it (backend/src/valley/hq.rs).
+Skipped when node is not installed. Stdlib only."""
 import json
 import os
 import shutil
@@ -23,36 +24,74 @@ var fs = require("fs"), url = require("url"), root = process.argv[1];
 import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(function(T){
   global.window = {HQV: {}};
   new Function(fs.readFileSync(root + "/games/hqexo.js", "utf8"))();
-  var X = window.HQV.hqExo, out = {built: 0, posed: 0, bad: [], budget: {}, over: [], seq: {}, rt: [], refused: 0, odd: 0};
+  var X = window.HQV.hqExo, out = {built: 0, posed: 0, bad: [], budget: {}, over: [], seq: {}, rt: [], refused: 0, odd: 0, fit: {}, bones: null, strip: []};
+  var FILES = ["character-female-a", "character-male-a", "character-female-c", "character-male-c", "character-female-e", "character-male-e"];
+  // a GLB as avatar3d builds it (minus the colours): its node tree, the skeleton and the skinned meshes
+  function glb(name){
+    var b = fs.readFileSync(root + "/games/golf/" + name + ".glb"), jl = b.readUInt32LE(12), j = JSON.parse(b.slice(20, 20 + jl).toString());
+    var bin = b.slice(20 + jl + 8), NC = {SCALAR: 1, VEC3: 3, VEC4: 4, MAT4: 16}, CT = {5126: Float32Array, 5123: Uint16Array, 5121: Uint8Array, 5125: Uint32Array};
+    function acc(i){ var a = j.accessors[i], v = j.bufferViews[a.bufferView], n = NC[a.type], C = CT[a.componentType], es = C.BYTES_PER_ELEMENT;
+      var off = (v.byteOffset || 0) + (a.byteOffset || 0), st = v.byteStride || n*es, o = new C(a.count*n);
+      for(var k = 0; k < a.count; k++){ var r = bin.slice(off + k*st, off + k*st + n*es), u = new Uint8Array(n*es); for(var q = 0; q < n*es; q++) u[q] = r[q]; o.set(new C(u.buffer), k*n); }
+      return o; }
+    var sk = j.skins[0], objs = j.nodes.map(function(n, i){ var o = sk.joints.indexOf(i) >= 0 ? new T.Bone() : new T.Object3D(); o.name = n.name || "";
+      if(n.translation) o.position.fromArray(n.translation); if(n.rotation) o.quaternion.fromArray(n.rotation); if(n.scale) o.scale.fromArray(n.scale); return o; });
+    j.nodes.forEach(function(n, i){ (n.children || []).forEach(function(c){ objs[i].add(objs[c]); }); });
+    var g = new T.Group(); j.scenes[j.scene || 0].nodes.forEach(function(i){ g.add(objs[i]); });
+    var ibm = acc(sk.inverseBindMatrices), bones = sk.joints.map(function(i){ return objs[i]; });
+    var skel = new T.Skeleton(bones, bones.map(function(_, k){ return new T.Matrix4().fromArray(ibm, k*16); }));
+    var meshes = [];
+    j.nodes.forEach(function(n, i){ if(n.mesh == null) return; var pr = j.meshes[n.mesh].primitives[0], A = pr.attributes, geo = new T.BufferGeometry();
+      geo.setAttribute("position", new T.BufferAttribute(acc(A.POSITION), 3)); geo.setAttribute("skinIndex", new T.Uint16BufferAttribute(Array.from(acc(A.JOINTS_0)), 4));
+      geo.setAttribute("skinWeight", new T.BufferAttribute(acc(A.WEIGHTS_0), 4)); if(pr.indices != null) geo.setIndex(new T.BufferAttribute(acc(pr.indices), 1));
+      var m = new T.SkinnedMesh(geo, new T.MeshStandardMaterial()); m.name = n.name; objs[i].name += "-node"; objs[i].parent.add(m); m.position.copy(objs[i].position); meshes.push(m); });
+    g.updateMatrixWorld(true); meshes.forEach(function(m){ m.bind(skel, m.matrixWorld); });
+    var head = g.getObjectByName("head"), hat = new T.Mesh(new T.BoxGeometry(0.1, 0.1, 0.1)); hat.name = "halo"; var hg = new T.Group(); hg.add(hat); head.add(hg);
+    var ups = 0, ch = {o: g, base: 2.1, mixer: {update: function(){}}, acts: {}, cur: "idle", update: function(){ ups++; }, ups: function(){ return ups; }, hat: hg, skel: skel};
+    g.scale.setScalar(2.1);
+    return ch;
+  }
   var ODD = [{}, {f: NaN, p: NaN, fin: NaN, g: NaN}, {f: -3, p: -1, fin: -9, g: -2}, {f: 99, p: 1e9, fin: 7, g: 1e6}, {f: "flux", p: "2", fin: "1", g: "x"}, null];
   var CLOCK = [0, 0, 0.016, NaN, 0.5, -0.4, 30, 30, 1e6, 0.016];
-  var FLY = [null, {mode: "hover"}, {mode: "cruise", speed: 30}, {mode: "cruise", speed: NaN, boost: true}, {mode: "swim", speed: 4}, {mode: "nonsense"}];
-  var CUR = ["idle", "walk", "sprint", "sit", "loco", null];
+  var FLY = [null, {mode: "hover"}, {mode: "cruise", speed: 30}, {mode: "cruise", speed: NaN, boost: true}, {mode: "swim", speed: 4}, {mode: "nonsense"}, null];
   function finite(ch){ var ok = true; ch.o.updateMatrixWorld(true); ch.o.traverse(function(o){ var e = o.matrixWorld.elements; for(var i = 0; i < 16; i++) if(!isFinite(e[i])) ok = false; }); return ok; }
+  function clip(ch, t){ ch.skel.bones.forEach(function(b, i){ if(b.name !== "root") b.rotation.set(Math.sin(t + i)*0.3, 0, Math.cos(t*2 + i)*0.2); }); }   // a stand-in for the mixer
   function posed(ch, tag){
     var t = 1;
-    CUR.forEach(function(c, ci){ FLY.forEach(function(fl){
-      ch.cur = c; ch.loco = c === "loco" ? {idle: 0.2, walk: 0.5, sprint: 0.3} : null;
-      ch.acts.idle.weight = 0.2; ch.acts.walk.weight = ci % 2 ? 0.7 : NaN; ch.acts.sprint.weight = 0.3; ch._fly = fl;
-      for(var f = 0; f < CLOCK.length; f++){ var k = CLOCK[f]; t = isFinite(k) ? t + k : NaN; ch.update(t); out.posed++; if(!isFinite(t)) t = 1; }
-    }); });
+    FLY.forEach(function(fl){ ch._fly = fl; for(var f = 0; f < CLOCK.length; f++){ var k = CLOCK[f]; t = isFinite(k) ? t + k : NaN; clip(ch, t || 0); ch.update(t); out.posed++; if(!isFinite(t)) t = 1; } });
     if(!finite(ch)) out.bad.push(tag);
+    var r = ch.o.getObjectByName("root"); if(r.quaternion.w < 0.999 || r.position.length() > 1e-6) out.bad.push(tag + ": the root left tilted on landing");
   }
-  X.FRAMES.forEach(function(F, fi){
-    for(var p = 0; p < X.PAINTS.length; p++) for(var fin = 0; fin < X.FINISHES.length; fin++) for(var g = 0; g < X.GLOWS.length; g++){
-      var ch = X.build(T, {f: fi, p: p, fin: fin, g: g}); out.built++;
-      var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 6 || s.tris > 6000) out.over.push([F.id, p, fin, g, s]);
-      if(p === 0 && g === 0) posed(ch, F.id + "/" + fin);
-      X.dispose(ch);
-    }
-    ["gantry", "summon", "flow", "drop"].forEach(function(st){ [false, true].forEach(function(rev){
-      var ch = X.build(T, {f: fi}), S = X.seq(T, ch, st, {reverse: rev}), r = null, n = 0, locks = 0;
-      for(; n < 2000; n++){ r = X.seqStep(S, n % 7 ? 1/60 : (n % 3 ? NaN : -1)); if(r.lock) locks++; if(r.done) break; }
-      var shown = ch._exo.meshes.every(function(m){ return m.visible; });
-      out.seq[F.id + "/" + st + (rev ? "/off" : "")] = {done: !!(r && r.done), steps: n, locks: locks, shown: shown, left: S.g.parent ? 1 : 0, finite: finite(ch)};
-    }); });
+  function box(ch, k){ var m = ch._exo.meshes.filter(function(m){ return m.name === "exo-" + k; })[0]; m.geometry.computeBoundingBox(); return m.geometry.boundingBox; }
+  FILES.forEach(function(file, bi){
+    X.FRAMES.forEach(function(F, fi){
+      for(var p = 0; p < X.PAINTS.length; p++) for(var fin = 0; fin < X.FINISHES.length; fin++) for(var g = 0; g < X.GLOWS.length; g++){
+        if(bi && (p || fin || g)) continue;                    // every look on the first model, every frame on all six
+        var ch = glb(file), ok = X.wear(T, ch, {f: fi, p: p, fin: fin, g: g}); out.built++;
+        if(!ok){ out.bad.push(file + "/" + F.id + ": did not fit"); continue; }
+        var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 4 || s.tris > 4000) out.over.push([file, F.id, p, fin, g, s]);
+        if(p === 0 && g === 0 && fin === 0){
+          posed(ch, file + "/" + F.id);
+          var A = box(ch, "A"), hb = new T.Box3().setFromBufferAttribute(ch.o.getObjectByName("head-mesh").geometry.attributes.position);
+          out.fit[file + "/" + F.id] = {scale: ch.o.scale.x, helmet: A.max.y >= hb.max.y - 0.08 && A.max.x >= hb.max.x && A.min.x <= hb.min.x && A.max.z >= hb.max.z,
+                                        feet: A.min.y > -0.06 && A.min.y < 0.1, hat: ch.hat.visible};
+          X.strip(ch);
+          out.strip.push([ch.o.scale.x, ch.hat.visible, !!ch._exo, ch.o.children.length && !ch.o.getObjectByName("exo-A"), (ch.update(1), ch.ups())]);
+        }
+      }
+      if(bi > 1) return;
+      ["gantry", "summon", "flow", "drop"].forEach(function(st){ [false, true].forEach(function(rev){
+        var ch = glb(file); X.wear(T, ch, {f: fi}); var S = X.seq(T, ch, st, {reverse: rev}), r = null, n = 0, locks = 0;
+        for(; n < 2000; n++){ clip(ch, n/60); r = X.seqStep(S, n % 7 ? 1/60 : (n % 3 ? NaN : -1)); if(r.lock) locks++; if(r.done) break; }
+        var shown = ch._exo ? ch._exo.meshes.every(function(m){ return m.visible; }) : false;
+        out.seq[file + "/" + F.id + "/" + st + (rev ? "/off" : "")] = {done: !!(r && r.done), steps: n, locks: locks, shown: shown, left: S.g.parent ? 1 : 0, finite: finite(ch),
+          stripped: !ch._exo, scale: ch.o.scale.x};
+      }); });
+    });
   });
-  ODD.forEach(function(o, i){ var ch = X.build(T, o); posed(ch, "odd" + i); out.odd++; });
+  out.bones = glb(FILES[0]).skel.bones.map(function(b){ return b.name; });
+  ODD.forEach(function(o, i){ var ch = glb(FILES[i % 6]); X.wear(T, ch, o); posed(ch, "odd" + i); out.odd++; });
+  var plain = glb(FILES[0]); var sm = []; plain.o.traverse(function(n){ if(n.isSkinnedMesh) sm.push(n); }); sm.forEach(function(n){ n.parent.remove(n); }); out.noskin = X.wear(T, plain, {});
   for(var f = 0; f < 6; f++) for(var m = 1; m <= 6; m++){ var e = X.encode({f: f, p: (f*3) % 9, fin: f % 4, g: f % 5}, m), d = X.decode(e); out.rt.push([e, d && [d.f, d.p, d.fin, d.g, d.m]]); }
   [[6, 0, 0, 0, 2], [0, 9, 0, 0, 2], [0, 0, 4, 0, 2], [0, 0, 0, 5, 2], [0, 0, 0, 0, 0], [0, 0, 0, 0, 7], [0, 0, 0, 0], [0.5, 0, 0, 0, 2], "x", null, [-1, 0, 0, 0, 2]]
     .forEach(function(a){ if(X.decode(a) === null) out.refused++; });
@@ -76,31 +115,47 @@ class ExoBudget(unittest.TestCase):
         assert r.returncode == 0, r.stderr[-3000:]
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
 
-    def test_every_frame_paint_finish_and_glow_builds_within_budget(self):
+    def test_it_fits_the_kenney_skeleton_on_all_six_models(self):
         o = self.o
-        self.assertEqual(o["built"], 6*9*4*5)
-        self.assertEqual(o["over"], [], "a suit over 6 draw calls or 6k triangles")
+        self.assertEqual(sorted(o["bones"]), sorted(["root", "torso", "head", "arm-left", "arm-right", "leg-left", "leg-right"]))
+        self.assertEqual(o["built"], 6*9*4*5 + 5*6)
+        self.assertEqual(len(o["fit"]), 36)
+        for k, f in o["fit"].items():
+            self.assertTrue(f["helmet"], k + ": the helmet covers the big head")
+            self.assertTrue(f["feet"], k + ": the boots sit on the feet")
+            self.assertFalse(f["hat"], k + ": headwear hides under the helmet")
+            self.assertAlmostEqual(f["scale"], 2.1*1.3 if "/bulwark" in k else 2.1, places=5)
+        for s in o["strip"]:
+            self.assertEqual(s[:4], [2.1, True, False, True], "strip: own scale, headwear and no armour")
+        self.assertFalse(o["noskin"], "no skinned skeleton: no suit, no crash")
+
+    def test_every_frame_paint_finish_and_glow_within_budget(self):
+        o = self.o
+        self.assertEqual(o["over"], [], "armour over 4 draw calls or 4k triangles")
         self.assertEqual(sorted(o["budget"]), ["abyss", "bulwark", "flux", "sentinel", "stratos", "strider"])
         for k, s in o["budget"].items():
-            self.assertLessEqual(s["draws"], 6, k)
-            self.assertLessEqual(s["tris"], 6000, k)
+            self.assertLessEqual(s["draws"], 4, k)
+            self.assertLessEqual(s["tris"], 4000, k)
         self.assertEqual(o["budget"]["abyss"]["draws"], 4, "abyss alone has the glass dome")
+        self.assertEqual(o["budget"]["sentinel"]["draws"], 3)
 
     def test_poses_stay_finite_with_odd_inputs_and_clocks(self):
         self.assertEqual(self.o["bad"], [])
         self.assertEqual(self.o["odd"], 6)
-        self.assertGreater(self.o["posed"], 6*4*36*10)
+        self.assertGreater(self.o["posed"], 36*7*10)
 
     def test_every_suit_up_style_ends_on_the_body(self):
         seq = self.o["seq"]
-        self.assertEqual(len(seq), 6*4*2)
+        self.assertEqual(len(seq), 2*6*4*2)
         for k, s in seq.items():
             self.assertTrue(s["done"], k)
             self.assertTrue(s["finite"], k)
             self.assertEqual(s["left"], 0, k + ": its pieces are gone once it ends")
             if k.endswith("/off"):
+                self.assertTrue(s["stripped"], k + ": off strips the layer")
+                self.assertAlmostEqual(s["scale"], 2.1, places=5)
                 continue
-            self.assertTrue(s["shown"], k + ": the merged suit shows once the pieces land")
+            self.assertTrue(s["shown"], k + ": the merged armour shows once the pieces land")
             self.assertGreater(s["locks"], 3, k)
             self.assertLess(s["steps"], 400, k)
 
@@ -130,6 +185,8 @@ class ExoWiring(unittest.TestCase):
     def test_hq3d_builds_suits_and_takes_the_keys(self):
         s = read("games", "hq3d.js")
         self.assertIn("XO.wanted(key)", s)
+        self.assertIn("XO.wear(THREE, ch, l)", s, "a suit is armour over the character, not a body of its own")
+        self.assertNotIn("XO.build(", s)
         self.assertIn("HQV.hqExo.peer(p.u, p.ex)", s)
         self.assertIn('e.code !== "KeyU"', s)
         self.assertIn("if(exoKey(e)) return;", s)
@@ -142,6 +199,27 @@ class ExoWiring(unittest.TestCase):
         cam = read("games", "camrig.js")
         self.assertIn("exo:     {", cam)
         self.assertIn("<kbd>U</kbd> summons your exosuit", read("index.html"))
+
+    def test_the_customiser_opens_at_the_kiosk_and_from_the_side_panel(self):
+        s = read("games", "hq3d.js")
+        self.assertIn('if(what === "kiosk") return exoPanel("bay");', s)
+        self.assertIn("inst.exoPanel = function()", s)
+        self.assertIn('id="hqExoBtn"', read("index.html"))
+        self.assertIn('$("hqExoBtn")', read("ui", "app", "22-hq.js"))
+        self.assertIn("z-index:99;", read("games", "hqexo.js"), "above the page's overlays (z 80 scrims)")
+
+    def test_go_to_flies_by_air_while_suited(self):
+        city = read("games", "hqcity3d.js")
+        self.assertIn('return m && m.exo ? "exo" :', city, "suited, the route is by air, not by road")
+        self.assertIn('if(route.mode === "exo"){', city)
+        self.assertIn("w.exoGuide = function()", city)
+        self.assertIn('" · bearing "', city)
+        self.assertIn("exo: exoNav()", read("games", "hq3d.js"))
+        hud = read("games", "hqexohud.js")
+        self.assertIn("function draw(S, cam, targets, frameId, tint, wp)", hud)
+        self.assertIn("cx.translate(0, tY)", hud, "the heading tape moves below the nav banner")
+        self.assertIn("cur.exoGuide()", read("games", "hq3d.js"))
+        self.assertIn("info.quiet", read("games", "hqnavui.js"), "a countdown is not spoken every frame")
 
     def test_the_arena_keeps_ex(self):
         proto = read("backend", "src", "protocol.rs")

@@ -70,7 +70,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
         if(bi && (p || fin || g)) continue;                    // every look on the first model, every frame on all six
         var ch = glb(file), ok = X.wear(T, ch, {f: fi, p: p, fin: fin, g: g}); out.built++;
         if(!ok){ out.bad.push(file + "/" + F.id + ": did not fit"); continue; }
-        var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 4 || s.tris > 4000) out.over.push([file, F.id, p, fin, g, s]);
+        var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 4 || s.tris > 2500) out.over.push([file, F.id, p, fin, g, s]);
         if(p === 0 && g === 0 && fin === 0){
           posed(ch, file + "/" + F.id);
           var A = box(ch, "A"), hb = new T.Box3().setFromBufferAttribute(ch.o.getObjectByName("head-mesh").geometry.attributes.position);
@@ -162,7 +162,7 @@ class ExoBudget(unittest.TestCase):
         self.assertEqual(sorted(o["budget"]), ["abyss", "bulwark", "flux", "sentinel", "stratos", "strider"])
         for k, s in o["budget"].items():
             self.assertLessEqual(s["draws"], 4, k)
-            self.assertLessEqual(s["tris"], 4000, k)
+            self.assertLessEqual(s["tris"], 2500, k)
         self.assertEqual(o["budget"]["abyss"]["draws"], 4, "abyss alone has the glass dome")
         self.assertEqual(o["budget"]["sentinel"]["draws"], 3)
 
@@ -176,7 +176,7 @@ class ExoBudget(unittest.TestCase):
         self.assertTrue(70 * deg <= g["fast"]["tilt"] <= 80 * deg, g["fast"]["tilt"])
         self.assertGreater(g["boost"]["tilt"], 84 * deg, "boost: nearly flat")
         self.assertLessEqual(g["boost"]["tilt"], 90 * deg)
-        self.assertLess(g["cruise"]["splay"], 0.03, "cruise: legs together")
+        self.assertTrue(0.03 < g["cruise"]["splay"] < 0.09, "cruise: legs parted a little, so both read")
         self.assertLess(g["cruise"]["armSw"], 0, "cruise: arms swept back")
         self.assertEqual(g["boost"]["lead"], 1, "boost: the leading arm forward")
         self.assertEqual(g["landed"]["crouch"], 1)

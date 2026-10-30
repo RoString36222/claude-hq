@@ -3,6 +3,22 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.38.0 — Exosuit polish.**
+  - **Detailing in the shader.** Panel lines with rivets, worn bare edges, a glow-colour trim line and a decal per frame
+    (Sentinel chevrons, Strider racing stripe, Bulwark hazard stripes, Abyss rivet rows, Stratos quilting, Flux liquid
+    sheen), bumped through screen derivatives and fading with distance. Two slanted glowing eyes with a soft halo replace
+    the single slit; ear vents, chest core rings, knee cops and knuckle plates. Still at most 4 draw calls, under 2.5k triangles.
+  - **Legs that read in flight.** An angled shin and boot fake a knee bend, the legs part a little at cruise, the boot jets
+    lean down and out, and the chase camera sits higher and off to one side for a three-quarter view.
+  - **Thrust.** Layered flames (soft outer cone, white-hot core, nozzle glow ring) with two-octave flicker and shock
+    diamonds, a short fading ribbon behind each boot at cruise and boost, ground downwash rings in a low hover and a spark
+    burst when boost kicks in. Still two draw calls, pooled, no per-frame allocation.
+  - **Flying.** A spooled throttle and tapered top speed, an air brake that hands over to the hover, cruise hysteresis,
+    banked turns that keep their momentum, gentle auto-levelling; breathing, head into turns, arms countering the bank;
+    a gentle camera shake on boost only.
+  - **Live preview in the suit terminal.** Your own character wearing the picked frame, paint, finish and glow on a small
+    renderer of its own: it turns slowly, drags to turn, has a Fly pose with lit thrusters, and is disposed on close.
+
 - **3.37.2 — The exosuit really flies.**
   - **Flight poses.** Upright with palms down in a hover; near-horizontal, legs trailing and arms swept back in a
     cruise; flat out with the leading arm forward on a boost; a crouch for take-off and landing. No walking in the air.

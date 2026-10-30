@@ -55,7 +55,7 @@ impl Land {
         self.t.height_at(q.0, q.1)
     }
 
-    /// The city's diameter (cm): what the airport's runway is a quarter of.
+    /// The city's diameter (cm).
     pub fn city_d(&self) -> i64 {
         2 * self.p.city_r_cm
     }

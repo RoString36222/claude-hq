@@ -629,9 +629,12 @@ class SourceTest(unittest.TestCase):
                   "polygonOffset", "onBeforeCompile", "uFade[8]", "fract(vWPos.y / 3.5)", "InstancedMesh"):
             self.assertIn(s, src)
         # polygon offsets: asphalt -1, marks -2, kerb/walk -3
-        self.assertRegex(src, r"m\.asphalt = offset\(std\([^)]*\), -1\)")
+        self.assertRegex(src, r"m\.asphalt = offset\(roadSurface\(std\([^)]*\), \"asphalt\", ASPHALT_GLSL, ASPHALT_ROUGH\), -1\)")
         self.assertRegex(src, r"m\.marks = offset\(std\([^)]*\), -2\)")
-        self.assertRegex(src, r"m\.walk = offset\(std\([^)]*\), -3\)")
+        self.assertRegex(src, r"m\.walk = offset\(roadSurface\(std\([^)]*\), \"walk\", PAVING_GLSL\), -3\)")
+        # the road surfaces' grain: world-position noise with no sin hash, its fine detail faded by its footprint
+        self.assertIn("fwidth(rdP)", src)
+        self.assertNotIn("sin(", src[src.index("var RD_GLSL"):src.index("function lodFor")])
         # far roads: marks merged into the asphalt are lifted clear of depth precision; tree trunks skip the instance tint
         self.assertIn("lifted(m.roads.marks, FAR_MARK_LIFT)", src)
         self.assertIn("if(lit > 0.5) vColor.xyz = color.xyz;", src)

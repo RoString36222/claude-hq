@@ -13,7 +13,7 @@ fn the_planned_commons_fills_its_island() {
     // the layers the client reads (v5/doc.rs)
     assert!(l.lots.iter().filter(|x| x.kind == "hq").count() > 10, "an HQ pool");
     assert!(l.sites.iter().any(|s| s.kind == "spawn"));
-    assert!(l.sites.iter().any(|s| s.kind == "airport" && s.runway.as_ref().is_some_and(|r| r.len * 4 <= 2 * w.size_cm)));
+    assert!(l.sites.iter().any(|s| s.kind == "airport" && s.runway.as_ref().is_some_and(|r| r.len == v5::airport::RUNWAY_CM)));
     let m = l.metro.as_ref().unwrap();
     assert!(m.lines.len() >= 3 && m.entrances.len() >= 2 * m.stations.len());
     let rl = l.rail.as_ref().unwrap();

@@ -115,6 +115,30 @@ function lifted(G, dy){
   for(var i = 1; i < pos.length; i += 3) pos[i] += dy;
   return {pos: pos, nrm: G.nrm, col: G.col, idx: G.idx};
 }
+// The road surfaces' grain, from the fragment's world position alone (no texture, no UVs; the same at every LOD and in
+// the far mesh): the asphalt's tone drifts in broad patches (worn and resurfaced stretches) and finer mottling, and
+// carries an aggregate speckle; a sidewalk's or median's flat top (not a kerb's face, not a planted verge, apron or
+// hedge: green) is laid in RD_SLAB m slabs, each its own shade, with darker joints. The fine detail fades out by its
+// screen-space footprint (fwidth), so it never shimmers in the distance.
+var RD_GLSL = "varying vec3 vRdW;\nvarying float vRdNy;\n" +
+  // (a hash with no sin: world metres times 14 overrun sin's precision on some GPUs and band)
+  "float rdH(vec2 p){ vec3 q = fract(vec3(p.xyx)*0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y)*q.z); }\n" +
+  "float rdN(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0 - 2.0*f);\n" +
+  "  return mix(mix(rdH(i), rdH(i + vec2(1.0, 0.0)), f.x), mix(rdH(i + vec2(0.0, 1.0)), rdH(i + vec2(1.0, 1.0)), f.x), f.y); }\n";
+// (RD_LIFT: the asphalt's vertex colour, near black in linear light, lifted to a weathered mid-dark grey the grain shows on)
+var RD_LIFT = 1.3;
+var ASPHALT_GLSL = "vec2 rdP = vRdW.xz; float rdFw = length(fwidth(rdP));\n" +
+  "float rdK = " + RD_LIFT.toFixed(2) + " + (rdN(rdP*0.045) - 0.5)*0.34 + (rdN(rdP*0.37 + 17.0) - 0.5)*0.16;\n" +
+  "rdK += (rdH(floor(rdP*14.0)) - 0.5)*0.24*clamp(1.0 - rdFw*9.0, 0.0, 1.0);\n" +
+  "diffuseColor.rgb *= rdK;";
+// (and its roughness drifts a little with the patches: polished wheel tracks, rougher fresh stretches)
+var ASPHALT_ROUGH = "roughnessFactor = clamp(roughnessFactor + (rdN(vRdW.xz*0.12 + 5.0) - 0.5)*0.12, 0.0, 1.0);";
+var RD_SLAB = 0.6;
+var PAVING_GLSL = "vec2 rdP = vRdW.xz/" + RD_SLAB.toFixed(2) + "; float rdFw = length(fwidth(rdP));\n" +
+  "float rdTop = smoothstep(0.85, 0.95, vRdNy)*step(diffuseColor.g, max(diffuseColor.r, diffuseColor.b) + 0.04);\n" +
+  "vec2 rdF = abs(fract(rdP) - 0.5); float rdJ = smoothstep(0.455, 0.49, max(rdF.x, rdF.y))*clamp(1.0 - rdFw*3.0, 0.0, 1.0);\n" +
+  "float rdS = (rdH(floor(rdP)) - 0.5)*0.10 + (rdN(vRdW.xz*0.2) - 0.5)*0.08;\n" +
+  "diffuseColor.rgb *= 1.0 + rdTop*(rdS - 0.22*rdJ);";
 function lodFor(d, s, cur){
   var t0 = LOD0*s, t1 = LOD1*s, want = d < t0 ? 0 : (d < t1 ? 1 : 2);
   if(cur != null && cur !== want){
@@ -208,9 +232,9 @@ function create(c, W, opts){
   function materials(){
     var m = {};
     m.terrain = std({roughness: 0.95});
-    m.asphalt = offset(std({roughness: 0.9}), -1);
+    m.asphalt = offset(roadSurface(std({roughness: 0.9}), "asphalt", ASPHALT_GLSL, ASPHALT_ROUGH), -1);
     m.marks = offset(std({roughness: 0.7}), -2);
-    m.walk = offset(std({roughness: 0.85}), -3);
+    m.walk = offset(roadSurface(std({roughness: 0.85}), "walk", PAVING_GLSL), -3);
     m.body = bodyMat(true);
     m.body0 = bodyMat(false);   // detail 0 has real window quads: no shader rows (they would z-fight with them)
     // window quads: per-vertex lit code (games/citylife.js: by use and hour; 1 every night), emissive only at night
@@ -260,6 +284,16 @@ function create(c, W, opts){
     }));
     ["terrain", "asphalt", "marks", "walk", "body", "body0", "trees", "bridge", "bridgeLit", "works", "tunnel"].forEach(function(k){ settle(m[k]); });
     return m;
+  }
+  function roadSurface(m, key, frag, rough){
+    return patch(m, "rd-" + key, function(sh){
+      sh.vertexShader = rep(sh.vertexShader, "common", "varying vec3 vRdW;\nvarying float vRdNy;");
+      sh.vertexShader = rep(sh.vertexShader, "begin_vertex", "vRdW = (modelMatrix * vec4(position, 1.0)).xyz; vRdNy = normal.y;");
+    }, function(sh){
+      sh.fragmentShader = rep(sh.fragmentShader, "common", RD_GLSL);
+      sh.fragmentShader = rep(sh.fragmentShader, "color_fragment", frag);
+      if(rough) sh.fragmentShader = rep(sh.fragmentShader, "roughnessmap_fragment", rough);
+    });
   }
   function stencilMark(m){ m.stencilWrite = true; m.stencilRef = 1; m.stencilFunc = THREE.AlwaysStencilFunc; m.stencilZPass = THREE.ReplaceStencilOp; return m; }
   // What the weather leaves on the ground (HQ 3.2, games/hqweather.js settled): snow lying in patches on whatever faces

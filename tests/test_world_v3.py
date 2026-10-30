@@ -205,7 +205,7 @@ done(out);
             self.assertFalse(p[k]["blocked"], k)
             self.assertEqual(p[k]["ground"], p[k]["deck"], k)
         self.assertEqual(p["pier0"]["deck"], 1.2)
-        self.assertEqual(p["breakwater"]["deck"], 2.5)          # the crown walk over sea level 0
+        self.assertAlmostEqual(p["breakwater"]["deck"], 2.58, 9)   # the crown walk's slab (0.08 m) on the crown, over sea level 0
         self.assertIsNone(p["land"]["water"])
         self.assertFalse(p["land"]["blocked"])
         for k in ("ent0", "ent1", "portal", "il"):
@@ -288,6 +288,7 @@ for(var tz4 = 0; tz4 < 8; tz4++) for(var tx4 = 0; tx4 < 8; tx4++){
   var M = G.roadTile(W, tx4, tz4).marks, c = M.col, p = M.pos;
   for(var v = 0; v < c.length; v += 3){
     var yel = Math.abs(c[v] - 0.95) < 1e-6 && Math.abs(c[v+1] - 0.74) < 1e-6;
+    if(!yel && c[v] < 0.9) continue;   // (the street's ironwork: grates and manholes, not paint)
     if(yel) mk.yellow++; else mk.white++;
     // along the avenue (z = 0) between junctions: the line edges, rounded to cm
     if(!yel && p[v] > -230 && p[v] < -80) mk.edgeLines[Math.round(p[v+2]*100)] = 1;

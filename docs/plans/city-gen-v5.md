@@ -33,8 +33,13 @@ height range); **no two boxes intersect**, ever. `v5/space.rs` holds them and an
 
 1. **Land and water**: terrain, coast, river, lakes. The buildable area.
 2. **Airport**: at the city's edge or inside it, whichever scores better (flat, a clear run over the sea or open land
-   for its approaches, away from homes). **Its runway is a quarter of the city's diameter** (about 430 m on the
-   Commons; it was 1.6 km, the city's whole width). Its box is locked before anything else.
+   for its approaches, away from homes). **Its runway is as long as the fastest HQ vehicle needs to run from a
+   standstill to its top speed with nitro and brake to a stop** (the Chiron Super Sport, 2,138 m with the game's
+   physics: a 2.2 km runway, `RUNWAY_CM` in `v5/airport.rs`; `tests/test_runway_length.py` runs every catalogue
+   vehicle against it). That is longer than the Commons is wide, so only the apron side (apron, terminal, landside)
+   must stand on the island: the strip may run out over the sea on a pier deck (piles, a deck edge, a sea wall where
+   it meets the land), never across a river, lake, canal or the marina, and neither approach passes over the city's
+   middle. Its box is locked before anything else.
 3. **Port** where the water is deepest and clear of the approaches.
 4. **The centre**: the plaza and Central (the metro and rail hub) near the middle, on high dry ground.
 5. **Land use from travel**: offices round the hub; homes in rings within a commute of the offices and a short walk of
@@ -62,7 +67,8 @@ height range); **no two boxes intersect**, ever. `v5/space.rs` holds them and an
 - industry at least 150 m from any home; every home within a walk of a station or a stop;
 - no road curve under its class's design radius, no corner on a road over 35 degrees where nothing else joins;
 - **no corner on a rail line, ever**; rail gradients within the line's limit;
-- the airport's runway a quarter (to a fifth) of the city's diameter, its box clear of everything else above ground.
+- the airport's runway long enough for every HQ vehicle to reach its top speed (nitro) and stop on it, its apron
+  side on the island, its approaches clear of the city's middle, its box clear of everything else above ground.
 
 ## Phases
 

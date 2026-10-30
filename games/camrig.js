@@ -475,7 +475,9 @@ function chasePose(s, mode, T, dt, q){
   var A = _.ahead, ax = spring(A.x, A.vx, hf.x*al, AHEAD_W, dt), az = spring(A.z, A.vz, hf.z*al, AHEAD_W, dt);
   A.x = ax[0]; A.vx = ax[1]; A.z = az[0]; A.vz = az[1];
   // the camera: behind the pivot along camYaw; height over max(pivot feet, ground under the camera (sprung))
-  var el = e0 + _.orbitPitch, r = Math.sqrt(back*back + up*up), horiz = r*Math.cos(el), h = r*Math.sin(el);
+  // T.pitch (SkyStrike's dive, a vehicle's nose): tip the chase elevation so the
+  // shot looks down the line of the dive. Vehicles already used it in fpPose.
+  var el = e0 + _.orbitPitch + clamp((T.pitch || 0)*0.55, -0.7, 0.7), r = Math.sqrt(back*back + up*up), horiz = r*Math.cos(el), h = r*Math.sin(el);
   var off = rotYaw(-side, -horiz, camYaw), px = P.x + off.x, pz = P.z + off.z, g = q.ground(px, pz);
   if(_.gnd == null) _.gnd = {y: g, v: 0};
   var gs = spring(_.gnd.y, _.gnd.v, g, M.lag, dt); _.gnd.y = gs[0]; _.gnd.v = gs[1];

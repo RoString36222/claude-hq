@@ -434,6 +434,28 @@ function create(c, W, scene, opts){
       });
     },
     open: function(id){ var it = byId(id); return it ? smooth(it.st.u) : 0; },
+    /* Solid AABBs for the body collider: each bridge's deck, towers and cabins.
+       ALL construction is opaque — a swing must stop at a bridge deck just like
+       at a downtown tower. Local (across x, along z) is turned to world. */
+    solidItems: function(x, y, z){
+      var out = [];
+      for(var i = 0; i < items.length; i++){
+        var b = items[i].b;
+        var cx = (b.a.x + b.b.x)/2, cz = (b.a.z + b.b.z)/2;
+        if(Math.hypot(cx - x, cz - z) > 80) continue;
+        var ax = +b.axis[0] || 0, az = +b.axis[1] || 1;
+        var L = +b.len || 0, ho = (+b.edgeO || 0) + PARA_W, cw = +b.cw || 4;
+        // deck: across ±ho, along 0..L in local z, at b.y
+        var hw = Math.max(ho, cw) + 1.5;
+        var x0 = Math.min(b.a.x, b.b.x) - hw, x1 = Math.max(b.a.x, b.b.x) + hw;
+        var z0 = Math.min(b.a.z, b.b.z) - hw, z1 = Math.max(b.a.z, b.b.z) + hw;
+        var topY = +b.y || 0;
+        if(b.kind === "lift" && items[i].topY != null) topY = +b.y + items[i].topY;
+        else topY = +b.y + 3.2;
+        out.push({id: "bridge:" + b.id, min: {x: x0, y: (+b.y || 0) - 4, z: z0}, max: {x: x1, y: topY, z: z1}});
+      }
+      return out;
+    },
     state: function(id){ var it = byId(id); return it ? {u: it.st.u, bar: it.st.bar, lights: !!it.st.lights, active: it.st.active} : null; },
     blockedAt: function(x, z){
       for(var i = 0; i < items.length; i++){

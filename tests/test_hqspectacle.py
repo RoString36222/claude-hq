@@ -75,6 +75,32 @@ out.coaster = {inside: C.pts.every(p => Math.abs(p.x) <= a - 6 + 1e-6 && Math.ab
 const Wi = WD.pack(doc('island@2')), Si = SP.claim(Wi, 1);
 out.island = {park: !!Si.park, marks: Si.marks.length,
   shown: Si.marks.every(m => { const l = Wi.lots.filter(x => x.id === m.lot)[0]; return l.min_tier == null || l.min_tier <= 1; })};
+// Every LIVE world must still get a park. 3.18's generator squeezed the park district, so the
+// clear rectangle claim() gets is much smaller than it was on @2 — but it must never be empty,
+// and every ride must sit inside the fence the park draws round that rectangle.
+out.live = {};
+for (const id of ['claude-hq@2', 'claude-hq@3', 'island@2', 'island@3']) {
+  const Wl = WD.pack(doc(id)), Sl = SP.claim(Wl, 5);
+  const Pl = Sl.park;
+  if (!Pl) { out.live[id] = {park: null, coasterInside: false, ridesInside: false}; continue; }
+  const al = Pl.w/2, bl = Pl.d/2;
+  const pl2 = SP.rideLayout(al, bl);
+  // the coaster is built at rideLayout's own hm (clamped by the park's size), never
+  // at a fixed 46 — a small park gets a smaller loop, and that is the one that must fit
+  const Cl = SP.coasterPlan(al, bl, pl2.hm);
+  const coasterInside = Cl.pts.every(p => Math.abs(p.x) <= al - 6 + 1e-6 && Math.abs(p.z) <= bl - 6 + 1e-6);
+  // the ride + boarding-deck boxes buildPark lays out (rideLayout is the one authority), must
+  // stay inside the fence: [-al,al] x [-bl,bl]. These are the decks' roofs, not the scenery
+  // keep-out (zones): the Starswing's roof is the thing that used to poke through the fence.
+  const ridesInside = pl2.reach.every(r =>
+    al + r.x + r.minX >= -1e-6 && al - r.x - r.maxX >= -1e-6 &&
+    bl + r.z + r.minZ >= -1e-6 && bl - r.z - r.maxZ >= -1e-6);
+  out.live[id] = {
+    park: {w: Pl.w, d: Pl.d, block: Pl.block},
+    coasterInside, ridesInside,
+    wheelR: pl2.wheel.R, carouselR: pl2.carousel.r, reach: pl2.reach
+  };
+}
 // the world cache (world.js cacheCopy) never keeps a claim: a claim made by older code read back from
 // IndexedDB was trusted forever (W.spectacle short-circuits claim), with its old sites (y 0: underground)
 const Wk = WD.pack(doc('claude-hq@2')), lotsK = {}; Wk.lots.forEach(l => { lotsK[l.id] = l.kind; });
@@ -119,7 +145,19 @@ class ClaimTests(unittest.TestCase):
         self.assertTrue(self.o["parkOnEmptyBlock"])
         self.assertEqual(self.o["roads"], 0)
         self.assertEqual(self.o["trees"], 0)
-        self.assertGreaterEqual(min(self.o["park"]["w"], self.o["park"]["d"]), 56)
+        # 28 m: the clear rectangle the rides actually need (coasterPlan degrades to it),
+        # not the 56 m the v3 generator can no longer offer on the live Commons
+        self.assertGreaterEqual(min(self.o["park"]["w"], self.o["park"]["d"]), 28)
+
+    def test_every_live_world_still_claims_a_park(self):
+        # 3.18's generator put the park lake and the metro through the park district, leaving one
+        # empty park block on claude-hq@3 cut down to a 32 m clear strip. The old 56 m gate claimed
+        # nothing there, so the live Commons had landmarks and no amusement park at all.
+        for wid, info in self.o["live"].items():
+            self.assertIsNotNone(info["park"], f"{wid}: claim() placed no park")
+            self.assertGreaterEqual(min(info["park"]["w"], info["park"]["d"]), 28, wid)
+            self.assertTrue(info["coasterInside"], f"{wid}: the coaster does not fit the park")
+            self.assertTrue(info["ridesInside"], f"{wid}: a ride hangs over the fence")
 
     def test_you_walk_the_terrain_not_a_floor_at_zero(self):
         # a site is a level pad at its y unless pad is false; at y 0 the park sank you ~1 m underground

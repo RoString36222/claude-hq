@@ -1,7 +1,8 @@
 /* Claude HQ 3.2: landmarks and an amusement park in the 3D City (HQV.hqSpectacle; games/hqcity3d.js wires it in).
  *
  * claim(W, tier)   Decide, once per world doc, what stands where; pure and deterministic (tests/test_hqspectacle.py).
- *   The park: the largest park-district block with no lots and no sites on it, at least PARK_MIN m a side, shrunk
+ *   The park: the largest park-district block with no lots and no sites on it, whose clear rectangle is at least
+ *   PARK_CLEAR m a side (the 3.18 generator squeezed the park district, so the gate is the rides' own floor), shrunk
  *   until no road runs inside it. It becomes a site {kind: "funpark"} so the trees keep off it (world.js trees()
  *   skips sites), the residents count it as a park (npcsim PARK_SITE) and Go to lists it (hqnav KINDS).
  *   Landmarks: up to MAX_MARKS of the biggest building lots in the downtown / finance / office / commercial / tech
@@ -12,6 +13,8 @@
  *   -> W.spectacle = {park: {x, z, w, d, rot, block, gate: {x, z}} | null, marks: [{lot, x, z, s, rot, type, name}]}
  *
  * coasterPlan(a, b, hm)   the coaster's control points in the park's frame (pure; the tests check its clearances).
+ * rideLayout(a, b)        every other ride's seat and the AABB its ironwork + boarding deck reach, each centre
+ *                         clamped so that whole box stays inside the fence (pure; the tests check the same boxes).
  *
  * create(c, W, o) -> the drawn landmarks and park, and riding them (needs THREE through hq3d's ctx):
  *   o: {scene, ground(x, z), owner (the city's owner id), city() (its CityState), say(text), avatar()}
@@ -36,6 +39,14 @@ var HQV = root.HQV = root.HQV || {};
 var PI = Math.PI, TAU = PI*2, G = 9.81;
 
 var PARK_MIN = 70, PARK_INSET = 7, MAX_MARKS = 8, LANDMARK_GAP = 170, MARK_MIN = 16;
+// The clear rectangle the rides need. The coaster's plan degrades cleanly down to
+// ~16 m across (hm clamps to 26, the loop tightens to its R floor), and every other
+// ride clamps to the space it has. 28 m leaves room for the loop and the wheel.
+// This is deliberately much smaller than PARK_MIN: the v3 generator (3.18) put the
+// park lake and the metro through the park district, and the one empty park block
+// left on claude-hq@3 is cut by a road down to a 32 m strip. Asking for 56 m there
+// claimed nothing, so the live Commons had landmarks and no park at all.
+var PARK_CLEAR = 28;
 var MARK_DISTRICTS = {downtown: 1, finance: 1, office: 1, commercial: 1, tech: 1};
 var TYPES = ["twist", "spire", "lantern", "twins", "needle", "regent"];
 var NAMES = {twist: "The Helix", spire: "Aurora Spire", lantern: "The Lantern", twins: "Gemini Towers",
@@ -81,6 +92,17 @@ function freeRect(W, b, Q){
     if(r && r.dist <= r.half + ROAD_MARGIN) return false;
     return !(W.river && Q.riverAt && Q.riverAt(W, x, z));
   }
+  // the layout is drawn for no more than 2.2 to 1, so compare the CLAMPED shape:
+  // a long thin clear strip is the biggest area on claude-hq@3's cut park block
+  // and still only 26 m across after clamping, while a squarer 38 m floor sits
+  // next to it. A park is ranked by its short side first (the rides' floor), then
+  // by area.
+  function shape(wm, dm){
+    var w = wm, d = dm;
+    if(d > w*2.2) d = w*2.2;
+    if(w > d*2.2) w = d*2.2;
+    return {w: w, d: d, m: Math.min(w, d), a: w*d};
+  }
   for(var k = 0; k < nz; k++){
     var zc = z0 + (k + 0.5)*CELL;
     for(i = 0; i < nx; i++) h[i] = free(x0 + (i + 0.5)*CELL, zc) ? h[i] + 1 : 0;
@@ -90,15 +112,14 @@ function freeRect(W, b, Q){
       while(st.length && h[st[st.length - 1]] >= hi){
         var top = st.pop(), hh = h[top], left = st.length ? st[st.length - 1] + 1 : 0, ww = i - left;
         var wm = ww*CELL - 2*EDGE, dm = hh*CELL - 2*EDGE;
-        if(Math.min(wm, dm) > 0 && (!best || wm*dm > best.w*best.d))
-          best = {x: x0 + (left + ww/2)*CELL, z: zc + CELL/2 - hh*CELL/2, w: wm, d: dm};
+        if(Math.min(wm, dm) > 0){
+          var s = shape(wm, dm);
+          if(!best || s.m > best.m || (s.m === best.m && s.a > best.a))
+            best = {x: x0 + (left + ww/2)*CELL, z: zc + CELL/2 - hh*CELL/2, w: s.w, d: s.d, m: s.m, a: s.a};
+        }
       }
       st.push(i);
     }
-  }
-  if(best){                                           // no longer than 2.2 to 1: the layout is drawn for that
-    if(best.d > best.w*2.2) best.d = best.w*2.2;
-    if(best.w > best.d*2.2) best.w = best.d*2.2;
   }
   return best;
 }
@@ -121,9 +142,9 @@ function claim(W, tier, Q){
   var best = null;
   (W.blocks || []).forEach(function(b){
     if(!b || leg[b.district] !== "park" || used[b.id] || !shown(b)) return;
-    if(Math.min(b.w, b.d)/100 < PARK_MIN) return;
+    if(Math.min(b.w, b.d)/100 < PARK_CLEAR) return;
     // ranked by the clear rectangle inside it, not the block: roads can cut a big block down
-    var R = freeRect(W, b, Q); if(!R || Math.min(R.w, R.d) < PARK_MIN - 2*PARK_INSET) return;
+    var R = freeRect(W, b, Q); if(!R || Math.min(R.w, R.d) < PARK_CLEAR) return;
     var a = R.w*R.d;
     if(!best || a > best.a || (a === best.a && b.id < best.b.id)) best = {b: b, a: a, R: R};
   });
@@ -140,7 +161,7 @@ function claim(W, tier, Q){
   }
   if(best){
     var b = best.b, R = best.R, cx = R ? R.x : 0, cz = R ? R.z : 0, w = R ? R.w : 0, d = R ? R.d : 0;
-    if(R && Math.min(w, d) >= PARK_MIN - 2*PARK_INSET){
+    if(R && Math.min(w, d) >= PARK_CLEAR){
       // the long axis is the park's local z; the gate is on the short side nearer a road
       var longZ = d >= w, lw = longZ ? w : d, ld = longZ ? d : w;
       var ends = longZ ? [[0, -1], [0, 1]] : [[-1, 0], [1, 0]];
@@ -186,6 +207,66 @@ function claim(W, tier, Q){
    In the park's frame (x across, z along, the gate at -z): the station on the +x side heading +z, a straight lift
    hill up that side, a first drop turning across the far end, a vertical loop down the -x side, two airtime hills,
    and a sweeping turn back over the entrance (high enough to walk under) into the brake run. */
+/* Every ride's seat in the park's frame, and the AABB its ironwork and boarding deck
+   actually reach. A station sits at yaw PI/2 beside the ride, so a deck of size w x d
+   overhangs the ride's +x by about d/2 + 1.1 (the gabled roof is a little deeper than
+   the deck) and ±(w/2 + 1.1) in z; the Storm Galleon's deck is behind it (yaw PI) and
+   overhangs -z instead. Each centre is then clamped so the whole reach stays inside
+   the fence at ±a, ±b — on a narrow park (the live Commons is a 32 m clear strip) the
+   wheel gets smaller and the decks tuck in, rather than the Starswing's roof poking
+   through the fence. buildPark draws this; tests/test_hqspectacle.py checks the same
+   boxes, so the two can never disagree about what "inside the fence" means. */
+function rideLayout(a, b){
+  a = Math.max(8, +a || 0); b = Math.max(8, +b || 0);
+  var hm = clamp(Math.min(a, b)*0.84, 26, 46);          // == clamp(min(P.w, P.d)*0.42, ...) on the full rect
+  // body (hw x hd about the ride's centre) plus its deck at (dx, dz), yaw PI/2 (or PI)
+  function reachOf(hw, hd, dx, dz, w, d, yaw){
+    var dh = d/2 + 1.1, zh = w/2 + 1.1, sx = yaw === PI ? zh : dh, sz = yaw === PI ? dh : zh;
+    return {
+      minX: Math.min(-hw, dx - sx), maxX: Math.max(hw, dx + sx),
+      minZ: Math.min(-hd, (dz || 0) - sz), maxZ: Math.max(hd, (dz || 0) + sz)
+    };
+  }
+  function seat(r, wantX, wantZ){
+    return {
+      x: clamp(wantX, -a - r.minX, a - r.maxX),
+      z: clamp(wantZ, -b - r.minZ, b - r.maxZ),
+      reach: r
+    };
+  }
+  var wheelR = clamp(Math.min(a, b)*0.42, 8, 20);       // rim + gondolas; 20 keeps the rim clear of the fence at 32 m
+  var carR = clamp(a*0.18, 6, 9), swR = clamp(a*0.12, 4, 6);
+  // deck offsets are the stationAt numbers each builder uses (see the rides below)
+  var wheel = reachOf(1.9, wheelR + 1.4, 4.2, 0, 8, 4);
+  var drop = reachOf(4.3, 4.3, 7.2, 0, 7, 4);
+  var carousel = reachOf(carR + 0.8, carR + 0.8, carR + 3.0, 0, 6, 3.2);
+  // the Starswing's chairs fly out to about r + 6*sin(0.3), and its deck is past that
+  var swing = reachOf(swR + 3.5, swR + 3.5, swR + 6*0.85 + 2.7, 0, 6, 3.4);
+  var out = {
+    hm: hm,
+    wheel: {R: wheelR},
+    drop: {H: clamp(hm*1.55, 40, 72)},
+    carousel: {r: carR},
+    swing: {r: swR},
+    galleon: null,
+    reach: []
+  };
+  function place(id, r, wantX, wantZ){
+    var s = seat(r, wantX, wantZ);
+    out[id].x = s.x; out[id].z = s.z;
+    out.reach.push({id: id, x: s.x, z: s.z, minX: r.minX, maxX: r.maxX, minZ: r.minZ, maxZ: r.maxZ});
+  }
+  place("wheel", wheel, -a*0.42, -b*0.36);
+  place("drop", drop, -a*0.42, b*0.42);
+  place("carousel", carousel, a*0.3, -b*0.02);
+  place("swing", swing, a*0.28, b*0.38);
+  if(a >= 30 && b >= 48){                              // behind the boulevard's end, where the park is long enough
+    out.galleon = {};
+    place("galleon", reachOf(9.3, 5.5, 0, -8.4, 8, 3.4, PI), -a*0.04, b*0.69);
+  }
+  return out;
+}
+
 function coasterPlan(a, b, hm){
   var A = a - 7, B = b - 7, N = b - 13, H = hm, R = Math.max(7, Math.min(11, hm*0.25)), pts = [];
   function p(x, y, z, tag){ pts.push({x: x, y: y, z: z, tag: tag || null}); }
@@ -774,15 +855,9 @@ function create(c, W, o){
     [{x: -9, z: -b*0.55, name: "Popcorn", prop: "popcorn", acc: "#ffd23f"}, {x: 9, z: -b*0.35, name: "Ice Cream", prop: "cone", acc: "#7ee0ff"},
      {x: -9, z: b*0.2, name: "Cotton Candy", prop: "candy", acc: "#ff7ad9"}].forEach(function(k){ k.yaw = k.x < 0 ? PI/2 : -PI/2; kiosk(k); });
 
-    /* ----- the rides ----- */
-    var place = {
-      coaster: null,
-      wheel: {x: -a*0.42, z: -b*0.36, R: clamp(Math.min(a, b)*0.42, 10, 26)},
-      drop: {x: -a*0.42, z: b*0.42, H: clamp(hm*1.55, 40, 72)},
-      carousel: {x: a*0.3, z: -b*0.02, r: clamp(a*0.18, 6, 9)},
-      swing: {x: a*0.28, z: b*0.38, r: clamp(a*0.12, 4, 6)},
-      galleon: a >= 30 && b >= 48 ? {x: -a*0.04, z: b*0.69} : null     // behind the boulevard's end, where the park is long enough
-    };
+    /* ----- the rides ----- (placed by rideLayout: every ride and its boarding deck inside the fence) */
+    var place = rideLayout(a, b);
+    place.coaster = null;
     rides.push(coaster(), wheel(place.wheel), drop(place.drop), carousel(place.carousel), swinger(place.swing));
     if(place.galleon) rides.push(galleon(place.galleon));
     zones.push({x: place.wheel.x, z: place.wheel.z, hw: 4, hd: place.wheel.R + 2}, {x: place.drop.x, z: place.drop.z, hw: 5.5, hd: 5.5},
@@ -1581,6 +1656,7 @@ function create(c, W, o){
     }
     return {g: pg, a: a, b: b, crowd: crowd, gate: {x: 0, z: -b - 2.5}, booth: {x: GATE + 4.8, z: -b - 4.6}, rides: rides, bulbs: bulbs, bulbI: bulbI, glows: glows,
             balloons: balloons, blockedL: blockedL, toW: toW, toL: toL, ly: ly, inside: function(lx, lz){ return lx > -a && lx < a && lz > -b && lz < b; },
+            place: place,
             fx: {lagoon: lagoon, beams: beams, glowPts: glowPts, glowCol: glowGeo.attributes.color, fwG: fwG, fwPts: fwPts, WU: WU, trees: trees.length, beds: beds.length, tables: tops.length}};
   }
 
@@ -1800,6 +1876,38 @@ function create(c, W, o){
       var L = park.toL(x, z);
       return park.blockedL(L.x, L.z, true);
     },
+    /* Solid AABBs for the body collider: every landmark tower and every ride's
+       ironwork + boarding deck. ALL construction is opaque — a swing must stop
+       at the park's wheel just like at a downtown tower. */
+    solidItems: function(x, y, z){
+      var out = [];
+      for(var i = 0; i < marks.length; i++){
+        var mk = marks[i], H = mk.H || 200;
+        for(var j = 0; j < mk.polys.length; j++){
+          var bb = mk.polys[j].b;
+          if(!bb || bb.x1 < x - 42 || bb.x0 > x + 42 || bb.z1 < z - 42 || bb.z0 > z + 42) continue;
+          out.push({id: "mark:" + i + ":" + j, min: {x: bb.x0, y: 0, z: bb.z0}, max: {x: bb.x1, y: H, z: bb.z1}});
+        }
+      }
+      if(park && park.place && park.place.reach && park.place.reach.length){
+        var gy = park.g ? +park.g.position.y || 0 : 0;
+        var place = park.place;
+        for(var r = 0; r < place.reach.length; r++){
+          var R = place.reach[r];
+          var c = park.toW(R.x, R.z);
+          if(Math.abs(c.x - x) > 42 || Math.abs(c.z - z) > 42) continue;
+          // the reach is in the park's local frame: rotate the half-extents
+          var cr = Math.cos(spec.park.rot || 0), sr = Math.sin(spec.park.rot || 0);
+          var hx = Math.abs(R.maxX - R.minX)/2, hz = Math.abs(R.maxZ - R.minZ)/2;
+          var ex = Math.abs(hx*cr + hz*sr), ez = Math.abs(hx*sr + hz*cr);
+          var top = gy + (R.id === "drop" ? (place.drop && place.drop.H ? place.drop.H : 50) :
+                    R.id === "wheel" ? (place.wheel && place.wheel.R ? place.wheel.R*2 + 4 : 36) :
+                    R.id === "swing" ? 18 : R.id === "galleon" ? 14 : 10);
+          out.push({id: "ride:" + R.id, min: {x: c.x - ex, y: gy - 0.5, z: c.z - ez}, max: {x: c.x + ex, y: top, z: c.z + ez}});
+        }
+      }
+      return out;
+    },
     use: function(p){
       if(riding){
         var sec = nowSec();
@@ -1859,7 +1967,7 @@ function create(c, W, o){
   return inst;
 }
 
-HQV.hqSpectacle = {boomVol: boomVol, BOOM_M: BOOM_M, claim: claim, create: create, coasterPlan: coasterPlan, TYPES: TYPES, NAMES: NAMES, PARK_NAME: PARK_NAME,
+HQV.hqSpectacle = {boomVol: boomVol, BOOM_M: BOOM_M, claim: claim, create: create, coasterPlan: coasterPlan, rideLayout: rideLayout, TYPES: TYPES, NAMES: NAMES, PARK_NAME: PARK_NAME,
   shells: shells, showAt: showAt, SHOW_EVERY: SHOW_EVERY, SHOW_LEN: SHOW_LEN, FW_SLOTS: FW_SLOTS, FW_RISE: FW_RISE, FW_LIVE: FW_LIVE, FW_KINDS: FW_KINDS,
   PARK_MIN: PARK_MIN, MAX_MARKS: MAX_MARKS, LANDMARK_GAP: LANDMARK_GAP, hash32: hash32};
 })();

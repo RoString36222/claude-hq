@@ -99,7 +99,7 @@ function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
 // walking forward turns you to face where a dragged (orbited) camera looks (HQ 3.2: the mouse steers while you walk).
 // 3.2 turns faster (3.6 rad/s, was 2.4) on a snappier spring (omega 18, was 10): the old turn read as sluggish
 // next to the minimap, which turned with your facing at once.
-var FOOT = {walk: 4, run: 7, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
+var FOOT = {walk: 7, run: 10, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
 // Where you are headed: facing while going forward or turning, facing + PI while stepping back. Standing still it
 // stays your facing if that is where you were last headed (prev: the last travelYaw), so the camera finishes
 // swinging in behind you after you turn on the spot; after a back-step (prev ~ facing + PI) or from a standstill: null
@@ -112,7 +112,7 @@ function travelYawOf(yaw, speed, rate, prev){
 }
 // One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV, travelYaw?, aboutV?,
 // faceGoal?, faceOff?}; inp = {fwd: -1..1 (W +, S -), turn: -1..1 (A +, turns left), run, face?}. The turn rate springs
-// toward +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 4 / 7 m/s forward.
+// toward +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 7 / 10 m/s forward.
 // S walks you toward the camera (HQ 3.3.1, as in most third-person games): you turn to face it -- inp.face, the
 // camera's heading + PI (else your facing + PI, latched when S went down) -- on a critically damped spring
 // (FOOT.aboutW: eases in and out, no overshoot), and walk forward out of the turn, faster the more you face it.
@@ -173,12 +173,13 @@ function steerStep(st, inp, dt){
 // gliding. Turning on the spot shuffles (the walk at a small weight, its
 // rate from the turn rate). speed: m/s (signed: < 0 steps back, the clips run backwards); rate: rad/s.
 // -> {idle, walk, sprint (weights, sum 1), walkTs, sprintTs}
-var STRIDE = {walk: 3.1, sprint: 5.8, shuffle: 0.9};
+// HQ 3.19: the walk pace is the old run pace (7 m/s) and Shift runs on at 10.
+var STRIDE = {walk: 5.4, sprint: 8.3, shuffle: 0.9};
 function locoWeights(speed, rate){
   speed = +speed || 0; rate = +rate || 0;
   var v = Math.abs(speed), dir = speed < 0 ? -1 : 1;
   var shuffle = v < 0.8 ? Math.min(1, Math.abs(rate)/2.5)*(1 - v/0.8)*0.6 : 0;
-  var sprint = Math.max(0, Math.min(1, (v - 4.6)/2)), still = Math.max(0, 1 - v/1.1)*(1 - shuffle);
+  var sprint = Math.max(0, Math.min(1, (v - 7.4)/2)), still = Math.max(0, 1 - v/1.1)*(1 - shuffle);
   var walk = Math.max(0, 1 - sprint - still);
   var wv = Math.max(v, shuffle > 0 ? Math.abs(rate)*STRIDE.shuffle : 0);
   return {idle: still, walk: walk, sprint: sprint, walkTs: dir*wv/STRIDE.walk, sprintTs: dir*v/STRIDE.sprint};
@@ -805,7 +806,9 @@ function mount(el, api){
     board: function(col){ return boardModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
-    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z, hy: avatar.hy} : null; },   // [hq revamp] hy: your feet's height (a roof deck)
+    avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z, hy: avatar.hy, hop: avatar.hop || 0,
+                                          airborne: !!avatar.airborne, yaw: avatar.yaw || 0,
+                                          air: !!(api.air && typeof api.air === "function") && !E.calm()} : null; },   // [hq revamp] hy: your feet's height (a roof deck)
     // the vehicle catalogue (games/vehicles/catalogue.json) and the Showroom's pick, for the garage (games/hqcarpark.js)
     catalogue: function(){ return CAT; },
     showroomPick: function(){ return showProp ? {vehicle_id: showProp.kind, paint: showProp.color} : null; },
@@ -1027,15 +1030,25 @@ function mount(el, api){
     return live.concat(stale).slice(0, MAX_DESKS);
   }
   // A person: their own 3D character when they built one (games/avatar3d.js; you, and anyone whose
-  // presence carries `c`), else one of the six looks picked from a hash of the key.
-  function makeCharacter(key, onReady, spec){
+  // presence carries `c`), else one of the six looks picked from a hash of the key. SkyStrike
+  // (games/skystrike.js) takes "you:*" while its Valley game is open — a smooth original body.
+  function makeCharacter(key, onReady, spec, skipSky){
+    var SS = HQV.skystrike;
+    if(!skipSky && SS && SS.wanted && SS.build && SS.wanted(key)){
+      SS.build().then(function(ch){
+        if(!inst.alive) return;
+        ch.base = ch.base || 1; ch.o.scale.setScalar(ch.base);
+        onReady(ch);
+      }).catch(function(){ makeCharacter(key, onReady, spec, true); });
+      return;
+    }
     var A3 = HQV.avatar3d;
     if(spec && A3 && A3.valid(spec)){
       A3.build(spec).then(function(ch){
         if(!inst.alive) return;
         ch.base = 1.7/CH_H; ch.o.scale.setScalar(ch.base);
         onReady(ch);
-      }).catch(function(){ makeCharacter(key, onReady); });
+      }).catch(function(){ makeCharacter(key, onReady, null, true); });
       return;
     }
     var name = CHAR_FILES[hashStr(key) % CHAR_FILES.length];
@@ -1068,10 +1081,18 @@ function mount(el, api){
   }
   // On foot: the locomotion blend (locoWeights), its weights eased (omega 10) so a change of pace crossfades, the
   // sprint's phase locked to the walk's so the two never fight. A character with no walk clip: setAnim as before.
-  function locomote(ch, speed, rate, dt){
+  function locomote(ch, speed, rate, dt, runWant, goWant){
     if(!ch) return;
     if(!ch.acts.walk || !ch.acts.idle){ setAnim(ch, Math.abs(speed) > 0.3 ? "walk" : "idle", Math.abs(speed) > 0.3 ? speed/FOOT.walk : 1); return; }
     var W = locoWeights(speed, rate);
+    // RAW intents, before the crossfade: what the KEYS say. The eased weights
+    // below take ~0.3 s to fall, which is the latency the player feels after
+    // stopping. _runWant gates the sprint shape (and snaps it off the moment
+    // Shift is up); _goWant plus speed gate idle. Peers pass neither — they
+    // keep the eased behaviour.
+    ch._runWant = runWant == null ? W.sprint : (runWant && W.sprint > 0.01 ? 1 : 0);
+    ch._goWant = goWant == null ? 1 : (goWant ? 1 : 0);
+    ch._spd = speed;
     if(ch.cur !== "loco"){
       var was = ch.cur, start = {idle: 0, walk: 0, sprint: 0};
       if(was && LOCO.indexOf(was) >= 0) start[was] = 1;        // the clip already playing keeps its weight and its place
@@ -1105,7 +1126,11 @@ function mount(el, api){
     }
     var a = spring(lean.r, lean.rv, rg, 9, dt), b = spring(lean.p, lean.pv, pg, 9, dt), c = spring(lean.h, lean.hv, hg, 9, dt);
     lean.r = a[0]; lean.rv = a[1]; lean.p = b[0]; lean.pv = b[1]; lean.h = c[0]; lean.hv = c[1];
-    ch.o.rotation.x = lean.p; ch.o.rotation.z = lean.r;
+    // a body that owns its own forward bend (SkyStrike, ownLean) hinges at the
+    // waist; pitching the whole model here would tip it at the feet and sink it
+    // into the ground. It still banks into turns — that is not a bend.
+    if(!ch.ownLean) ch.o.rotation.x = lean.p;
+    ch.o.rotation.z = lean.r;
   }
   // the head's turn, put on after the clips have run and taken off again before they next run
   function headUndo(ch){ var R = ch && ch._hd; if(R && R.bone){ R.bone.rotation.y -= R.off; R.off = 0; } }
@@ -1965,6 +1990,7 @@ function mount(el, api){
   function rigOf(ch){
     if(!ch) return null;
     if(ch._rig !== undefined) return ch._rig;
+    // a body that ships its own bone map (games/skystrike.js) is ready as it is
     var o = ch.o, R = {root: o.getObjectByName("root"), t: o.getObjectByName("torso"), h: o.getObjectByName("head"),
                        la: o.getObjectByName("arm-left"), ra: o.getObjectByName("arm-right"),
                        ll: o.getObjectByName("leg-left"), rl: o.getObjectByName("leg-right")};
@@ -2027,8 +2053,9 @@ function mount(el, api){
     hatsOf(ch).forEach(function(o){ o.visible = !bare; });
     if(B && B.seat){
       var s = base*(B.riderK || RIDER_K), p = B.seat.position;
+      var hip = ch.hip || HIP;
       ch.o.scale.setScalar(s); ch.o.rotation.set(0, 0, 0);
-      ch.o.position.set(p.x - HIP[0]*s, p.y - HIP[1]*s, p.z - HIP[2]*s);
+      ch.o.position.set(p.x - hip[0]*s, p.y - hip[1]*s, p.z - hip[2]*s);
       setAnim(ch, "idle");
       return;
     }
@@ -3832,6 +3859,213 @@ function mount(el, api){
     else { var h = spring(avatar.hy, avatar.hyV, gy, 18, dt); avatar.hy = h[0]; avatar.hyV = h[1]; }
     return gy;
   }
+  /* ---------- air (SkyStrike: double jump, dive, web-swing) ----------
+     A Valley game that supplies api.air owns the body while it is off the
+     ground: the keys pump the swing and fire the line, and the game's pure
+     airFrame does the physics. hq3d only reads / writes the avatar and casts
+     the anchor ray. Nothing here leaves the machine. */
+  var AIR = null, airWeb = null;
+  function airWebGet(){
+    if(airWeb && airWeb.g && cur && airWeb.g.parent === cur.scene) return airWeb;
+    if(airWeb && airWeb.dispose){ try { airWeb.dispose(); } catch(e){} airWeb = null; }
+    if(!THREE || !cur || !cur.scene) return null;
+    var M = HQV.skystrike && HQV.skystrike.makeWeb;
+    if(typeof M !== "function") return null;
+    try { airWeb = M(THREE, cur.scene, HQV.skystrike.NEON); } catch(e){ airWeb = null; }
+    return airWeb;
+  }
+  function airAnchor(from, dir, maxDist){
+    if(!from || !dir) return null;
+    var o = {x: +from.x || 0, y: +from.y || 0, z: +from.z || 0};
+    // 1. the city's solid AABBs (buildings, HQs, tree crowns, roof decks).
+    //    cur.hits is door drums and signs only — a mesh raycast never finds a
+    //    tower, so the web fell through and the swing never started.
+    if(cur && typeof cur.webHit === "function"){
+      var g = null;
+      try { g = cur.webHit(o, dir, maxDist); } catch(e){ g = null; }
+      if(g && isFinite(g.x) && isFinite(g.y) && isFinite(g.z)){
+        // A wall in FRONT is a grab at any height (a zip must reach a face at or
+        // below the hand). Only the street you just left is not — that one is
+        // close and under you. The old y-only gate rejected every level /
+        // downward zip hit, so Space found nothing and the web never drew.
+        var hd = Math.sqrt((g.x - o.x)*(g.x - o.x) + (g.z - o.z)*(g.z - o.z));
+        if(g.y >= o.y - 2.2 || hd > 2.5) return {x: +g.x, y: +g.y, z: +g.z};
+      }
+    }
+    // 2. any mesh the world does list (door drums, signs, terrain tiles)
+    if(!ray || !THREE || !cur) return null;
+    var list = (cur.hits || []).slice();
+    try { if(cur.floor && cur.floor.length) list = list.concat(cur.floor); } catch(e){}
+    if(!list.length) return null;
+    var o3 = new THREE.Vector3(+from.x || 0, +from.y || 0, +from.z || 0);
+    var d = new THREE.Vector3(+dir.x || 0, +dir.y || 0, +dir.z || 0);
+    if(d.lengthSq() < 1e-8) return null;
+    d.normalize();
+    ray.set(o3, d);
+    ray.far = Math.max(4, Math.min(60, +maxDist || 42));
+    ray.near = 0.6;
+    var hits = ray.intersectObjects(list, false);
+    for(var i = 0; i < hits.length; i++){
+      var h = hits[i];
+      if(!h || !h.point) continue;
+      var p = h.point;
+      // never anchor on the ground you just left, or on yourself — but a wall
+      // in front counts at any height (the zip's forward fan must find it)
+      var hd2 = Math.sqrt((p.x - o.x)*(p.x - o.x) + (p.z - o.z)*(p.z - o.z));
+      if(p.y < o.y - 2.2 && hd2 <= 2.5) continue;
+      return {x: p.x, y: p.y, z: p.z};
+    }
+    return null;
+  }
+  function airOwns(){
+    if(!(api.air && typeof api.air === "function") || E.calm()) return false;
+    if(AIR && (AIR.sw || AIR.zip || AIR.wall || Math.abs((AIR.y || 0) - groundAt(avatar.x, avatar.z)) > 0.12 || Math.abs(AIR.vy || 0) > 0.25)) return true;
+    // walking into a building face: the air kit starts the wall climb THIS
+    // frame, without a jump or a Space press ("in contact with wall and keep
+    // pressing W I should start crawling"). Only for keys INTO the face —
+    // walking past a wall must keep the walk, not snap onto it.
+    if(!avatar || !avatar.ch) return false;
+    if(HQV.skystrike && HQV.skystrike.pure && HQV.skystrike.pure.wallFromInput &&
+       cur && typeof cur.occluderItems === "function"){
+      var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+      var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+      if(Math.abs(fwd) < 0.05 && Math.abs(side) < 0.05) return false;
+      if(avatar.speed < 0.2) return false;
+      try {
+        return !!HQV.skystrike.pure.wallFromInput(
+          {x: avatar.x, y: (+avatar.hy || 0) + (+avatar.hop || 0), z: avatar.z, yaw: avatar.yaw},
+          {fwd: fwd, side: side,
+           heading: (camHeading() != null ? camHeading() : avatar.yaw),
+           blocked: function(x, z){ return blocked(x, z); },
+           solids: function(x, y, z){ return cur.occluderItems(x, y, z) || []; }});
+      } catch(e){ return false; }
+    }
+    return false;
+  }
+  function airStep(dt){
+    if(!avatar || !(api.air && typeof api.air === "function")) return false;
+    if(!AIR) AIR = {};
+    AIR.x = avatar.x; AIR.z = avatar.z;
+    AIR.y = avatar.hy + avatar.hop;
+    if(AIR.yaw == null || !isFinite(AIR.yaw)) AIR.yaw = avatar.yaw;
+    if(AIR.vy == null || !isFinite(AIR.vy)) AIR.vy = avatar.vy || 0;
+    // On the feet the body's facing IS the air state's facing — the walk's keys
+    // are body-relative, and a stale AIR.yaw (from the last jump) would turn the
+    // wall grip's W into a sideways crawl. In the air the air state owns yaw.
+    if(!AIR.sw && !AIR.zip && !AIR.wall && (+AIR.y || 0) <= groundAt(avatar.x, avatar.z) + 0.12){
+      AIR.yaw = avatar.yaw;
+    }
+    if(AIR.webSide == null) AIR.webSide = 1;
+    // The walk's pace is the air state's launch velocity. On the feet the walk
+    // owns x/z, so AIR.vx/vz is stale every frame — seed it from the walk before
+    // airFrame runs, and a jump that leaves the ground THIS frame carries the
+    // speed you walked in with instead of starting from zero and hopping on the spot.
+    if(!AIR.sw && !AIR.zip && (AIR.y == null || +AIR.y <= groundAt(avatar.x, avatar.z) + 0.12)){
+      AIR.vx = Math.sin(avatar.yaw || 0)*(avatar.speed || 0);
+      AIR.vz = Math.cos(avatar.yaw || 0)*(avatar.speed || 0);
+    }
+    var fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+    var env = {
+      space: !!keys.Space,
+      shift: !!(keys.ShiftLeft || keys.ShiftRight),
+      w: !!(keys.KeyW || keys.ArrowUp),
+      fwd: fwd, side: side,
+      heading: camHeading() != null ? camHeading() : avatar.yaw,
+      calm: E.calm(),
+      groundY: function(x, z){ return groundAt(x, z); },
+      blocked: function(x, z){
+        try {
+          // In the sky the city is scenery, not walls. A slinger leaves the roof
+          // deck and swings past towers: once the feet are off the surface, ground
+          // collision does not apply. On the feet it is the walk's, as usual.
+          if((AIR ? +AIR.y || 0 : 0) > groundAt(x, z) + 0.15) return false;
+          return blocked(x, z);
+        } catch(e){ return false; }
+      },
+      anchor: airAnchor,
+      // All construction is opaque: the city's solid AABBs, so a swing, a zip
+      // or a free fall never passes through a building. Local geometry only.
+      solids: function(x, y, z){
+        try {
+          if(cur && typeof cur.occluderItems === "function") return cur.occluderItems(x, y, z) || [];
+        } catch(e){}
+        return [];
+      },
+      web: airWebGet(),
+      sfx: function(n){ try { E.sfx(n); } catch(e){} }
+    };
+    var r = null;
+    try { r = api.air(AIR, env, dt); } catch(e){ r = null; }
+    if(!r) return false;
+    // the neon line: hand -> anchor while the web is out (a swing OR a web zip),
+    // gone the frame it is not
+    var web = airWebGet();
+    if(web){
+      if(AIR.webFrom && AIR.webTo && (AIR.sw || AIR.zip)) web.set(AIR.webFrom, AIR.webTo);
+      else web.clear();
+    }
+    // While the body is on its feet the walk owns x / z / yaw — the air state
+    // only writes back the hop. The moment it leaves the ground (or hangs on a
+    // line) the air state owns everything. A ROOF is ground too: airFrame's
+    // `roofRest` returns mode "ground" for a body standing on a tower top the
+    // city's groundY does not know about — that is standing, not flying, and
+    // the dive silhouette must not linger there ("still floating in air").
+    var onRoofRest = !!(r && r.mode === "ground" && (+AIR.y || 0) > groundAt(avatar.x, avatar.z) + 0.12);
+    var flying = !!(AIR.sw) || !!(AIR.zip) || !!(AIR.wall) ||
+                 (!onRoofRest && (+AIR.y || 0) > groundAt(avatar.x, avatar.z) + 0.12) ||
+                 Math.abs(+AIR.vy || 0) > 0.25;
+    AIR._ground = !!(r && r.mode === "ground");       // next frame's airLive reads this
+    // Ground CLOSE, air WHOLE-BODY: the camera stand-off follows the feet.
+    if(HQV.skystrike && typeof HQV.skystrike.camAir === "function"){
+      try { HQV.skystrike.camAir(flying); } catch(e){}
+    }
+    if(flying){
+      avatar.x = +AIR.x || 0; avatar.z = +AIR.z || 0;
+      if(AIR.yaw != null && isFinite(AIR.yaw)) avatar.yaw = +AIR.yaw;
+    }
+    var gy = groundAt(avatar.x, avatar.z);
+    avatar.hy = gy;
+    if(flying || onRoofRest){
+      // flying: the hop is the height above the street. A roof rest keeps the
+      // same hop so the body stands ON the roof instead of dropping to the
+      // street the city's groundY reports under a tower.
+      avatar.hop = Math.max(0, (+AIR.y || 0) - gy);
+      avatar.vy = +AIR.vy || 0;
+      avatar.airborne = flying;
+    } else {
+      avatar.hop = 0; avatar.vy = 0; avatar.airborne = false;
+    }
+    // on the feet the gait owns the body again — the air pose must not linger
+    // the dive tips the body head-first. camrig's pitch is "positive = nose up",
+    // so a dive is negative there (the chase elevation follows it down the line).
+    avatar.pitch = E.calm() ? 0 : -Math.max(0, Math.min(1, +AIR.dive || 0))*0.95;
+    if(avatar.ch){
+      if(!flying){
+        avatar.ch._air = null;
+        avatar.pitch = 0;
+      } else {
+        var tuck = Math.max(0, Math.min(1, +AIR.tuck || 0));
+        avatar.ch._air = {
+          dive: AIR.wall ? 0 : Math.max(0, Math.min(1, +AIR.dive || 0)),
+          swing: AIR.sw ? 1 : 0,
+          wall: AIR.wall ? 1 : 0,
+          wallRun: AIR.wall && AIR.wall.run ? 1 : 0,
+          wallMove: AIR.wall && AIR.wall.move ? 1 : 0,
+          stretch: Math.max(0, Math.min(1, 1 - tuck)),
+          launch: Math.max(0, Math.min(1, +AIR.launch || 0)),
+          fallT: AIR.wall ? 0 : Math.max(0, Math.min(1, +AIR.fallT || 0)),
+          tuck: tuck,
+          side: AIR.webSide < 0 ? -1 : 1,
+          webArm: AIR.webArm < 0 ? -1 : (AIR.webArm > 0 ? 1 : 0),
+          t: +AIR.t || 0
+        };
+        // wall crawl is upright — never tip the chase cam into a dive pitch
+        if(AIR.wall) avatar.pitch = 0;
+      }
+    }
+    return true;
+  }
   // a teleport: standing still where you land, at the ground's height (no spring from where you were)
   // y: the level you land on (a roof deck's spawn carries its y; a dismount keeps the height you rode at). Without it,
   // the street: -1e9, never 1e9 (3.13.5: "above everything" put you up on your helideck, which overhangs your front door)
@@ -3858,6 +4092,14 @@ function mount(el, api){
     var side = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
     var run = !!(keys.ShiftLeft || keys.ShiftRight), rm = HQV.cityPlay && HQV.cityPlay.sprintMul ? HQV.cityPlay.sprintMul() : 1, base = run ? FOOT.run*runMul({runMul: rm}) : FOOT.walk;   // [3.22] fed: a faster sprint
     if(fwd || side){ walkTo = null; walkDoor = null; }
+    // A Valley game's air (SkyStrike): while the body is off the ground or on a
+    // web line the keys pump the swing and steer the fall — they do not walk.
+    // Air owns the keys only while the body is ACTUALLY in the air (on a line,
+    // gripping, or above the street in a fall). A roof rest is standing — the
+    // walk must keep owning the feet, or a crest freezes the body mid-stride.
+    var airLive = !!(api.air && typeof api.air === "function") && !E.calm() &&
+                  !!(AIR && !AIR._ground && (AIR.sw || AIR.zip || AIR.wall || (AIR.y != null && AIR.y > groundAt(avatar.x, avatar.z) + 0.12) || Math.abs(AIR.vy || 0) > 0.25));
+    if(airLive){ fwd = 0; side = 0; walkTo = null; walkDoor = null; }
     var yaw0 = avatar.yaw, sp0 = avatar.speed || 0, dx = 0, dz = 0;
     if(steering() && !walkTo){
       // Mouse steering (HQ 3.15): the captured mouse turns the camera (onMove: an orbit, as a drag does) and each frame
@@ -3940,13 +4182,16 @@ function mount(el, api){
     }
     // idle, walk and sprint blended by your pace, each at the rate your stride needs (backwards while you step back);
     // a lean into the turn and with the pace, the head into the turn
-    locomote(avatar.ch, avatar.speed, avatar.rate, dt);
+    locomote(avatar.ch, avatar.speed, avatar.rate, dt, run, !!(fwd || side || walkTo));
     if(keyMove) walkInto();
     leanStep(avatar.ch, avatar.lean || (avatar.lean = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), avatar.speed, avatar.rate, dt > 0 ? (avatar.speed - sp0)/dt : 0, dt, true);
     // Space hops: a little gravity so you come back down where you started.
     // Calm mode keeps feet on the ground (no bouncing for reduced motion).
     // The hop is measured from the ground under you (the 3D city's hills; 0 on every flat floor).
-    if(E.calm()){ avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; }
+    // SkyStrike (api.air) owns the body the moment it leaves the ground: double
+    // jump, dive and web-swing are its airFrame's, not the hop's.
+    if(airStep(dt)){ /* the game's air state is now the avatar */ }
+    else if(E.calm()){ avatar.vy = 0; avatar.airborne = false; avatar.hop = 0; }
     else{
       if(keys.Space && !avatar.airborne){ avatar.airborne = true; avatar.vy = 6.2; E.sfx("jump"); }
       if(avatar.airborne){
@@ -3958,6 +4203,13 @@ function mount(el, api){
     }
     settleY(dt);
     avatar.g.position.set(avatar.x, avatar.hy + avatar.hop, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    // a dive tips the WHOLE body head-first (root + spine), not just the waist —
+    // otherwise the fall reads as a standing lean. camrig's pitch is nose-up
+    // positive; three.js group rotation.x is nose-DOWN positive, so the group
+    // takes the OPPOSITE sign to avatar.pitch. It used to take the same sign,
+    // which tipped the body backward against the bones' forward tip: the two
+    // cancelled and the fall read as a standing bend. Calm never pitches.
+    avatar.g.rotation.x = E.calm() ? 0 : -(+avatar.pitch || 0)*0.62;
     // the camera follows you, gently
     if(cur === worlds.mission) view.goal.set((avatar.x + TABLE.x)*0.5, 1.4, (avatar.z + TABLE.z)*0.5 + 1);
     else view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
@@ -4106,7 +4358,8 @@ function mount(el, api){
     if(TD && TD.a === 14 && TD.x != null) return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: TD.yaw, pitch: 0, roll: 0, speed: Math.abs(TD.sv || 0),
                                                  vehicle: "tank", size: 1, lean: 0, moving: false, travelYaw: TD.yaw, turnRate: TD.syr || 0};
     var st = ride && ride.sk && ride.sk.st;
-    return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw, pitch: ride ? ride.pitch || 0 : 0, roll: ride ? ride.roll || 0 : 0,
+    return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw,
+            pitch: ride ? ride.pitch || 0 : (avatar.pitch || 0), roll: ride ? ride.roll || 0 : 0,
             speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.base || ride.kind : null,
             size: ride && ride.V && ride.V.size || 1,
             lean: ride && ride.lean ? ride.lean.rotation.z : 0, moving: !!keyMove,
@@ -6233,6 +6486,13 @@ function mount(el, api){
   }
 
   inst._place = function(x, z, yaw){ if(avatar){ avatar.x = x; avatar.z = z; if(yaw != null && isFinite(yaw)) avatar.yaw = +yaw; } };    // for tests (yaw: 3.13.5)
+  // Put yourself somewhere at a height: y is the level your feet land on (a roof deck carries its
+  // deck.y, so the city's groundY holds you there; without y you drop to the street under you).
+  // ctx.teleport is the same call for the floors that build with it; this is it for a Valley game
+  // (SkyStrike spawns on a tower top through here).
+  inst.teleport = function(x, z, yaw, y){ if(avatar){ if(ride) dismount(true); placeAvatar(x, z, yaw, y); } };
+  // the City's HQ roofs (games/hqroof.js): every tower's {pad, deck, lift, house}, or [] before the city is built
+  inst.roofs = function(){ return cur && cur.roofs ? cur.roofs() : []; };
   // read-only: the scene of the world you stand in (tests and tools traverse it)
   inst.sceneOf = function(){ return cur ? cur.scene : null; };
   // where you are, for presence: the floor (the 3D city is "city3d"), and in it your feet height (m) and pitch (rad)

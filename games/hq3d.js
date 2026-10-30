@@ -2147,7 +2147,8 @@ function mount(el, api){
      or down and F at its kiosk opens the customiser. The suit is your body (makeCharacter builds it for "you:*" while
      HQV.hqExo.me.on, and for a peer whose presence carries `ex`). Suited in the City, Space takes off: EXO.fly is the flight,
      outside `ride` (nothing else treats you as riding), and it ends when the sim lands. Getting into anything takes it off. */
-  var EXO = {S: null, where: null, fly: null, black: 0, blackEl: null, hud: null, fx: null, fxs: null, shake: 0, land: 0};
+  var EXO = {S: null, where: null, fly: null, black: 0, blackEl: null, hud: null, fx: null, fxs: null, shake: 0, land: 0,
+             park: null, pkW: null, pk: undefined, dock: null, auto: null, cv: null};   // [3.38.0] the parked suit, the docking, the auto-dock
   var EXO_MODE = {hover: 3, cruise: 4, swim: 6};
   function exoOk(){ return !!(HQV.hqExo && THREE && avatar); }
   // suited, Go to flies (games/hqcity3d.js navStep): {v} the frame's cruise speed (m/s, its top) for the ETA; null on foot
@@ -2163,7 +2164,7 @@ function mount(el, api){
     if(ride || POOL.u || (inst.transitNet && inst.transitNet())){ exoSay("Get out first: no suiting up in a seat."); return false; }
     var ch = avatar.ch, look = XO.load();
     if(!ch || !XO.wear(THREE, ch, look)){ exoSay("Your character isn't ready for a suit yet."); return false; }
-    XO.me.look = look; XO.me.on = true; setAnim(ch, "idle");
+    XO.me.look = look; XO.me.on = true; setAnim(ch, "idle"); exoUnpark();
     EXO.where = where; EXO.S = XO.seq(THREE, ch, XO.styleFor(look.f, where));
     walkTo = null; walkDoor = null; E.sfx("go");
     return true;
@@ -2185,6 +2186,7 @@ function mount(el, api){
   function exoSeqDone(){
     var XO = HQV.hqExo, S = EXO.S; EXO.S = null; if(!S) return;
     if(XO.bayRef) XO.bayRef.busy = 0;
+    if(EXO.dock){ EXO.dock = null; if(EXO.park) EXO.park.g.visible = true; if(S.rev) exoSay("Suit docked. F at the gantry to suit up again."); }
     if(S.rev || !XO.me.on || !S.ch._exo) return;
     EXO.black = 6;
     var H = HQV.hqExoHud;
@@ -2224,7 +2226,8 @@ function mount(el, api){
     if(gp){ if(gp.thr > 0.2) inp.fwd = true; if(gp.thr < -0.2) inp.back = true; if(gp.x < -0.3) inp.left = true; if(gp.x > 0.3) inp.right = true; if(gp.hand) inp.up = true; if(gp.slide) inp.down = true; }
     walkTo = null; walkDoor = null;
     var yaw0 = avatar.yaw;
-    R.step(st, dt, inp, exoEnv());
+    if(EXO.auto && (inp.fwd || inp.back || inp.left || inp.right)) exoAutoCancel("Auto-dock off: you have the suit.");
+    if(EXO.auto) exoAutoStep(st, dt); else R.step(st, dt, inp, exoEnv());
     avatar.x = st.x; avatar.z = st.z; avatar.yaw = wrapPi(st.yaw - PI); avatar.hy = st.y; avatar.hyV = 0;
     avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt);
     avatar.speed = st.speed; avatar.travelYaw = st.speed > 0.5 ? avatar.yaw : null; avatar.pitch = st.pitch || 0;
@@ -2240,6 +2243,7 @@ function mount(el, api){
       fy.spin = sp ? sp.d*2*PI*smooth01(sp.t/0.75) : 0;
     }
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+    if(EXO.auto && EXO.auto.done){ exoAutoEnd(); return; }
     var still = st.mode === "landed" && !inp.up && !inp.fwd && !inp.back;
     EXO.land = still ? EXO.land + dt : 0;
     if(EXO.land > 0.3) exoLand();
@@ -2268,6 +2272,11 @@ function mount(el, api){
       if(r.lock) exoFx(r.lock, EXO.S.style);
       if(r.shake) EXO.shake = Math.max(EXO.shake, r.shake);
       if(r.done) exoSeqDone();
+    }
+    exoParkKeep();
+    if(EXO.dock && EXO.S && !E.calm()){                              // [3.38.0] docking: a slow orbit round you and the gantry
+      var D = EXO.dock, cd = curCam(); D.t += dt; var an = D.a + D.t*0.9;
+      cd.position.set(D.x + Math.sin(an)*5.5, D.y + 2.2, D.z + Math.cos(an)*5.5); cd.lookAt(D.x, D.y, D.z);
     }
     if(EXO.fx){ var s = EXO.fxs; if(s){ s.t -= dt; s.yaw += 2.3; s.calm = E.calm(); if(s.t <= 0){ s.flame = 0; s.smoke = 0; } } EXO.fx.step(dt, s || {calm: true}); if(s && s.t <= -3) EXO.fxs = null; }
     if(EXO.shake > 0.003){ var cm = curCam(); if(!E.calm()){ cm.position.x += (Math.random() - 0.5)*EXO.shake; cm.position.y += (Math.random() - 0.5)*EXO.shake; } EXO.shake *= Math.exp(-dt*7); }
@@ -2302,6 +2311,9 @@ function mount(el, api){
     var XO = HQV.hqExo; if(!XO || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
     var down = e.type === "keydown";
     if(XO.panelOpen()){ keys = {}; if(down && e.key === "Escape") XO.panelClose(); if(!MOVE_KEYS[e.code] && e.key !== "Escape") return false; e.preventDefault(); e.stopPropagation(); return true; }
+    if(EXO.auto && e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); if(down) exoAutoCancel("Auto-dock off: you have the suit."); return true; }
+    if(e.code === "KeyF" && !XO.panelOpen()){ var dh = exoHere(); if(dh){ e.preventDefault(); e.stopPropagation();
+      if(down && !e.repeat){ if(dh === "dock") exoDock(exoRoof()); else if(dh === "park") exoUndock(); else exoAutoStart(exoRoof()); } return true; } }
     if(EXO.S && e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); if(down){ XO.seqEnd(EXO.S); exoSeqDone(); } return true; }
     if(EXO.fly && e.code === "KeyX"){ e.preventDefault(); e.stopPropagation(); keys.KeyX = down; return true; }
     // a double-tap of A or D in a cruise: a barrel roll that way (the pose's flourish; the flight itself is unchanged)
@@ -2347,6 +2359,72 @@ function mount(el, api){
     var XO = HQV.hqExo, suit = avatar.ch; if(!suit || !suit._exo) return;
     XO.wear(THREE, suit, XO.me.look);
   }
+  /* [3.38.0] dock your suit at your HQ roof: suited on YOUR roof's pad (games/hqroof.js R.dock, its platform off the
+     deck), F takes it off in reverse onto the gantry (the pieces over to it, the eyes fading, the camera round you) and it
+     stays there, parked, in its look (hqexo park: 4 draws at most; the gantry is the City's, 2). F at it suits you up
+     again (the gantry's suit-up); U anywhere else takes it from the roof. Suited and flying within 60 m of your roof, F
+     flies you in (EXO.auto: an eased path, no physics; WASD or Esc hands it back). Kept across reloads (hqexo parked()).
+     Peers do not see it (presence carries no flag for it). */
+  function exoRoof(){ var rs = cur && cur === worlds.city && cur.roofs ? cur.roofs() : null; if(!rs) return null; for(var i = 0; i < rs.length; i++) if(rs[i] && rs[i].own && rs[i].dock) return rs[i]; return null; }
+  function exoDockYaw(R){ return Math.atan2(R.deck.x - R.dock.sx, R.deck.z - R.dock.sz); }
+  function exoHere(){
+    var XO = HQV.hqExo; if(!exoOk() || EXO.S || EXO.auto || ride || POOL.u) return null;
+    var R = exoRoof(); if(!R) return null;
+    var y = avatar.g.position.y;
+    if(EXO.fly) return XO.me.on && Math.hypot(avatar.x - R.dock.sx, avatar.z - R.dock.sz) < 60 ? "auto" : null;
+    if(XO.me.on && Math.hypot(avatar.x - R.pad.x, avatar.z - R.pad.z) <= R.pad.r + 0.3 && Math.abs(y - R.pad.y) < 1.2) return "dock";
+    if(!XO.me.on && EXO.park && Math.hypot(avatar.x - R.dock.sx, avatar.z - R.dock.sz) < 2.2 && Math.abs(y - R.dock.y) < 1.2) return "park";
+    return null;
+  }
+  var EXO_PROMPT = {dock: "F  Dock suit", park: "F  Suit up (docked suit)", auto: "F  Dock at HQ roof"};
+  function exoPrompt(){ var h = exoHere(); return h ? EXO_PROMPT[h] : null; }
+  function exoUnpark(){ var XO = HQV.hqExo; if(EXO.park){ XO.unpark(EXO.park); EXO.park = null; } if(EXO.pk != null){ XO.setParked(null); EXO.pk = null; } }
+  function exoPlace(P, R){ P.g.position.set(R.dock.sx, R.dock.y, R.dock.sz); P.g.rotation.set(0, P.yaw, 0); P.g.scale.setScalar(P.s); }
+  // F on your pad, suited: turn to face the pad from the gantry, bake the parked suit, then the reverse suit-up onto it
+  function exoDock(R){
+    var XO = HQV.hqExo, ch = avatar && avatar.ch; if(!exoOk() || !XO.me.on || EXO.S || EXO.fly || !R || !R.dock || !ch || !ch._exo) return false;
+    exoUnpark();
+    avatar.yaw = exoDockYaw(R); avatar.g.rotation.set(0, avatar.yaw, 0); avatar.g.updateMatrixWorld(true);
+    var P = XO.park(THREE, ch); if(!P) return false;
+    exoPlace(P, R); P.g.visible = false; cur.scene.add(P.g); EXO.park = P; EXO.pkW = cur;
+    var to = ch.o.worldToLocal(new THREE.Vector3(R.dock.sx, R.dock.y, R.dock.sz));     // where ch.o would stand on the gantry
+    XO.me.on = false; if(EXO.hud) EXO.hud.show(false);
+    EXO.pk = XO.setParked(avatar.yaw);
+    EXO.dock = {t: 0, a: avatar.yaw + PI*0.75, x: (avatar.x + R.dock.sx)/2, y: R.dock.y + 1, z: (avatar.z + R.dock.sz)/2};
+    EXO.where = "roof"; EXO.S = XO.seq(THREE, ch, "gantry", {reverse: true, to: to, rdur: 2.2});
+    walkTo = null; walkDoor = null; E.sfx("go");
+    return true;
+  }
+  // F at the parked suit: it comes off the gantry and onto you (the gantry's own suit-up)
+  function exoUndock(){ var XO = HQV.hqExo; if(!EXO.park) return false; XO.save(EXO.park.look); exoUnpark(); return exoUp("bay"); }
+  // a reload (or a new City): the parked suit back on the dock, baked from your own character once
+  function exoParkKeep(){
+    var XO = HQV.hqExo; if(EXO.pk === undefined) EXO.pk = XO.parked();
+    if(EXO.park){ var want = cur === worlds.city ? cur.scene : null;
+      if(EXO.park.g.parent !== want){ if(EXO.park.g.parent) EXO.park.g.parent.remove(EXO.park.g); var R0 = want && exoRoof(); if(R0){ exoPlace(EXO.park, R0); want.add(EXO.park.g); } }
+      return; }
+    if(EXO.pk == null || EXO.pkW === cur || EXO.S || XO.me.on || cur !== worlds.city || !avatar || !avatar.ch || avatar.ch._exo) return;
+    EXO.pkW = cur; var R = exoRoof(); if(!R) return;
+    var ch = avatar.ch, y0 = avatar.g.rotation.y; avatar.g.rotation.y = exoDockYaw(R); avatar.g.updateMatrixWorld(true);
+    if(XO.wear(THREE, ch, XO.load())){ EXO.park = XO.park(THREE, ch); XO.strip(ch); }
+    avatar.g.rotation.y = y0; avatar.g.updateMatrixWorld(true);
+    if(EXO.park){ exoPlace(EXO.park, R); cur.scene.add(EXO.park.g); }
+  }
+  // F flying near your roof: the auto-dock, an eased path (up over the roof if you are under it, a curve in, slowing) to the dock
+  function exoAutoStart(R){
+    var st = EXO.fly && EXO.fly.st; if(!st || !R) return false;
+    EXO.auto = HQV.hqExo.dockPlan(st, {x: R.dock.sx, y: R.dock.y, z: R.dock.sz}); if(!EXO.auto) return false; EXO.auto.R = R;
+    exoSay("Auto-docking: WASD or Esc takes it back.");
+    return true;
+  }
+  function exoAutoCancel(msg){ var st = EXO.fly && EXO.fly.st; EXO.auto = null; if(st){ st.vx = 0; st.vy = 0; st.vz = 0; st.speed = 0; } if(msg) exoSay(msg); }
+  function exoAutoStep(st, dt){ HQV.hqExo.dockStep(EXO.auto, st, dt); }
+  function exoAutoEnd(){
+    var A = EXO.auto; EXO.auto = null; if(!A) return;
+    exoLand(); avatar.hy = A.R.dock.y; avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    exoDock(A.R);
+  }
+  inst.exoDockState = function(){ return {here: exoHere(), parked: !!EXO.park, pk: EXO.pk, auto: !!EXO.auto, docking: !!EXO.dock}; };   // tools / tests
   inst.exoNet = function(){
     var XO = HQV.hqExo; if(!XO || !avatar || !(XO.me.on || EXO.S)) return null;
     if(EXO.S && EXO.S.rev) return null;
@@ -4674,6 +4752,7 @@ function mount(el, api){
   // near you already has its own E pill (rideUi: "Drive (E)", "Row (E)"), so the HUD never offers it a second time (it
   // once said "E  Ride the bike" by a rowboat). The worlds still write their prompts "E  ...": shown as F.
   function hudPrompt(){
+    var xp = exoPrompt(); if(xp) return xp;
     if(rig.mode === "fp" && !ride && pose){ var d = doorUnderCrosshair(pose, curDoors(), 3); if(d) return "F  Enter " + (d.label || d.tip || "the door"); }
     // [3.27] a stopped traffic car you can take: E, as getting into any vehicle is (not by one of your own: E is that one's)
     if(!ride && !POOL.u && nearIdx < 0 && cur && cur.jackPrompt && avatar){ var jp = null; try { jp = cur.jackPrompt({x: avatar.x, z: avatar.z}); } catch(e){ jp = null; } if(jp) return String(jp); }

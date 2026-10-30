@@ -4,6 +4,12 @@ Every Claude HQ release, newest first. The [README](README.md) has an overview o
 recent releases.
 
 - **3.38.0 — Mission Control ops and Exosuit polish.**
+  - **Dock your suit at your HQ roof.** Your own HQ's roof gets a cantilevered docking platform off its deck, with a
+    railing and a lit top rail, walkable from the pad, holding the docking gantry, so the helipad stays clear. Suited on
+    your pad, F docks the suit: the pieces lift off onto the gantry, the eyes fade, the camera circles, and you step out
+    with the suit parked there in its frame, paint and glow (kept across reloads). F at it suits you up again; U anywhere
+    else takes it from the roof. Flying within 60 m of your roof, F auto-docks: an eased path over the roof and down
+    onto the platform, then the docking; WASD or Esc hands control back. Others don't see the parked suit yet.
   - **Mission Control ops (server side).** A new `GET /api/mc/ops` builds the ops wall's CI board: the latest GitHub
     Actions run of each workflow on each branch (pass, fail, running) and the names of failing jobs, for this HQ's repo
     and the repos your live sessions are in. It runs your own `gh` CLI with its existing login, never reads or sends a

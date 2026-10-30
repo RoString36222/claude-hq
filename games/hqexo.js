@@ -20,6 +20,7 @@
  *                                        strip at the end); seqStep(S, dt) -> {done, eyes 0..1, shake, lock, black}
  *   bay(c, w, x, z, ry) -> B             the lobby's Suit-Up Centre: the plate, two gantry arms, the customiser kiosk
  *   panel(onPick, onSuit) / panelOpen()  the customiser (frame, two-tone paint, finish, glow / HUD tint)
+ *   park(T, ch) / unpark(P) / dockRig(T)   [3.38.0] the suit parked on your roof's dock, and its gantry; parked() / setParked(yaw)
  *   wanted(key) / peer(u, ex) / sig(o)   who wears a suit: "you:*" and "peer:*"
  * Free: every frame, paint and finish from day one. Privacy: presence carries five small numbers.
  */
@@ -70,7 +71,12 @@ function decode(a){
 }
 function sig(o){ if(!o) return ""; var c = clean(o); return "x" + [c.f, c.p, c.fin, c.g].join("."); }
 function load(){ try { return clean(JSON.parse(G.localStorage.getItem(KEY) || "{}")); } catch(e){ return clean({}); } }
-function save(o){ var c = clean(o); try { G.localStorage.setItem(KEY, JSON.stringify(c)); } catch(e){} return c; }
+function raw(){ try { var v = JSON.parse(G.localStorage.getItem(KEY) || "{}"); return v && typeof v === "object" ? v : {}; } catch(e){ return {}; } }
+function pkOf(v){ return typeof v === "number" && isFinite(v) ? v : null; }
+function save(o){ var c = clean(o), w = clean(c), pk = pkOf(raw().pk); if(pk != null) w.pk = pk; try { G.localStorage.setItem(KEY, JSON.stringify(w)); } catch(e){} return c; }
+// [3.38.0] the suit parked on your roof's dock: its yaw (rad), kept beside the look; null when it is not parked
+function parked(){ return pkOf(raw().pk); }
+function setParked(yaw){ var w = clean(raw()), pk = pkOf(+yaw); if(yaw != null && pk != null) w.pk = pk; try { G.localStorage.setItem(KEY, JSON.stringify(w)); } catch(e){} return parked(); }
 // gantry needs the Centre's arms; summon needs open sky: each falls back to the other
 function styleFor(f, where){ var u = FRAMES[idx(f, FRAMES.length, 0)].up; return where === "bay" ? (u === "summon" ? "gantry" : u) : (u === "gantry" ? "summon" : u); }
 
@@ -630,7 +636,8 @@ function seq(T, ch, style, opts){
   opts = opts || {};
   var X = ch._exo, o = X.look, g = new T.Group(), parts = [], dur = 0, M = X.mats;
   ch.o.updateMatrixWorld(true);
-  var S = {g: g, ch: ch, parts: parts, style: style, t: 0, rev: !!opts.reverse, done: false, m4: new T.Matrix4(), inv: new T.Matrix4().copy(ch.o.matrixWorld).invert(),
+  var to = opts.to && isFinite(opts.to.x + opts.to.y + opts.to.z) ? opts.to : null;
+  var S = {g: g, ch: ch, parts: parts, style: style, t: 0, rev: !!opts.reverse, rd: Math.max(0.3, Math.min(5, fin(opts.rdur) || 0.9)), keep: !!to, done: false, m4: new T.Matrix4(), inv: new T.Matrix4().copy(ch.o.matrixWorld).invert(),
            q: new T.Quaternion(), q1: new T.Quaternion(), e: new T.Euler(), v: new T.Vector3(), s: new T.Vector3(), T: T};
   X.spec.forEach(function(q, i){
     var geo = pieceGeo(T, q);
@@ -642,7 +649,8 @@ function seq(T, ch, style, opts){
     var hp = new T.Vector3(q[3], q[4], q[5]).applyMatrix4(hm), s = Math.sign(q[3]) || (rnd(i, o.f) < 0.5 ? -1 : 1), gr = q[12];
     pc.hp = hp;
     // offsets in the character's own (unscaled, ~0.8 tall) frame
-    if(style === "gantry"){ pc.from = new T.Vector3(s*0.7, -0.5 + gr*0.02, -0.15); pc.del = gr*0.3 + rnd(i, o.f)*0.06; pc.d = 0.55; pc.spin = 1.2; }
+    if(to){ pc.from = new T.Vector3(to.x, to.y, to.z); pc.del = gr*0.25; pc.d = 0.8; }             // [3.38.0] docking: each piece over to the gantry
+    else if(style === "gantry"){ pc.from = new T.Vector3(s*0.7, -0.5 + gr*0.02, -0.15); pc.del = gr*0.3 + rnd(i, o.f)*0.06; pc.d = 0.55; pc.spin = 1.2; }
     else if(style === "summon"){ var an = rnd(i, o.f)*6.28; pc.from = new T.Vector3(Math.cos(an)*6, 3 + rnd(i + 3, o.f)*4, Math.sin(an)*6); pc.del = gr*0.22 + rnd(i, o.f)*0.15; pc.d = 0.7; pc.spin = 4; }
     else if(style === "drop"){ pc.from = new T.Vector3(0, 13, 0); pc.del = gr*0.32; pc.d = 0.45; }
     else { pc.flow = 1; pc.del = hp.distanceTo(new T.Vector3(0, 0.3, 0.1))*3.2; pc.d = 0.5; }
@@ -650,7 +658,7 @@ function seq(T, ch, style, opts){
   });
   S.dur = dur + 0.45;
   X.meshes.forEach(function(m){ m.visible = false; });
-  if(M.G) M.G.emissiveIntensity = 0; X.U.uGK.value = 0;
+  if(M.G) M.G.emissiveIntensity = S.rev ? 2.2 : 0; X.U.uGK.value = S.rev ? 1 : 0;
   ch.o.add(g);
   scaleTo(S, S.rev ? 1 : 0);
   return S;
@@ -661,11 +669,11 @@ function seqStep(S, dt){
   var out = {done: false, eyes: 0, shake: 0, lock: null, black: false, k: 0};
   if(!S || S.done || !S.ch._exo){ out.done = true; if(S && !S.done) seqEnd(S); return out; }
   S.t += Math.max(0, Math.min(0.1, fin(dt)));
-  var t = S.rev ? Math.max(0, (S.dur - 0.45)*(1 - S.t/0.9)) : S.t;           // off: the build run backwards, fast
+  var t = S.rev ? Math.max(0, (S.dur - 0.45)*(1 - S.t/S.rd)) : S.t;           // off: the build run backwards, fast
   S.ch.o.updateMatrixWorld(true); S.inv.copy(S.ch.o.matrixWorld).invert();
   S.parts.forEach(function(p){
     var k = Math.max(0, Math.min(1, (t - p.del)/p.d)), e = S.style === "drop" ? (k < 1 ? k*k : 1) : ease(k);
-    p.m.visible = k > 0;
+    p.m.visible = k > 0 || S.keep;
     home(S, p, S.m4);
     if(p.flow){ var sc = Math.max(0.001, ease(k)); S.m4.scale(S.v.set(sc, sc, sc)); p.m.matrix.copy(S.m4); }
     else {
@@ -676,10 +684,11 @@ function seqStep(S, dt){
     if(k >= 1 && !p.done && !S.rev){ p.done = 1; out.lock = p.hp.clone().applyMatrix4(S.ch.o.matrix); out.shake = Math.max(out.shake, S.style === "drop" ? 0.35 : 0.04); }
     if(k < 1) p.done = 0;
   });
-  out.k = Math.min(1, S.t/(S.rev ? 0.9 : S.dur));
-  scaleTo(S, S.rev ? 1 - out.k : out.k*1.6);
-  var end = S.rev ? 0.9 : S.dur, G = S.ch._exo.mats.G;
-  if(!S.rev){ out.eyes = Math.max(0, Math.min(1, (S.t - (S.dur - 0.3))/0.3)); if(G) G.emissiveIntensity = 2.2*out.eyes; S.ch._exo.U.uGK.value = out.eyes; }
+  out.k = Math.min(1, S.t/(S.rev ? S.rd : S.dur));
+  if(!S.keep) scaleTo(S, S.rev ? 1 - out.k : out.k*1.6);
+  var end = S.rev ? S.rd : S.dur, G = S.ch._exo.mats.G;
+  if(S.rev){ out.eyes = 1 - out.k; if(G) G.emissiveIntensity = 2.2*out.eyes; S.ch._exo.U.uGK.value = out.eyes; }   // off: the eyes fade
+  else { out.eyes = Math.max(0, Math.min(1, (S.t - (S.dur - 0.3))/0.3)); if(G) G.emissiveIntensity = 2.2*out.eyes; S.ch._exo.U.uGK.value = out.eyes; }
   if(S.t >= end) seqEnd(S), out.done = true;
   return out;
 }
@@ -692,6 +701,83 @@ function seqEnd(S){
   if(S.rev){ strip(S.ch); return; }
   scaleTo(S, 1);
   X.meshes.forEach(function(m){ m.visible = true; }); if(X.mats.G) X.mats.G.emissiveIntensity = 2.2; X.U.uGK.value = 1;
+}
+
+/* ---------- [3.38.0] the suit parked on your HQ roof's dock ----------
+   park(T, ch) -> P {g, meshes, look, s, yaw}: the armour ch wears now, baked in its current pose into plain meshes (one per
+   material, so 4 draws at most, like the layer) with materials of their own (the eyes on standby), in a group the caller
+   places (P.s the scale, P.yaw the facing it had); unpark(P) frees it. dockRig(T) -> the docking gantry: 2 draws. */
+function park(T, ch){
+  var X = ch && ch._exo; if(!X) return null;
+  ch.o.updateMatrixWorld(true);
+  var g = new T.Group(), U = armU(T, X.look, X.M), MT = mats(T, X.look, U), meshes = [], inv = new T.Matrix4().copy(ch.o.matrixWorld).invert();
+  var sk = X.M.sk, bm = sk.bones.map(function(b, i){ return new T.Matrix4().multiplyMatrices(b.matrixWorld, sk.boneInverses[i]); }), mi = new T.Matrix4(), n3 = new T.Matrix3(), v = new T.Vector3();
+  U.uGK.value = 0.25; MT.G.emissiveIntensity = 0.5;
+  X.meshes.forEach(function(m){
+    var k = m.name.slice(4), src = m.geometry, n = src.attributes.position.count, pos = new Float32Array(n*3), nor = new Float32Array(n*3);
+    var si = src.attributes.skinIndex.array, pa = src.attributes.position, na = src.attributes.normal;
+    for(var i = 0; i < n; i++){
+      mi.copy(m.bindMatrixInverse).multiply(bm[si[i*4]]).multiply(m.bindMatrix); n3.getNormalMatrix(mi);
+      v.fromBufferAttribute(pa, i).applyMatrix4(mi); pos[i*3] = v.x; pos[i*3 + 1] = v.y; pos[i*3 + 2] = v.z;
+      v.fromBufferAttribute(na, i).applyMatrix3(n3).normalize(); nor[i*3] = v.x; nor[i*3 + 1] = v.y; nor[i*3 + 2] = v.z;
+    }
+    var geo = new T.BufferGeometry();
+    geo.setAttribute("position", new T.BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.BufferAttribute(nor, 3));
+    geo.setAttribute("color", src.attributes.color.clone()); geo.setAttribute("aX", src.attributes.aX.clone());
+    var me = new T.Mesh(geo, MT[k]); me.name = "exo-park-" + k; me.matrixAutoUpdate = false; me.matrix.multiplyMatrices(inv, m.matrixWorld); me.castShadow = k !== "L";
+    g.add(me); meshes.push(me);
+  });
+  var q = new T.Quaternion(), ws = new T.Vector3(); ch.o.matrixWorld.decompose(v, q, ws);
+  g.name = "exo-parked";
+  return {g: g, meshes: meshes, mats: MT, look: X.look, s: ws.x, yaw: new T.Euler().setFromQuaternion(q, "YXZ").y};
+}
+function unpark(P){
+  if(!P || P.gone || !P.g || !P.meshes) return; P.gone = true;
+  if(P.g.parent) P.g.parent.remove(P.g);
+  P.meshes.forEach(function(m){ m.geometry.dispose(); });
+  for(var k in P.mats) P.mats[k].dispose();
+}
+function parkStats(P){ var d = 0; (P && !P.gone ? P.meshes : []).forEach(function(m){ if(m.visible) d++; }); return {draws: d}; }
+// the docking gantry (the Suit-Up Centre's steel and glow): base plate, two posts, the beam, boom tips; merged to 2 meshes
+function dockRig(T){
+  var steel = new T.MeshStandardMaterial({color: 0x56606b, metalness: 0.75, roughness: 0.35}), glow = new T.MeshStandardMaterial({color: 0x0d1a24, emissive: 0x4fd8ff, emissiveIntensity: 1.8});
+  function merge(list){
+    var pos = [], nor = [];
+    list.forEach(function(b){ var bg = (b[6] ? new T.CylinderGeometry(b[0], b[0], b[1], 24) : new T.BoxGeometry(b[0], b[1], b[2])).toNonIndexed(); bg.translate(b[3], b[4], b[5]);
+      pos.push.apply(pos, bg.attributes.position.array); nor.push.apply(nor, bg.attributes.normal.array); bg.dispose(); });
+    var geo = new T.BufferGeometry(); geo.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); geo.setAttribute("normal", new T.Float32BufferAttribute(nor, 3)); return geo;
+  }
+  var g = new T.Group(); g.name = "exo-dock-rig";
+  var a = new T.Mesh(merge([[0.85, 0.1, 0, 0, 0.05, 0, 1], [0.2, 2.5, 0.2, -1.05, 1.25, -0.35], [0.2, 2.5, 0.2, 1.05, 1.25, -0.35], [2.3, 0.16, 0.24, 0, 2.5, -0.35],
+                         [0.6, 0.1, 0.16, -0.75, 1.4, -0.35], [0.6, 0.1, 0.16, 0.75, 1.4, -0.35]]), steel);
+  var b = new T.Mesh(merge([[0.72, 0.02, 0, 0, 0.11, 0, 1], [0.08, 0.26, 0.18, -0.45, 1.3, -0.35], [0.08, 0.26, 0.18, 0.45, 1.3, -0.35], [1.6, 0.05, 0.05, 0, 2.42, -0.22]]), glow);
+  a.castShadow = true; g.add(a); g.add(b);
+  return g;
+}
+
+// the auto-dock's path (pure; hq3d sets the flight state from it, no physics): dockPlan(st, to) -> A from where st flies
+// to the dock {x, y, z}; dockStep(A, st, dt) -> done: up over the roof first if you are under it (6 m over the dock), a
+// curve in (a quadratic through a side point), easing out, the last 15% straight down onto it, "landed" on arrival
+function sm(x){ x = x < 0 ? 0 : x > 1 ? 1 : x; return x*x*(3 - 2*x); }
+function dockPlan(st, to){
+  if(!st || !to || !isFinite(st.x + st.y + st.z + to.x + to.y + to.z)) return null;
+  var dx = to.x - st.x, dz = to.z - st.z, d = Math.hypot(dx, dz);
+  return {to: {x: to.x, y: to.y, z: to.z}, t: 0, T: Math.max(2.5, Math.min(7, d/12 + 2)), x0: st.x, y0: st.y, z0: st.z, top: Math.max(st.y, to.y + 6),
+          cx: (st.x + to.x)/2 - dz*0.25, cz: (st.z + to.z)/2 + dx*0.25, px: st.x, pz: st.z, done: false};
+}
+function dockStep(A, st, dt){
+  if(!A || !st || A.done) return !!(A && A.done);
+  dt = Math.max(0, Math.min(0.1, fin(dt))); A.t += dt;
+  var P = A.to, u = sm(A.t/A.T), v = 1 - u, dn = A.T*0.85;
+  st.x = v*v*A.x0 + 2*u*v*A.cx + u*u*P.x; st.z = v*v*A.z0 + 2*u*v*A.cz + u*u*P.z;
+  st.y = A.t < dn ? A.y0 + (A.top - A.y0)*sm(A.t/(A.T*0.4)) : A.top + (P.y - A.top)*sm((A.t - dn)/(A.T - dn));
+  var mx = st.x - A.px, mz = st.z - A.pz, sp = dt > 0 ? Math.hypot(mx, mz)/dt : 0;
+  if(sp > 0.3) st.yaw = st.th = Math.atan2(-mx, -mz);
+  A.px = st.x; A.pz = st.z;
+  st.vx = 0; st.vy = 0; st.vz = 0; st.speed = sp; st.pitch = 0; st.roll = 0; st.vs = 0; st.agl = Math.max(0, st.y - P.y);
+  st.mode = A.t >= A.T ? "landed" : u < 0.8 ? "cruise" : "hover";
+  if(A.t >= A.T){ st.x = P.x; st.z = P.z; st.y = P.y; A.done = true; }
+  return A.done;
 }
 
 /* ---------- the Suit-Up Centre (games/hqlobby.js): a plate, two gantry arms, the customiser kiosk ---------- */
@@ -894,6 +980,6 @@ function wanted(key){
 
 HQV.hqExo = {FRAMES: FRAMES, PAINTS: PAINTS, FINISHES: FINISHES, GLOWS: GLOWS, MODES: MODES, BONES: NEED, clean: clean, encode: encode,
   decode: decode, sig: sig, load: load, save: save, styleFor: styleFor, wear: wear, strip: strip, stats: stats, pose: pose, measure: measure, targets: targets, bankFor: bankFor, BANK_MAX: BANK_MAX,
-  seq: seq, seqStep: seqStep, seqEnd: seqEnd, FX: {N: FX_N, I: FX_I, DUST: FX_DUST, TRAIL: FX_TRAIL, SPARK: FX_SPARK, RIB: FX_RIB}, KNEE: KNEE, EYE: [EYE_X, EYE_Y], bay: bay, panel: panel, panelOpen: panelOpen, panelClose: panelClose, preview: preview, previewRef: function(){ return PVW; },
+  seq: seq, seqStep: seqStep, seqEnd: seqEnd, park: park, unpark: unpark, parkStats: parkStats, dockRig: dockRig, dockPlan: dockPlan, dockStep: dockStep, parked: parked, setParked: setParked, FX: {N: FX_N, I: FX_I, DUST: FX_DUST, TRAIL: FX_TRAIL, SPARK: FX_SPARK, RIB: FX_RIB}, KNEE: KNEE, EYE: [EYE_X, EYE_Y], bay: bay, panel: panel, panelOpen: panelOpen, panelClose: panelClose, preview: preview, previewRef: function(){ return PVW; },
   peer: peer, wanted: wanted, me: me, bayRef: null, hex: hex};
 })();

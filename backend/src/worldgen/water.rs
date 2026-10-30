@@ -178,6 +178,10 @@ impl Plan {
     pub fn outlines(&self) -> Vec<Vec<P>> {
         self.bodies.iter().map(|b| b.poly.iter().map(|q| (q[0], q[1])).collect()).collect()
     }
+    /// The bodies as laid: outline (cm), surface and depth below it (cm). City Gen v5 carves them in its volume.
+    pub fn levels(&self) -> Vec<(Vec<P>, i64, i64)> {
+        self.bodies.iter().map(|b| (b.poly.iter().map(|q| (q[0], q[1])).collect(), b.level, b.bed)).collect()
+    }
 }
 
 fn pts(v: &[P]) -> Vec<[i64; 2]> {

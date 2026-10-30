@@ -111,10 +111,12 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
         let (nx, nz) = (-dz * ap.side as f64, dx * ap.side as f64);
         let out = super::airport::TERMINAL_CM as f64;
         let at = (ap.c.0 + (nx * out) as i64, ap.c.1 + (nz * out) as i64);
-        let poly: Vec<[i64; 2]> = ap.poly.iter().map(|q| [q.0, q.1]).collect();
-        let w = ap.len + 2 * super::airport::STRIP_END_CM;
-        let mut s = site("airport:0", "airport", at, ap.y, w, super::airport::STRIP_W_CM + super::airport::APRON_W_CM, Some(poly), q16(nx, nz));
-        s.runway = Some(Runway { x: ap.c.0, z: ap.c.1, dir: q16(dx, dz), len: ap.len, side: ap.side });
+        // the site is the terminal (40 m deep along its front, 160 m across, world axes as @3's); the locked box is the
+        // runway's `area`, the generator's alone
+        let (w, d) = if nx.abs() > nz.abs() { (4_000, 16_000) } else { (16_000, 4_000) };
+        let mut s = site("airport:0", "airport", at, ap.y, w, d, None, q16(nx, nz));
+        let area: Vec<[i64; 2]> = ap.poly.iter().map(|q| [q.0, q.1]).collect();
+        s.runway = Some(Runway { x: ap.c.0, z: ap.c.1, dir: q16(dx, dz), len: ap.len, side: ap.side, area });
         doc.sites.push(s);
     }
     if let Some((at, f)) = port {

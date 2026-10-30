@@ -104,7 +104,8 @@ pub struct Site {
     pub runway: Option<Runway>,
 }
 
-/// A runway: its middle (cm), its direction (Q16 unit), its length (cm), and the side of it the apron is on (+1: left).
+/// A runway: its middle (cm), its direction (Q16 unit), its length (cm), the side of it the apron is on (+1: left), and
+/// the airport's locked footprint (cm): what the generator kept clear from the ground to the sky, never drawn.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Runway {
     pub x: i64,
@@ -112,6 +113,7 @@ pub struct Runway {
     pub dir: [i64; 2],
     pub len: i64,
     pub side: i64,
+    pub area: Vec<[i64; 2]>,
 }
 
 /// The grid's line positions: line `i` runs between block columns i and i+1.

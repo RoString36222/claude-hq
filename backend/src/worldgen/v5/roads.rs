@@ -153,7 +153,7 @@ impl Grid {
                 let g = land.height(q);
                 let h = GRID_CM / 2;
                 let sq = vec![(q.0 - h, q.1 - h), (q.0 + h, q.1 - h), (q.0 + h, q.1 + h), (q.0 - h, q.1 + h)];
-                free[((i + n) * side + (j + n)) as usize] = space.blocker_but(&sq, g - 200, g + ROAD_UP_CM, 0, &["road"]).is_none();
+                free[((i + n) * side + (j + n)) as usize] = space.blocker_but(&sq, g - 200, g + ROAD_UP_CM, 0, &["road", "water"]).is_none();
             }
         }
         // a route keeps a cell (20 m) off anything: room for its curves to cut their corners (a 45 degree bend of R_ART_CM
@@ -337,7 +337,8 @@ fn clear(land: &Land, space: &Space, pts: &[(f64, f64)], hw: i64) -> bool {
         let (nx, nz) = (-dz / l * hw as f64, dx / l * hw as f64);
         let poly = vec![((a.0 + nx) as i64, (a.1 + nz) as i64), ((b.0 + nx) as i64, (b.1 + nz) as i64), ((b.0 - nx) as i64, (b.1 - nz) as i64), ((a.0 - nx) as i64, (a.1 - nz) as i64)];
         let g = land.height((a.0 as i64, a.1 as i64)).min(land.height((b.0 as i64, b.1 as i64)));
-        space.blocker_but(&poly, g - 200, g + ROAD_UP_CM, 0, &["road"]).is_none()
+        // (over the water: a bridge, its deck the client's)
+        space.blocker_but(&poly, g - 200, g + ROAD_UP_CM, 0, &["road", "water"]).is_none()
     })
 }
 
@@ -387,12 +388,17 @@ pub fn arterials(land: &Land, space: &mut Space, cs: &[P]) -> Vec<Road> {
     out
 }
 
+/// A road's level over a-b: the ground's `g`, or over the water a bridge's, its underside clear of the boats.
+fn deck(land: &Land, a: (f64, f64), b: (f64, f64), g: i64) -> i64 {
+    [a, b, ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0)].iter().filter_map(|q| land.water_top((q.0 as i64, q.1 as i64))).map(|t| t + 200).fold(g, i64::max)
+}
+
 /// An arterial's points on the ground, its box carved along them.
 fn carve(land: &Land, space: &mut Space, pts: &[(f64, f64)]) -> Vec<[i64; 3]> {
     let points: Vec<[i64; 3]> = pts.iter().map(|p| [p.0 as i64, land.height((p.0 as i64, p.1 as i64)), p.1 as i64]).collect();
     for w in points.windows(2) {
         let (a, b) = ((w[0][0] as f64, w[0][2] as f64), (w[1][0] as f64, w[1][2] as f64));
-        let g = w[0][1].min(w[1][1]);
+        let g = deck(land, a, b, w[0][1].min(w[1][1]));
         space.put("road", "arterial", box_of(a, b, ART_HW_CM), g - 200, g + ROAD_UP_CM);
     }
     points
@@ -531,7 +537,7 @@ pub fn locals(land: &Land, space: &mut Space, hub: P, buildings: &[super::landus
                             let run = &pts[i0..=i];
                             if run.len() < 3 { continue; }
                             for w in run.windows(2) {
-                                let g = land.height((w[0].0 as i64, w[0].1 as i64));
+                                let g = deck(land, w[0], w[1], land.height((w[0].0 as i64, w[0].1 as i64)));
                                 space.put("road", "local", box_of(w[0], w[1], LOCAL_HW_CM), g - 200, g + ROAD_UP_CM);
                             }
                             lay(&mut laid, run);

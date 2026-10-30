@@ -370,6 +370,106 @@ function dressBlocked(D, x, z){
   return false;
 }
 
+/* ---------- an HQ lot's marks: its kerb all round and its plaque at the street front ---------- */
+// Every HQ lot, taken or free, shows where it starts and ends (a low kerb a little inside its outline, so two lots side by
+// side show two lines) and, at its street edge, a plaque: the lot's number and its owner's name, or "Available". Yours is
+// amber. In the lot's frame (the door to +z, the street), on R (hqcity3d lotRing); keep: [[x, z, hx, hz]] what the plaque
+// stands clear of (the building, its walk, the garage and its way out, the finish). Pure placement in markPlan.
+var KERB_IN = 0.3, KERB_W = 0.4, KERB_H = 0.16;            // m: the kerb's inset from the outline, its width and height (0.11 m over the lot)
+var PLAQUE = {w: 2.6, h: 1.25, d: 0.14, base: 0.45, up: 0.4};   // the plaque's panel (w x h x d) on a stone base, its bottom up
+// a convex outline with every edge moved d m inwards (each corner where its two moved edges meet)
+function insetRing(R, d){
+  var n = R.length, area = 0;
+  for(var i = 0; i < n; i++){ var p = R[i], q = R[(i + 1) % n]; area += p[0]*q[1] - q[0]*p[1]; }
+  var sg = area > 0 ? 1 : -1, L = [];
+  for(var k = 0; k < n; k++){                           // each edge as a point and a direction, moved along its inward normal
+    var a = R[k], b = R[(k + 1) % n], dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1, nx = -dz/l*sg, nz = dx/l*sg;
+    L.push({x: a[0] + nx*d, z: a[1] + nz*d, dx: dx/l, dz: dz/l});
+  }
+  return R.map(function(q, k){
+    var A = L[(k + n - 1) % n], B = L[k], den = A.dx*B.dz - A.dz*B.dx;
+    if(Math.abs(den) < 1e-9) return [B.x, B.z];
+    var t = ((B.x - A.x)*B.dz - (B.z - A.z)*B.dx)/den;
+    return [A.x + A.dx*t, A.z + A.dz*t];
+  });
+}
+// -> {kerb: [outer ring, inner ring], plaque: {x, z, rot} | null} (lot frame, m). The plaque stands just inside the street
+// edge (the edge facing +z most), turned along it, at the first spot along it clear of keep, the ends first (the walk to
+// the door is in the middle).
+function markPlan(R, keep){
+  var out = {kerb: null, plaque: null};
+  if(!R || R.length < 3) return out;
+  keep = keep || [];
+  out.kerb = [insetRing(R, KERB_IN), insetRing(R, KERB_IN + KERB_W)];
+  var best = null;
+  for(var i = 0, j = R.length - 1; i < R.length; j = i++){
+    var a = R[j], b = R[i], len = Math.hypot(b[0] - a[0], b[1] - a[1]); if(!(len > 4)) continue;
+    var nz = Math.abs(b[0] - a[0])/len, mz = (a[1] + b[1])/2;
+    if(!best || nz > best.nz + 0.05 || (Math.abs(nz - best.nz) <= 0.05 && mz > best.mz)) best = {a: a, b: b, len: len, nz: nz, mz: mz};
+  }
+  if(!best) return out;
+  var ux = (best.b[0] - best.a[0])/best.len, uz = (best.b[1] - best.a[1])/best.len;
+  if(ux < 0){ ux = -ux; uz = -uz; var t = best.a; best.a = best.b; best.b = t; }     // a -> b runs +x
+  var inw = KERB_IN + KERB_W + PLAQUE.base/2 + 0.1, hw = PLAQUE.w/2 + 0.1, hd = PLAQUE.base/2 + 0.1;
+  var mx = (best.a[0] + best.b[0])/2, mzz = (best.a[1] + best.b[1])/2, rot = Math.atan2(-uz, ux);
+  var bx = hw*Math.abs(ux) + hd*Math.abs(uz), bz = hw*Math.abs(uz) + hd*Math.abs(ux);    // its footprint's box in the lot's frame
+  var tries = [], lim = best.len/2 - hw - 0.8;
+  for(var s = lim; s >= 0; s -= 0.5){ tries.push(s); if(s > 0) tries.push(-s); }
+  for(var k = 0; k < tries.length; k++){
+    var sx = mx + ux*tries[k] + uz*inw, sz = mzz + uz*tries[k] - ux*inw;    // along the edge, then inward (-z side)
+    var ok = keep.every(function(K){ return !(Math.abs(sx - K[0]) < bx + K[2] && Math.abs(sz - K[1]) < bz + K[3]); });
+    if(ok){ out.plaque = {x: sx, z: sz, rot: rot}; return out; }
+  }
+  out.plaque = {x: mx + ux*Math.max(0, lim) + uz*inw, z: mzz + uz*Math.max(0, lim) - ux*inw, rot: rot};
+  return out;
+}
+// the plaque's words: {num: "LOT 12", name (the owner's, or "Available"), tag: "YOUR LOT" | "HQ LOT"}; n the lot's number (its rank + 1)
+function plaqueText(n, owner, mine){
+  var name = typeof owner === "string" ? owner.replace(/\s+/g, " ").trim().slice(0, 28) : "";
+  return {num: "LOT " + Math.max(1, n | 0), name: mine ? (name || "You") : name || "Available", tag: mine ? "YOUR LOT" : "HQ LOT"};
+}
+// Builds the marks into g (the lot's group, its frame). o: {n, owner, mine, keep, night}. -> {plan, blocks, mats (lit at
+// night: setNight), panel}
+function lotMarks(c, g, R, o){
+  o = o || {};
+  var THREE = c.THREE, PI = c.PI, mat = c.mat, plan = markPlan(R, o.keep), mine = !!o.mine, free = !o.owner && !mine;
+  var out = {plan: plan, blocks: [], mats: [], panel: null, setNight: function(on){ out.mats.forEach(function(m){ m.emissiveIntensity = on ? m.userData.night : m.userData.day; }); }};
+  if(!plan.kerb) return out;
+  var col = mine ? 0xffb347 : free ? 0x5fbf6e : 0x2fa9c0;   // the minimap's colours: yours amber, taken cyan, free green
+  var kerbM = new THREE.MeshStandardMaterial({color: col, roughness: 0.6, emissive: new THREE.Color(col)});
+  kerbM.userData.day = 0; kerbM.userData.night = mine ? 0.75 : 0.4; out.mats.push(kerbM);
+  var sh = new THREE.Shape(), hole = new THREE.Path();
+  plan.kerb[0].forEach(function(q, k){ if(k) sh.lineTo(q[0], -q[1]); else sh.moveTo(q[0], -q[1]); });
+  plan.kerb[1].forEach(function(q, k){ if(k) hole.lineTo(q[0], -q[1]); else hole.moveTo(q[0], -q[1]); });
+  sh.holes.push(hole);
+  var kerb = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, {depth: KERB_H, bevelEnabled: false, curveSegments: 1}), kerbM);
+  kerb.rotation.x = -PI/2; kerb.position.y = DRESS_Y; kerb.receiveShadow = true; g.add(kerb);
+  var P = plan.plaque; if(!P) return out;
+  var T = plaqueText(o.n, o.owner, mine);
+  var bg = mine ? "#ffb347" : "#13202c", ink = mine ? "#1b1206" : "#eef3f6", acc = mine ? "#1b1206" : free ? "#7fd18b" : "#5fd3e6";
+  var tex = c.canvasTex(256, 128, function(x){
+    x.fillStyle = bg; x.fillRect(0, 0, 256, 128);
+    x.fillStyle = acc; x.fillRect(0, 0, 256, 6); x.fillRect(0, 122, 256, 6);
+    x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = ink;
+    x.font = "800 40px system-ui, sans-serif"; x.fillText(T.num, 128, 36);
+    var fs = 26; x.font = "700 " + fs + "px system-ui, sans-serif";
+    while(fs > 13 && x.measureText(T.name).width > 236){ fs -= 1; x.font = "700 " + fs + "px system-ui, sans-serif"; }
+    x.fillText(T.name, 128, 76);
+    x.fillStyle = acc; x.font = "800 15px system-ui, sans-serif"; x.fillText(T.tag, 128, 106);
+  });
+  var face = new THREE.MeshBasicMaterial({map: tex.t, toneMapped: false}), side = mat(mine ? 0xd8b34a : 0x2b3a48, {metalness: 0.5, roughness: 0.4});
+  var pg = new THREE.Group(); pg.position.set(P.x, DRESS_Y, P.z); pg.rotation.y = P.rot; g.add(pg);
+  c.box(PLAQUE.w + 0.2, PLAQUE.up, PLAQUE.base, mat(0x8f8a80, {roughness: 0.85}), 0, PLAQUE.up/2, 0, pg);
+  var panel = new THREE.Mesh(new THREE.BoxGeometry(PLAQUE.w, PLAQUE.h, PLAQUE.d), [side, side, side, side, face, face]);
+  panel.position.set(0, PLAQUE.up + PLAQUE.h/2, 0); panel.castShadow = true; pg.add(panel); out.panel = panel;
+  // what it blocks, in the lot's frame: a box along the edge (turned: its bounding box)
+  var cr = Math.abs(Math.cos(P.rot)), sr = Math.abs(Math.sin(P.rot)), bw = (PLAQUE.w + 0.2)/2, bd = PLAQUE.base/2;
+  out.blocks.push([P.x, P.z, 0, bw*cr + bd*sr, bw*sr + bd*cr]);
+  out.setNight(!!o.night);
+  return out;
+}
+
 HQV.hqCityParts = {fountain: fountain, bikePark: bikePark, skatePark: skatePark, lotExtras: lotExtras, lamplit: lamplit, FOUNT_R: FOUNT_R,
-  lotDress: lotDress, dressPlan: dressPlan, dressTier: dressTier, dressBlocked: dressBlocked, DRESS_LEVELS: DRESS_LEVELS, DRESS_Y: DRESS_Y};
+  lotDress: lotDress, dressPlan: dressPlan, dressTier: dressTier, dressBlocked: dressBlocked, DRESS_LEVELS: DRESS_LEVELS, DRESS_Y: DRESS_Y,
+  lotMarks: lotMarks, markPlan: markPlan, plaqueText: plaqueText, insetRing: insetRing, PLAQUE: PLAQUE};
 })();

@@ -3795,7 +3795,8 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!R || !R.dock) return null;
     var D = R.dock, g = new THREE.Group(), steel = new THREE.MeshStandardMaterial({color: 0x6b737c, metalness: 0.6, roughness: 0.5}),
         lit = new THREE.MeshStandardMaterial({color: 0x10202a, emissive: 0x9fe6ff, emissiveIntensity: 1.6});
-    function bx(w, h, d, m, x, y, z){ var me = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); me.position.set(x, y, z); me.castShadow = me.receiveShadow = m === steel; g.add(me); return me; }
+    var sg = new THREE.Group(); g.add(sg);                                    // the steel merges; the lit strip stays its own (a live material)
+    function bx(w, h, d, m, x, y, z){ var me = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); me.position.set(x, y, z); me.castShadow = me.receiveShadow = m === steel; (m === steel ? sg : g).add(me); return me; }
     var hw = D.hw, hd = D.hd, o = D.s*hw;                                    // local +x*s: the open (outer) end
     bx(hw*2, 0.22, hd*2, steel, 0, -0.11, 0);                                // the slab, its top at the deck
     bx(0.3, 0.5, hd*2, steel, -o*0.7, -0.45, 0);                             // the cantilever's bracket under it
@@ -3805,7 +3806,7 @@ HQV.hqWorlds.city3d = function(c, w){
       [-0.95, 0, 0.95].forEach(function(k){ bx(0.06, 1.0, 0.06, steel, r[0] + (r[2] > 0.1 ? k*hw : 0), 0.5, r[1] + (r[3] > 0.1 ? k*hd : 0)); });
     });
     g.position.set(D.x, D.y, D.z); g.rotation.y = D.rot;
-    if(HQV.hqMerge && HQV.hqMerge.mergeStatic) try { HQV.hqMerge.mergeStatic(THREE, g); } catch(e){}
+    if(HQV.hqMerge && HQV.hqMerge.mergeStatic) try { HQV.hqMerge.mergeStatic(THREE, sg); } catch(e){}
     var XO = HQV.hqExo;
     if(XO && XO.dockRig){ var rig = XO.dockRig(THREE); rig.position.set(D.sx, D.y, D.sz); rig.rotation.y = Math.atan2(R.deck.x - D.sx, R.deck.z - D.sz); rig.updateMatrixWorld(true);
       g.updateMatrixWorld(true); var inv = new THREE.Matrix4().copy(g.matrixWorld).invert(); rig.applyMatrix4(inv); g.add(rig); }

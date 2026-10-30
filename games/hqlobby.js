@@ -173,6 +173,8 @@ HQV.hqWorlds.lobby = function(c, w){
   var studioDoor = {view: null, kind: "studio", label: "HQ Studio", tip: "HQ Studio: style your tower, lobby and floors", front: new THREE.Vector3(-6.4, 0, -10.6)};
   studioK.traverse(function(o){ if(o.isMesh){ o.userData.door = studioDoor; hits.push(o); } });
   var skTag = c.label("HQ Studio", c.HEX.amber, 0.5); skTag.position.set(-7.0, 2.6, -11.6); S.add(skTag);
+  // [exo] the Suit-Up Centre (games/hqexo.js): its plate (F: suit up / off) and its kiosk (F: the customiser)
+  var exoBay = HQV.hqExo && HQV.hqExo.bay ? HQV.hqExo.bay(c, w, 11, -1.5, -PI/2) : null;
 
   // the greeter bot behind reception (its desk is the style's)
   var bot = new THREE.Group(); bot.position.set(0, 0, -10.8); S.add(bot);
@@ -363,6 +365,7 @@ HQV.hqWorlds.lobby = function(c, w){
     if(Math.abs(x + 6.2) < 0.7 && Math.abs(z + 6.5) < 0.7) return true;            // columns
     if(Math.abs(x - 6.2) < 0.7 && Math.abs(z + 6.5) < 0.7) return true;
     if(Math.hypot(x + 7.0, z + 11.6) < 0.5) return true;                            // the Studio kiosk
+    if(exoBay && exoBay.blocked(x, z)) return true;                                 // [exo] the Suit-Up Centre's posts and kiosk
     if(dyn) for(var i = 0; i < dyn.blockers.length; i++) if(dyn.blockers[i](x, z)) return true;
     return false;
   }
@@ -375,6 +378,8 @@ HQV.hqWorlds.lobby = function(c, w){
                  basement: {x: R - 2.6, z: -8, yaw: -PI/2},   // [basement 3.4] out of the B1 lift
                  roof: {x: 4.6, z: -R + 2.6, yaw: 0}};        // [hq revamp] down the roof lift (from the City's roof deck)
   w.blocked = blocked;
+  w.use = function(p){ var n = exoBay && exoBay.near(p); return !!(n && c.exoBay && c.exoBay(n)); };   // [exo] F at the Suit-Up Centre
+  w.prompt = function(p){ return exoBay ? exoBay.prompt(p) : null; };
   var nightNow = true;
   w.setTime = function(night){
     nightNow = night; var Mo = dyn && dyn.mood || (D ? D.MOODS.warm : {bg: [0x7fb2d6, 0x0a1520]});
@@ -399,6 +404,7 @@ HQV.hqWorlds.lobby = function(c, w){
         sg.fillStyle = c.HEX.cyan; sg.font = "600 44px ui-monospace, Menlo, monospace"; sg.fillText(counts.working + " working · " + counts.needs + " need you · level " + c.level(), 512, 320); sg.textAlign = "left"; dyn.screen.t.needsUpdate = true; } }
     if(amb && dyn && dyn.amb) amb.set(dyn.amb[2]*(k > 0 ? 1 : 0.6), 0, dyn.amb[3] ? dyn.ambAt : null);
     var av = c.avatar();
+    if(exoBay) exoBay.update(t, dt);
     var near = av && Math.hypot(av.x, av.z + 10) < 6.5;
     botBody.position.y = Math.sin(t*1.6)*0.08*k; hover.material.opacity = 0.45 + Math.sin(t*3)*0.15;
     arm.rotation.z = near ? 2.4 + Math.sin(t*7)*0.4*k : 0.15;

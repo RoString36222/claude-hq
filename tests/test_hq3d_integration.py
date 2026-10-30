@@ -58,6 +58,8 @@ class LoadOrderAndProtocol(unittest.TestCase):
                          ["engine", "avatar3d", "hq3d", "hqpets", "hqpetride", "hqlobby",
                           # the basement garage (3.4): the car lift, the garage manager, its effects, B1 itself
                           "hqcarlift", "hqgaragemgr", "hqbasementfx", "hqbasement",
+                          # HQ Exosuit (3.37): the suits, their flight, the visor HUD
+                          "hqexo", "hqexoride", "hqexohud",
                           # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
                           "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom",
                           # city life (3.21): read by the world worker and the City, before both

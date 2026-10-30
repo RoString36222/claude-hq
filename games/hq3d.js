@@ -1033,6 +1033,8 @@ function mount(el, api){
   // presence carries `c`), else one of the six looks picked from a hash of the key. SkyStrike
   // (games/skystrike.js) takes "you:*" while its Valley game is open — a smooth original body.
   function makeCharacter(key, onReady, spec, skipSky){
+    var XO = HQV.hqExo, xl = !skipSky && XO && THREE && XO.wanted(key);              // [exo] a suit (games/hqexo.js): built at once
+    if(xl){ var xc = XO.build(THREE, xl); xc.o.scale.setScalar(xc.base); onReady(xc); return; }
     var SS = HQV.skystrike;
     if(!skipSky && SS && SS.wanted && SS.build && SS.wanted(key)){
       SS.build().then(function(ch){
@@ -2121,6 +2123,177 @@ function mount(el, api){
     drvMount();                                                        // [3.12] its lights, damage (games/hqdrive.js)
     rideUiSync(true);
   }
+  /* ---------- [exo] HQ Exosuit (games/hqexo.js the body and the suit-up, hqexoride.js the flight, hqexohud.js the visor) ----------
+     U summons the suit anywhere in the City and takes it off again; in the lobby, F on the Suit-Up Centre's plate suits you up
+     or down and F at its kiosk opens the customiser. The suit is your body (makeCharacter builds it for "you:*" while
+     HQV.hqExo.me.on, and for a peer whose presence carries `ex`). Suited in the City, Space takes off: EXO.fly is the flight,
+     outside `ride` (nothing else treats you as riding), and it ends when the sim lands. Getting into anything takes it off. */
+  var EXO = {S: null, old: null, nu: null, where: null, fly: null, black: 0, blackEl: null, hud: null, fx: null, fxs: null, shake: 0, land: 0};
+  var EXO_MODE = {hover: 3, cruise: 4, swim: 6};
+  function exoOk(){ return !!(HQV.hqExo && THREE && avatar); }
+  function exoBusy(){ return !!EXO.S; }
+  function exoSay(m){ if(api.announce) api.announce(m); }
+  function exoUp(where){
+    var XO = HQV.hqExo; if(!exoOk() || EXO.S || XO.me.on) return false;
+    if(ride || POOL.u || (inst.transitNet && inst.transitNet())){ exoSay("Get out first: no suiting up in a seat."); return false; }
+    XO.me.look = XO.load(); XO.me.on = true;
+    var ch = XO.build(THREE, XO.me.look); ch.o.scale.setScalar(ch.base); avatar.g.add(ch.o); setAnim(ch, "idle");
+    EXO.nu = ch; EXO.where = where; EXO.S = XO.seq(THREE, ch, XO.styleFor(XO.me.look.f, where));
+    walkTo = null; walkDoor = null; E.sfx("go");
+    return true;
+  }
+  function exoOff(now, msg){
+    var XO = HQV.hqExo; if(!exoOk() || !XO.me.on) return false;
+    if(EXO.S){ XO.seqEnd(EXO.S); exoSeqDone(); }
+    if(EXO.fly) exoLand();
+    var suit = avatar.ch && avatar.ch._exo ? avatar.ch : null, old = EXO.old; EXO.old = null; XO.me.on = false;
+    if(EXO.hud) EXO.hud.show(false);
+    if(old){ avatar.ch = null; putMe(old); }
+    else makeCharacter("you:" + (api.name || ""), function(ch){ if(!XO.me.on && (!avatar.ch || avatar.ch === suit)){ avatar.ch = null; putMe(ch); } }, api.character && api.character());
+    if(suit){
+      if(now || ride || POOL.u){ if(suit.o.parent) suit.o.parent.remove(suit.o); XO.dispose(suit); }
+      else { EXO.S = XO.seq(THREE, suit, XO.styleFor(suit._exo.look.f, EXO.where || "city"), {reverse: true}); EXO.nu = null; }
+    }
+    if(msg) exoSay(msg);
+    return true;
+  }
+  // a suit-up done (or skipped with Esc): your old body off, the suit on, a cut to black, the eyes and the visor on
+  function exoSeqDone(){
+    var XO = HQV.hqExo, S = EXO.S; EXO.S = null; if(!S) return;
+    if(XO.bayRef) XO.bayRef.busy = 0;
+    if(S.rev){ if(S.ch.o.parent) S.ch.o.parent.remove(S.ch.o); XO.dispose(S.ch); return; }
+    var nu = EXO.nu; EXO.nu = null; if(!nu || !XO.me.on) return;
+    var old = avatar.ch; if(old && old !== nu){ if(old.o.parent) old.o.parent.remove(old.o); EXO.old = old; }
+    avatar.ch = nu; if(nu.o.parent !== avatar.g) avatar.g.add(nu.o); setAnim(nu, "idle");
+    EXO.black = 6;
+    var H = HQV.hqExoHud;
+    if(H && !EXO.hud){ try { EXO.hud = H.create(el); } catch(e){ EXO.hud = null; } }
+    if(EXO.hud){ EXO.hud.show(true); EXO.hud.boot(); }
+    if(cur && cur.camModes) exoSay("Suited. Space takes off, U takes the suit off.");
+  }
+  function exoEnv(){
+    var pe = petEnv();
+    return {floor: pe.floor, water: function(x, z){ return pe.water(x, z) ? pe.waterY(x, z) : null; }};
+  }
+  // Space, suited and on foot in the City: a VTOL lift-off from where you stand
+  function exoTakeoff(){
+    var XO = HQV.hqExo, R = HQV.hqExoRide; if(!R || !XO.me.on || EXO.fly) return;
+    var F = XO.FRAMES[XO.me.look.f];
+    EXO.fly = {st: R.newState(F.id, avatar.x, avatar.g.position.y, avatar.z, avatar.yaw + PI), cam: F.h > 1.2 ? "exobig" : "exo"};
+    EXO.land = 0; walkTo = null; walkDoor = null; avatar.airborne = false; avatar.vy = 0; movedHere = true;
+    E.sfx("go");
+    exoSay("Flying: W / S speed, A / D turn, Space / Shift up and down, hold X to boost. Come down slow to land.");
+  }
+  function exoLand(){
+    var fl = EXO.fly; EXO.fly = null; if(!fl) return;
+    avatar.g.rotation.x = 0; avatar.g.rotation.z = 0; avatar.pitch = 0;
+    if(avatar.ch) avatar.ch._fly = null;
+    stopFeet(fl.st.y); avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    if(fl.st.mode !== "landed") settleY(0);
+  }
+  // the flight, in moveAvatar's place: the sim (fixed steps), then you where it says, banked and pitched (the hips' pose is the body's)
+  function exoMove(dt){
+    var R = HQV.hqExoRide, fl = EXO.fly, st = fl.st, gp = padNow();
+    var inp = {fwd: !!(keys.KeyW || keys.ArrowUp), back: !!(keys.KeyS || keys.ArrowDown), left: !!(keys.KeyA || keys.ArrowLeft), right: !!(keys.KeyD || keys.ArrowRight),
+               up: !!keys.Space, down: !!(keys.ShiftLeft || keys.ShiftRight), boost: !!keys.KeyX};
+    if(gp){ if(gp.thr > 0.2) inp.fwd = true; if(gp.thr < -0.2) inp.back = true; if(gp.x < -0.3) inp.left = true; if(gp.x > 0.3) inp.right = true; if(gp.hand) inp.up = true; if(gp.slide) inp.down = true; }
+    walkTo = null; walkDoor = null;
+    var yaw0 = avatar.yaw;
+    R.step(st, dt, inp, exoEnv());
+    avatar.x = st.x; avatar.z = st.z; avatar.yaw = wrapPi(st.yaw - PI); avatar.hy = st.y; avatar.hyV = 0;
+    avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt);
+    avatar.speed = st.speed; avatar.travelYaw = st.speed > 0.5 ? avatar.yaw : null; avatar.pitch = st.pitch || 0;
+    keyMove = st.mode !== "landed" || inp.fwd || inp.back; keyRun = false; movedHere = true;
+    avatar.g.position.set(avatar.x, avatar.hy, avatar.z);
+    avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = st.mode === "cruise" ? -(st.pitch || 0)*0.5 : 0; avatar.g.rotation.z = st.mode === "landed" ? 0 : (st.roll || 0);
+    if(avatar.ch) avatar.ch._fly = st.mode === "landed" ? null : {mode: st.mode, speed: st.speed, boost: !!st.boosting};
+    view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
+    var still = st.mode === "landed" && !inp.up && !inp.fwd && !inp.back;
+    EXO.land = still ? EXO.land + dt : 0;
+    if(EXO.land > 0.3) exoLand();
+  }
+  // before moveAvatar: no walking during a suit-up; Space suited in the City lifts off
+  function exoPre(){
+    var XO = HQV.hqExo; if(!XO) return;
+    if(EXO.S){ keys = {}; return; }
+    if(XO.me.on && !EXO.fly && !ride && !POOL.u && keys.Space && cur && cur.camModes && avatar && !avatar.airborne) exoTakeoff();
+    if(EXO.fly && !(cur && cur.camModes)) exoLand();
+  }
+  function exoFx(p, style){
+    if(E.calm() || !HQV.hqVfx || !cur || !cur.scene) return;
+    if(!EXO.fx){ try { EXO.fx = HQV.hqVfx.create(THREE, cur.scene); } catch(e){ EXO.fx = null; return; } }
+    if(EXO.fx.group && EXO.fx.group.parent !== cur.scene) cur.scene.add(EXO.fx.group);
+    var w = new THREE.Vector3(p.x, p.y, p.z); if(avatar.ch && avatar.ch.o) avatar.g.localToWorld(w);
+    EXO.fxs = {x: w.x, y: style === "drop" ? avatar.g.position.y : w.y - 0.3, z: w.z, yaw: 0, back: 0, w: style === "drop" ? 1.6 : 0.3, speed: 0,
+               flame: style === "drop" ? 0 : 0.6, smoke: style === "drop" ? 1 : 0.35, t: style === "drop" ? 0.5 : 0.12};
+  }
+  // after placeCam: the suit-up's own clock, sparks / steam / dust, a shake, the cut to black, peers' flight poses, the visor
+  function exoFrame(dt, t){
+    var XO = HQV.hqExo; if(!XO || !avatar) return;
+    if(EXO.S){
+      var r = XO.seqStep(EXO.S, dt);
+      if(XO.bayRef) XO.bayRef.busy = EXO.where === "bay" && EXO.S && EXO.S.style === "gantry" && !EXO.S.rev ? Math.max(0.001, r.k) : 0;
+      if(r.lock) exoFx(r.lock, EXO.S.style);
+      if(r.shake) EXO.shake = Math.max(EXO.shake, r.shake);
+      if(r.done) exoSeqDone();
+    }
+    if(EXO.fx){ var s = EXO.fxs; if(s){ s.t -= dt; s.yaw += 2.3; s.calm = E.calm(); if(s.t <= 0){ s.flame = 0; s.smoke = 0; } } EXO.fx.step(dt, s || {calm: true}); if(s && s.t <= -3) EXO.fxs = null; }
+    if(EXO.shake > 0.003){ var cm = curCam(); if(!E.calm()){ cm.position.x += (Math.random() - 0.5)*EXO.shake; cm.position.y += (Math.random() - 0.5)*EXO.shake; } EXO.shake *= Math.exp(-dt*7); }
+    if(EXO.black > 0 || EXO.blackEl){
+      if(!EXO.blackEl){ EXO.blackEl = document.createElement("div"); EXO.blackEl.style.cssText = "position:absolute;inset:0;background:#000;z-index:6;pointer-events:none"; el.appendChild(EXO.blackEl); }
+      EXO.blackEl.hidden = !(EXO.black > 0); if(EXO.black > 0) EXO.black--;
+    }
+    if(XO.me.on && !EXO.S && ((ride && ride.kind) || POOL.u || (inst.transitNet && inst.transitNet()))) exoOff(true, "Suit off: you can't ride or drive in a suit.");
+    for(var u in peers){ var P = peers[u], d = P.ch && P.ch._exo ? XO.decode(P.ex) : null;
+      if(P.ch && P.ch._exo) P.ch._fly = d && d.m >= 3 ? {mode: d.m === 6 ? "swim" : d.m === 3 ? "hover" : "cruise", speed: d.m >= 4 ? 30 : 0, boost: d.m === 5} : null; }
+    if(EXO.hud && XO.me.on && !EXO.S && cur && cur.camModes){
+      var st = EXO.fly ? EXO.fly.st : {frame: XO.FRAMES[XO.me.look.f].id, x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw + PI, pitch: 0, roll: 0,
+                                       speed: Math.abs(avatar.speed || 0), vs: 0, mode: "landed", boost: 1, boosting: false, agl: 0};
+      var tg = []; for(var k in peers){ var Q = peers[k]; if(Q.g.parent === cur.scene && Q.x != null) tg.push({x: Q.g.position.x, y: Q.g.position.y + 1.2, z: Q.g.position.z, label: (Q.n || "VISITOR").toUpperCase()}); }
+      EXO.hud.show(true); EXO.hud.draw(st, curCam(), tg.slice(0, 12), st.frame, XO.hex(XO.GLOWS[XO.me.look.g][1]));
+    } else if(EXO.hud) EXO.hud.show(false);
+  }
+  // U (on foot, City: summon / off; anywhere suited: off), F at the Centre (lobby w.use calls exoBay), the customiser's keys,
+  // Esc skips a suit-up, X held while flying (boost)
+  function exoKey(e){
+    var XO = HQV.hqExo; if(!XO || !inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return false;
+    var down = e.type === "keydown";
+    if(XO.panelOpen()){ keys = {}; if(down && e.key === "Escape") XO.panelClose(); if(!MOVE_KEYS[e.code] && e.key !== "Escape") return false; e.preventDefault(); e.stopPropagation(); return true; }
+    if(EXO.S && e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); if(down){ XO.seqEnd(EXO.S); exoSeqDone(); } return true; }
+    if(EXO.fly && e.code === "KeyX"){ e.preventDefault(); e.stopPropagation(); keys.KeyX = down; return true; }
+    // [exo] F suited in the City (nothing to use here): the palm repulsor, fired down the grenade path (its hits, damage,
+    // knockback and where it is allowed: gnHere / gnCan), with a flash at the palm
+    if(e.code === "KeyF" && XO.me.on && !EXO.S && gnHere() && !(cur.prompt && cur.prompt({x: avatar.x, z: avatar.z}))){
+      e.preventDefault(); e.stopPropagation();
+      if(down && !e.repeat){ var o0 = GN.out; GN.out = true; var fired = gnFire(); GN.out = o0;
+        if(fired !== false) exoFx({x: 0.35, y: 1.1, z: 0.3}, "summon"); }
+      return true;
+    }
+    if(e.code !== "KeyU" || !down || e.repeat) return false;
+    if(XO.me.on){ e.preventDefault(); e.stopPropagation(); exoOff(false); return true; }
+    if(PK && PK.near) return false;                                  // a pet within reach: U pets it (games/hqpets.js)
+    if(!(cur && cur.camModes)){ if(cur === worlds.lobby){ e.preventDefault(); exoSay("Suit up at the Suit-Up Centre (F on its plate), or press U out in the City."); return true; } return false; }
+    e.preventDefault(); e.stopPropagation(); exoUp("city"); return true;
+  }
+  ctx.exoBay = function(what){
+    var XO = HQV.hqExo; if(!exoOk()) return false;
+    if(what === "kiosk"){ XO.panel(XO.me.look, function(o){ XO.me.look = o; if(XO.me.on && !EXO.S) exoRedress(); }, function(o){ XO.me.look = o; if(!XO.me.on) exoUp("bay"); else exoRedress(); }); return true; }
+    if(XO.me.on) exoOff(false); else exoUp("bay");
+    return true;
+  };
+  // a new frame or paint while suited: the new suit on at once
+  function exoRedress(){
+    var XO = HQV.hqExo, suit = avatar.ch; if(!suit || !suit._exo) return;
+    var ch = XO.build(THREE, XO.me.look); ch.o.scale.setScalar(ch.base);
+    if(suit.o.parent) suit.o.parent.remove(suit.o); XO.dispose(suit); avatar.ch = null; putMe(ch);
+  }
+  inst.exoNet = function(){
+    var XO = HQV.hqExo; if(!XO || !avatar || !(XO.me.on || EXO.S)) return null;
+    if(EXO.S && EXO.S.rev) return null;
+    var st = EXO.fly && EXO.fly.st;
+    return XO.encode(XO.me.look, EXO.S ? 1 : !st || st.mode === "landed" ? 2 : st.boosting ? 5 : EXO_MODE[st.mode] || 3);
+  };
+  inst.exoState = function(){ var XO = HQV.hqExo; return XO ? {on: XO.me.on, look: XO.me.look, seq: EXO.S ? EXO.S.style : null, fly: EXO.fly ? EXO.fly.st : null, net: inst.exoNet()} : null; };   // tools
   /* ---------- [3.14] riding your pet (games/hqpetride.js) ----------
      A grown dragon, the sea serpent or a big dinosaur out with you (the pets runtime offers "E  Ride <name>" beside it,
      PK.rideable). Only in the 3D City (a world with camModes): a dragon is a helicopter-shaped ride (ride.heli is its
@@ -2884,7 +3057,7 @@ function mount(el, api){
   var DRV = {wx: null, manual: null, lit: false, fx: null, key: null, dmg: null, grip: null, gripSaid: null, jHeld: false,
              C: null, cvAt: -9, el: null, sig: "", ring: null, routeSig: "", peerLit: false, base: null};
   function Drv(){ return HQV.hqDrive || null; }
-  function drvGround(){ return !!ride && !ride.boat && !ride.heli && !ride.plane && !ride.pet && ride.kind !== "skate"; }
+  function drvGround(){ return !!ride && !ride.boat && !ride.heli && !ride.plane && !ride.pet && ride.kind !== "skate" && !EXO.fly; }
   // the weather here (games/hqweather.js through the City), eased over a few seconds; indoors and elsewhere clear
   function drvWxStep(dt){
     var D = Drv(); if(!D) return;
@@ -4072,6 +4245,7 @@ function mount(el, api){
   var SIT_H = 0.45;            // [3.15] m: the "sit" clip's seat height over the feet (a carry's y is the seat's top)
   function stopFeet(y){ avatar.speed = 0; avatar.sv = 0; avatar.rate = 0; avatar.rv = 0; avatar.travelYaw = null; avatar.hy = y != null && isFinite(y) ? +y : -1e9; }
   function moveAvatar(dt){
+    if(EXO.fly){ exoMove(dt); return; }                                // [exo] flying your suit
     if(ride){ if(ride.tank) tankMove(dt); else if(ride.pet && !ride.heli) petGroundMove(dt); else if(ride.kind === "skate") skateMove(dt); else if(ride.boat) boatMove(dt); else if(ride.heli) heliMove(dt); else if(ride.plane) planeMove(dt); else rideMove(dt); return; }
     if(POOL.u && poolMove()) return;                                   // [3.15] a passenger: where their vehicle takes you
     // on a bus or a tram (games/hqcity3d.js w.carry): the vehicle's seat, its timetable's pose. [3.15] carry.anim: "sit"
@@ -4360,7 +4534,7 @@ function mount(el, api){
     var st = ride && ride.sk && ride.sk.st;
     return {x: avatar.x, y: avatar.g.position.y, z: avatar.z, yaw: avatar.yaw,
             pitch: ride ? ride.pitch || 0 : (avatar.pitch || 0), roll: ride ? ride.roll || 0 : 0,
-            speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.base || ride.kind : null,
+            speed: ride ? Math.abs(st ? st.speed || 0 : ride.speed) : Math.abs(avatar.speed || 0), vehicle: ride ? ride.base || ride.kind : EXO.fly ? EXO.fly.cam : null,
             size: ride && ride.V && ride.V.size || 1,
             lean: ride && ride.lean ? ride.lean.rotation.z : 0, moving: !!keyMove,
             travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0};
@@ -5707,6 +5881,7 @@ function mount(el, api){
       else if(e.type === "keyup") cTap = 0;
     }
     if(e.type === "keydown" && inst.running && rigOn() && !typing(e.target)) noteInput();
+    if(exoKey(e)) return;                                              // [exo] U suit, the customiser, Esc skips a suit-up, X boost
     if(petsKey(e)) return;                                             // [pets 3.14] B ball, U pet, O trick, E lobby
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
        && (ride || POOL.u || POOL.near || nearBike() >= 0 || (rigOn() && rig.mode === "fp") || (cur && cur.use))){ if(useKey()) e.preventDefault(); return; }
@@ -5756,6 +5931,7 @@ function mount(el, api){
     // the keys drive the camera (rigFrame), not you
     var kb = keys, kp = withPad();
     keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
+    exoPre();                                                          // [exo] a suit-up holds you; Space suited lifts off
     moveAvatar(dt);
     callStep(dt);                                                      // a vehicle you called, on its way
     motionStep(dt);
@@ -5779,6 +5955,7 @@ function mount(el, api){
     garageCam();                                                       // [3.33] Move garage: your lot from above
     var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
+    exoFrame(dt, t);                                                   // [exo] the suit-up, its effects, the visor
     if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());   // [sound] the ears: this frame's camera (earAt), your reach
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
@@ -6016,7 +6193,8 @@ function mount(el, api){
         var tg = label(short(p.n || "Visitor", 14), frameHex(p.f) || HEX.green, 0.5); tg.position.y = 2.3; P.g.add(tg);
       }
       // Their character: made on arrival, and made again when they change it (`c`, the "look" capability).
-      var cs = Array.isArray(p.c) ? p.c.join(".") : "";
+      var cs = (Array.isArray(p.c) ? p.c.join(".") : "") + (HQV.hqExo && HQV.hqExo.peer(p.u, p.ex) ? HQV.hqExo.sig(HQV.hqExo.decode(p.ex)) : "");   // [exo] `ex`: their suit
+      P.ex = Array.isArray(p.ex) ? p.ex : null;
       if(P.csig !== cs){
         P.csig = cs;
         makeCharacter("peer:" + p.u, function(ch){

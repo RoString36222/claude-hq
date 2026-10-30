@@ -3485,7 +3485,7 @@ HQV.hqWorlds.city3d = function(c, w){
     snap: function(x, z){
       if(!W || !HQV.hqnav) return null;
       var p = HQV.hqnav.snap(navGraph(), x, z); if(!p) return null;
-      var D = edgeDir(p.ei, p.x, p.z);
+      var D = p.ei >= 0 ? edgeDir(p.ei, p.x, p.z) : {ux: 0, uz: 1, half: 3.5};   // (an airport extra road: no W edge)
       return {x: p.x, z: p.z, ux: D.ux, uz: D.uz, half: D.half, d: p.d};
     },
     route: function(from, to){ return W && HQV.hqnav ? HQV.hqnav.route(navGraph(), from, to, "drive") : null; },
@@ -3494,7 +3494,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(!W || !HQV.hqnav) return [];
       var G = navGraph(), out = [];
       for(var k = 0; k < G.M; k++){
-        var e = W.edges[G.keep[k]]; if(e.cls === "highway" || e.bridge) continue;
+        var e = G.E[k]; if(!e || G.keep[k] < 0 || e.cls === "highway" || e.bridge) continue;   // (not the airport's extra roads)
         var P = G.XZ[k], C = G.CUM[k], last = -1e9;
         for(var i = 0; i < P.length; i += 2){
           if(C[i/2] - last < 25) continue;

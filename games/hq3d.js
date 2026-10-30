@@ -2261,6 +2261,14 @@ function mount(el, api){
     if(XO.panelOpen()){ keys = {}; if(down && e.key === "Escape") XO.panelClose(); if(!MOVE_KEYS[e.code] && e.key !== "Escape") return false; e.preventDefault(); e.stopPropagation(); return true; }
     if(EXO.S && e.key === "Escape"){ e.preventDefault(); e.stopPropagation(); if(down){ XO.seqEnd(EXO.S); exoSeqDone(); } return true; }
     if(EXO.fly && e.code === "KeyX"){ e.preventDefault(); e.stopPropagation(); keys.KeyX = down; return true; }
+    // [exo] F suited in the City (nothing to use here): the palm repulsor, fired down the grenade path (its hits, damage,
+    // knockback and where it is allowed: gnHere / gnCan), with a flash at the palm
+    if(e.code === "KeyF" && XO.me.on && !EXO.S && gnHere() && !(cur.prompt && cur.prompt({x: avatar.x, z: avatar.z}))){
+      e.preventDefault(); e.stopPropagation();
+      if(down && !e.repeat){ var o0 = GN.out; GN.out = true; var fired = gnFire(); GN.out = o0;
+        if(fired !== false) exoFx({x: 0.35, y: 1.1, z: 0.3}, "summon"); }
+      return true;
+    }
     if(e.code !== "KeyU" || !down || e.repeat) return false;
     if(XO.me.on){ e.preventDefault(); e.stopPropagation(); exoOff(false); return true; }
     if(PK && PK.near) return false;                                  // a pet within reach: U pets it (games/hqpets.js)

@@ -118,6 +118,36 @@ cat.vehicles.filter(v => String(v['class']).split('.')[0] !== 'bike').forEach(v 
   const kind = v.sound || 'v8', real = P.engineFor ? P.engineFor(v.spec, 'car', kind) : null;
   [null, 'sport', 'quad', 'titanium'].forEach(ex => { const d = E.shaperDrive(kind, E.engineProfile(kind, ex, real)); out.drive.push([v.id, ex, d.peak, d.peak0, d.subIn, d.subClean]); });
 });
+// [3.38] the Koenigseggs' own notes: the tone's new fields
+{
+  const ko = id => P.engineFor(cat.vehicles.find(v => v.id === id).spec, 'car', 'v8tt');
+  const prof = {}; ['koenigsegg-jesko-absolut', 'koenigsegg-agera-rs', 'koenigsegg-one-1', 'koenigsegg-regera'].forEach(id => {
+    const Q = E.engineProfile('v8tt', null, ko(id)); prof[id] = {sub: Q.sub, cut: Q.cut, gain: Q.gain, hKey: Q.hKey || null, h: Q.h,
+      spool: Q.spool, flutter: Q.flutter, bang: Q.bang, hybrid: Q.hybrid || 0, red: Q.red, shiftS: Q.shiftS || null}; });
+  out.ko = prof;
+  const posV = g1 => gains.slice(g1).reduce((n, p) => n + p.ev.filter(e => e[0] === 'V' && e[1] > 0).length, 0);
+  const base = {idle: 950, red: 8250, limit: 8250, cyl: 8};
+  // a lift off boost: a wastegate's flutter is a train of bursts, a blow-off valve one falling pssh (no crackle here)
+  function lift(tone){ const g1 = gains.length, e = E.engineSound('v8tt', null, Object.assign({}, base, {tone}));
+    for (let i = 0; i < 120; i++){ now += 1/60; e.set(6500, {thr: 1, gear: 5}); } const n0 = posV(g1);
+    for (let i = 0; i < 6; i++){ now += 1/60; e.set(6400, {thr: 0, gear: 5}); } const n = posV(g1) - n0; e.stop(); return n; }
+  out.flutter = [lift({whistle: 0.6, crackle: 0, flutter: 1}), lift({whistle: 0.6, crackle: 0, flutter: 0})];
+  // an upshift: the cannon bang (a positive burst) and the cut's depth by the box (a seamless LST barely dips)
+  function upshift(tone, shift){ const g1 = gains.length, e = E.engineSound('v8tt', null, Object.assign({}, base, {tone, shift}));
+    for (let i = 0; i < 30; i++){ now += 1/60; e.set(6000, {thr: 1, gear: 3}); } const n0 = posV(g1);
+    now += 1/60; e.set(4700, {thr: 1, gear: 4}); const bursts = posV(g1) - n0;
+    const dip = [0.04, 0.3, 0.7].filter(c => gains.slice(g1).some(p => p.ev.some(x => x[0] === 'T' && x[2] >= now - 1e-9 && x[1] === c)));
+    e.stop(); return {bursts, dip}; }
+  out.bang = [upshift({crackle: 0, bang: 1}, 0.1), upshift({crackle: 0, bang: 0}, 0.1), upshift({crackle: 0, bang: 0}, 0.025)];
+  // a hybrid: the motors' whine rides the road speed, and the engine is hushed while it creeps
+  { const o1 = oscs.length, g1 = gains.length, e = E.engineSound('v8tt', null, Object.assign({}, base, {tone: {hybrid: 1}}));
+    const n = oscs.length - o1, outG = gains[g1];
+    for (let i = 0; i < 60; i++){ now += 1/60; e.set(2250, {thr: 0.2, speed: 4}); } const slow = outG.ev[outG.ev.length - 2][1];
+    const whine = Math.max(...oscs.slice(o1).map(o => lastV(o.frequency)).filter(f => f > 150 && f < 200));
+    for (let i = 0; i < 60; i++){ now += 1/60; e.set(2250, {thr: 0.2, speed: 30}); } const fast = outG.ev[outG.ev.length - 2][1];
+    e.stop(); const o2 = oscs.length; E.engineSound('v8tt', null, Object.assign({}, base, {tone: {}})).stop();
+    out.hybrid = {extra: n - (oscs.length - o2), slow, fast, whine}; }
+}
 console.log(JSON.stringify(out));
 """
 
@@ -220,6 +250,34 @@ class EngineSound(unittest.TestCase):
         self.assertGreater(o["jetFull"]["layers"], o["jetIdle"]["layers"]*1.5)   # the roar grows with the thrust
         with open(os.path.join(ROOT, "games", "hqplane.js"), encoding="utf-8") as f:
             self.assertEqual(f.read().count('eng: "jet"'), 2)            # the narrow-body and the regional jet
+
+    def test_koenigseggs_sound_their_own(self):
+        k = self.o["ko"]
+        j, a, o1, r = (k["koenigsegg-" + n] for n in ("jesko-absolut", "agera-rs", "one-1", "regera"))
+        # the Jesko's flat-plane crank: no half-order burble, a brighter wave, the low-pass far up; the 8,500 limit
+        self.assertLess(j["sub"], a["sub"]*0.2)
+        self.assertIsNotNone(j["hKey"]); self.assertIsNone(a["hKey"])
+        self.assertGreater(sum(j["h"][3:]), sum(a["h"][3:])*1.4)
+        self.assertGreater(j["cut"][1], max(a["cut"][1], o1["cut"][1], r["cut"][1])*1.4)
+        self.assertEqual(j["red"], 8500); self.assertEqual(a["red"], 8250)
+        self.assertEqual(j["shiftS"], 0.025)
+        self.assertEqual(j["spool"], 1)                                  # the air tank's anti-lag
+        # the Agera's cannon on the upshift, the One:1 the loudest (Spa's 103 dB), the Regera the hybrid with a flutter
+        self.assertGreater(a["bang"], max(j["bang"], r["bang"]))
+        self.assertGreater(o1["gain"], max(j["gain"], a["gain"], r["gain"]))
+        self.assertEqual(r["hybrid"], 1); self.assertEqual(r["flutter"], 1); self.assertEqual(o1["flutter"], 0)
+        sig = {n: (round(v["sub"], 3), tuple(v["cut"]), round(v["gain"], 4), v["flutter"], v["bang"]) for n, v in k.items()}
+        self.assertEqual(len(set(sig.values())), 4, "four different notes")
+
+    def test_flutter_bang_seamless_and_hybrid(self):
+        f, b, h = self.o["flutter"], self.o["bang"], self.o["hybrid"]
+        self.assertGreaterEqual(f[0], 6, "a wastegate flutter: a train of bursts"); self.assertEqual(f[1], 0, "a blow-off: one pssh")
+        self.assertGreaterEqual(b[0]["bursts"], 1); self.assertEqual(b[1]["bursts"], 0)
+        self.assertEqual(b[1]["dip"], [0.3])                                   # a 100 ms box: the usual cut
+        self.assertEqual(b[2]["dip"], [0.7])                                   # the LST: the note barely dips
+        self.assertEqual(h["extra"], 2)                                        # the whine's two oscillators, made once
+        self.assertAlmostEqual(h["whine"], 43.2*4, delta=3)
+        self.assertLess(h["slow"], h["fast"]*0.6, "creeping on the motors: the engine hushed")
 
     def test_planes_get_a_prop(self):
         with open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8") as f:

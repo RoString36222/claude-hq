@@ -14,7 +14,9 @@
  *   engineFor(spec, kind, voice, gears) -> E   its real revs and gearing (spec.engine, researched per vehicle; the voice's
  *                                     typical revs where a figure is missing): {idle, red, limit, k (rpm per m/s in each
  *                                     gear, from the gear ratios, primary and final drive and the rear tyre; else from
- *                                     `gears`), shiftUp, launch, electric, motorMax, cyl, tone} (tone: the exhaust's
+ *                                     `gears`), shiftUp, launch, electric, motorMax, cyl, tone, and where researched [3.38]: shift (s,
+ *                                     the box's own upshift), upod (a kickdown skips gears), coupling (rpm: a slipping hydraulic
+ *                                     coupling ahead of one fixed reduction, the Regera's), launchHold} (tone: the exhaust's
  *                                     depth, rasp, crackle, induction, whistle, 0..1, for games/engine.js)
  *   tyreCirc("190/55 ZR17") -> m       a tyre's rolling circumference (3% squat under load)
  *   gearState(E) -> G / gearStep(G, inp, E, dt) -> out   the gearbox and clutch, per frame (games/hq3d.js drives on it):
@@ -160,11 +162,20 @@ function engineFor(spec, kind, voice, gears){
   } else if(gears && gears.length) E.k = gears.map(function(v){ return Math.round(E.red/Math.max(1, v)*1000)/1000; });
   else E.k = null;
   E.shiftUp = Math.round(E.red*0.97);
-  E.launch = Math.round(E.idle + (E.red - E.idle)*(kind === "bike" ? 0.3 : 0.28));
+  // the launch rpm (spec.engine.launch: researched; held exactly by launch control), else a share of the range
+  if(num(R.launch, 0) > E.idle){ E.launch = Math.min(E.red, +R.launch); E.launchHold = true; }
+  else E.launch = Math.round(E.idle + (E.red - E.idle)*(kind === "bike" ? 0.3 : 0.28));
   // a quickshifter (spec.engine.qs, else: a sporty bike of 70 kW or more, or a car with a 7+ speed DCT / automatic):
   // upshifts under power with a 50 ms ignition cut, no clutch, no lift
   var gears = num(spec.gears, 0);
   E.qs = typeof R.qs === "boolean" ? R.qs : kind === "bike" ? num(spec.powerKw, 0) >= 70 : gears >= 7;
+  // the box's own upshift time (spec.engine.shiftMs: a Jesko's LST 25 ms, an Agera's single-input-shaft box 100 ms);
+  // UPOD (spec.engine.upod: a kickdown goes straight to the gear that pulls, not one at a time); a hydraulic coupling
+  // (spec.engine.coupling, rpm: the Regera's HydraCoup slips the engine up to that under throttle until its one fixed
+  // reduction catches up; its downshift paddle flares the revs instead of changing gear)
+  if(num(R.shiftMs, 0) > 0) E.shift = clamp(R.shiftMs/1000, 0.01, 0.5);
+  if(R.upod === true) E.upod = true;
+  if(num(R.coupling, 0) > E.idle) E.coupling = Math.min(E.red, +R.coupling);
   return E;
 }
 
@@ -266,6 +277,7 @@ function wheelieStep(W, inp, dt){
   if(W.p < 0 && v < 0.5){ W.pv = 3; }                                  // a stoppie never sticks at a standstill
   return {events: ev, p: W.p};
 }
+var FLARE_S = 0.35, FLARE_RPM = 1500;     // the Regera's paddle flare: 0.35 s, +1,500 rpm over the locked revs
 function gearState(E){ return {gear: 1, rpm: E && E.idle || 900, shiftT: 0, manual: false, clutchWas: false, launchT: 0, slip0: 0, held: false}; }
 function gearStep(G, inp, E, dt){
   inp = inp || {}; dt = Math.max(0, Math.min(0.1, +dt || 0));
@@ -282,7 +294,8 @@ function gearStep(G, inp, E, dt){
   G.shiftT = Math.max(0, G.shiftT - dt);
   var g = G.gear | 0;
   if(G.manual){
-    if(inp.up && g < n){ var qs = E.qs && thr > 0.4 && g > 0; g = g + 1; G.shiftT = qs ? 0.05 : 0.18; ev.push("up"); if(qs) ev.push("qs"); }
+    if(inp.up && g < n){ var qs = E.qs && thr > 0.4 && g > 0; g = g + 1; G.shiftT = E.shift ? (qs ? Math.min(0.05, E.shift) : E.shift) : qs ? 0.05 : 0.18; ev.push("up"); if(qs) ev.push("qs"); }
+    else if(inp.down && E.coupling && g === 1){ G.flareT = FLARE_S; ev.push("flare"); }   // KDD: no gear below, the coupling flares
     else if(inp.down){
       if(g > 1 && at(g - 1) > E.limit*0.99) ev.push("refused");            // it would over-rev: the box says no
       else if(g > 1){ g--; G.shiftT = 0.14; G.blipTo = at(g); ev.push("down"); }
@@ -299,10 +312,12 @@ function gearStep(G, inp, E, dt){
       if(tg > g && thr > 0.85 && inp.top > 0 && inp.top*K[g - 1] < E.shiftUp) tg = g;
       if(cur >= E.shiftUp && g < n) tg = g + 1;                   // never sit on the limiter, even off the throttle
       if(tg > g && (G.since >= 0.45 || cur >= E.shiftUp)){
-        var aq = E.qs && thr > 0.4; g++; G.shiftT = aq ? 0.05 : 0.25*M.shiftT; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
+        var aq = E.qs && thr > 0.4; g++; G.shiftT = E.shift ? (aq ? Math.min(0.05, E.shift) : E.shift)*M.shiftT : aq ? 0.05 : 0.25*M.shiftT; G.since = 0; ev.push("up"); if(aq) ev.push("qs");
       } else if(tg < g && (G.since >= (thr > 0.85 ? 0.12 : inp.brake ? 0.3 : 0.5))){
-        // never skips a gear: one at a time, each rev-matched
+        // never skips a gear: one at a time, each rev-matched (UPOD flat out: straight down to the lowest gear that
+        // still lands under the up point)
         var to = tg;
+        if(E.upod && thr > 0.85){ var SP = shiftPoints(E, thr, false, inp.mode), lim = Math.min(SP.up, SP.full)*0.95; while(to > 1 && at(to - 1) <= lim) to--; }
         g = to; G.shiftT = 0.18; G.since = 0; G.blipTo = at(g); ev.push("down");
       }
     }
@@ -315,7 +330,7 @@ function gearStep(G, inp, E, dt){
   if(hold){ free = true; out.launch = true; if(!G.held) ev.push("launch"); }
   if(free){
     // a downshift blips the revs up to the lower gear's (rev-matched) while the clutch is in for it
-    var want = hold ? Math.min(E.limit, E.launch + (E.red - E.launch)*0.35)
+    var want = hold ? (E.launchHold ? E.launch : Math.min(E.limit, E.launch + (E.red - E.launch)*0.35))
              : G.shiftT > 0 && G.blipTo ? Math.min(E.limit, G.blipTo*1.04) : E.idle + thr*(E.limit - E.idle);
     rpm += want > rpm ? Math.min(want - rpm, E.red*(G.blipTo ? 6 : 1.9)*dt) : -Math.min(rpm - want, E.red*1.2*dt);
     if(thr > 0.9 && !hold && rpm >= E.limit - 60){ rpm = E.limit - 220*((G.limPh = ((G.limPh || 0) + dt*24) % 1)); out.limiter = true; }
@@ -324,6 +339,10 @@ function gearStep(G, inp, E, dt){
     var wheel = Math.max(at(g), E.idle);
     // pulling away in 1st the clutch slips the revs up to the launch rpm under throttle
     if(g === 1 && v < 6) wheel = Math.max(wheel, E.idle + (E.launch - E.idle)*thr*(1 - v/6));
+    // a hydraulic coupling: the engine held at its slip rpm under throttle until the road speed carries it past; the
+    // downshift paddle's flare (a burst of slip: the revs jump, the road speed does not, the engine brakes harder)
+    if(E.coupling) wheel = Math.max(wheel, E.idle + (E.coupling - E.idle)*thr);
+    if(G.flareT > 0){ G.flareT = Math.max(0, G.flareT - dt); wheel = Math.min(E.limit - 100, wheel + FLARE_RPM*Math.min(1, G.flareT/FLARE_S*2)); }
     // let out with the revs well above the wheels at low speed: a launch, the tyres spinning
     var rel = (G.clutchWas || G.held) && G.rpm > wheel + 1500 && v < 12;
     if(rel){ G.launchT = 0.9; G.slip0 = clamp((G.rpm - wheel)/(E.red*0.55), 0.3, 1); ev.push("launch"); }
@@ -332,7 +351,7 @@ function gearStep(G, inp, E, dt){
     rpm += (wheel - rpm)*k;
     out.cap = E.limit/K[Math.max(0, g - 1)];
     if(at(g) >= E.limit - 40 && thr > 0.05){ rpm = E.limit - 220*((G.limPh = ((G.limPh || 0) + dt*24) % 1)); out.limiter = true; out.drive = 0; }
-    out.engineBrake = thr < 0.05 ? (0.5 + 3.2*clamp((rpm - E.idle)/(E.red - E.idle), 0, 1))*(G.manual ? 1.25 : 1) : 0;
+    out.engineBrake = thr < 0.05 ? (0.5 + 3.2*clamp((rpm - E.idle)/(E.red - E.idle), 0, 1))*(G.manual ? 1.25 : 1)*(G.flareT > 0 ? 1.6 : 1) : 0;
   }
   if(G.launchT > 0){
     G.launchT = Math.max(0, G.launchT - dt);

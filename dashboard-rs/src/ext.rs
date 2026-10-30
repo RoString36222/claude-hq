@@ -39,6 +39,7 @@ pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/skate", skate_board),
     ("/api/arena/weather", weather),
     ("/api/notch/status", crate::notch::get_status),
+    ("/api/mcdesk/pending", crate::mcdesk::get_pending), // [3.38] approve from the desk
     ("/api/mc/ops", crate::mcops::get_ops), // [3.38] Mission Control ops wall
 ];
 

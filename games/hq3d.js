@@ -1659,6 +1659,25 @@ function mount(el, api){
       streams.push({curve: curve, tube: tube, dots: dots, dir: st === "working" ? 1 : -1, speed: st === "working" ? 0.35 : 0.18, D: D});
     });
   }
+  // [3.38] approve from the desk (games/hqmcdesk.js): walking up to a crew member opens its panel
+  var mcPanel = null, mcPanelId = null, mcPanelEl = null, mcPanelAcc = 0;
+  var mcApi = {get: function(u){ return fetch(u, {cache: "no-store"}).then(function(r){ return r.json(); }); },
+               post: function(u, b){ return api.arenaPost ? api.arenaPost(u, b).then(function(r){ return r.j; }) : Promise.reject(new Error("no post")); }};
+  function mcPanelClose(){ if(mcPanel){ try { mcPanel.destroy(); } catch(e){} } mcPanel = null; mcPanelId = null; if(mcPanelEl) mcPanelEl.style.display = "none"; }
+  function mcPanelStep(dt){
+    mcPanelAcc += dt; if(mcPanelAcc < 0.3) return; mcPanelAcc = 0;
+    if(!HQV.hqMcDesk || !avatar || cur !== worlds.mission){ if(mcPanel) mcPanelClose(); return; }
+    var best = null, bd = 2.7;
+    for(var i = 0; i < desks.length; i++){ var D = desks[i], p = D.root.position; if(crewState(D.s) === "stale") continue;
+      var d = Math.hypot(avatar.x - p.x, avatar.z - p.z); if(d < bd){ bd = d; best = D; } }
+    if(!best){ if(mcPanel) mcPanelClose(); return; }
+    if(mcPanelId === best.id){ if(mcPanel && mcPanel.update) mcPanel.update(best.s); return; }
+    mcPanelClose();
+    if(!mcPanelEl){ mcPanelEl = document.createElement("div"); mcPanelEl.className = "hq-mcdesk";
+      mcPanelEl.style.cssText = "position:absolute;left:50%;bottom:84px;transform:translateX(-50%);z-index:5;max-width:min(440px,calc(100% - 32px))"; el.appendChild(mcPanelEl); }
+    mcPanelEl.style.display = "";
+    try { mcPanel = HQV.hqMcDesk.panel(mcPanelEl, best.s, mcApi); mcPanelId = best.id; } catch(e){ mcPanel = null; mcPanelId = best.id; }
+  }
   function applyFilter(){
     desks.forEach(function(D){
       var on = !filter || projectOf(D.s) === filter;
@@ -6025,6 +6044,7 @@ function mount(el, api){
     fxStep(t, dt); driveHudDraw(t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
     if(cur !== worlds.mission){
+      if(mcPanel) mcPanelClose();
       if(rigOn()){ qualityStep(ms); perfLog(ms); }
       if(cur.update){ if(cur.camModes) cur.update(t, dt, k, camInfo()); else cur.update(t, dt, k); }
       placeRideUi();
@@ -6033,6 +6053,7 @@ function mount(el, api){
       return;
     }
     acc.scr += dt; acc.wall += dt;
+    mcPanelStep(dt);                                                   // [3.38] the desk's approve panel
     if(acc.scr > 0.18){ acc.scr = 0; desks.forEach(function(D){ if(!filter || projectOf(D.s) === filter) drawScreen(D, t); }); drawLeds(); }
     if(acc.wall > 1){ acc.wall = 0; drawWall(t); }
     // the table

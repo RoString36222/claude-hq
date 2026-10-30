@@ -39,6 +39,7 @@ pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/skate", skate_board),
     ("/api/arena/weather", weather),
     ("/api/notch/status", crate::notch::get_status),
+    ("/api/mc/ops", crate::mcops::get_ops), // [3.38] Mission Control ops wall
 ];
 
 pub const POST: &[(&str, PostFn)] = &[
@@ -252,14 +253,14 @@ impl App {
         std::fs::rename(&tmp, path)
     }
 
-    fn gh_available(&self) -> bool {
+    pub(crate) fn gh_available(&self) -> bool {
         if let Some(b) = *self.ext.gh_which_hook.read().unwrap() {
             return b;
         }
         crate::actions::which("gh", &std::env::var("PATH").unwrap_or_default()).is_some()
     }
 
-    fn run_gh(&self, argv: &[String]) -> Option<(i32, String)> {
+    pub(crate) fn run_gh(&self, argv: &[String]) -> Option<(i32, String)> {
         if let Some(h) = self.ext.gh_hook.read().unwrap().clone() {
             return h(argv);
         }

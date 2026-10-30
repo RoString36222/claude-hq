@@ -153,6 +153,7 @@ pub struct App {
     pub music: Arc<crate::music::MusicState>,
     pub ext: crate::ext::ExtState,
     pub notch: crate::notch::NotchState,
+    pub mcops: crate::mcops::McOpsState,
     pub sprites: crate::sprite::SpriteCache,
     /// Replaces `claude agents --json` (tests).
     pub agents_hook: RwLock<Option<AgentsFn>>,
@@ -193,6 +194,7 @@ impl App {
             music: Arc::new(crate::music::MusicState::default()),
             ext: crate::ext::ExtState::default(),
             notch: crate::notch::NotchState::default(),
+            mcops: crate::mcops::McOpsState::default(),
             agents_hook: RwLock::new(None),
             restart_hook: RwLock::new(None),
             exe_hook: RwLock::new(None),

@@ -35,6 +35,8 @@ impl City {
     pub fn plan(seed: &str) -> Result<City, String> {
         let land = land::Land::new(seed)?;
         let mut space = space::Space::default();
+        // the water takes its level first: the boats on it, the bed under it
+        land.carve_water(&mut space);
         let airport = airport::place(&land, &mut space).ok_or("v5: no room for the airport")?;
         let (hub, port) = landuse::centre(&land, &airport);
         let rail = rail::plan(&land, hub, port, &airport, &mut space);

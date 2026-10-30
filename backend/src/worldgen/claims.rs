@@ -133,8 +133,8 @@ impl Airport {
     pub fn of(sites: &[Site]) -> Option<Airport> {
         let s = sites.iter().find(|s| s.kind == "airport")?;
         // City Gen v5: the claim is the planned footprint
-        if let (Some(_), Some(poly)) = (&s.runway, &s.poly) {
-            let poly: Vec<P> = poly.iter().map(|q| (q[0], q[1])).collect();
+        if let Some(r) = s.runway.as_ref().filter(|r| r.area.len() >= 3) {
+            let poly: Vec<P> = r.area.iter().map(|q| (q[0], q[1])).collect();
             let bbox = poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
             return Some(Airport { site: s.id.clone(), polys: vec![poly], corridor: Vec::new(), landside: 0, bbox });
         }

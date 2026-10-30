@@ -65,7 +65,7 @@ const BAY_RAMP_CM: i64 = 3_000;
 /// The river bed: a metre below the sea at the water's edge, falling this much (per
 /// mille) to this depth (cm) below the sea.
 const BED_PM: i64 = 300;
-const DEPTH_CM: i64 = 400;
+pub const DEPTH_CM: i64 = 400;
 /// The meander's noise cell (cm) along the course.
 const MEANDER_CM: i64 = 20_000;
 /// Samples of the course before it is resampled to its step, and the smoothing passes

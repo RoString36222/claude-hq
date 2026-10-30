@@ -21,6 +21,11 @@ height range); **no two boxes intersect**, ever. `v5/space.rs` holds them and an
 - A **building** is its box: its footprint by its height (and a basement's depth when it has one).
 - The **airport** takes its whole footprint from the ground up into the sky (runway, apron, terminal, approach
   surfaces as sloped boxes); the ground under it stays free for tunnels.
+- **Water** (the river, lakes, canals, the marina) takes its own level, carved first: from 3 m under its bed up to 6 m
+  over its surface, the boats' level. Nothing else is laid through it: a tunnel passes under the bed, a bridge's deck
+  over the boats.
+- The boxes are the generator's alone (its "is this free?"), never drawn: the airport's locked footprint is
+  `runway.area` on the airport site, read by the claims; the site itself is the terminal, as before.
 - A **road** or **rail** line carves a swept box along its centre line: its width, its clearance height, on the level
   it runs at; a level change carves the ramp between levels.
 
@@ -53,7 +58,7 @@ height range); **no two boxes intersect**, ever. `v5/space.rs` holds them and an
 
 ## Rules the validator holds (hard, on 50 seeds)
 
-- no two boxes intersect; every building reachable by road from every other; every station by road and on foot;
+- no two boxes intersect (the water's level among them); every building reachable by road from every other; every station by road and on foot;
 - industry at least 150 m from any home; every home within a walk of a station or a stop;
 - no road curve under its class's design radius, no corner on a road over 35 degrees where nothing else joins;
 - **no corner on a rail line, ever**; rail gradients within the line's limit;

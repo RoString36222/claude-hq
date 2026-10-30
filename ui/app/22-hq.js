@@ -21,13 +21,13 @@ function hqWebGL(){ try { return !!document.createElement("canvas").getContext("
 // landmarks and amusement park (hqspectacle), also before the City. Transport 3.18: the ride core, commuters, tramway,
 // coaches, metro and the underground, City Line and gondola, ferries, cabs and heli calling, the phone and its apps, and
 // hqtransit (the City's transport glue), also before the City; each one missing only takes its own feature out.
-var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","citylife","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
+var HQ_SCRIPTS = ["engine","avatar3d","hq3d","hqpets","hqpetride","hqlobby","hqcarlift","hqgaragemgr","hqbasementfx","hqbasement","hqexo","hqexoride","hqexohud","hqstyle","hqtower","hqroof","hqdecor","hqbase","hqskate","world","worldgeom","citylife","worldbuild","camrig","hqhud","hqcityparts","hqcity","hqmerge",
                   "hqcivic","npcsim","npcdraw","traffic","ocean","hqboat","hqheli","hqvehicles","hqvehiclephys","hqvehiclemodels","hqdrive","hqvfx","hqnetsmooth","hqshowroom","hqgarage", "hqdealer","hqtuning","hqgpvenue","hqcasinoui","hqcasino","hqcall","hqautopilot","hqtravel","hqvoyage","hqships","hqbridges","hqairfield","hqair","hqaircraft","hqplane","hqairport3d","hqairbldg","hqairground","hqairbase","hqnav","hqminimap","hqroutefx","hqnavui","hqrail","hqcarpark","hqweather","hqspectacle",
                   "hqride","hqcommute","hqtramway","hqcoach","hqmetro","hqunderground","hqcityrail","hqgondola","hqferries","hqcabs","hqhelicall","hqphone","hqphoneapps","hqphonecabs","hqphonecomms","hqgallery","hqtransit",
                   "hqstunts","hqgrenade","hqtank","cityevents3d","cityplay","playjobs","playheat","playraces","playfinds","playstreet","playcarjack","playarena","hqcity3d"];
 // The 3D City's own files: if one fails, the classic City still works (games/hq3d.js falls back to it);
 // a Cities part that fails only takes its own feature out of the 3D City.
-var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqgrenade:1, hqtank:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, citylife:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
+var HQ_SCRIPTS_3D = {hqpets:1, hqpetride:1, hqexo:1, hqexoride:1, hqexohud:1, hqgrenade:1, hqtank:1, hqcarlift:1, hqgaragemgr:1, hqbasementfx:1, hqbasement:1, world:1, worldgeom:1, citylife:1, worldbuild:1, camrig:1, hqhud:1, hqmerge:1, hqcity3d:1,
                      hqcivic:1, npcsim:1, npcdraw:1, traffic:1, ocean:1, hqboat:1, hqheli:1, hqvehicles:1, hqvehiclephys:1, hqvehiclemodels:1, hqdrive:1, hqvfx:1, hqnetsmooth:1, hqshowroom:1, hqgarage:1, hqdealer:1, hqtuning:1, hqgpvenue:1, hqcasinoui:1, hqcasino:1, hqcall:1, hqautopilot:1, hqtravel:1, hqvoyage:1, hqships:1, hqbridges:1, hqairfield:1, hqair:1, hqaircraft:1, hqplane:1, hqairport3d:1, hqairbldg:1, hqairground:1, hqairbase:1,
                      hqnav:1, hqminimap:1, hqroutefx:1, hqnavui:1, hqrail:1, hqcarpark:1, hqweather:1, hqspectacle:1, hqstunts:1,
                      hqride:1, hqcommute:1, hqtramway:1, hqcoach:1, hqmetro:1, hqunderground:1, hqcityrail:1, hqgondola:1, hqferries:1, hqcabs:1, hqhelicall:1, hqphone:1, hqphoneapps:1, hqphonecabs:1, hqphonecomms:1, hqgallery:1, hqtransit:1, cityevents3d:1, cityplay:1, playjobs:1, playheat:1, playraces:1, playfinds:1, playstreet:1, playcarjack:1, playarena:1};
@@ -666,7 +666,10 @@ function hqNetSend(){
     var pgOk = (pg.pi==null || PR.test(pg.pi)) && (pg.pj==null || PR.test(pg.pj)) && !(pg.pi && pg.pj) &&
       (pg.pq==null || (Array.isArray(pg.pq) && pg.pq.length>=1 && pg.pq.length<=12 && pg.pq.every(function(v){ return (v|0)===v && Math.abs(v)<=16777216; })));
     if(pgOk){ msg.pk=pg.pk; if(pg.pi) msg.pi=pg.pi; if(pg.pj) msg.pj=pg.pj; if(pg.pq) msg.pq=pg.pq.slice(); } }
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join(",")+","+msg.tk+","+msg.tv+","+[msg.pk,msg.pi,msg.pj,JSON.stringify(msg.pq||0)].join(","), now=Date.now();
+  // [exo] "exo" (games/hqexo.js): your suit while you wear it (ex: [frame, paint, finish, glow, mode]), five small numbers
+  var ex = hqNetCan("exo") && HQ3D.inst.exoNet ? HQ3D.inst.exoNet() : null;
+  if(Array.isArray(ex) && ex.length===5) msg.ex=ex.slice();
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.pb,msg.ps,msg.k,msg.y,msg.h,msg.p,msg.v,msg.vp,msg.bb,msg.bt,msg.ci,msg.cv,msg.cg,msg.vt,JSON.stringify(msg.pt||0),msg.vx,msg.vz,msg.yr,msg.rpm,msg.gl,JSON.stringify(msg.gn||0),JSON.stringify(msg.ta||0)].join(",")+","+msg.tk+","+msg.tv+","+[msg.pk,msg.pi,msg.pj,JSON.stringify(msg.pq||0)].join(",")+","+JSON.stringify(msg.ex||0), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}

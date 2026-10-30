@@ -3,6 +3,24 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.37.0 — HQ Exosuit.**
+  - **Six suit frames.** Sentinel (all-rounder), Strider (speed), Bulwark (a 1.45x giant), Abyss (swims and dives),
+    Stratos (no height cap) and Flux (nanite). Original designs on familiar armour types. Each is a human-proportioned
+    hero body rigged like SkyStrike's, merged per material: at most 4 draw calls and about 4.3-4.7k triangles.
+  - **Customiser.** Two-tone paint (9), finish (gloss, matte, chrome, carbon) and glow / HUD tint (5), all free, kept in
+    this browser (`hq3d.exo`).
+  - **Suit-Up Centre** in the lobby: a plate with gantry arms (**F**: suit up / off) and a kiosk (**F**: customise).
+    **U** summons the suit anywhere in the City and takes it off. Suit-up styles: gantry, summon, nanite flow and an
+    orbital drop with a camera shake and dust; each ends with a cut to black, the eyes lighting and the HUD booting.
+    **Esc** skips.
+  - **Flight** (games/hqexoride.js, a fixed-step sim): hover, VTOL take-off, banked cruise, boost (**X**), landing;
+    per-frame speed, acceleration and turn rate. A camrig `exo` preset with a helmet first-person view and a visor HUD
+    (games/hqexohud.js, one canvas, at most 30 fps).
+  - **Multiplayer:** the "exo" capability (still hq v4): presence `ex` = [frame, paint, finish, glow, mode], checked by
+    the Arena (backend/src/valley/hq.rs). Peers see your suit and its flight pose.
+  - Getting into a seat or vehicle takes the suit off.
+  - **Privacy / egress:** five small numbers in presence while suited; no new network calls. **Third-party assets:** none.
+
 - **3.36.7 — SkyStrike: wall crawl looks like a crawl, not flying.**
   - **Upright spider cling.** The wall pose used to tip the root ~40° nose-down (a dive silhouette), so crawling from
     the ground read as floating / swimming above the surface. Crawl is now an upright crouch on the face: chest into

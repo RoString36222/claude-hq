@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.37.0",
+      "title": "HQ Exosuit",
+      "body": "Six flyable suits: Sentinel, Strider, Bulwark, Abyss, Stratos and Flux.\n\nSuit up at the Suit-Up Centre in your lobby (F on the plate, F at the kiosk to pick the frame, paint, finish and glow), or press U anywhere in the City to summon it; U again takes it off. Suited, Space takes off: W/S speed, A/D turn, Space/Shift up and down, hold X to boost, and it lands when you come down slow. Abyss dives under the sea; Stratos has no height cap. A visor HUD shows your flight. Everything is free, and other players see your suit.\n\nPresence carries five small numbers while you wear it. No third-party assets."
+    },
+    {
       "version": "3.36.7",
       "title": "SkyStrike: wall crawl looks like a crawl, not flying",
       "body": "Upright spider cling on the face.\n\nThe wall pose used to tip the body nose-down like a dive, so crawling from the ground looked like floating or swimming above the surface. Crawl is now an upright crouch: chest into the wall, hips dropped, head up the climb, opposite limbs plant together. Idle is a static spider crouch; Shift runs with bigger, faster reaches. The body also pulls tighter onto the facade so the hands sit on it.\n\nNo new network calls - pose is local only. No third-party assets."

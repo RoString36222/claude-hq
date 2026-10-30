@@ -9,8 +9,12 @@ recent releases.
     and the repos your live sessions are in. It runs your own `gh` CLI with its existing login, never reads or sends a
     token, caches for 90 s, and stays quiet without `gh` or a network. Each session in `/api/sessions` now carries `git`
     (repo, GitHub slug, branch, read straight from `.git`, cached) and `lastTool` (its last tool target) for the desk
-    holograms. Later: the 3D ops wall, desk holograms, repo link lines and usage gauges in Mission Control, and approving
-    or messaging a session from its desk.
+    holograms. Later: the 3D ops wall, desk holograms, repo link lines and usage gauges in Mission Control, and messaging
+    a session from its desk.
+  - **Approve from the desk.** Walk up to a crew member in Mission Control: a panel shows its pending permission
+    request (tool and command) with Approve and Deny, answered over the HQ Notch relay's line protocol on its own
+    socket (HQNotch/desk.sock), behind the existing Host, CSRF token and Origin gates. Never auto-approves; without the
+    hook it shows how to install it. The message box is there but disabled (no supported way to reach a running session yet).
   - **Detailing in the shader.** Panel lines with rivets, worn bare edges, a glow-colour trim line and a decal per frame
     (Sentinel chevrons, Strider racing stripe, Bulwark hazard stripes, Abyss rivet rows, Stratos quilting, Flux liquid
     sheen), bumped through screen derivatives and fading with distance. Two slanted glowing eyes with a soft halo replace

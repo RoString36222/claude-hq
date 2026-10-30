@@ -253,7 +253,8 @@ fn cross(a: (f64, f64), b: (f64, f64), c: (f64, f64), d: (f64, f64)) -> Option<(
     let (qx, qz) = (c.0 - a.0, c.1 - a.1);
     let t = (qx * s.1 - qz * s.0) / den;
     let u = (qx * r.1 - qz * r.0) / den;
-    (t > 1e-6 && t < 1.0 - 1e-6 && u > 1e-6 && u < 1.0 - 1e-6).then_some((t, u))
+    // a crossing on a vertex counts once: on the segment it starts
+    (t > -1e-9 && t < 1.0 - 1e-9 && u > -1e-9 && u < 1.0 - 1e-9).then_some((t, u))
 }
 
 /// The foot of `q` on segment a-b: its parameter and distance.
@@ -400,6 +401,21 @@ pub fn graph(all: &[&Road]) -> Roads {
                 tram: None, bed: None, lines: 0,
             }.classed(Some(if art { "avenue" } else { "local" })));
         }
+    }
+    // a street that runs on from an avenue's end (a node of just the two) is a collector: one class at a time
+    let mut deg: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (k, e) in edges.iter().enumerate() {
+        deg.entry(e.a).or_default().push(k);
+        deg.entry(e.b).or_default().push(k);
+    }
+    let taper: Vec<usize> = deg.values().filter(|v| v.len() == 2).filter_map(|v| {
+        let (x, y) = (&edges[v[0]], &edges[v[1]]);
+        match (x.v4, y.v4) { (Some("avenue"), Some("local")) => Some(v[1]), (Some("local"), Some("avenue")) => Some(v[0]), _ => None }
+    }).collect();
+    let c = super::super::classes::class("collector").expect("a class");
+    for k in taper {
+        let e = edges[k].clone();
+        edges[k] = Edge { width: c.total_cm, walk: c.side_cm, ..e }.classed(Some("collector"));
     }
     // (a node only a dropped piece ended at) out, the ids packed
     let used: BTreeSet<u32> = edges.iter().flat_map(|e| [e.a, e.b]).collect();

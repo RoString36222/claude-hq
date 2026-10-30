@@ -3,6 +3,14 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.37.2 — The exosuit really flies.**
+  - **Flight poses.** Upright with palms down in a hover; near-horizontal, legs trailing and arms swept back in a
+    cruise; flat out with the leading arm forward on a boost; a crouch for take-off and landing. No walking in the air.
+  - **Thrusters.** Jets from both boot soles and both palms in your glow colour: short and flickering in a hover, long
+    in a cruise, shock diamonds on a boost. Two draw calls for all four; peers see them from their synced flight mode.
+  - **Turning.** Banks up to 60° (yaw rate x speed), critically damped easing, pitch with the climb, a little sideslip
+    at speed; double-tap A or D in a cruise for a barrel roll. The chase camera lags into turns, leans 30% of the bank
+    and pulls back with a wider view on a boost; first person keeps a steadier horizon.
 - **3.37.1 — The exosuit fits your own character.**
   - **Armour over your avatar.** The suit is no longer a separate tall body: a helmet and faceplate over your
     character's big head (its hat or halo hides under it), a chest plate and core, shoulder pads, gauntlets, shins and

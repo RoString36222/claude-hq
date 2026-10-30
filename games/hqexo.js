@@ -6,14 +6,15 @@
  * of the skin its bone carries, so it fits all six base models, and is skinned rigidly to that bone, merged per material
  * into at most 4 SkinnedMeshes on the avatar's own skeleton (paint as vertex colour, the finish on the material, the dark
  * undersuit, the glow, Abyss's glass dome): under 4k triangles (tests/test_hqexo.py). The avatar's clips keep running;
- * in the air pose() tilts and poses it after them.
+ * in the air pose() blends a flight pose over them (lean, bank, climb, crouch) and lights the thrusters (two more draws).
  *
  *   FRAMES / PAINTS / FINISHES / GLOWS   the roster (index for index what presence `ex` carries)
  *   clean(o) -> {f, p, fin, g}           any input to a valid look       load() / save(o)   this browser (hq3d.exo)
  *   encode(o, m) / decode(a)             presence `ex` = [frame, paint, finish, glow, mode] (backend/src/valley/hq.rs)
  *                                        mode 1 suiting up, 2 on foot, 3 hover, 4 cruise, 5 boost, 6 swim
  *   wear(THREE, ch, o) -> bool           the armour onto character ch (ch._exo; ch._fly = {mode, speed, boost} flies it)
- *   strip(ch)                            and off again; stats(ch) -> {draws, tris} of the armour
+ *   strip(ch)                            and off again; stats(ch) -> {draws, tris} of the armour, fx the thrusters' draws
+ *   pose(ch, t) / targets(fl) / bankFor(turn, speed)   the flight pose (after the clips), its pure targets, the bank
  *   styleFor(f, where)                   the suit-up style: "gantry" (the Suit-Up Centre), "summon", "flow", "drop"
  *   seq(THREE, ch, style, opts) -> S     the suit-up: one mesh per piece flying home onto its bone (reverse: off, and
  *                                        strip at the end); seqStep(S, dt) -> {done, eyes 0..1, shake, lock, black}
@@ -213,8 +214,8 @@ function wear(T, ch, o0){
   head.children.forEach(function(c){ if(!c.isBone && !c.userData.exo){ hid.push([c, c.visible]); c.visible = false; } });
   var rest = {}; NEED.forEach(function(n){ var bn = M.sk.bones[M.bi[n]]; rest[n] = {q: bn.quaternion.clone(), p: bn.position.clone()}; });
   var s0 = ch.base || ch.o.scale.x || 1;
-  ch._exo = {look: o, frame: F, mats: MT, meshes: meshes, spec: P, M: M, hid: hid, rest: rest, s0: s0, s1: s0*F.h, up: ch.update, tilt: false,
-             q: new T.Quaternion(), q2: new T.Quaternion(), e: new T.Euler(), v: new T.Vector3(), v2: new T.Vector3()};
+  ch._exo = {look: o, frame: F, mats: MT, meshes: meshes, spec: P, M: M, hid: hid, rest: rest, s0: s0, s1: s0*F.h, up: ch.update, tilt: false, T: T, fx: null,
+             q: new T.Quaternion(), q2: new T.Quaternion(), q3: new T.Quaternion(), e: new T.Euler(), v: new T.Vector3(), v2: new T.Vector3()};
   ch.base = s0*F.h; ch.o.scale.setScalar(ch.base);
   var up = ch._exo.up;
   ch.update = function(t){ if(up) up(t); pose(ch, t); };
@@ -226,6 +227,7 @@ function strip(ch){
   for(var k in X.mats) X.mats[k].dispose();
   X.hid.forEach(function(h){ h[0].visible = h[1]; });
   if(X.tilt) unTilt(X);
+  if(X.fx){ fxFree(X.fx); X.fx = null; }
   ch.update = X.up; if(!X.up) delete ch.update;
   ch.base = X.s0; ch.o.scale.setScalar(X.s0);
   ch._exo = null; ch._fly = null;
@@ -233,43 +235,225 @@ function strip(ch){
 function stats(ch){
   var tris = 0, draws = 0;
   (ch && ch._exo ? ch._exo.meshes : []).forEach(function(m){ if(m.visible){ draws++; tris += (m.geometry.index ? m.geometry.index.count : m.geometry.attributes.position.count)/3; } });
-  return {tris: tris, draws: draws};
+  var F = ch && ch._exo && ch._exo.fx, fx = F ? (F.fl.visible && F.fl.parent ? 1 : 0) + (F.pts.visible && F.pts.parent ? 1 : 0) : 0;
+  return {tris: tris, draws: draws, fx: fx};          // draws: the armour (at most 4); fx: the thrusters (at most 2)
 }
 
 /* ---------- flight poses, put on after the avatar's clips (on foot its own idle / walk / sprint / sit carry on) ----------
-   rest arms lie along +-X: a Z turn hangs them, an X turn swings them (+ forward); legs swing on X */
+   rest arms lie along +-X: a Z turn hangs them, an X turn swings them (+ forward); legs swing on X (+ back). ch._fly =
+   {mode "hover"|"cruise"|"swim"|"landed", speed m/s, boost, turn (yaw rate rad/s, + left), vs (m/s), agl (m), spin (rad)};
+   a peer's carries only what presence syncs (mode, a stand-in speed, boost) and what hq3d measures (turn, agl): a missing
+   turn or vs is measured here from the body's own movement. Every pose number is a critically damped spring toward
+   targets(fl) and the whole pose blends in and out over the clip (w), so take-off and landing never snap. */
+var BANK_MAX = 1.05, BANK_K = 0.03;       // rad (60 degrees); bank = yaw rate x speed x BANK_K
 function fin(v){ v = +v; return isFinite(v) ? v : 0; }
+function cl(v, a, b){ return v < a ? a : v > b ? b : v; }
 function bone(X, n){ return X.M.sk.bones[X.M.bi[n]]; }
-function turn(X, n, x, y, z){ var b = bone(X, n); X.e.set(x, y, z); b.quaternion.copy(X.rest[n].q).multiply(X.q.setFromEuler(X.e)); }
-function arm(X, n, s, swing, out){ turn(X, "arm-" + n, -swing, 0, -s*(PI/2 - out)); }
-function unTilt(X){ var r = bone(X, "root"); r.quaternion.copy(X.rest.root.q); r.position.copy(X.rest.root.p); X.tilt = false; }
+// the bank for a yaw rate (rad/s, + left) at a speed (m/s): + leans left, at most BANK_MAX either way
+function bankFor(turn, speed){ return cl(fin(turn)*(Math.max(0, fin(speed))*BANK_K + 0.08), -BANK_MAX, BANK_MAX); }
+// the pose's targets for a flight state (pure, for tests): tilt (rad, the body toward horizontal), crouch 0..1, cruise
+// and boost weights, the legs' swing and splay, the arms' swing and spread, lead (the leading arm forward), thrust 0..1.3
+function targets(fl, o){
+  o = o || {}; var m = fl ? fl.mode : null, sp = Math.max(0, fin(fl && fl.speed)), b = !!(fl && fl.boost) && m === "cruise";
+  var c = m === "cruise" ? 1 : 0, ks = cl((sp - 15)/45, 0, 1), agl = fl && fl.agl != null && isFinite(+fl.agl) ? Math.max(0, +fl.agl) : 10;
+  o.c = c; o.b = b ? 1 : 0; o.swim = m === "swim" ? 1 : 0;
+  o.crouch = m === "landed" ? 1 : m === "hover" ? cl(1 - agl/1.6, 0, 1)*0.85 : 0;
+  o.tilt = m === "swim" ? PI/2 : m === "cruise" ? (b ? 1.5 : 1.22 + 0.14*ks) : m === "hover" ? 0.06 + cl(sp/15, 0, 1)*0.25 : 0;
+  o.legX = c ? (b ? 0.04 : 0.08) : -0.08 - o.crouch*0.4;
+  o.splay = c ? 0.015 : 0.13;
+  o.armSw = c ? (b ? -0.3 : -0.22) : 0.12 + o.crouch*0.25;
+  o.armOut = c ? (b ? 0.05 : 0.13) : 0.4 + o.crouch*0.15;
+  o.lead = b ? 1 : 0;
+  o.thrust = m === "swim" || !m ? 0 : m === "landed" ? 0.2 : c ? (b ? 1.3 : 0.75 + 0.25*ks) : 0.45 + 0.1*cl(fin(fl.vs)/6, -1, 1);
+  return o;
+}
+// an exact critically damped step of S[k] (its rate S[kv]) toward goal at w rad/s
+function sd(S, k, kv, goal, w, dt){
+  var x = S[k], v = S[kv], c = x - goal, t = (v + w*c)*dt, e = Math.exp(-w*dt);
+  S[k] = goal + (c + t)*e; S[kv] = (v - w*t)*e;
+}
+var SPR = [["c", 3], ["b", 3.5], ["swim", 4], ["crouch", 6], ["tilt", 3.2], ["legX", 5], ["splay", 5], ["armSw", 4.5], ["armOut", 4.5],
+           ["lead", 3.5], ["thrust", 6], ["bank", 4.5], ["climb", 3], ["slip", 3], ["w", 7]];
+SPR.forEach(function(p){ p.push(p[0] + "v"); });          // its rate's key, made once
+function springs(){ var S = {}; SPR.forEach(function(p){ S[p[0]] = 0; S[p[2]] = 0; }); return S; }
+// a bone toward rest x Euler(x, y, z), by w of the way from where the clip left it
+function setB(X, n, x, y, z, w){ var b = bone(X, n); X.e.set(x, y, z); X.q.copy(X.rest[n].q).multiply(X.q3.setFromEuler(X.e)); b.quaternion.slerp(X.q, w); }
+function arm(X, n, s, swing, out, w){ setB(X, "arm-" + n, -swing, 0, -s*(PI/2 - out), w); }
+function unTilt(X){
+  NEED.forEach(function(n){ var b = bone(X, n); b.quaternion.copy(X.rest[n].q); b.position.copy(X.rest[n].p); });
+  X.tilt = false; X.t = null; X.s = null; if(X.fx) fxHide(X.fx);
+}
 function pose(ch, t){
   var X = ch && ch._exo; if(!X) return;
-  var fl = ch._fly, m = fl ? fl.mode : null;
-  if(m !== "hover" && m !== "cruise" && m !== "swim"){ if(X.tilt) unTilt(X); return; }
-  var E = HQV.engine, calm = !!(E && E.calm && E.calm()), t1 = fin(t), t0 = X.t, bob = calm ? 0 : Math.sin(t1*2.1);
-  X.t = t1; var dt = t0 == null ? 0 : Math.max(0, Math.min(0.1, t1 - t0)); if(calm) dt = 0;
-  var sa = X.M.arm.s, sl = X.M.leg.s;
-  NEED.forEach(function(n){ bone(X, n).quaternion.copy(X.rest[n].q); });
-  // pitched about the hips (the torso bone), not the feet, so the body lies along its flight
-  var k = m === "hover" ? 0 : m === "swim" ? 1 : Math.max(0.35, Math.min(1, fin(fl.speed)/30)), al = m === "swim" ? PI/2 : m === "hover" ? 0.08 : 1.3*k;
-  var r = bone(X, "root"), h = X.v.copy(bone(X, "torso").position).multiply(r.scale);
-  X.q2.setFromAxisAngle(X.v2.set(1, 0, 0), al).multiply(X.rest.root.q);
-  r.quaternion.copy(X.q2);
-  r.position.copy(X.rest.root.p).add(X.v2.copy(h).applyQuaternion(X.rest.root.q)).sub(h.applyQuaternion(X.q2));
+  var fl = ch._fly, m = fl ? fl.mode : null, on = m === "hover" || m === "cruise" || m === "swim" || m === "landed";
+  if(!on && !X.tilt) return;
+  var E = HQV.engine, calm = !!(E && E.calm && E.calm()), t1 = fin(t), t0 = X.t;
+  X.t = t1; var dt = t0 == null ? 0 : Math.max(0, Math.min(0.1, t1 - t0));
+  var S = X.s || (X.s = springs()), TG = targets(on ? fl : null, X.tg || (X.tg = {}));
+  // a turn rate or climb not given: measured from the body's world yaw and height (last frame's matrices: a frame late, smoothed)
+  var me = ch.o.matrixWorld.elements, wyaw = Math.atan2(me[8], me[10]), wy = me[13], mt = 0, mv = 0;
+  if(X.wy != null && dt > 0){ var dy = wyaw - X.wyaw; dy = dy > PI ? dy - 2*PI : dy < -PI ? dy + 2*PI : dy; mt = dy/dt; mv = (wy - X.wy)/dt; }
+  X.wyaw = wyaw; X.wy = wy;
+  S.mt = fin(S.mt) + (cl(mt, -4, 4) - fin(S.mt))*Math.min(1, dt*6); S.mv = fin(S.mv) + (cl(mv, -60, 60) - fin(S.mv))*Math.min(1, dt*4);
+  var turn = on && fl.turn != null && isFinite(+fl.turn) ? +fl.turn : S.mt, vs = on && fl.vs != null && isFinite(+fl.vs) ? +fl.vs : S.mv;
+  var sp = on ? Math.max(0, fin(fl.speed)) : 0;
+  TG.bank = on && m !== "swim" && m !== "landed" ? bankFor(turn, sp) : 0;
+  TG.climb = m === "cruise" ? cl(Math.atan2(vs, Math.max(sp, 10)), -0.6, 0.6) : 0;
+  TG.slip = m === "cruise" ? TG.bank*0.14*cl(sp/50, 0, 1) : 0;           // high speed: the nose a little into the turn, the body drifting out
+  TG.w = on ? 1 : 0;
+  if(t0 == null){ SPR.forEach(function(p){ S[p[0]] = TG[p[0]] || 0; }); S.w = 0; }     // a first frame: at the pose (blending in from the clip)
+  for(var i = 0; i < SPR.length; i++) sd(S, SPR[i][0], SPR[i][2], fin(TG[SPR[i][0]]), SPR[i][1], dt);
+  if(!isFinite(S.w + S.tilt + S.bank + S.climb + S.thrust)){ X.s = null; X.t = null; return; }
+  if(!on && S.w < 0.003){ unTilt(X); return; }
+  var w = cl(S.w, 0, 1), sa = X.M.arm.s, sl = X.M.leg.s, bob = calm ? 0 : Math.sin(t1*2.1), sway = calm ? 0 : Math.sin(t1*1.3);
+  var hov = cl(1 - S.c - S.swim, 0, 1);
+  // the hips: about the torso bone (not the feet), yaw-slip x bank (about the flight line) x the lean toward horizontal less the climb
+  var r = bone(X, "root"), h = X.v.copy(bone(X, "torso").position).multiply(r.scale), R0 = X.rest.root.q;
+  var spin = on ? fin(fl.spin) : 0;
+  X.e.set(S.tilt + S.crouch*0.12 - S.climb, S.slip, -(S.bank + spin), "YZX");
+  X.q2.setFromEuler(X.e).multiply(R0);
+  X.q.copy(R0).slerp(X.q2, w); r.quaternion.copy(X.q);
+  r.position.copy(X.rest.root.p).add(X.v2.copy(h).applyQuaternion(R0)).sub(h.applyQuaternion(X.q));
+  r.position.y += w*(-S.crouch*0.035 + hov*bob*0.008);
   X.tilt = true;
-  if(m === "hover"){
-    arm(X, "left", sa, 0.1, 0.38 + bob*0.04); arm(X, "right", -sa, 0.1, 0.38 - bob*0.04);
-    turn(X, "leg-left", -0.12 - bob*0.03, 0, sl*0.06); turn(X, "leg-right", -0.04 + bob*0.03, 0, -sl*0.06); turn(X, "head", 0.05, 0, 0);
-  } else if(m === "swim"){
+  // the torso arches up a little in a cruise, curls in a crouch; the head looks where it flies
+  setB(X, "torso", S.crouch*0.3 - S.c*0.1, 0, 0, w);
+  setB(X, "head", -S.tilt*0.72 + S.crouch*0.15 + 0.05, -S.slip*0.6, 0, w);
+  if(S.swim > 0.5){
     X.ph = ((X.ph || 0) + dt*0.7) % 1; var spn = Math.sin(X.ph*2*PI), kick = calm ? 0 : Math.sin(t1*7);
-    arm(X, "left", sa, 2.4 - spn*0.9, 0.5 + spn*0.4); arm(X, "right", -sa, 2.4 - spn*0.9, 0.5 + spn*0.4);
-    turn(X, "leg-left", -kick*0.25, 0, 0); turn(X, "leg-right", kick*0.25, 0, 0); turn(X, "head", -1.0, 0, 0);
+    arm(X, "left", sa, 2.4 - spn*0.9, 0.5 + spn*0.4, w); arm(X, "right", -sa, 2.4 - spn*0.9, 0.5 + spn*0.4, w);
+    setB(X, "leg-left", -kick*0.25, 0, 0, w); setB(X, "leg-right", kick*0.25, 0, 0, w);
   } else {
-    var back = fl.boost ? 0.6 : 0.3, out = fl.boost ? 0.06 : 0.2;
-    arm(X, "left", sa, -back, out); arm(X, "right", -sa, -back, out);
-    turn(X, "leg-left", 0.05 + bob*0.03, 0, sl*0.04); turn(X, "leg-right", 0.05 - bob*0.03, 0, -sl*0.04); turn(X, "head", -0.95*k, 0, 0);
+    var ls = hov*sway*0.06, ab = hov*bob*0.04;
+    arm(X, "left", sa, S.armSw, S.armOut + ab, w);
+    // the leading (right) arm reaches forward on a boost: the classic flying pose
+    arm(X, "right", -sa, S.armSw + (PI - 0.2 - S.armSw)*S.lead, S.armOut - ab + (0.12 - S.armOut)*S.lead, w);
+    setB(X, "leg-left", S.legX + ls, 0, sl*S.splay, w); setB(X, "leg-right", S.legX - ls, 0, -sl*(S.splay + hov*0.03), w);
   }
+  fxStep(ch, X, S, w, t1, dt, calm, on ? fl : null);
+}
+
+/* ---------- the thrusters: both boot soles and both palms, two draw calls for the lot ----------
+   One InstancedMesh of additive cones (per emitter a glow-coloured flame and a white-hot core: 8 instances) and one
+   Points cloud (per emitter a soft halo; a 16-mote dust ring on the ground when low; a 24-puff heat trail on a boost).
+   World space, under the scene the character stands in (nothing shows in a portrait); every buffer made once in fxMake. */
+var FX_DUST = 16, FX_TRAIL = 24, FX_N = 4 + FX_DUST + FX_TRAIL;
+var FLAME_VS = [
+  "attribute vec4 aI; varying float vT; varying float vE; varying vec4 vI; uniform float uTime;",
+  "void main(){",
+  "  vT = position.y; vI = aI; vec3 p = position;",
+  "  p.xz *= 1.0 + 0.16*sin(uTime*41.0 + aI.w*9.0 + p.y*11.0)*(1.0 - p.y*0.5);",
+  "  vec4 mv = modelViewMatrix*instanceMatrix*vec4(p, 1.0);",
+  "  vec3 n = normalize(normalMatrix*mat3(instanceMatrix)*normal);",
+  "  vE = abs(dot(n, normalize(-mv.xyz)));",
+  "  gl_Position = projectionMatrix*mv;",
+  "}"].join("\n");
+var FLAME_FS = [
+  "uniform vec3 uGlow; uniform float uTime; varying float vT; varying float vE; varying vec4 vI;",
+  "void main(){",
+  "  float core = vI.y, k = vI.x;",
+  "  vec3 hot = vec3(1.0, 0.97, 0.9);",
+  "  vec3 col = core > 0.5 ? mix(hot, uGlow, vT*0.55) : mix(mix(hot, uGlow, smoothstep(0.0, 0.3, vT)), uGlow*0.55, smoothstep(0.4, 1.0, vT));",
+  "  float a = pow(1.0 - vT, core > 0.5 ? 1.8 : 1.3)*pow(vE, 1.2)*k;",
+  "  a *= 0.82 + 0.18*sin(uTime*53.0 + vI.w*5.0 + vT*14.0);",
+  "  a *= 1.0 + vI.z*1.4*pow(max(0.0, sin(vT*19.0 - uTime*34.0)), 8.0);",   // a boost's shock diamonds
+  "  gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));",
+  "}"].join("\n");
+var PT_VS = [
+  "attribute vec4 aC; attribute float aS; varying vec4 vC; uniform float uVh;",
+  "void main(){ vC = aC; vec4 mv = modelViewMatrix*vec4(position, 1.0);",
+  "  gl_PointSize = aS <= 0.0 ? 0.0 : clamp(aS*projectionMatrix[1][1]*uVh*0.5/max(0.05, -mv.z), 0.0, 256.0);",
+  "  gl_Position = projectionMatrix*mv; }"].join("\n");
+var PT_FS = [
+  "varying vec4 vC;",
+  "void main(){ float d = length(gl_PointCoord - 0.5)*2.0; float a = pow(max(0.0, 1.0 - d), 2.0)*vC.a; if(a < 0.003) discard;",
+  "  gl_FragColor = vec4(vC.rgb, a); }"].join("\n");
+// the four nozzles in their bones' space: a boot's sole (jet down its leg), a palm (jet out along its arm)
+function emitters(T, X){
+  var M = X.M, Lg = M.leg, A = M.arm, lx = (Lg.i + Lg.o)/2, lz = (Lg.z0 + Lg.z1)/2 + 0.012, ay = (A.y0 + A.y1)/2, az = (A.z0 + A.z1)/2;
+  var bm = new T.Matrix4(), out = [];
+  [["leg-left", Lg.s*lx, Lg.y0, lz, 0, -1], ["leg-right", -Lg.s*lx, Lg.y0, lz, 0, -1], ["arm-left", A.s*(A.o + 0.01), ay, az, A.s, 0],
+   ["arm-right", -A.s*(A.o + 0.01), ay, az, -A.s, 0]].forEach(function(q){
+    var bi = M.bi[q[0]]; bm.multiplyMatrices(M.sk.boneInverses[bi], M.body.bindMatrix);
+    out.push({n: q[0], p: new T.Vector3(q[1], q[2], q[3]).applyMatrix4(bm), d: new T.Vector3(q[4], q[5], 0).transformDirection(bm)});
+  });
+  return out;
+}
+function fxMake(T, X, glow){
+  var cone = new T.ConeGeometry(1, 1, 12, 1, true); cone.rotateX(PI); cone.translate(0, 0.5, 0);     // the wide end at the nozzle, +Y along the jet
+  var fm = new T.ShaderMaterial({uniforms: {uGlow: {value: new T.Color(glow)}, uTime: {value: 0}}, vertexShader: FLAME_VS, fragmentShader: FLAME_FS,
+    transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide, toneMapped: false});
+  var ia = new T.InstancedBufferAttribute(new Float32Array(8*4), 4); ia.setUsage(T.DynamicDrawUsage); cone.setAttribute("aI", ia);
+  var fl = new T.InstancedMesh(cone, fm, 8); fl.instanceMatrix.setUsage(T.DynamicDrawUsage); fl.frustumCulled = false; fl.name = "exo-flames";
+  fl.castShadow = false; fl.receiveShadow = false; fl.renderOrder = 5; fl.userData.exo = 1;
+  var pg = new T.BufferGeometry(), pp = new T.BufferAttribute(new Float32Array(FX_N*3), 3), pc = new T.BufferAttribute(new Float32Array(FX_N*4), 4),
+      ps = new T.BufferAttribute(new Float32Array(FX_N), 1);
+  [pp, pc, ps].forEach(function(a){ a.setUsage(T.DynamicDrawUsage); });
+  pg.setAttribute("position", pp); pg.setAttribute("aC", pc); pg.setAttribute("aS", ps);
+  var pm = new T.ShaderMaterial({uniforms: {uVh: {value: 800}}, vertexShader: PT_VS, fragmentShader: PT_FS, transparent: true, depthWrite: false,
+    blending: T.AdditiveBlending, toneMapped: false});
+  var pts = new T.Points(pg, pm); pts.frustumCulled = false; pts.name = "exo-glow"; pts.renderOrder = 5; pts.userData.exo = 1;
+  var F = {fl: fl, pts: pts, ia: ia, pp: pp, pc: pc, ps: ps, glow: new T.Color(glow), em: emitters(T, X), m4: new T.Matrix4(), q: new T.Quaternion(),
+           v: new T.Vector3(), d: new T.Vector3(), s: new T.Vector3(), up: new T.Vector3(0, 1, 0), vs: new T.Vector2(),
+           nz: [new T.Vector3(), new T.Vector3(), new T.Vector3(), new T.Vector3()], nd: [new T.Vector3(), new T.Vector3(), new T.Vector3(), new T.Vector3()],
+           tp: new Float32Array(FX_TRAIL*3), ta: new Float32Array(FX_TRAIL).fill(9), tk: 0, tacc: 0};
+  pts.onBeforeRender = function(rr){ if(rr && rr.getSize){ rr.getSize(F.vs); pm.uniforms.uVh.value = F.vs.y*(rr.getPixelRatio ? rr.getPixelRatio() : 1) || 800; } };
+  return F;
+}
+function fxHide(F){ F.fl.visible = false; F.pts.visible = false; }
+function fxFree(F){ [F.fl, F.pts].forEach(function(o){ if(o.parent) o.parent.remove(o); o.geometry.dispose(); o.material.dispose(); }); }
+function sceneOf(o){ var s = o; while(s.parent) s = s.parent; return s.isScene ? s : null; }
+function fxStep(ch, X, S, w, t, dt, calm, fl){
+  var sc = sceneOf(ch.o), th = cl(S.thrust, 0, 1.4)*w;
+  if(!sc || th < 0.02 || !ch.o.visible){ if(X.fx) fxHide(X.fx); return; }
+  var T = X.T, F = X.fx || (X.fx = fxMake(T, X, GLOWS[X.look.g][1]));
+  if(F.fl.parent !== sc){ sc.add(F.fl); sc.add(F.pts); }
+  F.fl.visible = true; F.pts.visible = true;
+  ch.o.updateWorldMatrix(true, true);
+  var k = Math.max(0.3, ch.base/2.1), tm = calm ? 0 : t, flick = calm ? 0 : 1, b = cl(S.b, 0, 1), c = cl(S.c, 0, 1);
+  F.fl.material.uniforms.uTime.value = tm % 1000;
+  var ia = F.ia.array, pp = F.pp.array, pc = F.pc.array, ps = F.ps.array, g = F.glow;
+  for(var i = 0; i < 4; i++){
+    var e = F.em[i], bn = bone(X, e.n), P = F.nz[i].copy(e.p).applyMatrix4(bn.matrixWorld), D = F.nd[i].copy(e.d).transformDirection(bn.matrixWorld);
+    var palm = i >= 2, lead = i === 3 ? cl(S.lead, 0, 1) : 0;
+    var kk = th*(palm ? 0.75*(1 - lead*0.9) : 1);
+    // hover: short and flickering; a cruise: long jets; a boost: longer still, with shock diamonds
+    var len = k*(palm ? 0.18 + 0.5*c + 0.35*b : 0.26 + 0.75*c + 0.75*b)*cl(kk, 0, 1.3)*(1 + flick*(0.16 - 0.1*c)*Math.sin(t*31 + i*1.9));
+    var rad = k*(palm ? 0.045 : 0.065)*(0.75 + 0.25*cl(kk, 0, 1.2));
+    F.q.setFromUnitVectors(F.up, D);
+    F.m4.compose(P, F.q, F.s.set(rad, Math.max(0.001, len), rad)); F.fl.setMatrixAt(i*2, F.m4);
+    F.m4.compose(P, F.q, F.s.set(rad*0.42, Math.max(0.001, len*0.55), rad*0.42)); F.fl.setMatrixAt(i*2 + 1, F.m4);
+    ia[i*8] = cl(kk*0.85, 0, 1); ia[i*8 + 1] = 0; ia[i*8 + 2] = b*(1 - lead); ia[i*8 + 3] = i;
+    ia[i*8 + 4] = cl(kk*1.1, 0, 1); ia[i*8 + 5] = 1; ia[i*8 + 6] = b*(1 - lead); ia[i*8 + 7] = i + 0.5;
+    // its halo, just out of the nozzle
+    pp[i*3] = P.x + D.x*0.03*k; pp[i*3 + 1] = P.y + D.y*0.03*k; pp[i*3 + 2] = P.z + D.z*0.03*k;
+    pc[i*4] = 0.55 + g.r*0.45; pc[i*4 + 1] = 0.55 + g.g*0.45; pc[i*4 + 2] = 0.55 + g.b*0.45; pc[i*4 + 3] = cl(kk*0.7, 0, 0.9);
+    ps[i] = k*(palm ? 0.32 : 0.45)*(0.6 + 0.4*cl(kk, 0, 1.3))*(1 + flick*0.12*Math.sin(t*23 + i));
+  }
+  F.fl.instanceMatrix.needsUpdate = true; F.ia.needsUpdate = true;
+  // the dust ring: low over the ground in a hover (or settling), motes running out from under you
+  var agl = fl && fl.agl != null && isFinite(+fl.agl) ? Math.max(0, +fl.agl) : 99, dk = calm ? 0 : cl(1 - agl/3, 0, 1)*(1 - c)*th;
+  var ox = (F.nz[0].x + F.nz[1].x)/2, oz = (F.nz[0].z + F.nz[1].z)/2, gy = (F.nz[0].y + F.nz[1].y)/2 - agl + 0.05;
+  for(var j = 0; j < FX_DUST; j++){
+    var q = 4 + j, ph = (t*0.8 + j*0.618) % 1, an = j*2*PI/FX_DUST + Math.sin(j*12.9)*0.3, rr = k*(0.35 + ph*1.5);
+    pp[q*3] = ox + Math.cos(an)*rr; pp[q*3 + 1] = gy + ph*0.12; pp[q*3 + 2] = oz + Math.sin(an)*rr;
+    pc[q*4] = 0.62; pc[q*4 + 1] = 0.57; pc[q*4 + 2] = 0.5; pc[q*4 + 3] = dk*0.28*(1 - ph)*Math.min(1, ph*6);
+    ps[q] = dk > 0.01 ? k*(0.35 + ph*0.8) : 0;
+  }
+  // the heat trail: a boost sheds a puff from the end of a boot's jet every 1/40 s; each rises a little and fades in 0.7 s
+  F.tacc += dt;
+  var emit = !calm && b > 0.3 && th > 0.5;
+  while(F.tacc > 0.025){ F.tacc -= 0.025; if(!emit) continue;
+    var n = F.tk % FX_TRAIL, bi2 = F.tk & 1, NP = F.nz[bi2], ND = F.nd[bi2], ll = k*0.9;
+    F.tp[n*3] = NP.x + ND.x*ll; F.tp[n*3 + 1] = NP.y + ND.y*ll; F.tp[n*3 + 2] = NP.z + ND.z*ll; F.ta[n] = 0; F.tk++; }
+  if(F.tacc > 1) F.tacc = 0;
+  for(var u = 0; u < FX_TRAIL; u++){
+    var a = F.ta[u] = Math.min(9, F.ta[u] + dt), z = 4 + FX_DUST + u, live = a < 0.7;
+    pp[z*3] = F.tp[u*3]; pp[z*3 + 1] = F.tp[u*3 + 1] + a*0.4; pp[z*3 + 2] = F.tp[u*3 + 2];
+    pc[z*4] = 0.75 + g.r*0.2; pc[z*4 + 1] = 0.78 + g.g*0.2; pc[z*4 + 2] = 0.85 + g.b*0.15; pc[z*4 + 3] = live ? 0.16*(1 - a/0.7) : 0;
+    ps[z] = live ? k*(0.25 + a*1.3) : 0;
+  }
+  F.pp.needsUpdate = true; F.pc.needsUpdate = true; F.ps.needsUpdate = true;
 }
 
 /* ---------- the suit-up: every piece its own mesh, flying from `from` onto its bone on your posed body ---------- */
@@ -442,7 +626,7 @@ function wanted(key){
 }
 
 HQV.hqExo = {FRAMES: FRAMES, PAINTS: PAINTS, FINISHES: FINISHES, GLOWS: GLOWS, MODES: MODES, BONES: NEED, clean: clean, encode: encode,
-  decode: decode, sig: sig, load: load, save: save, styleFor: styleFor, wear: wear, strip: strip, stats: stats, pose: pose, measure: measure,
+  decode: decode, sig: sig, load: load, save: save, styleFor: styleFor, wear: wear, strip: strip, stats: stats, pose: pose, measure: measure, targets: targets, bankFor: bankFor, BANK_MAX: BANK_MAX,
   seq: seq, seqStep: seqStep, seqEnd: seqEnd, bay: bay, panel: panel, panelOpen: panelOpen, panelClose: panelClose,
   peer: peer, wanted: wanted, me: me, bayRef: null, hex: hex};
 })();

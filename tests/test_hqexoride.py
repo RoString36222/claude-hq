@@ -61,6 +61,10 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   // ---- turns: a banked cruise turn ----
   var tr = run(R.newState("sentinel", 0, 50, 0, 0), 6, {fwd: 1}, flat); var y0 = tr.yaw; run(tr, 1, {fwd: 1, left: 1}, flat);
   out.turn = {roll: tr.roll, dyaw: tr.yaw - y0, mode: tr.mode};
+  // ---- turn momentum: the yaw rate eases in (rate-limited), carries a moment after the key is let go, eases out ----
+  var hv = run(R.newState("strider", 0, 0, 0, 0), 2, {up: 1}, flat), rs = [], dmax = 0, prev = hv.yr;
+  for(var i = 0; i < 180; i++){ R.step(hv, 1/120, i < 60 ? {left: 1} : {}, flat); rs.push(hv.yr); dmax = Math.max(dmax, Math.abs(hv.yr - prev)*120); prev = hv.yr; }
+  out.mom = {early: rs[5], full: rs[59], after: rs[65], end: rs[179], dmax: dmax, want: R.STATS.strider.hoverTurn, lim: 4*1.5*(0.5 + R.STATS.strider.agility/100)};
   // ---- the HUD on a stub canvas ----
   var calls = {n: 0};
   function ctx(){ var g = {addColorStop: function(){}};
@@ -144,6 +148,14 @@ class ExoRide(unittest.TestCase):
         self.assertEqual(max(tops, key=tops.get), "strider")
         for f, v, m in self.o["tops"]:
             self.assertEqual(m, "cruise", f)
+
+    def test_turn_has_momentum(self):
+        m = self.o["mom"]
+        self.assertLess(m["early"], m["want"] * 0.5, "the turn eases in")
+        self.assertGreater(m["full"], m["want"] * 0.9, "and reaches the frame's rate")
+        self.assertGreater(m["after"], m["want"] * 0.3, "it carries a moment after the key is let go")
+        self.assertLess(abs(m["end"]), m["want"] * 0.05, "and eases out")
+        self.assertLessEqual(m["dmax"], m["lim"] * 1.001, "the yaw acceleration is rate-limited")
 
     def test_banked_turn(self):
         t = self.o["turn"]

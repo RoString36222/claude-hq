@@ -7,7 +7,7 @@
  *   step(st, dt, inp, env)    fixed 1/120 s sub-steps (the remainder carried in st.acc), so 30 Hz and 120 Hz agree;
  *                             dt is clamped to 0..0.25 s (NaN, negative or missing: 0), so nothing ever goes NaN
  * st = {frame, x, y, z, yaw, pitch, roll, speed, vs, mode: "hover"|"cruise"|"swim"|"landed", boost 0..1, boosting,
- *       agl (m above what is under it), acc}. Forward is (-sin yaw, 0, -cos yaw), as a THREE camera's; + yaw turns left.
+ *       agl (m above what is under it), yr (the yaw rate, rad/s, + left), acc}. Forward is (-sin yaw, 0, -cos yaw), as a THREE camera's; + yaw turns left.
  * inp = {fwd, back, left, right, up, down, boost} (bools or 0..1). env = {floor(x, z) -> ground y,
  *       water(x, z) -> the water's surface y or null}.
  * Hover (below CRUISE_V m/s): a VTOL, up / down climb and sink straight, left / right yaw on the spot. Cruise (faster):
@@ -16,6 +16,9 @@
  * no climb or thrust held, it lands. Speed, acceleration and turn rate come from the frame's stats; the bulwark is
  * slow and heavy. The abyss swims and dives under the water (slower there); the rest float on the surface and cannot go
  * under. The stratos has no height cap; the rest stop at CEILING m.
+ * Turning has momentum: the yaw rate st.yr chases the wanted rate (the bank's in a cruise, the key's in a hover) at most
+ * YAW_ACC x the frame's agility in rad/s^2, through a critically damped approach (no step when A / D goes down or up),
+ * so a turn eases in, carries a moment after you let go and eases out.
  */
 (function(){
 "use strict";
@@ -28,6 +31,8 @@ var CRUISE_V = 15;       // m/s: above this it flies on its wings (banked turns)
 var LAND_V = 4;          // m/s: slower than this near the floor, it settles
 var LAND_H = 0.6;        // m above the floor
 var REV = 6;             // m/s backwards in a hover
+var YAW_ACC = 4;         // rad/s^2 (x 0.5 + agility): how fast the turn rate may change
+var YAW_W = 9;           // 1/s: the rate's critically damped approach, before the limit
 
 var FR = [
   {id: "sentinel", n: "Sentinel", st: [65, 60, 65, 60]},
@@ -64,11 +69,17 @@ function waterOf(env, x, z){
 function newState(frameId, x, y, z, yaw){
   var f = STATS[frameId] ? frameId : "sentinel";
   return {frame: f, x: num(x, 0), y: num(y, 0), z: num(z, 0), yaw: wrapPi(yaw), pitch: 0, roll: 0, speed: 0, vs: 0,
-          mode: "landed", boost: 1, boosting: false, agl: 0, acc: 0};
+          mode: "landed", boost: 1, boosting: false, agl: 0, yr: 0, yra: 0, acc: 0};
+}
+// the yaw rate toward `want`: an exact critically damped step (st.yra its own rate of change), clamped to the frame's limit
+function yawTo(st, want, lim, h){
+  var c = st.yr - want, a = st.yra, t = (a + YAW_W*c)*h, e = Math.exp(-YAW_W*h);
+  var nx = want + (c + t)*e, na = (a - YAW_W*t)*e, d = clamp(nx - st.yr, -lim*h, lim*h);
+  st.yra = d === nx - st.yr ? na : d/h; st.yr += d;
 }
 
 function sane(st){
-  ["x", "y", "z", "pitch", "roll", "speed", "vs", "agl", "acc"].forEach(function(k){ st[k] = num(st[k], 0); });
+  ["x", "y", "z", "pitch", "roll", "speed", "vs", "agl", "acc", "yr", "yra"].forEach(function(k){ st[k] = num(st[k], 0); });
   st.yaw = wrapPi(st.yaw); st.boost = clamp(num(st.boost, 1), 0, 1);
   if(!STATS[st.frame]) st.frame = "sentinel";
   if(["hover", "cruise", "swim", "landed"].indexOf(st.mode) < 0) st.mode = "hover";
@@ -110,13 +121,15 @@ function sub(st, I, env){
     pitchT = clamp(I.v*0.45*(0.6 + F.agility/100), -0.6, 0.6);
     st.roll += (rollT - st.roll)*ease(2.5*(0.5 + F.agility/100), h);
     st.pitch += (pitchT - st.pitch)*ease(2/F.mass, h);
-    st.yaw = wrapPi(st.yaw + st.roll*0.55*F.turn*h);
+    yawTo(st, st.roll*0.55*F.turn, YAW_ACC*(0.5 + F.agility/100), h);
+    st.yaw = wrapPi(st.yaw + st.yr*h);
     vsT = Math.sin(st.pitch)*st.speed;
     st.vs += (vsT - st.vs)*ease(6, h);
   } else {
     st.roll += (I.t*0.15 - st.roll)*ease(3, h);
     st.pitch += (-I.f*0.08 - st.pitch)*ease(3, h);
-    st.yaw = wrapPi(st.yaw + I.t*F.hoverTurn*slow*h);
+    yawTo(st, I.t*F.hoverTurn*slow, YAW_ACC*1.5*(0.5 + F.agility/100), h);
+    st.yaw = wrapPi(st.yaw + st.yr*h);
     vsT = I.v*climb*(I.v < 0 ? 1.2 : 1);
     st.vs += (vsT - st.vs)*ease(4/F.mass, h);
   }
@@ -138,7 +151,7 @@ function sub(st, I, env){
   // the mode
   if(under) st.mode = "swim";
   else if(st.y - base < LAND_H && Math.abs(st.speed) < LAND_V && !I.up && !I.thr && st.vs <= 0.01){
-    st.mode = "landed"; st.y = base; st.vs = 0; st.pitch *= 0.9; st.roll *= 0.9;
+    st.mode = "landed"; st.y = base; st.vs = 0; st.pitch *= 0.9; st.roll *= 0.9; st.yr *= 0.9; st.yra = 0;
   } else st.mode = cruise ? "cruise" : "hover";
 }
 

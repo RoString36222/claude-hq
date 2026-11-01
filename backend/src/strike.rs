@@ -77,6 +77,29 @@ pub const FALL_MAX: f64 = 25.0;
 // the movement totems' multipliers (shared with games/strike.js FS)
 pub const LEAP_MULT: f64 = 3.0;   // the leap totem: Space-bar jumps this much taller
 pub const SPEED_MULT: f64 = 2.0;  // the speed totem: plain WASD at this multiple of sprint pace
+// ---- Wave F: the joke totems (Banana / Lava / Goose / Reverse / Black Hole /
+// Weapon Roulette). Every number here is judged on both sides. Twins: the same
+// names in games/strike.js FS.
+pub const BANANA_N: usize = 10;
+pub const BANANA_R: f64 = 14.0;
+pub const BANANA_SLIP: f64 = 1.1;
+pub const BANANA_SLIDE: f64 = 9.0;
+pub const BANANA_SPIN: f64 = 2.2;
+pub const LAVA_ZONES: usize = 5;
+pub const LAVA_R: f64 = 3.2;
+pub const LAVA_HOLD: f64 = 1.4;
+pub const LAVA_DMG: i64 = 12;
+pub const LAVA_LAUNCH: f64 = 8.0;
+pub const GOOSE_SPEED: f64 = 11.0;
+pub const GOOSE_HIT_R: f64 = 1.3;
+pub const GOOSE_DMG: i64 = 18;
+pub const GOOSE_KNOCK: f64 = 6.0;
+pub const HOLE_R: f64 = 2.2;
+pub const HOLE_PULL: f64 = 14.0;
+/// How far the pull reaches. The help promises "everything and everyone", so this has
+/// to cover the whole arena — never a bubble of HOLE_R * k. Twin: HOLE_REACH in JS.
+pub const HOLE_REACH: f64 = 56.0;
+pub const ROULETTE_GAP: f64 = 2.0;
 
 // --- weapons (shared with games/strike.js) ---
 pub struct Weapon {
@@ -125,9 +148,27 @@ pub const GRAPPLE_SWING: f64 = 11.0;
 pub const GRAPPLE_UP: f64 = 6.0;
 pub const GRAPPLE_PULL: f64 = 18.0;
 pub const HOOK_LOCK: f64 = 2.0;
+/// A shot-down match drone is a wreck for this long (its hull blocks nothing).
+/// Twin: DRONE_DOWN_SECS in games/strike.js.
+pub const DRONE_DOWN_SECS: f64 = 6.0;
+/// How many non-disaster totems a falling drone scatters on the wreck.
+/// Twin: DRONE_TOTEMS in games/strike.js.
+pub const DRONE_TOTEMS: usize = 3;
 pub const GRAPPLE_RISE: f64 = 4.0;
 /// Snapshot flag: hooked by a grappling gun (cannot shoot). Next free bit under 2^31.
 pub const FLAG_HOOK: i64 = 67_108_864;
+/// Snapshot flag: the Big Head totem is live arena-wide (every skull doubled).
+/// Repeated on every living player's row so the existing per-row decode just works.
+pub const FLAG_BIGHEAD: i64 = 134_217_728;
+/// Snapshot flag: this player is disco-dancing (the Disco totem's victim) and cannot
+/// shoot. Per-player — the taker never carries it. Twin: FLAG_DISCO in games/strike.js.
+pub const FLAG_DISCO: i64 = 268_435_456;
+/// Reverse Controls totem is live arena-wide (everyone's WASD is reversed).
+/// Twin: FLAG_REVERSE in games/strike.js. Repeated on every living player's row.
+pub const FLAG_REVERSE: i64 = 536_870_912;
+/// Weapon Roulette totem is live arena-wide (everyone's gun re-rolls every 2 s).
+/// Twin: FLAG_ROULETTE in games/strike.js. Repeated on every living player's row.
+pub const FLAG_ROULETTE: i64 = 1_073_741_824;
 // --- the launcher's rocket (shared with games/strike.js) ---
 pub const MISSILE_V: f64 = 22.0;   // launch speed (m/s)
 pub const MISSILE_G: f64 = 6.0;    // gravity on the rocket (gentler than a body)
@@ -206,15 +247,22 @@ pub fn drone_at(tg: &([f64; 3], [f64; 3], f64), t: f64) -> [f64; 3] {
 }
 
 /// First match-drone hit along the ray: (dist, index). Twin: droneHit.
+/// `downed`/`now` skip hulls that are currently shot down — a wreck blocks nothing
+/// and cannot be hooked. `now` is the server clock, matching `downed[i]`.
 pub fn drone_hit(
     o: [f64; 3],
     d: [f64; 3],
     routes: &[([f64; 3], [f64; 3], f64)],
     t: f64,
     maxd: f64,
+    downed: &[f64],
+    now: f64,
 ) -> Option<(f64, usize)> {
     let mut best: Option<(f64, usize)> = None;
     for (i, tg) in routes.iter().enumerate() {
+        if downed.get(i).copied().unwrap_or(0.0) > now {
+            continue;
+        }
         let c = drone_at(tg, t);
         let b = [
             c[0] - DRONE_R,
@@ -261,6 +309,11 @@ pub const IP_CAP: f64 = 0.35;
 pub const RTT_CAP: f64 = 0.4;
 pub const RTT_WINDOW: f64 = 3.0;
 pub const HISTORY: f64 = 1.2;
+/// Time Rewind travels this far back. Twin of FS.REWIND_S in games/strike.js.
+pub const REWIND_S: f64 = 3.0;
+/// How much of the body's trail the judge keeps. It has to cover the longest rewind
+/// (a 1.2 s window cannot serve a 3 s rewind — the old code silently travelled 1.2 s).
+pub const HIST_S: f64 = 3.0;
 pub const COUNTDOWN: f64 = 4.0;
 pub const RESPAWN: f64 = 3.0;
 pub const PROTECT: f64 = 1.5;
@@ -277,7 +330,34 @@ pub const GRACE: f64 = 15.0;
 // games/strike.js TOTEMS, which is the client's word for what each gem does.
 pub const TOTEM_GAP: f64 = 10.0;
 pub const TOTEM_FIRST: f64 = 8.0;
-pub const TOTEM_KINDS: [&str; 47] = [
+/// The Big Head totem: every head in the arena doubles for this long (the taker too).
+/// Twin: TOTEMS.bighead.dur / BIG_HEAD_S in games/strike.js.
+pub const BIG_HEAD: f64 = 10.0;
+/// The Big Head totem's head scale (1.0 = ordinary). The head AABB grows outward and
+/// upward only. Twin: BIG_HEAD_S in games/strike.js.
+pub const BIG_HEAD_S: f64 = 2.0;
+/// The Disco totem: everyone except the taker dances and cannot shoot for this long.
+/// Twin: TOTEMS.disco.dur in games/strike.js.
+pub const DISCO: f64 = 8.0;
+// ---- Wave F: the joke world totems (arena-wide, both sides suffer) ----
+/// Banana Panic: peels scatter; anyone stepping on one slips, spins and slides.
+/// Twin: TOTEMS.banana.dur in games/strike.js.
+pub const BANANA: f64 = 10.0;
+/// Floor Is Lava: random floor patches turn dangerous; standing too long launches
+/// you upward with health loss. Twin: TOTEMS.lava.dur in games/strike.js.
+pub const LAVA: f64 = 8.0;
+/// Goose Attack: an angry goose chases the nearest player and headbutts them.
+/// Twin: TOTEMS.goose.dur in games/strike.js.
+pub const GOOSE: f64 = 10.0;
+/// Reverse Controls: everyone's WASD is reversed. Twin: TOTEMS.reverse.dur in games/strike.js.
+pub const REVERSE: f64 = 8.0;
+/// Black Hole: a tiny black hole at the arena centre sucks everything in.
+/// Twin: TOTEMS.blackhole.dur in games/strike.js.
+pub const BLACKHOLE: f64 = 6.0;
+/// Weapon Roulette: every 2 s everyone's weapon randomly switches.
+/// Twin: TOTEMS.roulette.dur in games/strike.js.
+pub const ROULETTE: f64 = 10.0;
+pub const TOTEM_KINDS: [&str; 55] = [
     "mole", "freeze", "decoy", "cloak", "shield", "wings", "leap", "speed", "teleport",
     // Wave C — the unique set from the brainstorm (Time Freeze ≈ Paralyser and
     // Clone Army ≈ Decoy are deliberately skipped as repeats)
@@ -285,6 +365,12 @@ pub const TOTEM_KINDS: [&str; 47] = [
     "mark", "blink", "bubble", "wallrun", "secondwind", "fakedeath", "ghost",
     "cluster", "overclock", "ricochet", "infchamber", "bodyswap", "rally",
     "meteor", "chaos", "phoenix", "pocket", "fate", "king", "radarjam",
+    // Wave E — the joke power-ups. Big Head is arena-wide like a disaster but it
+    // helps every shooter, so it rides the personal roster, not the disaster ring.
+    // Disco is the other joke: a personal stun that hits everyone else.
+    "bighead", "disco",
+    // Wave F — the joke world totems (arena-wide, both sides suffer).
+    "banana", "lava", "goose", "reverse", "blackhole", "roulette",
     // Wave D — Arena Disasters: arena-wide, BOTH sides suffer, and the taker suffers too.
     // ("meteorshower" not "meteor": that name is already the personal Meteor Call.)
     "sandstorm", "meteorshower", "hurricane", "thunder", "earthquake",
@@ -312,6 +398,7 @@ pub const DIS_FIRST_DROP: f64 = 12.0; // s into the round before the first Disas
 /// The auto-disaster clock (independent of the totems, the Disaster totems, and Arena Events).
 pub const DIS_GAP: f64 = 45.0;   // s between automatic disasters
 pub const DIS_FIRST: f64 = 30.0;      // first auto-disaster ~30 s into the round
+pub const DIS_MAX: usize = 6;    // concurrent disasters before the oldest is shed
 /// One disaster at a time: 2s of warning everyone can read, then the hold.
 pub const DIS_WARN: f64 = 2.0;
 pub const DIS_SANDSTORM: f64 = 12.0;
@@ -444,6 +531,11 @@ pub const LEAP: f64 = 10.0;       // s the leap totem's boosted Space-bar jumps
 pub const SPEED: f64 = 6.0;       // s the speed totem's double-sprint dash on plain WASD
 // Wave C windows (server clock). Short one-shots use a charge count instead of a clock.
 pub const RIFT: f64 = 6.0;
+/// Rift totem: a standing ring you walk through. Twin of FS.RIFT_R / FS.RIFT_FRONT /
+/// FS.RIFT_COOL in games/strike.js.
+pub const RIFT_R: f64 = 1.15;
+pub const RIFT_FRONT: f64 = 2.4;
+pub const RIFT_COOL: f64 = 0.45;
 pub const MIRROR: f64 = 10.0;
 pub const GRAVFLIP: f64 = 8.0;
 pub const MAGNET: f64 = 8.0;
@@ -1297,14 +1389,21 @@ pub fn ray_map(m: &Map, o: [f64; 3], d: [f64; 3], maxd: f64) -> f64 {
     m.boxes.iter().filter_map(|b| ray_box(o, d, b)).fold(maxd, f64::min)
 }
 
-pub fn hit_boxes(x: f64, y: f64, z: f64) -> (Box3, Box3) {
+/// The Big Head totem's head scale. `hs` of 1 (or anything <= 0) is an ordinary head;
+/// the head box grows OUTWARD and UPWARD only — the body box never moves — so a chest
+/// shot can never become a headshot, only a near-miss can. Twin: `hitBoxes` in games/strike.js.
+pub fn hit_boxes(x: f64, y: f64, z: f64, hs: f64) -> (Box3, Box3) {
+    let s = if hs > 0.0 { hs } else { 1.0 };
+    let hr = HEAD_R * s;
+    let ht = BODY_H + (HEAD_TOP - BODY_H) * s;
     ([x - BODY_R, y, z - BODY_R, x + BODY_R, y + BODY_H, z + BODY_R],
-     [x - HEAD_R, y + BODY_H, z - HEAD_R, x + HEAD_R, y + HEAD_TOP, z + HEAD_R])
+     [x - hr, y + BODY_H, z - hr, x + hr, y + ht, z + hr])
 }
 
 /// (distance, head?) where the ray first meets a player at (x, y, z), nearer than maxd.
-pub fn ray_player(o: [f64; 3], d: [f64; 3], x: f64, y: f64, z: f64, maxd: f64) -> Option<(f64, bool)> {
-    let (body, head) = hit_boxes(x, y, z);
+/// `hs` is the Big Head totem's head scale (1.0 when heads are ordinary).
+pub fn ray_player(o: [f64; 3], d: [f64; 3], x: f64, y: f64, z: f64, maxd: f64, hs: f64) -> Option<(f64, bool)> {
+    let (body, head) = hit_boxes(x, y, z, hs);
     let mut best = ray_box(o, d, &body).filter(|t| *t < maxd).map(|t| (t, false));
     if let Some(th) = ray_box(o, d, &head).filter(|t| *t < maxd) {
         if best.map(|b| th < b.0).unwrap_or(true) {
@@ -1473,13 +1572,15 @@ pub struct Decoy {
     pub until: f64,
 }
 
-/// A rift pair (Rift totem): two linked openings; a projectile entering one exits the other.
+/// A rift pair (Rift totem): two linked standing rings. Walking into one exits the
+/// other; a projectile entering one does the same. `yaw` is the ring's facing in degrees.
 #[derive(Clone, Debug)]
 pub struct Portal {
     pub id: i64,
     pub x: f64,
     pub y: f64,
     pub z: f64,
+    pub yaw: f64,
     pub pair: i64,
     pub owner: String,
     pub until: f64,
@@ -1542,6 +1643,41 @@ pub struct FateLink {
     pub until: f64,
 }
 
+/// A Banana Panic peel on the deck. Anyone stepping on one slips, spins and slides.
+#[derive(Clone, Debug)]
+pub struct BananaPeel {
+    pub id: i64,
+    pub x: f64,
+    pub z: f64,
+}
+
+/// A Floor Is Lava dangerous patch. Stand too long → launched up + burned.
+#[derive(Clone, Debug)]
+pub struct LavaZone {
+    pub id: i64,
+    pub x: f64,
+    pub z: f64,
+    pub r: f64,
+}
+
+/// The Goose Attack angry goose. Chases the nearest player; headbutts on contact.
+#[derive(Clone, Debug)]
+pub struct Goose {
+    pub id: i64,
+    pub x: f64,
+    pub z: f64,
+    pub until: f64,
+}
+
+/// The Black Hole. Sucks everything toward its centre until it disappears.
+#[derive(Clone, Debug)]
+pub struct BlackHole {
+    pub id: i64,
+    pub x: f64,
+    pub z: f64,
+    pub until: f64,
+}
+
 /// One arena event (low gravity / sandstorm / no sprint) on its own clock.
 #[derive(Clone, Debug)]
 pub struct ArenaEvent {
@@ -1577,7 +1713,9 @@ pub struct Disaster {
 }
 
 /// One overhead / ground impact about to land (Meteor, Thunder, Quake).
-/// `overhead` marks the two that a shed roof stops.
+/// `overhead` marks the two that a shed roof stops. `dis` names the disaster that
+/// warned it, so the client can attribute the mark (and its FX group) correctly
+/// while several disasters run at once.
 #[derive(Clone, Debug)]
 pub struct WarnMark {
     pub id: i64,
@@ -1589,6 +1727,7 @@ pub struct WarnMark {
     pub dmg: i64,
     pub overhead: bool,
     pub quake: bool,
+    pub dis: &'static str,
 }
 
 /// The Warden: a giant torso-only totem god summoned at half the kill limit.
@@ -1724,6 +1863,9 @@ pub struct Player {
     pub r: i64,
     pub pt: i64,
     pub hp: i64,
+    /// Fractional heal not yet paid out as a whole hp (rally's 6 hp/s is 0.3 a tick
+    /// at 20 Hz — truncating it every tick means hp never moves).
+    pub hp_acc: f64,
     /// The hp before this tick's blast damage (detonate's echoes report the delta).
     pub hp_original: i64,
     pub w: usize,
@@ -1769,8 +1911,22 @@ pub struct Player {
     /// Totem windows (server clock): a charmed bot shoots its own side until charm_until,
     /// a paralysed one holds still until freeze_until, enemy bots can't see a cloaked player,
     /// and the shield totem's bubble holds until shield_totem_until (they still shoot).
+    /// A disco dancer holds still and cannot shoot until dance_until (the Disco totem's
+    /// victim — the taker never carries it).
     pub charm_until: f64,
     pub freeze_until: f64,
+    pub dance_until: f64,
+    /// Banana Panic: slipped on a peel — spinning and sliding forward until slip_until.
+    pub slip_until: f64,
+    /// The slide direction the slip locked in (unit × BANANA_SLIDE). Re-asserted every
+    /// step so a bot's wish cannot steer out of the slide. Twin: slipVx/slipVz in JS.
+    pub slip_vx: f64,
+    pub slip_vz: f64,
+    /// Floor Is Lava: seconds spent standing on a live lava patch (reset on leaving it).
+    pub lava_hold: f64,
+    /// Black Hole: the referee lets a pulled body through at slide speed for a moment
+    /// after the drag, so the drag is never rubber-banded. Twin: V.holeDrag in JS.
+    pub hole_drag: f64,
     pub cloak_until: f64,
     pub shield_totem_until: f64,
     /// the three movement totems' windows (server clock): wings flight, leap jumps and
@@ -1821,6 +1977,9 @@ pub struct Player {
     /// Climb target for a drone hook (the drone altitude). The client eases up to it
     /// like WING_RISE; the referee records it and never snaps `y`.
     pub swing_y: f64,
+    /// Which match drone (index into `drones`) this player is swinging from.
+    /// A shoot-down of that drone detaches them — they fall as if it never existed.
+    pub hook_drone: Option<usize>,
 }
 
 fn bucket(b: &mut (f64, f64), rate: f64, burst: f64, t: f64) -> bool {
@@ -1837,7 +1996,7 @@ impl Player {
     fn new(user: Value, slot: i64, ch: i64, t: f64, team: u8) -> Self {
         Self {
             user, slot, team, bot: None, ch, x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vz: 0.0, r: 0, pt: 0, hp: HP,
-            hp_original: HP, w: 0,
+            hp_acc: 0.0, hp_original: HP, w: 0,
             mag: std::array::from_fn(|i| WEAPONS[i].mag), res: std::array::from_fn(|i| WEAPONS[i].reserve),
             last: std::array::from_fn(|_| VecDeque::new()), ready: -(1 << 30), reload: None, n: 0,
             kills: 0, deaths: 0, dead: false, respawn_at: 0.0, life: 0, spawn_t: t, protect: 0.0,
@@ -1846,7 +2005,8 @@ impl Player {
             away: None, gone: false, q: None, q0: 0, t0: t, off: None, qmax: None, at: t, air_at: t,
             pb: (POS_BURST, t), fb: (FIRE_BURST, t), ob: (OP_BURST, t), fix_at: -1e9, sync_at: -1e9, bad: 0,
             hist: VecDeque::new(), rtts: VecDeque::new(), rtt: 0.0,
-            charm_until: 0.0, freeze_until: 0.0, cloak_until: 0.0, shield_totem_until: 0.0,
+            charm_until: 0.0, freeze_until: 0.0, dance_until: 0.0, cloak_until: 0.0, shield_totem_until: 0.0,
+            slip_until: 0.0, slip_vx: 0.0, slip_vz: 0.0, lava_hold: 0.0, hole_drag: 0.0,
             wings_until: 0.0, wings_fly: 0.0, leap_until: 0.0, speed_until: 0.0,
             overclock_until: 0.0, infchamber_until: 0.0, magnet_until: 0.0, wallrun_until: 0.0,
             rally_until: 0.0, fake_until: 0.0, pocket_until: 0.0, fate_until: 0.0,
@@ -1856,6 +2016,7 @@ impl Player {
             swap_cd: 0.0, radarjam_until: 0.0, grav_until: 0.0, flag_extra: 0,
             slow_until: 0.0, blind_until: 0.0,
             hook_until: 0.0, hook_pull: None, swing_until: 0.0, swing_y: 0.0,
+            hook_drone: None,
         }
     }
 
@@ -1877,12 +2038,14 @@ impl Player {
         if self.second_wind {
             self.second_wind = false;
             self.hp = (HP / 2).max(1);
+            self.hp_acc = 0.0;
             self.fake_until = t + 1.2;
             return true;
         }
         if self.phoenix_until > t {
             self.phoenix_until = 0.0;
             self.hp = HP;
+            self.hp_acc = 0.0;
             self.fake_until = t + 1.2;
             return true;
         }
@@ -1901,6 +2064,7 @@ impl Player {
         self.r = ((s[3] * 100.0) as i64).rem_euclid(36000);
         self.pt = 0;
         self.hp = HP;
+        self.hp_acc = 0.0;
         self.hp_original = HP;
         self.dead = false;
         self.mag = std::array::from_fn(|i| WEAPONS[i].mag);
@@ -1923,9 +2087,16 @@ impl Player {
         self.hook_pull = None;
         self.swing_until = 0.0;
         self.swing_y = 0.0;
+        self.hook_drone = None;
         self.n = 0; // the spread sequence restarts each life
         self.charm_until = 0.0;
         self.freeze_until = 0.0;
+        self.dance_until = 0.0;   // a dancer stands back up un-stunned
+        self.slip_until = 0.0;
+        self.hole_drag = 0.0;
+        self.slip_vx = 0.0;
+        self.slip_vz = 0.0;
+        self.lava_hold = 0.0;
         self.shield_totem_until = 0.0;   // a death pops the shield totem's bubble too
         self.wings_until = 0.0;
         self.wings_fly = 0.0;
@@ -2103,12 +2274,25 @@ pub struct Strike {
     pub meteors: Vec<MeteorMark>,
     pub beacons: Vec<Beacon>,
     pub bubbles: Vec<Bubble>,
+    // ---- Wave F: the joke world totems ----
+    pub bananas: Vec<BananaPeel>,
+    pub lava_zones: Vec<LavaZone>,
+    /// LISTS — several geese / holes can run at once and each one stacks (never replaces).
+    pub geese: Vec<Goose>,
+    pub blackholes: Vec<BlackHole>,
+    /// Reverse Controls totem window (server clock) — arena-wide, not per-player.
+    pub reverse_until: f64,
+    /// Weapon Roulette totem window (server clock) — arena-wide, not per-player.
+    pub roulette_until: f64,
+    /// Next Weapon Roulette re-roll (server clock).
+    pub roulette_next: f64,
     pub fate: Option<FateLink>,
     pub event: Option<ArenaEvent>,
     pub event_at: Option<f64>,
     /// ---- Wave D: Arena Disasters ----
-    /// The live disaster (one at a time), and when the clock may start another.
-    pub disaster: Option<Disaster>,
+    /// Every live disaster (several can run at once — a new one never stops the old),
+    /// and when the clock may start another. Cap DIS_MAX entries; oldest is shed.
+    pub disasters: Vec<Disaster>,
     pub disaster_at: Option<f64>,
     /// Impacts the disaster has warned about (rings/markers) — drained at `hit_at`.
     pub warns: Vec<WarnMark>,
@@ -2116,12 +2300,18 @@ pub struct Strike {
     pub hot_at: Option<f64>,
     pub fuse_at: Option<f64>,
     pub world_k: i64,
+    /// Big Head totem window (server clock): while live, every skull in the arena is
+    /// BIG_HEAD_S wide/tall and the head hitbox matches. Arena-wide — not per-player.
+    pub big_head_until: f64,
     /// The host's "Summon the Warden" option (half-score mid-match boss).
     pub warden_opt: bool,
     /// Set once the Warden has risen this match — it is a one-shot, not a recurring event.
     pub warden_done: bool,
     /// Match flight drones (grapple anchors): lanes from the map bounds, stepped in tick().
     pub drones: Vec<([f64; 3], [f64; 3], f64)>,
+    /// Per-lane shoot-down clock (server `t` until which that hull is a wreck; 0.0 = up).
+    /// Parallel to `drones`. Twin: `downUntil` on a JS match-drone.
+    pub drone_down: Vec<f64>,
     /// The Warden, while it lives. None before it is summoned and after it dies.
     pub warden: Option<Warden>,
     /// ms_left frozen at the summon (the clock is parked here until it dies).
@@ -2158,10 +2348,12 @@ impl Strike {
             totem_at: None, totem_k: 0, pack_at: None, pack_k: 0, dis_at: None, dis_k: 0,
             portals: Vec::new(), mines: Vec::new(), meteors: Vec::new(), beacons: Vec::new(),
             bubbles: Vec::new(), fate: None, event: None, event_at: None, capture: None,
-            hot_at: None, fuse_at: None, world_k: 0,
-            disaster: None, disaster_at: None, warns: Vec::new(),
+            bananas: Vec::new(), lava_zones: Vec::new(), geese: Vec::new(), blackholes: Vec::new(),
+            reverse_until: 0.0, roulette_until: 0.0, roulette_next: 0.0,
+            hot_at: None, fuse_at: None, world_k: 0, big_head_until: 0.0,
+            disasters: Vec::new(), disaster_at: None, warns: Vec::new(),
             warden_opt: true, warden_done: false, warden: None, warden_frozen_ms: 0,
-            drones: Vec::new(),
+            drones: Vec::new(), drone_down: Vec::new(),
             decoys: Vec::new(),
             shots: Vec::new(), booms: Vec::new(), detonate_echoes: Vec::new(), rockets: Vec::new(),
             rocket_k: 0, pending: Vec::new(), k: 0, sent: VecDeque::new(),
@@ -2208,6 +2400,32 @@ impl Strike {
         self.players.iter().position(|(u, _)| u == uid)
     }
 
+    /// Bubble Fortress: true when (x, y, z) sits inside a live bubble defending `team`.
+    /// Twin of `inBubble` in games/strike.js.
+    fn in_bubble(&self, x: f64, y: f64, z: f64, team: u8, t: f64) -> bool {
+        self.bubbles.iter().any(|b| {
+            b.until > t && b.team == team && dist3([x, y, z], [b.x, b.y, b.z]) <= b.r
+        })
+    }
+
+    /// King (×0.6) and Rally near its beacon (×0.7) shorten a reload.
+    /// Twin of `reloadMult` in games/strike.js.
+    fn reload_mult(&self, team: u8, x: f64, z: f64, t: f64) -> f64 {
+        let mut m = 1.0;
+        if self.players.iter().any(|(_, p)| p.team == team && p.king_until > t) {
+            m *= 0.6;
+        }
+        if self.players.iter().any(|(_, p)| p.team == team && p.rally_until > t)
+            && self.beacons.iter().any(|b| {
+                b.kind == "rally" && b.until > t && b.team == team
+                    && (x - b.x).hypot(z - b.z) < 10.0
+            })
+        {
+            m *= 0.7;
+        }
+        m
+    }
+
     fn mark(&mut self, uid: &str) {
         if !self.dirty.iter().any(|u| u == uid) {
             self.dirty.push(uid.to_string());
@@ -2219,6 +2437,12 @@ impl Strike {
         for u in all {
             self.mark(&u);
         }
+    }
+
+    /// The Big Head totem's live head scale (BIG_HEAD_S while the arena-wide window is
+    /// open, else 1.0). Twin: the `hs` the solo client passes into FS.rayPlayer.
+    fn head_scale(&self, t: f64) -> f64 {
+        if self.big_head_until > t { BIG_HEAD_S } else { 1.0 }
     }
 
     pub fn ms_left(&self, t: f64) -> i64 {
@@ -2353,6 +2577,7 @@ impl Strike {
         self.tsize = pick(tsize, &TEAM_SIZES, 2);
         self.phase = Phase::Warmup;
         self.drones = grapple_routes(self.map().bounds());
+        self.drone_down = vec![0.0; self.drones.len()];
         self.go_at = t + COUNTDOWN;
         self.results = None;
         self.players = Vec::new();
@@ -2381,7 +2606,7 @@ impl Strike {
         self.hot_at = Some(t + 22.0);
         self.fuse_at = Some(t + 30.0);
         self.capture = None;
-        self.disaster = None;
+        self.disasters.clear();
         self.disaster_at = Some(t + DIS_FIRST);
         // The Warden: opt-in from the host ("Summon the Warden" next to Map view 2D).
         self.warden_opt = warden.as_i64().map(|v| v != 0).unwrap_or(warden.as_bool().unwrap_or(true));
@@ -2425,7 +2650,7 @@ impl Strike {
         self.booms.clear();
         self.rockets.clear();
         self.pending.clear();
-        self.disaster = None;
+        self.disasters.clear();
         self.disaster_at = None;
         self.dis_at = None;
         self.warns.clear();
@@ -2579,11 +2804,14 @@ impl Strike {
             && !self.event.as_ref().map(|e| e.kind == "nosprint" && e.until > t).unwrap_or(false)
             // Absolute Zero: everything is ice, so the ground barely bites — the ref
             // refuses the tall acceleration exactly like it refuses an overspeed dash
-            && !self.disaster.as_ref().map(|d| d.kind == "absolutezero" && t >= d.warn_at && d.until > t).unwrap_or(false);
+            && !self.disaster_live("absolutezero", t);
         // the movement totems buy room while their windows run (the server itself judged
         // them, so a raised cap can't be claimed by just sending the flag): the speed
         // totem's dash outranks the sprint flag, the leap totem's jumps rise taller
-        let speed_cap = if p.speed_until > t { SPRINT_MAX_SPEED * SPEED_MULT }
+        // a banana slip slides at 9 m/s and is not a cheat — the ref lets it through.
+        // Same for the Black Hole: its drag is an arena force, not a speed claim.
+        let speed_cap = if p.slip_until > t || p.hole_drag > t { SPRINT_MAX_SPEED }
+            else if p.speed_until > t { SPRINT_MAX_SPEED * SPEED_MULT }
             else if sprint { SPRINT_MAX_SPEED } else { MAX_SPEED };
         // Disaster slowness (quake throw / toxic choke / sink stumble / wind footing) bites
         // the same way Absolute Zero's ice does: the ref refuses the tall step.
@@ -2592,11 +2820,47 @@ impl Strike {
         let (xm, ym, zm) = (x / 100.0, y / 100.0, z / 100.0);
         let b = self.map().bounds();
         let mut ok = dt >= 0.0 && b[0] <= xm && xm <= b[3] && b[1] <= ym && ym <= b[4] && b[2] <= zm && zm <= b[5];
+        // Rift walk-in: a body standing in one opening may hop to the other. That step is
+        // a legal move (the same pair the Rift totem planted) so the referee doesn't
+        // rubber-band the prediction back across the map. The hop lands just outside the
+        // far ring's RIFT_R, so the next pos cannot re-enter on the way out.
+        let mut rift_hop = false;
         if ok {
+            for q in self.portals.iter() {
+                if q.until <= t {
+                    continue;
+                }
+                if (p.x - q.x).hypot(p.z - q.z) > RIFT_R || p.y.abs() > 1.3 {
+                    continue;
+                }
+                let Some(o) = self.portals.iter().find(|o| o.id == q.pair && o.until > t) else {
+                    continue;
+                };
+                // step-out past the far ring along the pair's own axis (entered -> exit),
+                // the same rule as FS.riftHop in games/strike.js
+                let (mut ax, mut az) = (o.x - q.x, o.z - q.z);
+                let mut aln = ax.hypot(az);
+                if aln <= 0.01 {
+                    ax = q.yaw.to_radians().sin();
+                    az = -(q.yaw.to_radians().cos());
+                    aln = 1.0;
+                }
+                ax /= aln;
+                az /= aln;
+                let (ex, ez) = (o.x + ax * (RIFT_R + 0.35), o.z + az * (RIFT_R + 0.35));
+                if (xm - ex).hypot(zm - ez) <= 0.7 && ym.abs() <= 1.3 {
+                    rift_hop = true;
+                    break;
+                }
+            }
+        }
+        if ok && !rift_hop {
             let across = (xm - p.x).hypot(zm - p.z);
             let dy = ym - p.y;
             ok = across <= speed_cap * dt + SLACK && dy <= up_cap * dt + STEP_H + SLACK
                 && -dy <= FALL_MAX * dt + SLACK && overlaps(self.map(), xm, ym, zm, SHRINK).is_none();
+        } else if rift_hop {
+            ok = overlaps(self.map(), xm, ym, zm, SHRINK).is_none();
         }
         let clock = match (q, p.off) {
             (Some(q), Some(off)) => q as f64 / 100.0 + off,
@@ -2645,7 +2909,7 @@ impl Strike {
         p.pt = pt.map(|v| v as i64).unwrap_or(0);
         p.at = t;
         p.hist.push_back((mapped, xm, ym, zm));
-        while p.hist.len() > 2 && mapped - p.hist[0].0 > HISTORY {
+        while p.hist.len() > 2 && mapped - p.hist[0].0 > HIST_S {
             p.hist.pop_front();
         }
         self.ack(p, msg, q, t);
@@ -2699,6 +2963,7 @@ impl Strike {
                 if self.cursed.get(j).copied().unwrap_or(false) {
                     let p = &mut self.players[i].1;
                     p.hp = (p.hp - 15).max(1);
+                    p.hp_acc = 0.0;
                 }
                 if kind == "health" || kind == "ammo" {
                     let p = &mut self.players[i].1;
@@ -2872,35 +3137,52 @@ impl Strike {
             }
             // ---- Wave C ----
             "rift" => {
-                // a linked pair of openings a few metres ahead; projectiles may re-exit
+                // A standing portal ring a couple of metres in front of the taker, and
+                // its twin somewhere random on the map. Walk into either, come out the
+                // other. Rockets hop the same pair.
                 self.world_k += 1;
                 let (x, _y, z, yaw) = {
                     let p = &self.players[i].1;
-                    (p.x, p.y + 0.9, p.z, p.r as f64 / 100.0)
+                    (p.x, p.y, p.z, p.r as f64 / 100.0)
                 };
                 let vx = yaw.to_radians().sin();
                 let vz = -(yaw.to_radians().cos());
                 let id = self.world_k;
-                for k in 0..2 {
-                    let off = if k == 0 { 2.0 } else { 8.0 };
-                    let (mut gx, mut gz) = (x + vx * off, z + vz * off);
-                    for n in 0..20 {
-                        if overlaps(self.map(), gx, 0.1, gz, 0.2).is_none() {
-                            break;
-                        }
-                        gx = x + vx * (off + n as f64 * 0.3);
-                        gz = z + vz * (off + n as f64 * 0.3);
+                // near ring: just ahead, nudged off any box
+                let (mut nx, mut nz) = (x + vx * RIFT_FRONT, z + vz * RIFT_FRONT);
+                for n in 0..20 {
+                    if overlaps(self.map(), nx, 0.1, nz, 0.2).is_none() {
+                        break;
                     }
-                    self.portals.push(Portal {
-                        id: id + k as i64, x: gx, y: 0.0, z: gz,
-                        pair: id + (1 - k) as i64, owner: me.clone(), until: t + RIFT,
-                    });
+                    nx = x + vx * (RIFT_FRONT + n as f64 * 0.3);
+                    nz = z + vz * (RIFT_FRONT + n as f64 * 0.3);
                 }
+                // far ring: the same hashed open-spot scatter drops use
+                self.totem_k += 1;
+                let seed = (self.totem_k as u32)
+                    .wrapping_mul(0x9E37_79B9)
+                    .wrapping_add(0x51FE_2703)
+                    .wrapping_add(self.k as u32);
+                let (fx, fz) = self.open_spot(seed);
+                // far-ring facing = atan2(nx-fx, -(nz-fz)) — the same derivation as
+                // FS.riftPair in games/strike.js, so the hop's step-out lands where the
+                // client's prediction put it and pos() does not rubber-band.
+                let fyaw = (nx - fx).atan2(-(nz - fz)).to_degrees().rem_euclid(360.0);
+                self.portals.push(Portal {
+                    id, x: nx, y: 0.0, z: nz, yaw,
+                    pair: id + 1, owner: me.clone(), until: t + RIFT,
+                });
+                self.portals.push(Portal {
+                    id: id + 1, x: fx, y: 0.0, z: fz, yaw: fyaw,
+                    pair: id, owner: me.clone(), until: t + RIFT,
+                });
                 {
                     let a = &self.portals[self.portals.len() - 2];
                     let b = &self.portals[self.portals.len() - 1];
                     self.pending.push(("rift", json!({"id": id, "x": cm(a.x), "z": cm(a.z),
-                                                      "x2": cm(b.x), "z2": cm(b.z)})));
+                                                      "x2": cm(b.x), "z2": cm(b.z),
+                                                      "ya": cm(a.yaw),
+                                                      "yb": cm(b.yaw)})));
                 }
                 true
             }
@@ -2940,7 +3222,7 @@ impl Strike {
                 // 3s rewind, plus a one-shot death undo for 8s
                 let (tx, ty, tz) = {
                     let p = &self.players[i].1;
-                    p.where_at(t - 3.0)
+                    p.where_at(t - REWIND_S)
                 };
                 {
                     let p = &mut self.players[i].1;
@@ -3030,12 +3312,14 @@ impl Strike {
                 true
             }
             "mark" => {
-                // Hunter's Mark: every enemy is painted for your side
+                // Hunter's Mark: every enemy is painted for your side — and their
+                // cloaks drop, so "they can't hide" is literally true (twin of JS).
                 let team = self.players[i].1.team;
                 for (_, v) in self.players.iter_mut() {
                     if v.team != team && !v.dead && !v.gone {
                         v.hunter_until = t + HUNTER;
                         v.hunter_by = me.clone();
+                        v.cloak_until = 0.0;
                     }
                 }
                 self.mark_all();
@@ -3129,11 +3413,15 @@ impl Strike {
                     let p = &self.players[i].1;
                     (p.x, p.y, p.z)
                 };
+                // the taker's HUD clock (FLAG_RALLY) — the beacon itself drives the
+                // shared reload / heal for anyone on the side near it
+                self.players[i].1.rally_until = t + RALLY;
                 self.world_k += 1;
                 self.beacons.push(Beacon {
                     id: self.world_k, x, y, z, kind: "rally",
                     team, owner: me.clone(), until: t + RALLY,
                 });
+                self.mark_all();
                 true
             }
             "meteor" => {
@@ -3199,6 +3487,15 @@ impl Strike {
             }
             "king" => {
                 let team = self.players[i].1.team;
+                // King: reserve ammo up (royalty is well-supplied) and faster reloads
+                // via reload_mult (twin of the JS totemApply)
+                {
+                    let p = &mut self.players[i].1;
+                    for wi in 0..WEAPONS.len() {
+                        let cap = WEAPONS[wi].reserve * 2;
+                        p.res[wi] = (p.res[wi] + WEAPONS[wi].reserve).min(cap);
+                    }
+                }
                 for (_, v) in self.players.iter_mut() {
                     if v.team == team && !v.dead && !v.gone {
                         v.king_until = t + KING;
@@ -3226,6 +3523,129 @@ impl Strike {
                 self.mark_all();
                 true
             }
+            "bighead" => {
+                // Every skull in the arena doubles — both teams, bots included, the
+                // taker too. It's a world joke, not a power-up: it does not pop on death.
+                self.big_head_until = t + BIG_HEAD;
+                self.mark_all();
+                true
+            }
+            "disco" => {
+                // Everyone EXCEPT the taker dances and cannot shoot. Per-player clocks
+                // (the taker is the one who stays armed); a dancer's own death pops it.
+                let mut any = false;
+                for (u, v) in self.players.iter_mut() {
+                    if u.as_str() != me && !v.dead && !v.gone {
+                        v.dance_until = t + DISCO;
+                        any = true;
+                    }
+                }
+                if any {
+                    self.mark_all();
+                }
+                any
+            }
+            // ---- Wave F: the joke world totems (arena-wide, both sides suffer) ----
+            "banana" => {
+                // Banana peels scatter across the arena. Deterministic scatter from the
+                // world counter — never Math.random() (a user must see the same peels
+                // every time). Twin: the JS totemApply "banana" arm.
+                self.world_k += 1;
+                let seed = (self.world_k as u32)
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add((t * 1000.0) as u32);
+                let (mx, mz) = {
+                    let p = &self.players[i].1;
+                    (p.x, p.z)
+                };
+                for bi in 0..BANANA_N {
+                    let salt = (bi as u32).wrapping_mul(7).wrapping_add(1);
+                    let ang = (seed.wrapping_add(bi as u32).wrapping_mul(0x9e37_79b9)) as f64 * 0.001;
+                    let rad = 3.0 + hash_match(seed, salt) * BANANA_R;
+                    let bx = mx + ang.cos() * rad;
+                    let bz = mz + ang.sin() * rad;
+                    self.bananas.push(BananaPeel {
+                        id: self.world_k * 100 + bi as i64,
+                        x: bx,
+                        z: bz,
+                    });
+                }
+                self.mark_all();
+                true
+            }
+            "lava" => {
+                // Floor Is Lava: random floor patches turn dangerous. Stand too long →
+                // launched up + burned. Higher ground saves you.
+                self.world_k += 1;
+                let seed = (self.world_k as u32)
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add((t * 1000.0) as u32);
+                let (mx, mz) = {
+                    let p = &self.players[i].1;
+                    (p.x, p.z)
+                };
+                for li in 0..LAVA_ZONES {
+                    let salt = (li as u32).wrapping_mul(11).wrapping_add(3);
+                    let ang = (seed.wrapping_add(li as u32).wrapping_mul(0x9e37_79b9)) as f64 * 0.001;
+                    let rad = 4.0 + hash_match(seed, salt) * LAVA_R;
+                    let lx = mx + ang.cos() * rad;
+                    let lz = mz + ang.sin() * rad;
+                    self.lava_zones.push(LavaZone {
+                        id: self.world_k * 100 + li as i64,
+                        x: lx,
+                        z: lz,
+                        r: LAVA_R,
+                    });
+                }
+                self.mark_all();
+                true
+            }
+            "goose" => {
+                // An angry goose spawns and chases the nearest player at top speed.
+                // It headbutts anyone it catches. LISTS: a second goose stacks — it
+                // never replaces the first.
+                self.world_k += 1;
+                let (mx, mz) = {
+                    let p = &self.players[i].1;
+                    (p.x, p.z)
+                };
+                self.geese.push(Goose {
+                    id: self.world_k,
+                    x: mx + 4.0,
+                    z: mz + 4.0,
+                    until: t + GOOSE,
+                });
+                self.mark_all();
+                true
+            }
+            "reverse" => {
+                // Everyone's WASD is reversed for the window. Arena-wide, both teams,
+                // bots too. Twin: V.reverseUntil in games/strike.js.
+                self.reverse_until = t + REVERSE;
+                self.mark_all();
+                true
+            }
+            "blackhole" => {
+                // A tiny black hole opens at the centre of the arena and sucks
+                // everything in until it disappears. Twin: totemApply in games/strike.js.
+                // LISTS: a second hole stacks — it never replaces the first.
+                self.world_k += 1;
+                self.blackholes.push(BlackHole {
+                    id: self.world_k,
+                    x: 0.0,
+                    z: 0.0,
+                    until: t + BLACKHOLE,
+                });
+                self.mark_all();
+                true
+            }
+            "roulette" => {
+                // Every 2 s everyone's weapon randomly switches. Arena-wide, both teams.
+                self.roulette_until = t + ROULETTE;
+                self.roulette_next = t + ROULETTE_GAP;
+                self.mark_all();
+                true
+            }
             // ---- Wave D: Arena Disasters. Everyone suffers, the taker included.
             // Taking one unleashes the matching map-wide hazard; a Shield totem holder
             // is the one person a disaster cannot touch (shielded() is checked per hit).
@@ -3239,12 +3659,10 @@ impl Strike {
     }
 
     /// Unleash an arena-wide disaster. `taker` may be "" for a clock-started one.
-    /// Returns false when another disaster is already running (one at a time).
+    /// Several disasters can run at once — a new one NEVER stops an old one. The
+    /// oldest is shed only past DIS_MAX. Returns false only for an unknown kind.
     pub fn start_disaster(&mut self, kind: &'static str, t: f64) -> bool {
         if !DISASTERS.contains(&kind) {
-            return false;
-        }
-        if self.disaster.as_ref().map(|d| d.until > t).unwrap_or(false) {
             return false;
         }
         let hold = match kind {
@@ -3271,7 +3689,7 @@ impl Strike {
         } else {
             (0.0, 0.0)
         };
-        self.disaster = Some(Disaster {
+        self.disasters.push(Disaster {
             kind,
             warn_at: t + DIS_WARN,
             until: t + DIS_WARN + hold,
@@ -3283,10 +3701,14 @@ impl Strike {
             pit,
             mark_k: 0,
         });
+        while self.disasters.len() > DIS_MAX {
+            self.disasters.remove(0);
+        }
         self.pending.push((
             "disaster",
             json!({
                 "kind": kind,
+                "id": kind,
                 "warn": (DIS_WARN * 1000.0) as i64,
                 "dur": (hold * 1000.0) as i64,
             }),
@@ -3741,6 +4163,7 @@ impl Strike {
                         dmg: 0,
                         overhead: false,
                         quake: true,
+                        dis: "",
                     });
                 }
                 let mut victims: Vec<usize> = Vec::new();
@@ -3844,6 +4267,7 @@ impl Strike {
                             dmg: 0,
                             overhead: false,
                             quake: true,
+                            dis: "",
                         });
                     }
                 }
@@ -4023,8 +4447,17 @@ impl Strike {
             .filter(|k| !DISASTERS.contains(k))
             .filter(|k| can_mole || *k != "mole")
             .collect();
-        let kind: &'static str =
-            kinds[(hash_match(seed, 1) * kinds.len() as f64) as usize % kinds.len()];
+        // The newest joke set (Big Head … Roulette) is FEATURED: half the rolls come
+        // from it, so a player actually meets them inside a match instead of waiting
+        // on a 1-in-45 roll. Twin: totemSpawn's FEAT bias in games/strike.js.
+        let feat: [&'static str; 8] = [
+            "bighead", "disco", "banana", "lava", "goose", "reverse", "blackhole", "roulette",
+        ];
+        let kind: &'static str = if hash_match(seed, 5) < 0.5 {
+            feat[((hash_match(seed, 6) * feat.len() as f64) as usize) % feat.len()]
+        } else {
+            kinds[(hash_match(seed, 1) * kinds.len() as f64) as usize % kinds.len()]
+        };
         let (x, z) = self.open_spot(seed);
         let i = a + (self.totem_k as usize - 1) % DROP_SLOTS;
         // Hot Drop / Cursed Drop flavours: same scatter rule, a visible tag so the
@@ -4092,6 +4525,100 @@ impl Strike {
         self.pending.push(("pack", json!({"i": i, "kind": kind, "x": cm(x), "z": cm(z)})));
     }
 
+    /// Land at most DRONE_TOTEMS personal totems ON a wreck, not on a fresh open spot.
+    /// The three fan out from (x, z) on a hashed angle/radius so they don't stack on one
+    /// pixel. They get their own one-shot slots appended PAST the drop rings (the Warden
+    /// loot rule), never the recycled totem ring: a later drone appends more, it never
+    /// overwrites an unclaimed wreck's totems — they stay until someone takes them.
+    /// Twin: droneTotemDrop in games/strike.js.
+    fn drone_totem_drop(&mut self, x: f64, z: f64, seed: u32, t: f64) {
+        if self.warden.is_some() {
+            return;
+        }
+        self.ensure_drop_slots();
+        let kinds: Vec<&'static str> = TOTEM_KINDS
+            .iter()
+            .copied()
+            .filter(|k| !DISASTERS.contains(k))
+            .collect();
+        for i in 0..DRONE_TOTEMS {
+            let tok = (seed
+                ^ (((i as u32) + 1).wrapping_mul(0x9E37_79B9))
+                ^ (((t * 1000.0) as i64 & 0xFFFF) as u32))
+                .wrapping_add(0);
+            let kind = kinds[(tok as usize) % kinds.len()];
+            let mut ang = hash_match(tok, 71) * std::f64::consts::TAU;
+            let mut rad = 1.4 + hash_match(tok, 73) * 1.8;
+            let (mut tx, mut tz) = (x + ang.cos() * rad, z + ang.sin() * rad);
+            for k in 0..16 {
+                if overlaps(self.map(), tx, 0.1, tz, 0.0).is_none() {
+                    break;
+                }
+                let s2 = tok.wrapping_add(((k as u32) + 1).wrapping_mul(2654435761));
+                ang = hash_match(s2, 71) * std::f64::consts::TAU;
+                rad = 1.4 + hash_match(s2, 73) * 1.8;
+                tx = x + ang.cos() * rad;
+                tz = z + ang.sin() * rad;
+            }
+            let idx = self.kinds.len();
+            self.items.push(None);
+            self.kinds.push(kind);
+            self.spots.push([tx, 0.0, tz]);
+            self.cursed.push(false);
+            self.pending.push((
+                "totem",
+                json!({"i": idx, "kind": kind, "x": cm(tx), "z": cm(tz), "tag": ""}),
+            ));
+        }
+    }
+
+    /// Detach every swinger hooked to this drone index and drop them to the ground, as
+    /// if the drone were never there (the swing window dies with the hull).
+    /// Twin: droneDetach in games/strike.js.
+    fn drone_detach(&mut self, di: usize, t: f64) {
+        for (_, p) in self.players.iter_mut() {
+            if p.hook_drone != Some(di) {
+                continue;
+            }
+            p.swing_until = 0.0;
+            p.swing_y = 0.0;
+            p.hook_until = 0.0;
+            p.hook_pull = None;
+            p.hook_drone = None;
+            if !p.dead {
+                // fall as if there had never been a drone: the air clock restarts here,
+                // so the ground under them (or VOID_SECS) is what catches them.
+                p.air_at = t;
+                p.void_at = 0.0;
+            }
+        }
+    }
+
+    /// A shot-down match drone: the hull goes dark for DRONE_DOWN_SECS, everyone swinging
+    /// on it falls to the ground, three non-disaster totems land where it fell, and the
+    /// arena takes a random disaster (added to whatever is already running).
+    /// Twin: droneShootDown in games/strike.js. Returns the wreck spot when it went down.
+    pub fn drone_down(&mut self, di: usize, pos: [f64; 3], t: f64) -> Option<(f64, f64)> {
+        if di >= self.drones.len() {
+            return None;
+        }
+        if self.drone_down.len() <= di {
+            self.drone_down.resize(self.drones.len(), 0.0);
+        }
+        if self.drone_down[di] > t {
+            return None;
+        }
+        self.drone_down[di] = t + DRONE_DOWN_SECS;
+        let (x, z) = (pos[0], pos[2]);
+        self.drone_detach(di, t);
+        let seed = (((t * 1000.0) as u32) ^ ((di as u32).wrapping_mul(0x9E37_79B9))) | 1;
+        self.drone_totem_drop(x, z, seed, t);
+        let dkind = DISASTERS[dis_kind(seed, 19, DISASTERS.len())];
+        self.start_disaster(dkind, t);
+        self.booms.push(json!([cm(x), cm(0.3), cm(z)]));
+        Some((x, z))
+    }
+
     fn sync(p: &mut Player, t: f64) -> Option<Value> {
         if t - p.sync_at < FIX_GAP {
             return None;
@@ -4127,12 +4654,14 @@ impl Strike {
         if protect_ended {
             self.mark(uid);
         }
+        let hs = self.head_scale(t);
         // the grappling gun: zero damage. Hook a match drone (swing) or a foe (drag +
         // trigger lock). Never damages the Warden — a live Warden just means no foe hook.
         if w == GRAPPLE_W {
             let routes = self.drones.clone();
+            let downed = self.drone_down.clone();
             let reach = ray_map(self.map(), o, d, WEAPONS[GRAPPLE_W].range);
-            if let Some((_hd, di)) = drone_hit(o, d, &routes, t - self.go_at, reach) {
+            if let Some((_hd, di)) = drone_hit(o, d, &routes, t - self.go_at, reach, &downed, t) {
                 let c = drone_at(&routes[di], t - self.go_at);
                 {
                     let p = &mut self.players[i].1;
@@ -4142,6 +4671,7 @@ impl Strike {
                     p.vx = d[0] * GRAPPLE_SWING;
                     p.vz = d[2] * GRAPPLE_SWING;
                     p.swing_until = t + GRAPPLE_TIME;
+                    p.hook_drone = Some(di);
                     p.air_at = t;
                     p.void_at = 0.0;
                 }
@@ -4161,7 +4691,7 @@ impl Strike {
                     if v.protect > t {
                         continue;
                     }
-                    if let Some(h) = ray_player(o, d, v.x, v.y, v.z, reach) {
+                    if let Some(h) = ray_player(o, d, v.x, v.y, v.z, reach, hs) {
                         if h.0 < victim_h {
                             victim_h = h.0;
                             victim = Some(j);
@@ -4202,6 +4732,36 @@ impl Strike {
             self.shots.push(shot.clone());
             return (Some(shot), None);
         }
+        // Match flight drones: a bullet knocks one out of the sky. The hull blocks the
+        // shot — nobody behind it is hit. Twin of the JS fire() match-drone ray test.
+        if !self.drones.is_empty() {
+            let downed = self.drone_down.clone();
+            let routes = self.drones.clone();
+            let mut best: Option<(f64, usize, [f64; 3])> = None;
+            for (di, tg) in routes.iter().enumerate() {
+                if downed.get(di).copied().unwrap_or(0.0) > t {
+                    continue;
+                }
+                let c = drone_at(tg, t - self.go_at);
+                let b = [
+                    c[0] - DRONE_R, c[1] - DRONE_R * 0.7, c[2] - DRONE_R,
+                    c[0] + DRONE_R, c[1] + DRONE_R * 0.7, c[2] + DRONE_R,
+                ];
+                if let Some(h) = ray_box(o, d, &b) {
+                    if h < reach && best.map(|(bh, _, _)| h < bh).unwrap_or(true) {
+                        best = Some((h, di, c));
+                    }
+                }
+            }
+            if let Some((end, di, c)) = best {
+                self.drone_down(di, c, t);
+                let shot = json!([self.players[i].1.slot, w, cm(o[0] + d[0] * end),
+                                  cm(o[1] + d[1] * end), cm(o[2] + d[2] * end), -1, 0]);
+                self.shots.push(shot.clone());
+                self.mark(uid);
+                return (Some(shot), None);
+            }
+        }
         let team = self.players[i].1.team;
         let t_view = res.2;
         // The Warden: while it lives, fighters cannot hurt each other — only the
@@ -4237,7 +4797,7 @@ impl Strike {
                 continue;
             }
             let (vx, vy, vz) = v.where_at(t_view);
-            if let Some((th, head)) = ray_player(o, d, vx, vy, vz, reach) {
+            if let Some((th, head)) = ray_player(o, d, vx, vy, vz, reach, hs) {
                 if best.map(|b| th < b.1).unwrap_or(true) {
                     best = Some((j, th, head));
                 }
@@ -4253,8 +4813,10 @@ impl Strike {
             let hx = o[0] + d[0] * th;
             let hy = o[1] + d[1] * th;
             let hz = o[2] + d[2] * th;
-            for (k, (_ku, kv)) in self.players.iter().enumerate() {
-                if k == j || k == i || kv.dead || kv.gone || kv.magnet_until <= t {
+            for (k, (ku, kv)) in self.players.iter().enumerate() {
+                if k == j || k == i || ku == uid || kv.dead || kv.gone
+                    || kv.team == team || kv.magnet_until <= t
+                {
                     continue;
                 }
                 let dist = dist3([kv.x, kv.y + 0.9, kv.z], [hx, hy, hz]);
@@ -4277,7 +4839,7 @@ impl Strike {
                         continue;
                     }
                     let (vx, vy, vz) = kv.where_at(t_view);
-                    if let Some((th, head)) = ray_player(o, d, vx, vy, vz, reach) {
+                    if let Some((th, head)) = ray_player(o, d, vx, vy, vz, reach, hs) {
                         if second.map(|b| th < b.1).unwrap_or(true) {
                             second = Some((k, th, head));
                         }
@@ -4363,7 +4925,14 @@ impl Strike {
             // read-only snapshot of the victim first — the apply pass needs &mut self
             let (vid, slot, hp0, shield, fate_on) = {
                 let (u, v) = &self.players[j];
-                (u.to_string(), v.slot, v.hp, v.protect > t || v.shielded(t), v.fate_until > t)
+                let (sx, sy, sz) = {
+                    let sh = &self.players[i].1;
+                    (sh.x, sh.y + 0.9, sh.z)
+                };
+                let shield = v.protect > t || v.shielded(t)
+                    || (self.in_bubble(v.x, v.y + 0.9, v.z, v.team, t)
+                        && !self.in_bubble(sx, sy, sz, team, t));
+                (u.to_string(), v.slot, v.hp, shield, v.fate_until > t)
             };
             if first {
                 shot[5] = json!(slot);
@@ -4389,8 +4958,14 @@ impl Strike {
                 dmg -= half;
                 if let Some(pi) = self.idx(&pid) {
                     let dead_p = {
+                        let (pp_x, pp_y, pp_z, pp_team, pp_dead, pp_shield) = {
+                            let pp = &self.players[pi].1;
+                            (pp.x, pp.y + 0.9, pp.z, pp.team, pp.dead, pp.shielded(t))
+                        };
+                        let bubble_safe = self.in_bubble(pp_x, pp_y, pp_z, pp_team, t)
+                            && !self.in_bubble(o[0], o[1], o[2], team, t);
                         let pp = &mut self.players[pi].1;
-                        if !pp.dead && !pp.shielded(t) {
+                        if !pp_dead && !pp_shield && !bubble_safe {
                             pp.hp = (pp.hp - half).max(0);
                             pp.hp <= 0
                         } else {
@@ -4425,7 +5000,9 @@ impl Strike {
         -> (Option<(usize, [f64; 3], [f64; 3], f64, bool)>, Option<Value>, f64)
     {
         let none = (None, None, 0.0);
-        if p.dead || p.gone || p.is_bot() || p.hook_until > t || !bucket(&mut p.fb, FIRE_RATE, FIRE_BURST, t) {
+        if p.dead || p.gone || p.is_bot() || p.hook_until > t || p.dance_until > t
+            || !bucket(&mut p.fb, FIRE_RATE, FIRE_BURST, t)
+        {
             return none;
         }
         let w = as_num(msg.get("w"), -1.0, 99.0);
@@ -4481,18 +5058,7 @@ impl Strike {
         let d = {
             // disaster scatter: grit in the sights / wild wind / EMP electronics (shared rule)
             // read BEFORE the shot ray — `p` is still a live mut borrow of a player
-            let scatter = self.disaster.as_ref().map(|d| {
-                if t < d.warn_at || d.until <= t {
-                    0.0
-                } else {
-                    match d.kind {
-                        "hurricane" => DD_WIND_SCATTER,
-                        "sandstorm" => DD_SAND_SCATTER,
-                        "emp" => DD_EMP_SCATTER,
-                        _ => 0.0,
-                    }
-                }
-            }).unwrap_or(0.0);
+            let scatter = self.disaster_scatter(t);
             dir_of(yaw / 100.0 + dy + scatter, (pitch / 100.0 + dp + scatter * 0.6).clamp(-89.0, 89.0))
         };
         // lag compensation: where was everyone when the shooter pulled the trigger,
@@ -4530,6 +5096,10 @@ impl Strike {
             return;
         }
         // pass 1 (read-only): who is in range, and how hard it hits them
+        let (sh_x, sh_y, sh_z, sh_team) = self.players.iter()
+            .find(|(u, _)| *u == shooter)
+            .map(|(_, p)| (p.x, p.y + 0.9, p.z, p.team))
+            .unwrap_or((at[0], at[1] + 0.9, at[2], 0));
         let hits: Vec<(usize, i64)> = self.players.iter().enumerate()
             .filter(|(_, (_, v))| !v.dead && !v.gone)
             .map(|(j, (u, v))| {
@@ -4539,7 +5109,9 @@ impl Strike {
                 // eye detonates ~0.6 m above the shooter's torso, which would otherwise be
                 // an instant self-kill the moment anyone fires near a wall or their own feet.
                 let direct = *u != shooter && dist < DIRECT_R;
-                let dmg = if v.protect > t || v.shielded(t) { 0 } else { blast_damage(dist, direct) };
+                let bubble_safe = self.in_bubble(v.x, v.y + 0.9, v.z, v.team, t)
+                    && !self.in_bubble(sh_x, sh_y, sh_z, sh_team, t);
+                let dmg = if v.protect > t || v.shielded(t) || bubble_safe { 0 } else { blast_damage(dist, direct) };
                 (j, dmg)
             })
             .filter(|(_, dmg)| *dmg > 0)
@@ -4665,33 +5237,51 @@ impl Strike {
         p.dead || p.gone || p.shielded(t) || p.protect > t
     }
 
-    /// Extra shot scatter (degrees of yaw) while a disaster is chewing the sights.
+    /// Is ANY disaster of `kind` past its warn and inside its hold right now?
+    /// Twin: disKindLive in games/strike.js.
+    fn disaster_live(&self, kind: &str, t: f64) -> bool {
+        self.disasters.iter().any(|d| d.kind == kind && t >= d.warn_at && t < d.until)
+    }
+
+    /// The highest aim-scatter any live disaster is applying (degrees of yaw).
     /// Twin: disAimScatter in games/strike.js.
     fn disaster_scatter(&self, t: f64) -> f64 {
-        let Some(d) = self.disaster.as_ref() else { return 0.0 };
-        if t < d.warn_at || d.until <= t {
-            return 0.0;
+        let mut s = 0.0;
+        for d in &self.disasters {
+            if t < d.warn_at || d.until <= t {
+                continue;
+            }
+            let v = match d.kind {
+                "hurricane" => DD_WIND_SCATTER,
+                "sandstorm" => DD_SAND_SCATTER,
+                "emp" => DD_EMP_SCATTER,
+                _ => 0.0,
+            };
+            if v > s {
+                s = v;
+            }
         }
-        match d.kind {
-            "hurricane" => DD_WIND_SCATTER,
-            "sandstorm" => DD_SAND_SCATTER,
-            "emp" => DD_EMP_SCATTER,
-            _ => 0.0,
-        }
+        s
     }
 
     /// Bot aim error multiplier under a disaster (EMP ×3, hurricane ×2 — wild aim) and
-    /// while a bolt / flash has blinded them (×4 — spray). Twin: the aimX line in
-    /// games/strike.js bot turn/aim.
+    /// while a bolt / flash has blinded them (×4 — spray). Several can run at once, so
+    /// the WORST live modifier wins. Twin: the aimX line in games/strike.js bot turn/aim.
     fn bot_aim_mult(&self, t: f64, blind: bool) -> f64 {
-        let base = match self.disaster.as_ref() {
-            Some(d) if t >= d.warn_at && t < d.until => match d.kind {
+        let mut base = 1.0f64;
+        for d in &self.disasters {
+            if t < d.warn_at || d.until <= t {
+                continue;
+            }
+            let v = match d.kind {
                 "emp" => 3.0,
                 "hurricane" => 2.0,
                 _ => 1.0,
-            },
-            _ => 1.0,
-        };
+            };
+            if v > base {
+                base = v;
+            }
+        }
         if blind {
             base * 4.0
         } else {
@@ -4699,35 +5289,46 @@ impl Strike {
         }
     }
 
-    /// One Arena Disaster's worth of world upkeep. Called from tick() every frame.
+    /// Every live Arena Disaster's worth of world upkeep. Called from tick() every
+    /// frame. Several can run at once — each entry is stepped in turn and a new one
+    /// NEVER stops an old one. Twin: the worldTick disaster block in games/strike.js.
     fn disaster_tick(&mut self, t: f64) {
-        // the disaster clock: independent of the totems and of the small Arena Events
+        // the disaster clock: independent of the totems and of the small Arena Events.
+        // It no longer refuses to fire while one is live — concurrency is the point.
         if self.disaster_at.map(|at| t >= at).unwrap_or(false) {
             self.disaster_at = Some(t + DIS_GAP);
-            if !self.disaster.as_ref().map(|d| d.until > t).unwrap_or(false) {
-                self.world_k += 1;
-                let kind = DISASTERS[dis_kind(self.world_k as u32, 11, DISASTERS.len())];
-                self.start_disaster(kind, t);
-            }
+            self.world_k += 1;
+            let kind = DISASTERS[dis_kind(self.world_k as u32, 11, DISASTERS.len())];
+            self.start_disaster(kind, t);
         }
-        if self.disaster.is_none() {
-            if !self.warns.is_empty() {
-                self.warns.clear();
+        // expire finished disasters one at a time (never wipe the list)
+        let mut gone: Vec<&'static str> = Vec::new();
+        self.disasters.retain(|d| {
+            if d.until <= t {
+                gone.push(d.kind);
+                false
+            } else {
+                true
             }
-            return;
-        }
-        let mut d = self.disaster.take().unwrap();
-        if d.until <= t {
-            self.warns.clear();
-            self.pending.push(("disaster", json!({"kind": "clear"})));
+        });
+        for kind in gone {
+            // drop only THIS disaster's pending marks — a concurrent one keeps its own
+            self.warns.retain(|w| w.dis != kind);
+            self.pending.push(("disaster", json!({"kind": "clear", "id": kind})));
             self.mark_all();
+        }
+        if self.disasters.is_empty() {
             return;
         }
-        // warning window: the banner is up, nothing hurts yet
-        if t < d.warn_at {
-            self.disaster = Some(d);
-            return;
-        }
+        // step every live disaster in turn (clone-out / write-back: Disaster is small)
+        let n = self.disasters.len();
+        for i in 0..n {
+            let mut d = self.disasters[i].clone();
+            // warning window: the banner is up, nothing hurts yet
+            if t < d.warn_at {
+                self.disasters[i] = d;
+                continue;
+            }
         let m = self.map();
         let b = m.bounds();
         let (cx0, cz0, cx1, cz1) = (b[0], b[2], b[3], b[5]);
@@ -4769,6 +5370,7 @@ impl Strike {
                         dmg,
                         overhead,
                         quake,
+                        dis: d.kind,
                     });
                 }
             }
@@ -4989,7 +5591,8 @@ impl Strike {
             }
             _ => {}
         }
-        self.disaster = Some(d);
+            self.disasters[i] = d;
+        }
         // fire the impacts whose warning just ended
         let mut boom: Vec<WarnMark> = Vec::new();
         self.warns.retain(|w| {
@@ -5015,7 +5618,7 @@ impl Strike {
                 if w.overhead && has_roof(self.map(), px, py, pz) {
                     continue;
                 }
-                let dis = self.disaster.as_ref().map(|d| d.kind).unwrap_or("meteorshower");
+                let dis = if w.dis.is_empty() { "meteorshower" } else { w.dis };
                 // proximity crush: more damage near the strike (mark_damage twin of markDamage)
                 let hit = mark_damage(dd, w.r, w.dmg);
                 let dead_now = {
@@ -5043,23 +5646,29 @@ impl Strike {
         let phase = self.phase;
         // Absolute Zero: fingers are numb, every reload crawls. Read the flag BEFORE
         // player_mut() so the immutable borrow of self.disaster is done with first.
-        let zmult = if self.disaster.as_ref().map(|d| d.kind == "absolutezero" && t >= d.warn_at && d.until > t).unwrap_or(false) {
+        let zmult = if self.disaster_live("absolutezero", t) {
             1.5
         } else {
             1.0
         };
+        // the mutable borrow ends at the block; reload_mult needs a read-only &self
+        let (w, q, px, pz, pteam) = {
+            let Some(p) = self.player_mut(uid) else { return false };
+            if p.is_bot() || phase != Phase::Round || p.dead || p.gone
+                || !bucket(&mut p.ob, OP_RATE, OP_BURST, t) || !p.this_life(msg) {
+                return false;
+            }
+            let Some(q) = Self::clock(p, msg, t) else { return false };
+            p.finish_reload(q);
+            let w = p.w;
+            if p.reload.is_some() || p.mag[w] >= WEAPONS[w].mag || p.res[w] <= 0 {
+                return false;
+            }
+            (w, q, p.x, p.z, p.team)
+        };
+        let rmult = self.reload_mult(pteam, px, pz, t);
         let Some(p) = self.player_mut(uid) else { return false };
-        if p.is_bot() || phase != Phase::Round || p.dead || p.gone
-            || !bucket(&mut p.ob, OP_RATE, OP_BURST, t) || !p.this_life(msg) {
-            return false;
-        }
-        let Some(q) = Self::clock(p, msg, t) else { return false };
-        p.finish_reload(q);
-        let w = p.w;
-        if p.reload.is_some() || p.mag[w] >= WEAPONS[w].mag || p.res[w] <= 0 {
-            return false;
-        }
-        p.reload = Some((w, q, q + (WEAPONS[w].reload * zmult * 100.0).round() as i64));
+        p.reload = Some((w, q, q + (WEAPONS[w].reload * zmult * rmult * 100.0).round() as i64));
         true
     }
 
@@ -5097,10 +5706,14 @@ impl Strike {
         if self.players[i].1.freeze_until > t {
             return;
         }
+        // the Disco totem: a dancing bot holds still and holds its fire too
+        if self.players[i].1.dance_until > t {
+            return;
+        }
         // a sandstorm halves how far a bot can see (the dust is up) — the small arena
         // event and the arena-wide disaster both count
         let bot_range = if self.event.as_ref().map(|e| e.kind == "storm" && e.until > t).unwrap_or(false)
-            || self.disaster.as_ref().map(|d| d.kind == "sandstorm" && t >= d.warn_at && d.until > t).unwrap_or(false)
+            || self.disaster_live("sandstorm", t)
         {
             STORM_RANGE
         } else {
@@ -5431,6 +6044,19 @@ impl Strike {
                 wz = dz / ln;
             }
         }
+        // Banana Panic: a slipped bot can't steer — the slide holds at BANANA_SLIDE and
+        // the whole body spins at BANANA_SPIN until the window ends. Twin: the JS
+        // slipMe / slipB holds in update() and botsStep().
+        let slipped_now = self.players[i].1.slip_until > t;
+        if slipped_now {
+            wx = 0.0;
+            wz = 0.0;
+        }
+        // Reverse Controls totem: a bot's wish is reversed too (the window is arena-wide)
+        if self.reverse_until > t {
+            wx = -wx;
+            wz = -wz;
+        }
         // stuck against a wall/corner? aim a sidestep goal and hop the patrol
         {
             let mut slide: Option<(f64, f64)> = None;
@@ -5479,6 +6105,7 @@ impl Strike {
         {
             let m = self.map();
             let p = &mut self.players[i].1;
+            let (svx, svz) = (p.slip_vx, p.slip_vz);
             let b = p.bot.as_mut().unwrap();
             b.body.x = p.x;
             b.body.y = p.y;
@@ -5499,6 +6126,14 @@ impl Strike {
                     p.drop_t = 0.0;
                 }
                 step(m, &mut b.body, wx, wz, false, dt);
+                if slipped_now {
+                    // the slide holds against whatever friction the step applied
+                    b.body.vx = svx;
+                    b.body.vz = svz;
+                    // …and the body spins (aim_y is what writes p.r below)
+                    aim_y = (aim_y + BANANA_SPIN.to_degrees() * dt).rem_euclid(360.0);
+                    b.aim_y = aim_y;
+                }
             }
             p.x = b.body.x;
             p.y = b.body.y;
@@ -5509,7 +6144,7 @@ impl Strike {
             p.pt = (aim_p * 100.0) as i64;
             p.at = t;
             p.hist.push_back((t, p.x, p.y, p.z));
-            while p.hist.len() > 2 && t - p.hist[0].0 > HISTORY {
+            while p.hist.len() > 2 && t - p.hist[0].0 > HIST_S {
                 p.hist.pop_front();
             }
         }
@@ -5546,24 +6181,39 @@ impl Strike {
         }
         // -- reload --
         {
-            let p = &mut self.players[i].1;
-            let w = p.w;
-            if let Some((rw, _, end)) = p.reload {
-                if (t * 100.0) as i64 >= end {
-                    let take = (WEAPONS[rw].mag - p.mag[rw]).min(p.res[rw]);
-                    p.mag[rw] += take;
-                    p.res[rw] -= take;
-                    p.reload = None;
+            let (px, pz, pteam) = {
+                let p = &mut self.players[i].1;
+                let w = p.w;
+                if let Some((rw, _, end)) = p.reload {
+                    if (t * 100.0) as i64 >= end {
+                        let take = (WEAPONS[rw].mag - p.mag[rw]).min(p.res[rw]);
+                        p.mag[rw] += take;
+                        p.res[rw] -= take;
+                        p.reload = None;
+                    }
                 }
-            }
-            if p.mag[w] <= 0 && p.reload.is_none() && p.res[w] > 0 {
-                let zmult = if self.disaster.as_ref().map(|d| d.kind == "absolutezero" && t >= d.warn_at && d.until > t).unwrap_or(false) {
+                if p.mag[w] <= 0 && p.reload.is_none() && p.res[w] > 0 {
+                    (p.x, p.z, p.team)
+                } else {
+                    (0.0, 0.0, 0)
+                }
+            };
+            // only start a new reload when the block above left one pending
+            let needs = {
+                let p = &self.players[i].1;
+                p.mag[p.w] <= 0 && p.reload.is_none() && p.res[p.w] > 0
+            };
+            if needs {
+                let zmult = if self.disaster_live("absolutezero", t) {
                     1.5
                 } else {
                     1.0
                 };
+                let rmult = self.reload_mult(pteam, px, pz, t);
+                let p = &mut self.players[i].1;
+                let w = p.w;
                 p.reload = Some((w, (t * 100.0) as i64,
-                                 ((t + WEAPONS[w].reload * zmult) * 100.0).round() as i64));
+                                 ((t + WEAPONS[w].reload * zmult * rmult) * 100.0).round() as i64));
             }
         }
         let uid = self.players[i].0.clone();
@@ -5577,6 +6227,12 @@ impl Strike {
         if self.phase != Phase::Round {
             return None;
         }
+        // the Disco totem: a dancing bot cannot shoot (the Paralyser's freeze gate is
+        // up in bot_step; this one also stops the trigger mid-window)
+        if self.players[i].1.dance_until > t {
+            return None;
+        }
+        let hs = self.head_scale(t);
         let w = self.players[i].1.w;
         let b = self.players[i].1.bot.as_ref()?;
         // bot_rate is the host-picked MP skill stretching (or tightening) a bot's own gap
@@ -5643,6 +6299,7 @@ impl Strike {
         if w == GRAPPLE_W {
             return None;
         }
+        let scatter = self.disaster_scatter(t);
         let p = &mut self.players[i].1;
         if p.mag[w] <= 0 || p.reload.is_some() {
             return None;
@@ -5651,18 +6308,6 @@ impl Strike {
         p.n += 1;
         let (dy, dp) = spread_of(p.n, w);
         let d = {
-            let scatter = self.disaster.as_ref().map(|d| {
-                if t < d.warn_at || d.until <= t {
-                    0.0
-                } else {
-                    match d.kind {
-                        "hurricane" => DD_WIND_SCATTER,
-                        "sandstorm" => DD_SAND_SCATTER,
-                        "emp" => DD_EMP_SCATTER,
-                        _ => 0.0,
-                    }
-                }
-            }).unwrap_or(0.0);
             dir_of(aim_y + dy + scatter, (aim_p + dp + scatter * 0.6).clamp(-89.0, 89.0))
         };
         if p.protect > t {
@@ -5706,7 +6351,7 @@ impl Strike {
             if dc.until <= t {
                 continue;
             }
-            if let Some(th) = ray_player(o, d, dc.x, dc.y, dc.z, decoy_d).map(|h| h.0) {
+            if let Some(th) = ray_player(o, d, dc.x, dc.y, dc.z, decoy_d, hs).map(|h| h.0) {
                 decoy_hit = Some(dj);
                 decoy_d = th;
             }
@@ -5724,7 +6369,7 @@ impl Strike {
             if !foe || v.cloak_until > t {
                 continue;
             }
-            if let Some((th, head)) = ray_player(o, d, v.x, v.y, v.z, reach) {
+            if let Some((th, head)) = ray_player(o, d, v.x, v.y, v.z, reach, hs) {
                 if best.map(|bb| th < bb.1).unwrap_or(true) {
                     best = Some((j, th, head));
                 }
@@ -5751,13 +6396,31 @@ impl Strike {
         let mut shot = vec![json!(shooter_slot), json!(w), json!(cm(o[0] + d[0] * end)),
                             json!(cm(o[1] + d[1] * end)), json!(cm(o[2] + d[2] * end)), json!(-1), json!(0)];
         if let Some((j, _, head)) = best {
-            let (vid, v) = &mut self.players[j];
-            let vid = vid.clone();
-            shot[5] = json!(v.slot);
+            // snapshot both bodies first — the bubble check borrows `self` read-only
+            let (vid, slot, vx, vy, vz, vteam, vprotect, vshield) = {
+                let (vid, v) = &self.players[j];
+                (vid.clone(), v.slot, v.x, v.y + 0.9, v.z, v.team, v.protect > t, v.shielded(t))
+            };
+            let (sx, sy, sz, steam) = {
+                let sh = &self.players[i].1;
+                (sh.x, sh.y + 0.9, sh.z, sh.team)
+            };
+            let bubble_safe = self.in_bubble(vx, vy, vz, vteam, t)
+                && !self.in_bubble(sx, sy, sz, steam, t);
+            shot[5] = json!(slot);
             shot[6] = json!(if head { 1 } else { 0 });
-            let dmg = if v.protect > t || v.shielded(t) { 0 } else if head { WEAPONS[w].head } else { WEAPONS[w].damage };
-            v.hp = (v.hp - dmg).max(0);
-            let killed = dmg > 0 && v.hp <= 0;
+            let dmg = if vprotect || vshield || bubble_safe {
+                0
+            } else if head {
+                WEAPONS[w].head
+            } else {
+                WEAPONS[w].damage
+            };
+            let killed = {
+                let v = &mut self.players[j].1;
+                v.hp = (v.hp - dmg).max(0);
+                dmg > 0 && v.hp <= 0
+            };
             self.mark(&vid);
             if killed {
                 self.kill(i, j, w, head, t);
@@ -5912,8 +6575,9 @@ impl Strike {
                     if q.until <= t {
                         continue;
                     }
-                    let d = ((r.px - q.x).hypot(r.pz - q.z)).hypot((r.py - (q.y + 0.9)) * 0.5);
-                    if d <= 0.9 {
+                    // the same aperture the player walks: a vertical ring at q.y+0.9
+                    let dxz = (r.px - q.x).hypot(r.pz - q.z);
+                    if dxz <= RIFT_R && (r.py - (q.y + 0.9)).abs() <= RIFT_R {
                         let other = self.portals.iter().find(|o| o.id == q.pair && o.until > t);
                         if let Some(o) = other {
                             hop = Some((o.x, o.y + 0.9, o.z));
@@ -5947,12 +6611,13 @@ impl Strike {
                 } else {
                     // an enemy body blocks it (the shooter's own side is skipped, exactly
                     // like the browser's solo flight: it leaves your own head's box)
+                    let hs = self.head_scale(t);
                     let steam = self.players.iter().find(|(u, _)| *u == r.shooter).map(|(_, p)| p.team);
                     for (_, v) in self.players.iter() {
                         if v.dead || v.gone || Some(v.team) == steam {
                             continue;
                         }
-                        let (body, head) = hit_boxes(v.x, v.y, v.z);
+                        let (body, head) = hit_boxes(v.x, v.y, v.z, hs);
                         if ray_box([r.px, r.py, r.pz], u, &body).map(|h| h <= ln).unwrap_or(false)
                             || ray_box([r.px, r.py, r.pz], u, &head).map(|h| h <= ln).unwrap_or(false) {
                             stopped = true;
@@ -6001,10 +6666,223 @@ impl Strike {
         }
         // decoys expire silently (the client's render pass drops the mesh when its window ends)
         self.decoys.retain(|dc| dc.until > t);
+        // ---- Wave F: joke world totems (Banana / Lava / Goose / Black Hole / Roulette) ----
+        // Banana Panic: peels scatter; anyone stepping on one slips, spins and slides.
+        let mut slipped: Vec<usize> = Vec::new();
+        let mut slip_data: Vec<(usize, f64, f64, f64)> = Vec::new(); // (j, sx, sz, spin_deg)
+        for bp in self.bananas.clone() {
+            for (j, (_u, v)) in self.players.iter().enumerate() {
+                if v.dead || v.gone || v.slip_until > t {
+                    continue;
+                }
+                if (v.x - bp.x).hypot(v.z - bp.z) > BANANA_SLIP {
+                    continue;
+                }
+                // spin + slide forward in the direction they were moving (or facing)
+                let (mut sx, mut sz) = (v.vx, v.vz);
+                if sx.abs() < 0.01 && sz.abs() < 0.01 {
+                    let yaw = (v.r as f64 / 100.0).to_radians();
+                    sx = yaw.sin();
+                    sz = -(yaw.cos());
+                }
+                let ln = sx.hypot(sz).max(1e-6);
+                slip_data.push((j, sx / ln * BANANA_SLIDE, sz / ln * BANANA_SLIDE, BANANA_SPIN.to_degrees() * 100.0));
+            }
+        }
+        for (j, sx, sz, spin) in slip_data {
+            let p = &mut self.players[j].1;
+            p.slip_until = t + 1.2;
+            p.slip_vx = sx;
+            p.slip_vz = sz;
+            p.vx = sx;
+            p.vz = sz;
+            p.r = ((p.r as f64 + spin) as i64).rem_euclid(36000);
+            // a bot's physics body owns its motion — bot_step copies body → p every tick
+            if let Some(b) = p.bot.as_mut() {
+                b.body.vx = sx;
+                b.body.vz = sz;
+            }
+            slipped.push(j);
+        }
+        if !slipped.is_empty() {
+            self.mark_all();
+        }
+        // Floor Is Lava: standing on a dangerous patch too long launches you up + burns.
+        let mut lava_hits: Vec<usize> = Vec::new();
+        let mut lava_reset: Vec<usize> = Vec::new();
+        let mut lava_step: Vec<usize> = Vec::new();
+        for (j, (_u, v)) in self.players.iter().enumerate() {
+            if v.dead || v.gone || v.y > 1.5 {
+                // higher ground saves you
+                lava_reset.push(j);
+                continue;
+            }
+            let mut on = false;
+            for lz in self.lava_zones.iter() {
+                if (v.x - lz.x).hypot(v.z - lz.z) <= lz.r {
+                    on = true;
+                    break;
+                }
+            }
+            if !on {
+                lava_reset.push(j);
+                continue;
+            }
+            lava_step.push(j);
+        }
+        for j in lava_reset {
+            self.players[j].1.lava_hold = 0.0;
+        }
+        for j in lava_step {
+            let p = &mut self.players[j].1;
+            p.lava_hold += dt;
+            if p.lava_hold >= LAVA_HOLD {
+                p.lava_hold = 0.0;
+                p.y += 0.1;
+                p.hp = (p.hp - LAVA_DMG).max(0);
+                lava_hits.push(j);
+            }
+        }
+        for j in lava_hits {
+            self.mark_all();
+            if self.players[j].1.hp <= 0 && !self.players[j].1.dead {
+                self.env_kill(j, "lava", t);
+            }
+        }
+        // Goose Attack: chases the nearest player and headbutts anyone it catches.
+        // LISTS — several geese can run at once and each one stacks (never replaces).
+        let mut geese_keep: Vec<Goose> = Vec::with_capacity(self.geese.len());
+        let geese_in = std::mem::take(&mut self.geese);
+        for mut g in geese_in {
+            if g.until <= t {
+                continue;
+            }
+            // pick nearest living player
+            let mut best: Option<usize> = None;
+            let mut best_d = f64::MAX;
+            for (j, (_u, v)) in self.players.iter().enumerate() {
+                if v.dead || v.gone {
+                    continue;
+                }
+                let d = (v.x - g.x).hypot(v.z - g.z);
+                if d < best_d {
+                    best_d = d;
+                    best = Some(j);
+                }
+            }
+            if let Some(j) = best {
+                let (tx, tz) = (self.players[j].1.x, self.players[j].1.z);
+                let (dx, dz) = (tx - g.x, tz - g.z);
+                let ln = dx.hypot(dz).max(1e-6);
+                g.x += dx / ln * GOOSE_SPEED * dt;
+                g.z += dz / ln * GOOSE_SPEED * dt;
+                if ln < GOOSE_HIT_R {
+                    // one headbutt and the goose is satisfied
+                    let dead_now = {
+                        let p = &mut self.players[j].1;
+                        p.hp = (p.hp - GOOSE_DMG).max(0);
+                        p.vx = dx / ln * GOOSE_KNOCK;
+                        p.vz = dz / ln * GOOSE_KNOCK;
+                        if let Some(b) = p.bot.as_mut() {
+                            b.body.vx = dx / ln * GOOSE_KNOCK;
+                            b.body.vz = dz / ln * GOOSE_KNOCK;
+                        }
+                        p.hp <= 0
+                    };
+                    self.mark_all();
+                    if dead_now {
+                        self.env_kill(j, "goose", t);
+                    }
+                    continue;
+                }
+            }
+            geese_keep.push(g);
+        }
+        self.geese = geese_keep;
+        // Black Hole: sucks everything toward its centre until it disappears.
+        // LISTS — several holes can run at once and each one stacks (never replaces).
+        self.blackholes.retain(|bh| bh.until > t);
+        if !self.blackholes.is_empty() {
+            self.mark_all();
+        }
+        for bh in self.blackholes.clone() {
+            for (_u, p) in self.players.iter_mut() {
+                if p.dead || p.gone {
+                    continue;
+                }
+                let (dx, dz) = (bh.x - p.x, bh.z - p.z);
+                let ln = dx.hypot(dz).max(1e-6);
+                if ln > HOLE_REACH {
+                    continue;
+                }
+                // a gravity well bites harder the closer you are: full pull at the rim,
+                // a shove in the throat (and a hard clamp so you end up ON the hole, not
+                // orbiting it for the rest of the window)
+                let pull = (HOLE_PULL * dt) * (0.55 + 0.45 * (ln / HOLE_REACH).min(1.0));
+                let px = (dx / ln * pull).clamp(-ln, ln);
+                let pz = (dz / ln * pull).clamp(-ln, ln);
+                p.x += px;
+                p.z += pz;
+                p.hole_drag = t + 0.4;   // the ref lets this step through at slide speed
+                // a bot's physics body owns its position mid-tick — bot_step seeds body
+                // from p at entry, so write both
+                if let Some(b) = p.bot.as_mut() {
+                    b.body.x += px;
+                    b.body.z += pz;
+                }
+            }
+        }
+        // Weapon Roulette: every 2 s everyone's weapon randomly switches.
+        if self.roulette_until > t && t >= self.roulette_next {
+            self.roulette_next = t + ROULETTE_GAP;
+            self.world_k += 1;
+            let seed = (self.world_k as u32)
+                .wrapping_mul(2_654_435_761)
+                .wrapping_add((t * 1000.0) as u32);
+            for (j, (_u, p)) in self.players.iter_mut().enumerate() {
+                if p.dead || p.gone {
+                    continue;
+                }
+                let cap = if p.bot.is_some() {
+                    BOT_WEAPON_MAX
+                } else {
+                    NW
+                };
+                let rw = (seed.wrapping_add((j as u32).wrapping_mul(131)) % cap as u32) as usize;
+                p.w = rw;
+                // refill the mag on each switch so the roulette is a joke, not a death sentence
+                let mag = WEAPONS[rw].mag;
+                p.mag[rw] = mag;
+                p.reload = None;
+            }
+            self.mark_all();
+        }
         // ---- Wave C world tick: mines, meteors, bubbles, beacons, portals, events, crate ----
         self.portals.retain(|p| p.until > t);
         self.bubbles.retain(|b| b.until > t);
         self.beacons.retain(|b| b.until > t);
+        // Rally: the beacon heals your side slowly near it (6 hp/s, twin of the JS tick)
+        for b in &self.beacons {
+            if b.kind != "rally" || b.until <= t {
+                continue;
+            }
+            let team = b.team;
+            for (_, p) in self.players.iter_mut() {
+                if p.team != team || p.dead || p.gone {
+                    continue;
+                }
+                if (p.x - b.x).hypot(p.z - b.z) <= 10.0 {
+                    // 6 hp/s is 0.3 a tick at 20 Hz; truncating every tick never heals.
+                    // Accumulate the fraction, pay out whole points (twin of V.hpAcc).
+                    p.hp_acc += 6.0 * dt;
+                    if p.hp_acc >= 1.0 {
+                        let whole = p.hp_acc.floor() as i64;
+                        p.hp_acc -= whole as f64;
+                        p.hp = (p.hp + whole).min(HP);
+                    }
+                }
+            }
+        }
         if self.fate.as_ref().map(|f| f.until <= t).unwrap_or(false) {
             self.fate = None;
         }
@@ -6312,7 +7190,11 @@ impl Strike {
                 | if p.radarjam_until > t { FLAG_JAM } else { 0 }
                 | if p.blind_until > t { FLAG_BLIND } else { 0 }   // white-out veil
                 | if p.slow_until > t { FLAG_SLOW } else { 0 }   // disaster crawl
-                | if p.hook_until > t { FLAG_HOOK } else { 0 };  // grappling-gun lock
+                | if p.hook_until > t { FLAG_HOOK } else { 0 }  // grappling-gun lock
+                | if p.dance_until > t { FLAG_DISCO } else { 0 }  // disco dance (cannot shoot)
+                | if self.big_head_until > t { FLAG_BIGHEAD } else { 0 }  // arena-wide skull scale
+                | if self.reverse_until > t { FLAG_REVERSE } else { 0 }  // WASD reversed
+                | if self.roulette_until > t { FLAG_ROULETTE } else { 0 };  // weapon roulette
             let when = p.hist.back().map(|h| self.ms(h.0)).unwrap_or(-1);
             ents.push(json!([p.slot, cm(p.x), cm(p.y), cm(p.z), p.r, p.pt, p.hp, p.w, f, when]));
         }
@@ -6323,11 +7205,17 @@ impl Strike {
         let decoys: Vec<Value> = self.decoys.iter()
             .map(|dc| json!([dc.id, cm(dc.x), cm(dc.y), cm(dc.z),
                              ((dc.until - t) * 1000.0) as i64, (dc.yaw * 100.0) as i64])).collect();
-        // match flight drones (grapple anchors): [id, cm_x, cm_y, cm_z]
+        // match flight drones (grapple anchors): [id, cm_x, cm_y, cm_z, downMs]
+        // downMs is how long the hull stays a wreck (0 = up). Old clients ignore index 4.
         let mt = (t - self.go_at).max(0.0);
         let drone_rows: Vec<Value> = self.drones.iter().enumerate().map(|(i, tg)| {
             let c = drone_at(tg, mt);
-            json!([i, cm(c[0]), cm(c[1]), cm(c[2])])
+            let down_ms = self
+                .drone_down
+                .get(i)
+                .map(|d| ((d - t).max(0.0) * 1000.0) as i64)
+                .unwrap_or(0);
+            json!([i, cm(c[0]), cm(c[1]), cm(c[2]), down_ms])
         }).collect();
         // live grapple pulls: [victim_slot, cm_shooter_x, cm_shooter_z]
         let hook_rows: Vec<Value> = self.players.iter().filter_map(|(_, p)| {
@@ -6339,7 +7227,7 @@ impl Strike {
         }).collect();
         // Wave C world extras (additive keys — an old client just ignores them)
         let portals: Vec<Value> = self.portals.iter()
-            .map(|q| json!([q.id, cm(q.x), cm(q.z), ((q.until - t) * 1000.0) as i64])).collect();
+            .map(|q| json!([q.id, cm(q.x), cm(q.z), ((q.until - t) * 1000.0) as i64, cm(q.yaw)])).collect();
         let mines: Vec<Value> = self.mines.iter()
             .map(|q| json!([q.id, cm(q.x), cm(q.z), q.team])).collect();
         let meteors: Vec<Value> = self.meteors.iter()
@@ -6348,6 +7236,19 @@ impl Strike {
             .map(|q| json!([q.id, cm(q.x), cm(q.z), q.kind, q.team, ((q.until - t) * 1000.0) as i64])).collect();
         let bubbles: Vec<Value> = self.bubbles.iter()
             .map(|q| json!([q.id, cm(q.x), cm(q.y), cm(q.z), cm(q.r), q.team, ((q.until - t) * 1000.0) as i64])).collect();
+        // Wave F world objects (additive keys — an old client just ignores them)
+        let bananas: Vec<Value> = self.bananas.iter()
+            .map(|q| json!([q.id, cm(q.x), cm(q.z)])).collect();
+        let lava_rows: Vec<Value> = self.lava_zones.iter()
+            .map(|q| json!([q.id, cm(q.x), cm(q.z), cm(q.r)])).collect();
+        // gs / bh are LISTs of rows (several geese / holes stack). Each row is
+        // [id, cm x, cm z, ms left] — same row shape as the old single-slot value.
+        let goose_rows: Vec<Value> = self.geese.iter()
+            .map(|g| json!([g.id, cm(g.x), cm(g.z), ((g.until - t).max(0.0) * 1000.0) as i64]))
+            .collect();
+        let hole_rows: Vec<Value> = self.blackholes.iter()
+            .map(|h| json!([h.id, cm(h.x), cm(h.z), ((h.until - t).max(0.0) * 1000.0) as i64]))
+            .collect();
         // "ae" not "ev": Out::msg() writes the event name under "ev", and a data key of
         // that name would clobber it (so the frame would claim to be an array and the
         // client would drop the whole snapshot). fa/ae/di durations are milliseconds.
@@ -6360,31 +7261,59 @@ impl Strike {
             }).unwrap_or(0);
             json!([cm(c.x), cm(c.z), prog])
         });
-        // Wave D/E: the live disaster ("di" — never "ev", which Out::msg() owns) and the
-        // impact marks it has warned about ("dm"), both ms from the client clock.
-        // di = [kind, ms to warn-end, ms to hold-end, cm ring, ms to NEXT auto-disaster].
-        // di[4] is always present so the top bar can count the next one down even when
-        // nothing is live (the row is then [null, 0, 0, 0, ms-to-next]).
+        // Wave D/E: the LIVE disasters ("di" — never "ev", which Out::msg() owns) and the
+        // impact marks they warned about ("dm"), both ms from the client clock.
+        // di is now a LIST of rows (several disasters can run at once):
+        //   [kind, ms-to-warn-end, ms-to-hold-end, cm ring, ms-to-NEXT-auto, seed, zones, pit]
+        // di[0][4] is always the ms until the NEXT automatic disaster — the top-bar clock —
+        // even when nothing is live (the list is then [[null, 0, 0, 0, ms-to-next]]).
+        // dm rows gain a trailing disaster-kind string at index 8 so the client can
+        // attribute each mark to its parent disaster.
         let dis_next = self
             .disaster_at
             .map(|at| ((at - t).max(0.0) * 1000.0) as i64)
             .unwrap_or(0);
-        let dis_row = self.disaster.as_ref().map(|d| {
-            json!([d.kind, ((d.warn_at - t).max(0.0) * 1000.0) as i64,
-                   ((d.until - t).max(0.0) * 1000.0) as i64, cm(d.ring), dis_next,
-                   d.seed, d.zones.iter().map(|z| json!([cm(z.0), cm(z.1)])).collect::<Vec<_>>(),
-                   [cm(d.pit.0), cm(d.pit.1)]])
-        }).or_else(|| {
-            // no live disaster: still ship the countdown row so the top bar ticks
+        let dis_row: Value = if self.disasters.is_empty() {
             if self.disaster_at.is_some() {
-                Some(json!([Value::Null, 0, 0, 0, dis_next]))
+                json!([[Value::Null, 0, 0, 0, dis_next]])
             } else {
-                None
+                Value::Null
             }
-        });
-        let marks: Vec<Value> = self.warns.iter()
-            .map(|w| json!([w.id, cm(w.x), cm(w.z), ((w.hit_at - t).max(0.0) * 1000.0) as i64,
-                            cm(w.r), if w.overhead { 1 } else { 0 }, w.dmg, w.quake as i64]))
+        } else {
+            let rows: Vec<Value> = self
+                .disasters
+                .iter()
+                .map(|d| {
+                    json!([
+                        d.kind,
+                        ((d.warn_at - t).max(0.0) * 1000.0) as i64,
+                        ((d.until - t).max(0.0) * 1000.0) as i64,
+                        cm(d.ring),
+                        dis_next,
+                        d.seed,
+                        d.zones.iter().map(|z| json!([cm(z.0), cm(z.1)])).collect::<Vec<_>>(),
+                        [cm(d.pit.0), cm(d.pit.1)]
+                    ])
+                })
+                .collect();
+            json!(rows)
+        };
+        let marks: Vec<Value> = self
+            .warns
+            .iter()
+            .map(|w| {
+                json!([
+                    w.id,
+                    cm(w.x),
+                    cm(w.z),
+                    ((w.hit_at - t).max(0.0) * 1000.0) as i64,
+                    cm(w.r),
+                    if w.overhead { 1 } else { 0 },
+                    w.dmg,
+                    w.quake as i64,
+                    w.dis
+                ])
+            })
             .collect();
         // The Warden ("wd" — never "ev"): [hp, max, cm x, cm z,
         // ms-to-slab-arm, ms-to-slab-land, ms-to-laser-warn, laser-on-ms,
@@ -6421,6 +7350,7 @@ impl Strike {
                           "p": ents, "s": self.shots, "r": rockets, "b": self.booms, "d": decoys,
                           "dr": drone_rows, "hk": hook_rows,
                           "po": portals, "mi": mines, "me": meteors, "bc": beacons, "bu": bubbles,
+                          "bn": bananas, "lz": lava_rows, "gs": goose_rows, "bh": hole_rows,
                           "fa": fate_row, "ae": ev_row, "cr": crate_row,
                           "di": dis_row, "dm": marks, "wd": warden_row});
         self.dirty.clear();

@@ -172,7 +172,7 @@ fn way_out(r: &[P], keep: &[[i64; 4]], cx: i64, z0: i64) -> bool {
     let mut z = z0;
     while z <= edge + 500 {
         for &x in &cols {
-            if hits(keep, x, z, 0, 0) || (!inside((x, z), r) && !front_z(r, x).is_some_and(|f| z >= f)) {
+            if hits(keep, x, z, 0, 0) || (!inside((x, z), r) && front_z(r, x).is_none_or(|f| z < f)) {
                 return false;
             }
         }

@@ -3,6 +3,184 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.38.8 — Strike Zone: the dance looks like a dance, and six more joke totems.**
+  - **Nobody dances at kick-off anymore.** The dance pose's `else` branch zeroed every bone rotation each frame after
+    the mixer ran, so once a character existed the idle/walk pose was wiped and *everyone* stood in the disco pose from
+    the start of the match. Bones are now written only while a dancer is actually dancing, and on exit only the head
+    wobble is cleared — the walk/idle pose survives. The dance itself now raises the arms overhead **alternately**
+    (`armL` / `armR` on opposite swing phases), wobbles the head on `rotation.z` / `rotation.y` (never on `scale`, so
+    the Big Head totem still doubles the skull), and hangs a small original disco ball over the head at y = 2.55.
+    Calm / `prefers-reduced-motion` keep the still sway. Verified: `node tests/probe_disco.js` and the disco pose lock
+    in `tests/test_strike_sync.py` ("only write bones while dancing").
+  - **Banana Panic (10 s).** Ten peels scatter deterministically across the arena. Step on one and you slip for 1.2 s:
+    your wish goes to zero, the slide holds at 9 m/s in the direction you were already moving (or facing), and the
+    body spins at 2.2 rad/s. Bots included. Twin `BANANA_*` on both judges.
+  - **Floor Is Lava (8 s).** Five deterministic lava patches with a real lava texture. Stand on one for 1.4 s and it
+    launches you 8 m/s upward for 12 and burns you; being at `y > 2` is higher ground and the save. Twin `LAVA_*`.
+  - **Goose Attack (10 s).** An angry goose spawns and chases the nearest player at 11 m/s. Catch up (1.3 m) and it
+    headbutts you for 18 and knocks you 6 m/s away — once per goose, then it stands down. Twin `GOOSE_*`.
+  - **Reverse Controls (8 s).** Everyone's WASD is reversed — W backward, A right. Both the player wish and the bot
+    wish flip, arena-wide. `FLAG_REVERSE` (1<<29) on every row for the window. Twin `reverse_until`.
+  - **Black Hole (6 s).** A tiny hole opens at the arena centre and pulls everything and everyone toward it until it
+    disappears. **Fixed while it was still on the bench:** the first cut capped the pull at `HOLE_R * 8` = 17.6 m from
+    the centre — a bubble on an 84 x 60 m map that 14 of the 16 spawns sit outside of, so the totem read as "nothing
+    happens". The reach is now `HOLE_REACH` (56 m, the whole arena) with an inverse-distance curve (a shove in the
+    throat, gentler at the rim) and a clamp so a body lands *on* the hole instead of orbiting it. The mesh also sat at
+    y = 0.7 — inside the dockyard's centre platform — so it is now planted on the deck at the hole's spot and stops
+    rebuilding every frame (`R.moveBlackHole`); the flat map paints the throat and its reach ring. The referee lets the
+    drag through at slide speed (`hole_drag`) so it is not rubber-banded. Position kicks write both the player and the
+    bot's physics body. Twin `HOLE_*`.
+  - **Random Weapon Roulette (10 s).** Every 2 seconds everyone's equipped weapon re-rolls to another weapon and the
+    magazine refills. Bots too. `FLAG_ROULETTE` (1<<30) on every row; the MP snapshot carries the judge's pick so the
+    client's gun follows. Twin `ROULETTE_GAP`.
+  - **Both judges, both modes.** `worldTick` no longer returns early in multiplayer: the local feel (slide, launch,
+    pull, swap) runs client-side in MP too, because a human's position is client-authoritative, while judgment
+    (HP, deaths) stays solo-only — the server is the MP judge. Rust `bot_step` writes velocity kicks to
+    `body.vx` / `body.vz` (the body is what `bot_step` copies back out), and the speed cap opens to
+    `SPRINT_MAX_SPEED` while a slip is sliding so the 9 m/s slide is not rubber-banded. Environmental deaths use
+    `env_kill` (no shooter, feed names the disaster). Snapshot keys `"bn"` / `"lz"` / `"gs"` / `"bh"`.
+  - **The joke set actually drops.** Two reasons the new totems were never met in play: the drop clock was gated to
+    bot matches only (the practice range never dropped a totem at all), and 45 kinds over one 10 s ring meant a ~1-in-45
+    roll to see a given Wave F kind. The clock now runs in every non-Arena mode (the practice range drops too), and
+    half the personal-drop rolls come from a featured set (`bighead` … `roulette`) so a player actually meets them
+    inside a match. Same bias on both judges.
+  - **Every live totem shows its own chip.** Taking a second totem never stops the first: each effect runs on its own
+    clock and the HUD now draws a stacked-effect row (`.vg-fps-effs`) with one chip per live effect — name, hue and
+    time left — until that effect's own window ends. Instants (teleport, shock, decoy …) flash for 3 s so the stack
+    shows they were taken too. The old single toast (`say()` / `announce()`) is still the transient a11y line; it never
+    cancelled anything, it just looked like it did because there was no persistent display.
+  - **Geese and black holes stack.** Both were single-slot on the judge and in the 3D scene: a second take literally
+    replaced the first instance and its mesh. They are lists now (`V.geese` / `V.blackholes`, `geese: Vec<Goose>` /
+    `blackholes: Vec<BlackHole>`), keyed by id, several running at once. The MP snapshot emits `"gs"` / `"bh"` as lists
+    of rows and the client accepts a list (an older single-row frame is still read).
+  - **The goose and the hole look like something crazy.** The goose is an oversized cartoon-angry bird — fat body, long
+    neck, flapping wings, orange beak and feet, red eyes, a motion lean into the chase, a head wobble and a pulsing red
+    rage halo. The black hole is a MASSIVE gravity well, not a purple dot: the art is `HOLE_VIS` = 6× the 2.2 m pull
+    throat (~26 m across) so it reads as apocalyptic from anywhere on the map — a huge black maw, four tilted accretion
+    rings churning at their own rates, 36 orbiting particle streaks spiralling inward, a lensing halo, a funnel that
+    towers over the arena, a wide animated reach ring and a glow disc on the deck. The flat map paints the same 6×
+    scale. Gameplay pull is deliberately NOT scaled — `HOLE_REACH` / `HOLE_R` are untouched, so the well is only
+    bigger to look at. Both sit on whatever ground is under them and key by id so they are built once. Calm /
+    `prefers-reduced-motion` hold a still frame.
+  - Proven at runtime: `cargo test` 131/131 in `backend/`, `python3 -m unittest discover -s tests` 1931/1931,
+    `node tests/probe_blackhole.js` / `probe_bighead.js` / `probe_disco.js` all green, and
+    `tests/test_strike_sync.py::test_the_six_joke_world_totems_are_wired_on_both_sides` locking the geometry, the
+    windows, the roster, the flags, the body-write rules and the new list shape on both sides. Local only — no new
+    network calls, no new third-party assets.
+- **3.38.7 — Strike Zone: drone wreck loot sticks around.**
+  - **Shooting a drone down no longer erases the last wreck's totems.** A falling drone scatters three personal totems
+    around the wreck. Those used to land in the same recycled totem ring the timed drop clock uses (three slots,
+    round-robin), so destroying a second drone rewrote the first one's unclaimed loot. Drone totems now append their
+    own one-shot slots past the drop rings — the rule the Warden's checkpoint loot already used. A later wreck adds
+    more; it never takes an earlier one's away. The totems stay until somebody picks them up.
+  - Same on both judges: `droneTotemDrop` in `games/strike.js` and `drone_totem_drop` in `backend/src/strike.rs`. The
+    timed totem / pack / disaster rings are unchanged. A mid-match joiner's snapshot grows `MAP.pickups` to the
+    server's real slot count so it paints wreck loot too. Local only — no new network calls.
+  - Proven at runtime: `cargo test drone` 3/3, including a new `a_second_drone_shot_down_leaves_the_first_wrecks_loot_alone`
+    (shoot one drone, then another, then assert the first three totems are still live in their original slots), plus
+    `tests/test_strike_sync.py::test_a_second_drone_never_overwrites_the_first_wrecks_loot` locking the append rule on
+    both sides.
+- **3.38.6 — Strike Zone: the Disco totem.**
+  - **Grab it and everyone except you dances for 8 s.** Both teams, bots included — the taker is the one person who keeps
+    their gun. Dancers cannot shoot: the trigger lock is on the client (`canShoot` / `danceOn`) and on the Arena judge
+    (`fire_inner` / `bot_fire`), and a dancing bot holds still exactly like the Paralyser pins one. A dancer's own death
+    pops the window; the taker's death does not touch anyone else's dance.
+  - **A real dance pose, not a colour swap.** The Kenney character's `arm-left` / `arm-right` / `leg-left` / `leg-right` /
+    `torso` bones swing on a per-slot phase offset, the gun hand is hidden, and the name tag bounces with the groove. Calm
+    and `prefers-reduced-motion` hold a still sway instead. Colour `#ff2d95`, named "Disco".
+  - **Personal drop roster, per-player clocks.** `FLAG_DISCO` (1<<28, the next free bit under 2^31) rides each dancer's
+    snapshot row so every client agrees; the taker never carries the bit. 8 s, twin `DISCO` in `backend/src/strike.rs`,
+    `TOTEM_KINDS` 48 → 49. Local only — no new network calls.
+  - Proven at runtime: `node tests/probe_disco.js` 43/43 (the taker's `canShoot` stays open while the dancer's refuses
+    at `t=1` and `t=7.9` then recovers at `t=8.1`; `totemApply` stamps every living player but the taker and skips the
+    gone one; `canMove` / `botStep` gates; `FLAG_DISCO` = 1<<28 and `DISCO` = 8 twins; roster/help/pose). Four judge
+    tests in `backend/src/strike/tests.rs` cover the arena-wide stamp (taker exempt), the snapshot flag, the trigger
+    lock end-to-end through `fire()`, and a dancing bot holding still.
+- **3.38.5 — Strike Zone: the Big Head totem.**
+  - **Grab it and every skull in the arena doubles for 10 s — yours included.** The head's hitbox grows with the
+    head: half-width 0.25 m → 0.50 m, top 1.9 m → 2.4 m, bottom stays at the shoulders (1.4 m) so a chest shot can
+    never become a headshot. A shot that would have passed beside an ordinary skull lands as a headshot. The
+    Kenney character's `head` bone is scaled 2× and the name tag rises with the skull — decoys too.
+  - **Personal drop roster, arena-wide clock.** One `bigHeadUntil` on the match, not per player, and it does not
+    pop on death. `FLAG_BIGHEAD` (1<<27) rides every living row's snapshot so every client agrees on whose heads
+    are currently huge. 10 s, colour `#ff8fab`, named "Big Head".
+  - Proven at runtime: `node tests/probe_bighead.js` 22/22 (head AABB `x[-0.25,0.25] y[1.40,1.90]` →
+    `x[-0.50,0.50] y[1.40,2.40]`, body box unchanged, a 0.38 m near-miss is a headshot at `hs=2` and a miss at
+    `hs=1`, a chest shot stays a body hit at both). Three judge tests in `backend/src/strike/tests.rs` cover the
+    geometry, the arena-wide clock + snapshot flag, and an end-to-end `fire()` that turns a near-miss into a
+    headshot. Local only — no new network calls.
+- **3.38.4 — the Overflow Vial pours again.**
+  - **The bank stopped filling, and the Village still said it was.** The vial's pour watermark was one global
+    high-water mark ("this many surplus prompts have been paid") over a total that can **fall** — a session leaving
+    the card list drops it. Once the mark climbed above the live total it refused every later pour forever. On
+    2026-10-31 the live ledger read `seenPrompts: 1267` against a live surplus of 1204: 16 Apex creatures had
+    "poured" 6020 XP the bank had accepted nothing of, and the Village showed 0.
+  - **The watermark is now per session.** Each card's own mark only ratchets with that card's promptCount, so one
+    session leaving the list can never freeze another's pour. The ledger gains a `seen` map (`sid -> surplus prompts
+    paid`) and writes `seenPrompts` as the sum of those marks — a derived view, never a gate.
+  - **The backlog the freeze swallowed lands once, on the normal fuse.** The first pour per session deposits its
+    whole surplus; each of those drops dies 24 h after it lands like any other, so the catch-up cannot become a
+    savings account. Runtime, on the real ledger and the real 16-card list: `vial.xp` goes 0 → **6020** (16 drops,
+    every `ttl` 86400 s), the second build call pays nothing further, and a card leaving the list then a new Apex
+    card working 40 prompts past Apex still pours its 200 XP.
+  - Pinned by `dashboard-rs/tests/vial_freeze.rs` (replays the frozen ledger byte for byte) and three new unit tests
+    in `src/vial.rs`. No new network calls; the ledger stays local (`vial.json`, 0600) and never leaves the machine.
+- **3.38.3 — Strike Zone: disasters that look like disasters.**
+  - **Every disaster now has a real 3D scene, not a tint.** Sandstorm: three layers of grit (420 sprites), a dark
+    windward wall and a crushed sky. Meteor shower: 44 burning rocks with tails on a red-black sky. Hurricane: a
+    dark spiral sheath around the walking column. Thunder: a second fork branch and a ground-flash disc at every
+    strike. Shockwave: three trailing rings on the blast front. Toxic fog: under-clouds on the floor and thicker
+    banks. Absolute zero: a glassy ice sheet, 280 snow sprites and taller ice teeth. EMP: a blackout floor wash and
+    a harder blue strobe. Sinkhole: a real crater — throat cone, glowing core, 22 torn rim teeth, radiating cracks
+    and debris spiralling in. Earthquake: 16 floor cracks plus 10 heaving plates that ride the ground.
+  - **The 2D map reads as hazards too.** Each disaster paints its own mark: quake cracks and tilted plates, a dark
+    pit with drag cracks, a walking hurricane spiral, forked thunder bolts, toxic rings, sand grit streaks, frost
+    cracks, EMP scanlines and three trailing shockwave rings — not just a colour wash.
+  - **The disaster log no longer overlaps the kill feed.** It is a chip-styled list at the bottom-right (above the
+    ammo bar); the kill feed keeps the top-right. Chip colour and warn highlight follow the disaster kind.
+  - **The Strikezone welcome card finally says drones can be shot down.** The rules card players see before a match
+    only ever described the grappling gun — shoot-down (a drone takes a bullet, drops three totems where it fell and
+    starts a disaster) shipped in 3.38.1 without a line on the card. It has one now.
+  - All of it is deterministic art (`hashMatch` / `mb32`), gated behind Calm, and paints no new network state.
+    No new third-party assets.
+- **3.38.2 — Strike Zone: the sinkhole bites where the pit is, and the quake cracks the floor.**
+  - **Sinkhole: the pit that pulls is the pit that bites.** `disStart` stored the pit as `disSpot`'s `[x, 0, z]` triple
+    while the damage code indexed it as `[x, z]`, so the 12 hp/s bite and the pull sat at `(x, 0)` — off in the map —
+    while the mesh was at `(x, z)`. You could stand in the hole and take nothing. `D.pit` is now always `[x, z]`, the
+    same shape the MP `"di"` row and the Rust `(d.pit.0, d.pit.1)` already shipped. Runtime: a player standing on the
+    visible pit now takes 12 damage and 0.65 s slow per second (was 0); a player at the old damage point took 12.
+  - **Earthquake: the floor cracks.** The help always promised "the floor erupts in cracks and dust" and the 3D scene
+    had only dust and a fog tint. `fxStart` now draws 12 hashed jagged crack lines on the deck (the same deterministic
+    `mb32` seed as the dust), and the 2D map paints cracks across the floor plus a wash. The mark rings keep their
+    own quake colour. Runtime: a crack underfoot is 25 damage + 1.2 s slow (unchanged — that half already worked).
+  - **Every one of the ten disasters is locked as visual AND impact.** `every_disaster_kind_chips_or_hits_hp` now
+    walks all ten kinds (it only ever tested hurricane) and three new probe/Rust tests pin the quake and sinkhole
+    numbers. Probe: `tests/probe_quake_sink.js`.
+  - No new network calls; no new third-party assets. All state is existing Arena snapshot fields (`"di"`, `"dm"`).
+- **3.38.1 — Strike Zone: shot-down drones, and disasters that stack.**
+  - **Shoot a flight drone out of the sky.** The match drones (and the practice ones) take bullets the way a target in
+    Blaster Arena does. A hit knocks the hull down for 6 s: it is hidden, blocks no shot and cannot be hooked. Anyone
+    swinging on that hull is detached and falls to the ground as if the drone had never existed (the swing window dies
+    with the hull). Three non-disaster totems land in a small hashed fan where the drone fell, and a random disaster
+    joins the arena. `drone_down` / `droneShootDown`, `drone_detach` / `droneDetach`, `drone_totem_drop` /
+    `droneTotemDrop` are twins on both judges; the `"dr"` snap row carries a down-ms flag at index 4 so every client
+    sees the same wreck.
+  - **Disasters stack.** Starting a new disaster no longer cancels the one already running. `V.disasters` is a list
+    (capped at 6, oldest shed) on the client and `pub disasters: Vec<Disaster>` on the server; the auto-disaster clock
+    no longer refuses while one is live, and taking a second Disaster totem ADDS to the list. The snap `"di"` ships one
+    row per live disaster (kind, warn, hold, ring, ms-to-next, seed, zones, pit) and `"dm"` rows name their parent kind
+    so impact marks attribute correctly.
+  - **A log of what is happening.** `disLog` / `V.disasterLog` feeds a stacked HUD panel (`.vg-fps-dis-log`) naming every
+    live disaster and when one starts or ends — so players can see what all is happening when several run at once. The
+    3D FX layer grew one group per live disaster (`fxList`, `fxStart`/`fxStop`/`fxTick`), so the weather, the bolt, the
+    pit and the clouds of each run side by side and stop individually.
+  - **Runtime proof.** 66 strike unit tests green (`cargo test strike`), including new `several_disasters_run_at_once_and_the_clock_is_independent`
+    and `shooting_a_drone_down_drops_loot_detaches_the_swing_and_starts_a_disaster`; `tests/test_strike_sync.py` locks the
+    concurrent list, the log and the shoot-down path on both judges.
+  - **Privacy / egress.** No new network calls. The down flag is a 5th integer on the existing `"dr"` snapshot row, the
+    totem drops are existing `"totem"` events, and the disaster list is the existing `"di"` row shape. No transcript,
+    session or path data is read or sent. No third-party assets.
+
 - **3.38.0 — Mission Control ops and Exosuit polish.**
   - **Dock your suit at your HQ roof.** Your own HQ's roof gets a cantilevered docking platform off its deck, with a
     railing and a lit top rail, walkable from the pad, holding the docking gantry, so the helipad stays clear. Suited on
@@ -74,6 +252,24 @@ recent releases.
     the Arena (backend/src/valley/hq.rs). Peers see your suit and its flight pose.
   - Getting into a seat or vehicle takes the suit off.
   - **Privacy / egress:** five small numbers in presence while suited; no new network calls. **Third-party assets:** none.
+- **3.36.8 — Strike Zone: the rift is a walk-through portal, not a ground circle.**
+  - **A standing ring pair.** The rift used to plant two flat purple discs on the ground and only hopped rockets, so
+    "1 purple circle in the ground and nothing happens". It now opens an upright ring `RIFT_FRONT = 2.4` m in front of
+    you and its twin at a hashed open spot across the map, for 6 s. Walk into either ring (`RIFT_R = 1.15`) and you
+    come out `RIFT_R + 0.35` past the other one along the pair axis — never back into the exit ring. `RIFT_COOL = 0.45`
+    s stops you bouncing straight back. Rockets fly the same pair. The rings are torus + swirl + ground glow, and the
+    2D map draws them as linked stroke rings rather than filled discs.
+  - **Multiplayer is legal.** `pos()` / `pos_inner` gained a `rift_hop` let-up: standing in a live ring and stepping to
+    the legal exit skips the speed/air cap (still checks wall overlap), so the referee accepts the hop instead of
+    rubber-banding it. No new op — the client just moves and `sendPos` carries it.
+  - **Proven at runtime** (`tests/probe_rift.js`, ALL GREEN; `backend/src/strike/tests.rs`
+    `a_rift_is_a_standing_portal_pair_you_walk_through`): near ring at z = -2.4 with yaw 0, far ring at (28.5, -14.2);
+    walk-in side 0 exits at (29.886, -14.774) — 1.5 m past the far ring; reverse walk-in side 1 exits at
+    (-1.386, -1.826); the 0.45 s cool window and the distance both block re-entry; a rocket hops to (28.5, -14.2, 0.9);
+    an expired pair hops nothing; a body at y = 2.5 hops nothing.
+  - **Privacy / egress:** no new network calls — the existing Arena `rift` row carries only the pair's x/z/yaw and the
+    two ring positions, and `po` snapshots the pair the same way. No transcript, path or session data. **Third-party
+    assets:** none.
 
 - **3.36.7 — SkyStrike: wall crawl looks like a crawl, not flying.**
   - **Upright spider cling.** The wall pose used to tip the root ~40° nose-down (a dive silhouette), so crawling from

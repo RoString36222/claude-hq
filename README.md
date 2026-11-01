@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.38.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.38.8** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -632,11 +632,35 @@ change.
 ## 📜 Changelog
 
 The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
+- **3.38.8 — Strike Zone: the dance looks like a dance, six joke totems that actually drop, and effects that stack.** Nobody dances at the start of a match anymore: that was a pose bug that wiped the idle/walk bones every frame, so every character stood in the dance pose. Dancing now raises the arms overhead alternately, wobbles the head and hangs a small disco ball over the skull, and it only writes bones while someone is actually dancing. Then six more personal totems: **Banana Panic** (10 s peels that make you slip, spin and slide), **Floor Is Lava** (8 s of burning floor patches — stand too long and it launches you and burns you; higher ground is the save), **Goose Attack** (a ridiculous angry goose chases the nearest player and headbutts them), **Reverse Controls** (8 s of backwards WASD, bots included), **Black Hole** (6 s of a tiny hole at the arena centre that sucks everyone toward it across the whole arena), and **Random Weapon Roulette** (10 s of everyone's gun re-rolling every 2 s). They actually drop now: the practice range drops totems too, and half the rolls come from the new set instead of a 1-in-45 wait. Taking a totem never cancels another — every live effect keeps its own clock and its own chip on the HUD, and several geese and black holes can run at once. The goose and the hole got spectacle art (oversized angry bird; and a massive gravity well — the black hole's art is 6× the pull throat so it towers over the arena with churning accretion rings, orbiting streaks, a lensing halo and a vertical funnel). Local only — no new network calls.
+- **3.38.7 — Strike Zone: drone loot sticks around.** Shooting a drone down drops three totems on the wreck. They used to land in the recycled totem ring, so a second drone overwrote the first one's unclaimed loot. Drone totems now get their own one-shot slots, appended past the drop rings — a later wreck adds more, it never takes the old ones away. They stay until somebody picks them up. Local only — no new network calls.
+- **3.38.6 — Strike Zone: the Disco totem.** Grab it and everyone except you breaks into a disco dance for 8 s — both teams, bots included. Dancers can't shoot (the trigger locks on the client and the judge) and they can't walk; the taker keeps their gun and free rein. Per-player window that pops on the dancer's own death, `FLAG_DISCO` (1<<28) on each dancer's snapshot row, a bone-level dance pose on the 3D characters (swinging arms and legs, gun hidden) with a still sway under Calm / reduced-motion. Personal drop roster. No new network calls.
+- **3.38.5 — Strike Zone: the Big Head totem.** Grab it and every skull in the arena doubles for 10 s — yours included. The head hitbox grows with the head (outward and upward only), so a shot that would have passed beside an ordinary skull becomes a headshot, and the name tags rise with the skull. Personal drop roster, arena-wide clock, 2.4 m-tall physics. No new network calls.
+- **3.38.4 — the Overflow Vial pours again.** The bank's watermark was one global high-water mark over a total that
+  can fall (a session leaving the list), so once it climbed past the live surplus it refused every later pour — the
+  Village said Apex creatures had poured thousands of XP while the vial read 0. The watermark is now per session, the
+  backlog those marks swallowed lands in one drop on the normal 24 h fuse, and nothing is double-paid.
+- **3.38.3 — Strike Zone: disasters that look like disasters.** Every disaster now paints a real scene — a crater
+  with a glowing throat and torn rim for the sinkhole, heaving cracked plates for the quake, a wall of grit for the
+  storm, burning meteors with tails, a dark spiral hurricane, forking thunder that flashes the ground, stacked
+  shockwave rings, low poison banks, ice teeth and a glassy floor, a stuttering blackout. The 2D map shows each
+  hazard, and the disaster log no longer overlaps the kill feed. No new network calls.
+- **3.38.2 — Strike Zone: the sinkhole bites where the pit is, and the quake cracks the floor.** The sinkhole's pull
+  and 12 hp/s bite now sit exactly under the pit you see (the damage point used to be off in the map, so standing in the
+  hole did nothing). The earthquake draws real cracks across the floor — in the 3D scene and on the 2D map — as the help
+  always promised. Every one of the ten disasters is locked as visual AND impact. No new network calls.
+- **3.38.1 — Strike Zone: shot-down drones, and disasters that stack.** Shoot a flight drone out of the sky: anyone
+  swinging on that hull drops to the ground, three non-disaster totems land on the wreck, and a random disaster joins the
+  arena. Several disasters can run at once (a new one no longer cancels the old), with a HUD log naming each.
+  No new network calls.
 - **3.37.1 — The exosuit fits your own character.** Armour on your avatar's own bones (helmet, plates, gauntlets,
   boots, each frame's extras) instead of a separate body; Customise suit in the side panel; suited, Go to flies by air
   to a beacon with the bearing and ETA, and the visor marks the waypoint. No new network calls.
 - **3.37.0 — HQ Exosuit.** Six original flyable suit frames: suit up at the lobby's Suit-Up Centre or summon one with
   **U** in the City, paint it, fly it, and other players see it.
+- **3.36.8 — Strike Zone: the rift is a walk-through portal, not a ground circle.** A standing ring opens in front of you
+  and its twin somewhere across the map; walk into one and you come out the other. Rockets fly the same pair.
+  No new network calls beyond the existing Arena rift row.
 - **3.36.7 — SkyStrike: wall crawl looks like a crawl, not flying.** Upright spider crouch on the face (not a dive tip);
   tighter pull onto the facade; contralateral limb plant. No new network calls.
 - **3.36.6 — SkyStrike: swing into a wall stays a swing.** Crawl starts only from the ground (walk into a building);
@@ -816,8 +840,17 @@ The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
   - **100%** fills every road to the plan's comfortable level (at most 22 cars a km of lane).
   - **0%** leaves the roads to the buses, trams and you.
 
+- **3.38.8** — Strike Zone: the dance pose is fixed (nobody dances at kick-off), six joke totems — banana, lava, goose, reverse, black hole, roulette — that actually drop, and totem effects that stack instead of replacing each other.
+- **3.38.7** — Strike Zone: drone wreck totems no longer vanish when the next drone falls.
+- **3.38.6** — Strike Zone: the Disco totem — everyone but you dances and can't shoot for 8 s.
+- **3.38.5** — Strike Zone: the Big Head totem — every skull doubles for 10 s and headshots get easy.
+- **3.38.4** — the Overflow Vial pours again; its global watermark could freeze the bank forever.
+- **3.38.3** — Strike Zone: every disaster gets a real scene — crater, heaving plates, storm wall, burning sky.
+- **3.38.2** — Strike Zone: the sinkhole bites where its pit is; the quake cracks the floor you see.
+- **3.38.1** — Strike Zone: shot-down drones drop loot and start a disaster; disasters stack with a HUD log.
 - **3.37.1** — HQ Exosuit fits your own character: armour on your avatar's bones; Go to flies by air when suited.
 - **3.37.0** — HQ Exosuit: six flyable suits, the Suit-Up Centre, U to summon, a flight HUD.
+- **3.36.8** — Strike Zone: the rift is a standing portal pair. Walk into one ring, come out the other across the map.
 - **3.36.7** — SkyStrike: wall crawl looks like a crawl, not flying. Upright spider crouch; tighter face pull-in.
 - **3.36.6** — SkyStrike: swing into a wall stays a swing. Crawl is ground-only; air contact no longer auto-crawls.
 - **3.36.5** — SkyStrike: stop floating when you walk past a building. Wall grip needs intent; no more auto-cling beside a tower.

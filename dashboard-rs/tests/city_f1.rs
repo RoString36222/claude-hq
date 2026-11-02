@@ -54,7 +54,7 @@ M.tabs.forEach(k => k.sections.forEach(s => { if(s.type === "formula") f1Section
 const L = D.layout({w: 63.65, d: 39.15}, items, true);
 out.dealer = {f1Section, onSale: H.hqVehicles.onSale(cat).map(c => c.id), items: items.length, cells: L.cells.length, gallery: L.gallery,
   hall: L.hall, gridCells: L.cells.filter(c => c.grid).map(c => ({x: c.x, z: c.z, y: c.y, rx: c.rx, rz: c.rz, id: items[c.i].id})),
-  floorCells: L.cells.filter(c => !c.grid).map(c => ({x: c.x, z: c.z, r: c.r}))};
+  floorCells: L.cells.filter(c => !c.grid && c.y == null).map(c => ({x: c.x, z: c.z, r: c.r}))};   // (a bike on the gallery stands over the floor, a level up)
 console.log(JSON.stringify(out));
 "#;
 

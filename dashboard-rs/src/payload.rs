@@ -388,6 +388,8 @@ impl App {
             "likelyAwaiting": likely,
             "tokens": tokens,
             "spark": spark,
+            "git": self.git_info(&cwd), // [3.38] Mission Control holograms
+            "lastTool": a.and_then(|a| a.timeline.iter().rev().find(|e| e.kind == "tool").map(|e| py::truncate(&e.text, 120))),
             "source": "claude",
             "pinned": false,
             "tags": [],

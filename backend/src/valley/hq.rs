@@ -183,6 +183,9 @@ struct Person {
     /// its small state (`pq`, 1..=PLAY_Q_LEN whole numbers within +-PLAY_Q_ABS: map points in dm, a step, stars, a clock).
     /// Per frame: a frame without `pk` has none.
     play: Option<Play>,
+    /// Their exosuit (`ex`, the "exo" capability, games/hqexo.js): [frame, paint, finish, glow, mode], each a small index
+    /// (EXO_MAX); mode 1 suiting up, 2 on foot, 3 hover, 4 cruise, 5 boost, 6 swim. Per frame: a frame without `ex` has none.
+    exo: Option<[u8; 5]>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -231,6 +234,7 @@ impl Hq {
                 gn: None,
                 ta: None,
                 play: None,
+                exo: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -372,6 +376,8 @@ impl Hq {
         let ta = ta.filter(|_| pool.is_some() || a.as_f64() == Some(14.0));
         // [3.22] Arena play: pk with any of pi / pj / pq; a bad one (or pi / pj / pq without pk) drops the whole frame.
         let Some(play) = read_play(uid, msg) else { return false };
+        // [exo] a suit: five whole numbers in range; a bad one drops the whole frame.
+        let Some(exo) = read_exo(msg.get("ex")) else { return false };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
@@ -391,6 +397,7 @@ impl Hq {
         p.gn = gn;
         p.ta = ta;
         p.play = play;
+        p.exo = exo;
         self.dirty = true;
         true
     }
@@ -510,6 +517,10 @@ impl Hq {
                     // only while aiming a tank's turret from its gunner's seat ("tank", HQ 3.16)
                     if let Some((yaw, pitch)) = p.ta {
                         m.insert("ta".into(), json!([yaw, pitch]));
+                    }
+                    // only while they wear an exosuit ("exo")
+                    if let Some(ex) = p.exo {
+                        m.insert("ex".into(), json!(ex));
                     }
                     // only while they host or play an Arena game in the City ("cityplay", HQ 3.22)
                     if let Some(g) = &p.play {
@@ -752,6 +763,23 @@ const TA_PITCH_MAX: i64 = 60;
 
 /// `ta` from a gunner's pos frame: Some(None) when absent or null, Some((yaw, pitch)) when good, None to drop the whole
 /// frame (not two whole numbers, yaw within TA_YAW_MAX either way, pitch in TA_PITCH_MIN..=TA_PITCH_MAX).
+/// The "exo" capability's ranges, index for index games/hqexo.js FRAMES, PAINTS, FINISHES, GLOWS and its modes (1..=6).
+const EXO_MAX: [i64; 5] = [5, 8, 3, 4, 6];
+
+/// `ex`: absent or null is no suit; else exactly five whole numbers, each within EXO_MAX (the mode from 1), or None.
+fn read_exo(v: Option<&Value>) -> Option<Option<[u8; 5]>> {
+    let a = match v {
+        None | Some(Value::Null) => return Some(None),
+        Some(v) => v.as_array().filter(|a| a.len() == 5)?,
+    };
+    let mut out = [0u8; 5];
+    for (i, x) in a.iter().enumerate() {
+        let lo = if i == 4 { 1 } else { 0 };
+        out[i] = x.as_i64().filter(|n| (lo..=EXO_MAX[i]).contains(n))? as u8;
+    }
+    Some(Some(out))
+}
+
 fn read_aim(v: Option<&Value>) -> Option<Option<(i64, i64)>> {
     let a = match v {
         None | Some(Value::Null) => return Some(None),
@@ -983,6 +1011,21 @@ mod tests {
     // ------------------------------------------------------ the position rule --
 
     /// test_hq_presence.py:69's `test_position_rules`, line for line.
+    #[test]
+    fn an_exosuit_rides_along_and_a_bad_one_drops_the_frame() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "h": 12000, "p": 0, "ex": [4, 7, 2, 0, 4]}), 0.1));
+        assert_eq!(p.listing()[0]["ex"], json!([4, 7, 2, 0, 4]));
+        assert!(p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "ex": null}), 0.2));
+        assert!(p.listing()[0].get("ex").is_none(), "a frame without ex has no suit");
+        for bad in [json!([6, 0, 0, 0, 2]), json!([0, 9, 0, 0, 2]), json!([0, 0, 4, 0, 2]), json!([0, 0, 0, 5, 2]), json!([0, 0, 0, 0, 0]),
+                    json!([0, 0, 0, 0, 7]), json!([0, 0, 0, 0]), json!([0, 0, 0, 0, 2, 1]), json!([0.5, 0, 0, 0, 2]), json!("x"), json!([-1, 0, 0, 0, 2])] {
+            assert!(!p.pos("u", &json!({"w": "city3d", "x": 0, "z": 0, "r": 0, "a": 0, "ex": bad}), 5.0), "{bad}");
+        }
+        assert!(p.listing()[0].get("ex").is_none(), "and a dropped frame changed nothing");
+    }
+
     #[test]
     fn a_position_is_stored_only_when_every_field_passes() {
         let mut p = Hq::default();

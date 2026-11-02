@@ -62,6 +62,17 @@ var VEHICLE = {
   dragon:  {backMul: 2.3, upMul: 1.6, sideMul: 1,  fovSpeedKick: 0.7, fpAnchor: {seat: [0, 3.4, 0.3]}, roll: 0.3},
   dino:    {backMul: 1.7, upMul: 1.3, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 2.6, 0.2]}, roll: 0},
   serpent: {backMul: 2.0, upMul: 1.2, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.6, 0.4]}, roll: 0.2},
+  // [exo] flying an exosuit (games/hqexoride.js): a little further back and up, the horizon banking with you; first person is
+  // the helmet's view (games/hqexohud.js draws the visor over it); exobig is the 1.3x Bulwark
+  // headLag: it trails a turn a little; roll x lean x 0.5: the horizon leans 30% of the suit's bank (fp 10%, fpRoll), capped
+  // at rollMax rad; boostBack / boostFov: a boost pulls the camera back by that share and widens the view by those degrees;
+  // sideOff: the chase sits that share of its distance off to the right of straight behind (and a little higher, upMul), so
+  // the flying body reads in three-quarter profile instead of foreshortened from dead behind; boostShake: m of a gentle
+  // shake on a boost, the only shake in flight (none with reduced motion)
+  exo:     {backMul: 1.6, upMul: 1.45, sideMul: 1, sideOff: 0.3, fovSpeedKick: 1.2, fpAnchor: {seat: [0, 0.55, 0.12]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
+            headLag: 4.5, boostBack: 0.35, boostFov: 9, boostShake: 0.045},
+  exobig:  {backMul: 2.1, upMul: 1.65, sideMul: 1, sideOff: 0.28, fovSpeedKick: 1, fpAnchor: {seat: [0, 1.25, 0.2]}, roll: 0.6, fpRoll: 0.2, rollMax: 0.35,
+            headLag: 4.5, boostBack: 0.3, boostFov: 8, boostShake: 0.06},
   // [3.17] the tank (games/hqtank.js): well back and up, over its turret; first person from the driver's hatch
   tank:    {backMul: 2.0, upMul: 1.35, sideMul: 1, fovSpeedKick: 0.4, fpAnchor: {seat: [0.75, 2.35, 2.05]}, roll: 0},
   // planes (games/hqplane.js, HQ 3.2): well behind and above (the seaplane is 16 m long), the horizon banking a little;
@@ -358,7 +369,7 @@ function normTgt(t){
           speed: Math.abs(num(t.speed, 0)), vehicle: VEHICLE[t.vehicle] ? t.vehicle : null, lean: num(t.lean, 0), moving: !!t.moving,
           // where you are headed (null when still); a host without it: the facing while moving
           travelYaw: t.travelYaw === undefined ? (t.moving ? num(t.yaw, 0) : null) : (t.travelYaw == null ? null : num(t.travelYaw, null)),
-          turnRate: num(t.turnRate, 0), calm: !!t.calm, face: t.face == null ? null : num(t.face, null)};
+          turnRate: num(t.turnRate, 0), calm: !!t.calm, face: t.face == null ? null : num(t.face, null), boost: clamp(num(t.boost, 0), 0, 1)};
 }
 function basePose(mode){
   var M = MODES[mode];
@@ -371,6 +382,7 @@ function fovSpring(s, goal, dt){
   var r = spring(_.fov, _.fovV, goal, 12, dt); _.fov = r[0]; _.fovV = r[1];
   return _.fov;
 }
+function rollCap(V, r){ return V.rollMax ? clamp(r, -V.rollMax, V.rollMax) : r; }
 function fovOff(s){ return s.settings.fov - 65; }
 
 // Collision: t = q.hit(from, want); pull in at once to t*len - radius (min 0.6 m from `from`),
@@ -411,7 +423,10 @@ function chaseCollide(s, from, want, radius, dt, q){
 function chasePose(s, mode, T, dt, q){
   var _ = s._, M = MODES[mode], V = T.vehicle ? VEHICLE[T.vehicle] : null, red = s.settings.reduced, k;
   // T.size: a catalogue vehicle's length over its kind's starter (games/hq3d.js): a longer car, the camera further back
-  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale, baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1);
+  // a boost (T.boost 0..1, a vehicle with boostBack): sprung, the camera drops back and the view widens
+  if(_.bst == null){ _.bst = 0; _.bstV = 0; }
+  var bq = spring(_.bst, _.bstV, V && V.boostBack ? T.boost : 0, 3, dt); _.bst = bq[0]; _.bstV = bq[1];
+  var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale*(1 + (V && V.boostBack || 0)*_.bst), baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1) + (V && V.sideOff ? V.sideOff*back : 0);
   _.upOff = clamp(_.upOff + _.lift*LIFT*dt, 0.6 - baseUp, 2*baseUp);
   var up = baseUp + _.upOff;
   // The orbit offset on top of the heading: Q/R swing eased in and out (exact exponential), right-drag adds
@@ -475,12 +490,18 @@ function chasePose(s, mode, T, dt, q){
   var A = _.ahead, ax = spring(A.x, A.vx, hf.x*al, AHEAD_W, dt), az = spring(A.z, A.vz, hf.z*al, AHEAD_W, dt);
   A.x = ax[0]; A.vx = ax[1]; A.z = az[0]; A.vz = az[1];
   // the camera: behind the pivot along camYaw; height over max(pivot feet, ground under the camera (sprung))
-  var el = e0 + _.orbitPitch, r = Math.sqrt(back*back + up*up), horiz = r*Math.cos(el), h = r*Math.sin(el);
+  // T.pitch (SkyStrike's dive, a vehicle's nose): tip the chase elevation so the
+  // shot looks down the line of the dive. Vehicles already used it in fpPose.
+  var el = e0 + _.orbitPitch + clamp((T.pitch || 0)*0.55, -0.7, 0.7), r = Math.sqrt(back*back + up*up), horiz = r*Math.cos(el), h = r*Math.sin(el);
   var off = rotYaw(-side, -horiz, camYaw), px = P.x + off.x, pz = P.z + off.z, g = q.ground(px, pz);
   if(_.gnd == null) _.gnd = {y: g, v: 0};
   var gs = spring(_.gnd.y, _.gnd.v, g, M.lag, dt); _.gnd.y = gs[0]; _.gnd.v = gs[1];
   var want = v3(px, Math.max(P.y - LOOK_H, _.gnd.y) + h, pz);
   var pv = v3(P.x, P.y, P.z), pos = chaseCollide(s, pv, want, M.collide, dt, q);
+  // a boost's gentle shake (V.boostShake m, on the sprung boost share, two incommensurate sines: smooth, not jitter)
+  _.shk = ((_.shk || 0) + dt) % 1000;
+  if(V && V.boostShake && !red && _.bst > 0.01){ var sa = V.boostShake*clamp(_.bst, 0, 1);
+    pos.x += sa*Math.sin(_.shk*37.0)*0.7; pos.y += sa*Math.sin(_.shk*29.0 + 1.3); pos.z += sa*Math.sin(_.shk*41.0 + 2.1)*0.5; }
   var lk = v3(P.x + A.x, P.y, P.z + A.z);
   var kick = red ? 0 : Math.min(10, T.speed*0.5)*(V ? V.fovSpeedKick : 1);
   var p = basePose(mode);
@@ -489,8 +510,8 @@ function chasePose(s, mode, T, dt, q){
   // behind a plane or a ship gets the depth precision that stops the shore and the water flickering far off (3.2)
   var pd = Math.sqrt((pos.x - P.x)*(pos.x - P.x) + (pos.y - P.y)*(pos.y - P.y) + (pos.z - P.z)*(pos.z - P.z));
   p.near = clamp(pd/12, M.near, NEAR_MAX);
-  p.fov = fovSpring(s, M.fov + fovOff(s) + kick, dt);
-  p.roll = red || !V ? 0 : V.roll*T.lean*0.5;
+  p.fov = fovSpring(s, M.fov + fovOff(s) + kick + (red || !V || !V.boostFov ? 0 : V.boostFov*_.bst), dt);
+  p.roll = red || !V ? 0 : rollCap(V, V.roll*T.lean*0.5);
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);
   s.lookPitch = Math.atan2(lk.y - pos.y, Math.sqrt((lk.x - pos.x)*(lk.x - pos.x) + (lk.z - pos.z)*(lk.z - pos.z)));
   s.moveYaw = camYaw;   // the camera heading (classic and older hosts move by it)
@@ -521,7 +542,7 @@ function fpPose(s, T, dt){
   var p = basePose("fp");
   p.pos = pos; p.look = v3(pos.x + dir.x*10, pos.y + dir.y*10, pos.z + dir.z*10); p.focus = v3(pos.x, pos.y, pos.z);
   p.fov = fovSpring(s, Math.min(100, M.fov + fovOff(s)), dt);
-  p.roll = set.reduced || !V ? 0 : V.roll*T.lean*0.5;
+  p.roll = set.reduced || !V ? 0 : rollCap(V, (V.fpRoll != null ? V.fpRoll : V.roll)*T.lean*0.5);   // fpRoll: a steadier horizon than the body's
   p.headBob = bob;
   p.vignette = clamp((T.speed - 4)/10, 0, 0.6);
   p.hideAvatar = true;

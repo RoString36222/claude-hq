@@ -646,10 +646,12 @@ console.log(JSON.stringify(o)); process.exit(0);
         self.assertEqual(out["cab"], "go")
         self.assertEqual(out["ach"][0], ["100", "30"])
         self.assertIn("Score50", out["ach"][1])
-        self.assertEqual(out["notes"][0], 16)
+        # one <details> per entry, newest open; summary reads "<version> <title>" — all from the file
+        _n = json.loads(read("games", "patchnotes.json"))["entries"]
+        self.assertEqual(out["notes"][0], len(_n))
         self.assertTrue(out["notes"][1])
         self.assertFalse(out["notes"][2])
-        self.assertEqual(out["notes"][3], "3.20.0 Sound that comes from somewhere")
+        self.assertEqual(out["notes"][3], _n[0]["version"] + " " + _n[0]["title"])
         ids = {i[0]: i for i in out["ids"]}
         for k in ("tickets", "departures", "map", "achievements", "notes", "settings"):
             self.assertIn(k, ids)
@@ -663,8 +665,10 @@ class Static(unittest.TestCase):
         j = json.loads(read("games", "patchnotes.json"))
         e = j["entries"]
         self.assertGreaterEqual(len(e), 8)
-        self.assertEqual(e[0]["version"], "3.20.0")
-        self.assertEqual(e[0]["title"], "Sound that comes from somewhere")
+        self.assertTrue(e[0]["title"])
+        # the newest note is the version we ship, so the phone's Notes app never opens stale
+        app = read("dashboard-rs", "src", "app.rs")
+        self.assertIn('APP_VERSION: &str = "%s"' % e[0]["version"], app)
         for x in e:
             self.assertIsInstance(x["version"], str)
             self.assertIsInstance(x["title"], str)

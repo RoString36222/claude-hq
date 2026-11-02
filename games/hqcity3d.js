@@ -782,16 +782,38 @@ HQV.hqWorlds.city3d = function(c, w){
   function site(id){ for(var i = 0; i < W.sites.length; i++) if(W.sites[i].id === id) return W.sites[i]; return null; }
   function siteC(s){ return {x: s.x/100, y: s.y/100, z: s.z/100}; }
 
-  /* ---------- the building index: AABBs of the world's own buildings, for the camera ---------- */
+  /* ---------- the building index: AABBs of the world's own buildings, for the camera ----------
+     MUST match world.js's walk solids. A v2 lot's building is a box turned to its door
+     (worldgeom.footprint); the old axis-aligned buildingRect left the rotated corners
+     uncovered, so a swing / dive sailed through those walls. Same recipe as world.js
+     index(): footprint AABB when the lot has poly/front, else buildingRect. */
   function indexBuildings(){
     var nb = Math.max(1, Math.ceil(W.sizeCm/100/BUCKET)), half = W.half, B = [];
     for(var i = 0; i < nb*nb; i++) B.push([]);
     function bOf(v){ return Math.max(0, Math.min(nb - 1, Math.floor((v + half)/BUCKET))); }
+    var FLOOR_H = (HQV.worldgeom && HQV.worldgeom.FLOOR_H) || 3.5;
     W.lots.forEach(function(l){
       if(l.kind !== "building") return;
-      var R = WD.buildingRect(l), g0 = ground(R.x0, R.z0), g1 = ground(R.x1, R.z0), g2 = ground(R.x0, R.z1), g3 = ground(R.x1, R.z1);
-      var top = Math.max(g0, g1, g2, g3) + Math.max(1, l.floors | 0)*3.5 + 1.5;
+      var R = null, fp = null;
+      try {
+        if((l.poly || l.front) && HQV.worldgeom && typeof HQV.worldgeom.footprint === "function")
+          fp = HQV.worldgeom.footprint(l);
+      } catch(e){ fp = null; }
+      if(fp && fp.o && fp.F && fp.hu > 0.25 && fp.hv > 0.25){
+        // AABB of the oriented box (covers every corner of the visual facade)
+        var ex = Math.abs(fp.F.z)*fp.hu + Math.abs(fp.F.x)*fp.hv;
+        var ez = Math.abs(fp.F.x)*fp.hu + Math.abs(fp.F.z)*fp.hv;
+        R = {x0: fp.o.x - ex, x1: fp.o.x + ex, z0: fp.o.z - ez, z1: fp.o.z + ez};
+      } else {
+        R = WD.buildingRect(l);
+      }
+      if(!R || !(R.x1 - R.x0 > 0.4) || !(R.z1 - R.z0 > 0.4)) return;
+      var g0 = ground(R.x0, R.z0), g1 = ground(R.x1, R.z0), g2 = ground(R.x0, R.z1), g3 = ground(R.x1, R.z1);
+      var top = Math.max(g0, g1, g2, g3) + Math.max(1, l.floors | 0)*FLOOR_H + 1.5;
       var it = {id: l.id, min: {x: R.x0, y: Math.min(g0, g1, g2, g3) - 1, z: R.z0}, max: {x: R.x1, y: top, z: R.z1}};
+      // keep the oriented box so bodyBlock can refuse the fat AABB's empty corners
+      // without letting the body through the real facade
+      if(fp && fp.o && fp.F) it.obb = {ox: fp.o.x, oz: fp.o.z, fx: fp.F.x, fz: fp.F.z, hu: fp.hu, hv: fp.hv};
       for(var bz = bOf(R.z0); bz <= bOf(R.z1); bz++) for(var bx = bOf(R.x0); bx <= bOf(R.x1); bx++) B[bz*nb + bx].push(it);
     });
     bIdx = {nb: nb, b: B, bOf: bOf};
@@ -1054,6 +1076,7 @@ HQV.hqWorlds.city3d = function(c, w){
     roofsBuild();                                                                // [hq revamp] the towers' roofs and their lifts' doors
     var myRoof = roofs.filter(function(r){ return r.own; })[0];
     var rh = roofHeli(myRoof); if(rh && bikes.indexOf(rh) < 0) bikes.push(rh);     // [3.13.4] your helicopter, parked on your pad
+    roofDock(myRoof);                                                            // [3.38.0] the suit dock off your roof's deck
     if(myRoof && myRoof.lift) w.spawnFrom.roof = {x: myRoof.lift.x, y: myRoof.deck.y, z: myRoof.lift.z, yaw: myRoof.rot, camYaw: myRoof.rot + PI + 0.55};
     if(mine) w.homeLot = {x: mine.x, z: mine.z, rot: mine.rot, garage: mine.garage};   // [basement 3.4] the car lift's exact lot frame (streetSpot/liftSite)
     w.spawnFrom.basement = (mine && HQV.hqCarLift && HQV.hqCarLift.streetSpot && (function(){ try { return HQV.hqCarLift.streetSpot({home: at(mine), garage: mine.garage, rot: mine.rot, x: mine.x, y: mine.y, z: mine.z, lot: mine.lot, toWorld: function(x, z){ return toWorld(mine, x, z); }}, w.homeLot); } catch(e){ return null; } })()) || at(mine);   // [basement 3.4] up the car lift
@@ -2936,6 +2959,23 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // where to fly now: straight to the destination, or (a runway or a lane, still far out or off its line) to its final
   // approach fix first; on final, the glideslope: gs > 0 above it, < 0 below (-1..1 = +-half the slope's height)
+  // [exo] suited Go to: the bearing (0 north = -z, 90 east = +x, as the suit's visor tape), the straight-line distance and
+  // an ETA at the frame's cruise speed; w.exoGuide gives the visor its waypoint
+  var NAV_EXO_ARRIVE = 14;
+  function exoGuide(me0, m){
+    var dx = route.x - me0.x, dz = route.z - me0.z, dist = Math.hypot(dx, dz), brg = Math.round(((Math.atan2(dx, -dz)*180/Math.PI) % 360 + 360) % 360) % 360;
+    var v = m && m.exo && m.exo.v > 0 ? m.exo.v : 60, eta = dist/v, ft = HQV.hqnavui ? HQV.hqnavui.fmtDist : function(d){ return Math.round(d) + " m"; };
+    var et = HQV.hqnavui && HQV.hqnavui.fmtEta ? HQV.hqnavui.fmtEta(eta) : Math.round(eta) + " s";
+    var hdg = m ? Math.atan2(Math.sin(m.yaw || 0), -Math.cos(m.yaw || 0))*180/Math.PI : 0;     // where you face, on the same compass
+    return {dist: dist, bearing: brg, info: {step: {kind: "fly", road: "Fly " + ft(dist) + " · bearing " + ("00" + brg).slice(-3) + "° · " + et}, toNext: dist, left: dist, eta_s: eta,
+            rot: brg - hdg, quiet: true,
+            hint: dist < 120 ? "Come down slow to land by the beacon" : ""}};
+  }
+  w.exoGuide = function(){
+    var me0 = c.avatar(); if(!me0 || !route || route.done || route.mode !== "exo") return null;
+    var g = exoGuide(me0, c.motion ? c.motion() : null);
+    return {x: route.x, y: groundY(route.x, route.z), z: route.z, label: route.label, dist: g.dist, bearing: g.bearing};
+  };
   function airGuideNow(me0){
     if(!route || route.done || route.mode !== "air") return null;
     var m = c.motion ? c.motion() : null, y = m ? m.y : 0, A = route.air;
@@ -3338,7 +3378,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var mm = null, nui = null, fx = null, goBtn = null, navKeyFn = null, route = null, navTier = 5, navSig = null;
   function navMode(){
     var m = c.motion ? c.motion() : null;
-    return m && m.air ? "air" : m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
+    return m && m.exo ? "exo" : m && m.air ? "air" : m && m.boat ? "boat" : m && (m.ride === "car" || m.ride === "moto" || m.ride === "bike") ? "drive" : "walk";
   }
   function navGraph(){ return HQV.hqnav.graph(W, navTier); }
   /* Calling your vehicle (games/hqcall.js, driven by games/hq3d.js): the roads it can use, where it may appear out of
@@ -3434,6 +3474,11 @@ HQV.hqWorlds.city3d = function(c, w){
       if(fx){ fx.setRoute(null, groundY); fx.setWaypoint({x: route.x, y: route.air ? route.air.y : groundY(route.x, route.z), z: route.z}); }
       return;
     }
+    if(route.mode === "exo"){                            // [exo] suited: by air, a straight line to the beacon (the pillar)
+      route.R = null; approachShow(null);
+      if(fx){ fx.setRoute(null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
+      return;
+    }
     approachShow(null);
     route.R = route.mode === "boat" ? null : HQV.hqnav.route(navGraph(), {x: me0.x, z: me0.z}, {x: route.x, z: route.z}, route.mode);
     if(fx){ fx.setRoute(route.R ? route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
@@ -3475,6 +3520,10 @@ HQV.hqWorlds.city3d = function(c, w){
           info = {step: {kind: "fly", road: "Fly " + ("00" + hd).slice(-3) + "°" + (G.via ? " to the final approach" : G.gs != null ? " down the glideslope" : "")}, toNext: G.dist, left: dd,
                   eta_s: dd/Math.max(10, mm0 ? mm0.speed : 10), hint: G.gs != null ? "On final: follow the rings down to the runway" : ""};
         }
+      } else if(mode === "exo"){
+        var ex = exoGuide(me0, m);
+        if(ex.dist < NAV_EXO_ARRIVE && !(m && m.exo && m.exo.flying)) navArrive();
+        else { pts = new Float64Array([me0.x, me0.z, route.x, route.z]); info = ex.info; }
       } else if(route.R){
         var P = HQV.hqnav.progress(route.R, me0.x, me0.z);
         if(P.arrived) navArrive();
@@ -3737,17 +3786,75 @@ HQV.hqWorlds.city3d = function(c, w){
     return b;
   }
   w.roofHeli = function(){ return roofHeliP; };
+  // [3.38.0] the suit dock (games/hqroof.js R.dock): a cantilevered platform off your own roof's deck, with a railing on
+  // its three open sides and a lit strip along the top rail (2 draws, merged), and the docking gantry (hqexo dockRig: 2
+  // draws). The helipad stays clear; hq3d parks your suit at the gantry (sx, sz).
+  var roofDockG = null;
+  function roofDock(R){
+    if(roofDockG){ hqG.remove(roofDockG); disposeTree(roofDockG); roofDockG = null; }
+    if(!R || !R.dock) return null;
+    var D = R.dock, g = new THREE.Group(), steel = new THREE.MeshStandardMaterial({color: 0x6b737c, metalness: 0.6, roughness: 0.5}),
+        lit = new THREE.MeshStandardMaterial({color: 0x10202a, emissive: 0x9fe6ff, emissiveIntensity: 1.6});
+    var sg = new THREE.Group(); g.add(sg);                                    // the steel merges; the lit strip stays its own (a live material)
+    function bx(w, h, d, m, x, y, z){ var me = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); me.position.set(x, y, z); me.castShadow = me.receiveShadow = m === steel; (m === steel ? sg : g).add(me); return me; }
+    var hw = D.hw, hd = D.hd, o = D.s*hw;                                    // local +x*s: the open (outer) end
+    bx(hw*2, 0.22, hd*2, steel, 0, -0.11, 0);                                // the slab, its top at the deck
+    bx(0.3, 0.5, hd*2, steel, -o*0.7, -0.45, 0);                             // the cantilever's bracket under it
+    [[o, 0, 0.06, hd*2], [0, hd, hw*2, 0.06], [0, -hd, hw*2, 0.06]].forEach(function(r){
+      bx(r[2], 0.06, r[3], steel, r[0], 1.0, r[1]); bx(r[2], 0.04, r[3], steel, r[0], 0.5, r[1]);
+      bx(r[2] > 0.1 ? r[2] : 0.03, 0.03, r[3] > 0.1 ? r[3] : 0.03, lit, r[0], 1.045, r[1]);
+      [-0.95, 0, 0.95].forEach(function(k){ bx(0.06, 1.0, 0.06, steel, r[0] + (r[2] > 0.1 ? k*hw : 0), 0.5, r[1] + (r[3] > 0.1 ? k*hd : 0)); });
+    });
+    g.position.set(D.x, D.y, D.z); g.rotation.y = D.rot;
+    if(HQV.hqMerge && HQV.hqMerge.mergeStatic) try { HQV.hqMerge.mergeStatic(THREE, sg); } catch(e){}
+    var XO = HQV.hqExo;
+    if(XO && XO.dockRig){ var rig = XO.dockRig(THREE); rig.position.set(D.sx, D.y, D.sz); rig.rotation.y = Math.atan2(R.deck.x - D.sx, R.deck.z - D.sz); rig.updateMatrixWorld(true);
+      g.updateMatrixWorld(true); var inv = new THREE.Matrix4().copy(g.matrixWorld).invert(); rig.applyMatrix4(inv); g.add(rig); }
+    g.name = "hq-roof-dock"; hqG.add(g); roofDockG = g;
+    return g;
+  }
+  w.roofDock = function(){ return roofDockG; };
   // you stand on a roof deck: up at its height (or arriving: stopFeet's 1e9) and inside its railing
   function roofHere(){
     var a = c.avatar(); if(!a || !roofs.length) return null;
     var R = HQV.hqRoof.deckAt(roofs, a.x, a.z);
     return R && a.hy != null && a.hy > R.deck.y - 2.5 ? R : null;
   }
+  // the deck, or just past its railing (which is decoration): where a slinger can
+  // leave the roof without meeting a wall in the sky
+  function roofZone(){
+    var a = c.avatar(); if(!a || !roofs.length) return null;
+    for(var i = 0; i < roofs.length; i++){
+      var R = roofs[i]; if(!R || !R.deck) continue;
+      if(a.hy == null || !(a.hy > R.deck.y - 2.5)) continue;
+      var dx = a.x - R.deck.x, dz = a.z - R.deck.z;
+      var lim = (R.deck.r > 0 ? R.deck.r : Math.max(R.deck.hw || 0, R.deck.hd || 0)) + 2.6;
+      if(dx*dx + dz*dz <= lim*lim) return R;
+    }
+    return null;
+  }
   w.onRoof = function(){ return !!roofHere(); };
   w.blocked = function(x, z){
     if(transit && transit.noVehicle && transit.noVehicle(x, z)){ var mo = c.motion ? c.motion() : null; if(mo && mo.ride) return true; }   // [3.36] no vehicle down a metro entrance
     var ub = transit ? transit.blocked(x, z) : null; if(ub != null) return ub;           // [3.15] below the street: the metro's floors
-    var R = roofHere(); return R ? !HQV.hqRoof.onDeck(R, x, z) : blocked(x, z); };
+    var R = roofHere();
+    if(R){
+      // On the deck the RAILING is a wall: walking must never fall off the roof.
+      // A JUMP is what leaves it — the air path (hq3d's env.blocked) ignores walls
+      // once the feet are above the surface, so a hop clears the rail and a slinger
+      // swings away. The lift house is solid too.
+      if(R.house && Math.hypot(x - R.house.x, z - R.house.z) < R.house.r) return true;
+      return !HQV.hqRoof.onDeck(R, x, z);
+    }
+    var Z = roofZone();
+    if(Z){
+      // Just past the railing (a jump's first frames, a slinger leaving the pad):
+      // no wall in the sky. Only the lift house is solid.
+      if(Z.house && Math.hypot(x - Z.house.x, z - Z.house.z) < Z.house.r) return true;
+      return false;
+    }
+    return blocked(x, z);
+  };
   w.groundY = function(x, z){
     var ug = transit ? transit.ground(x, z) : null; if(ug != null) return ug;
     var R = roofHere(); return R && HQV.hqRoof.onDeck(R, x, z) ? R.deck.y : groundY(x, z); };
@@ -3804,6 +3911,63 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   w.garageGhostState = function(){ return ghostG ? {key: ghostKey, x: ghostG.userData.bay.position.x, z: ghostG.userData.bay.position.z, r: ghostG.userData.bay.rotation.y} : null; };
   w.onLook = function(){ forceYou = true; build(); };      // your own look: your building again
+  // Where a web can stick: the FIRST solid AABB along from -> from+dir*maxDist.
+  // This is what airAnchor must use. cur.hits is door drums and signs only (no
+  // facades), and a mesh raycast cannot see the generated building lots — so a
+  // line shot at a tower fell through and the swing never started.
+  w.webHit = function(from, dir, maxDist){
+    if(!W || !from || !dir) return null;
+    var o = {x: +from.x || 0, y: +from.y || 0, z: +from.z || 0};
+    var dx = +dir.x || 0, dy = +dir.y || 0, dz = +dir.z || 0;
+    var l = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if(l < 1e-8) return null;
+    dx /= l; dy /= l; dz /= l;
+    var far = Math.max(2, Math.min(80, +maxDist || 42));
+    var to = {x: o.x + dx*far, y: o.y + dy*far, z: o.z + dz*far};
+    // sample along the ray (not just the AABB of the segment) so long diagonals
+    // still find the lots they pass through
+    var span = Math.ceil(far/6), boxes = [];
+    for(var s = 0; s <= span; s++){
+      var u = (s/span)*far, px = o.x + dx*u, pz = o.z + dz*u;
+      buildingsIn(px - 2, px + 2, pz - 2, pz + 2).forEach(function(b){ boxes.push(b); });
+      placedIn(px - 2, px + 2, pz - 2, pz + 2).forEach(function(b){ boxes.push(b); });
+    }
+    // tree crowns: a trunk is a pole, the canopy is what a line grips
+    try {
+      var TS = WD.trees ? WD.trees(W) : null;
+      if(TS && TS.length){
+        for(var i = 0; i < TS.length; i++){
+          var t = TS[i];
+          if(!t) continue;
+          var tx = +t.x || 0, tz = +t.z || 0, sc = +t.s || 1;
+          if(Math.abs(tx - o.x) > far + 8 || Math.abs(tz - o.z) > far + 8) continue;
+          var gy = groundY(tx, tz), h = 4.2 + sc*3.4;
+          boxes.push({id: "tree:" + i, min: {x: tx - 1.15*sc, y: gy + h*0.42, z: tz - 1.15*sc},
+                                        max: {x: tx + 1.15*sc, y: gy + h, z: tz + 1.15*sc}});
+        }
+      }
+    } catch(e){}
+    // roof decks (a helideck is a good high anchor)
+    for(var r = 0; r < roofs.length; r++){
+      var R = roofs[r]; if(!R || !R.deck) continue;
+      var D = R.deck, rx = +D.x || 0, rz = +D.z || 0, ry = +D.y || 0;
+      var rr = D.r > 0 ? (+D.r || 0) : Math.max(+D.hw || 0, +D.hd || 0);
+      if(rr <= 0) continue;
+      if(Math.hypot(rx - o.x, rz - o.z) > far + rr + 4) continue;
+      // The walk height IS the top of the slab. A top 0.35 above it made every
+      // resting body sit INSIDE the solid, so the collision pushed it down
+      // through the roof and killed the jump. (Web anchors and camHit use this
+      // same box: the edge is still there from ry-0.2 up to ry.)
+      boxes.push({id: "deck:" + r, min: {x: rx - rr, y: ry - 0.2, z: rz - rr}, max: {x: rx + rr, y: ry, z: rz + rr}});
+    }
+    var best = 1;
+    for(var b = 0; b < boxes.length; b++){
+      var h = segBox(o, to, boxes[b]);
+      if(h < best) best = h;
+    }
+    if(best >= 1) return null;
+    return {x: o.x + dx*far*best, y: o.y + dy*far*best, z: o.z + dz*far*best, t: best};
+  };
   w.camHit = function(from, to){
     if(!W) return 1;
     var t = WD.rayGround(W, from, to, undefined, tunnelLevel());   // [3.30] in a tunnel: its walls and ceiling
@@ -3818,8 +3982,69 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   w.occluderItems = function(x, y, z){
     if(!W) return [];
-    return buildingsIn(x - 40, x + 40, z - 40, z + 40).map(function(b){ return {id: b.id, min: b.min, max: b.max}; })
-      .concat(placedIn(x - 40, x + 40, z - 40, z + 40));
+    // keep `obb` (oriented footprint) — stripping it re-opened the corner tunnels
+    // that indexBuildings just closed for v2 lots
+    var boxes = buildingsIn(x - 40, x + 40, z - 40, z + 40).map(function(b){
+      var o = {id: b.id, min: b.min, max: b.max};
+      if(b.obb) o.obb = b.obb;
+      return o;
+    }).concat(placedIn(x - 40, x + 40, z - 40, z + 40));
+    // ALL construction is opaque: tree crowns and roof decks (the same boxes
+    // webHit already knows about), park rides and landmarks, and bridge decks.
+    try {
+      var TS = WD.trees ? WD.trees(W) : null;
+      if(TS && TS.length){
+        for(var ti = 0; ti < TS.length; ti++){
+          var t = TS[ti]; if(!t) continue;
+          var tx = +t.x || 0, tz = +t.z || 0, sc = +t.s || 1;
+          if(Math.abs(tx - x) > 42 || Math.abs(tz - z) > 42) continue;
+          var tgy = groundY(tx, tz), th = 4.2 + sc*3.4;
+          boxes.push({id: "tree:" + ti, min: {x: tx - 1.15*sc, y: tgy + th*0.42, z: tz - 1.15*sc},
+                                        max: {x: tx + 1.15*sc, y: tgy + th, z: tz + 1.15*sc}});
+        }
+      }
+    } catch(e){}
+    for(var ri = 0; ri < roofs.length; ri++){
+      var R0 = roofs[ri]; if(!R0 || !R0.deck) continue;
+      var D0 = R0.deck, rx = +D0.x || 0, rz = +D0.z || 0, ry = +D0.y || 0;
+      var rr = D0.r > 0 ? (+D0.r || 0) : Math.max(+D0.hw || 0, +D0.hd || 0);
+      if(rr <= 0) continue;
+      if(Math.hypot(rx - x, rz - z) > 42 + rr + 4) continue;
+      // same as webHit: the walk height is the TOP of the slab (see above)
+      boxes.push({id: "deck:" + ri, min: {x: rx - rr, y: ry - 0.2, z: rz - rr}, max: {x: rx + rr, y: ry, z: rz + rr}});
+      if(R0.dock){ var dk = R0.dock, dr = Math.max(dk.hw, dk.hd); boxes.push({id: "dock:" + ri, min: {x: dk.x - dr, y: ry - 0.2, z: dk.z - dr}, max: {x: dk.x + dr, y: ry, z: dk.z + dr}}); }
+    }
+    // the amusement park's rides and the landmarks' towers (hqspectacle)
+    try {
+      if(spx && typeof spx.solidItems === "function"){
+        var spxS = spx.solidItems(x, y, z);
+        if(spxS && spxS.length) boxes = boxes.concat(spxS);
+      }
+    } catch(e){}
+    // the airport's hangars and control tower (hqairbase): the masonry the walk
+    // already refuses to cross. Without these a swing sails clean through a hangar.
+    try {
+      if(air && typeof air.solidItems === "function"){
+        var airS = air.solidItems(x, y, z);
+        if(airS && airS.length) boxes = boxes.concat(airS);
+      }
+    } catch(e){}
+    // the terminal, concourse, fire station, fuel farm, depot and car park
+    // (hqairbldg): walk-blocked masonry a swing used to sail straight through.
+    try {
+      if(apP && ABL && typeof ABL.solidItems === "function"){
+        var apS = ABL.solidItems(apP, x, y, z);
+        if(apS && apS.length) boxes = boxes.concat(apS);
+      }
+    } catch(e){}
+    // bridge decks and towers (hqbridges)
+    try {
+      if(bridges && typeof bridges.solidItems === "function"){
+        var brS = bridges.solidItems(x, y, z);
+        if(brS && brS.length) boxes = boxes.concat(brS);
+      }
+    } catch(e){}
+    return boxes;
   };
   w.setFaded = function(ids){
     ids = ids || [];

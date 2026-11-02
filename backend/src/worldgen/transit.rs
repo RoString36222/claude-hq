@@ -773,7 +773,7 @@ fn off_lots(feet: &[Foot], p: &Plat) -> bool {
     let corner = |sl: i64, sw: i64| (p.centre.0 + (p.u.0 * sl + p.front.0 * sw) / ONE, p.centre.1 + (p.u.1 * sl + p.front.1 * sw) / ONE);
     let rect = [corner(-hl, -hw), corner(hl, -hw), corner(hl, hw), corner(-hl, hw)];
     let b = rect.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, v| (b.0.min(v.0), b.1.max(v.0), b.2.min(v.1), b.3.max(v.1)));
-    feet.iter().all(|(f, q)| !(b.0 <= f.1 && f.0 <= b.1 && b.2 <= f.3 && f.2 <= b.3) || !super::validate::overlap(&rect, q))
+    feet.iter().all(|(f, q)| !(b.0 <= f.1 && f.0 <= b.1 && b.2 <= f.3 && f.2 <= b.3 && super::validate::overlap(&rect, q)))
 }
 
 /// The junctions whose boxes a platform (or its run of track) reaches.

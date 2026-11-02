@@ -13,6 +13,8 @@
  *                 (lining up), "descend" (over the pad) or "down" (on it)
  *   step(S, st, roofs, inp, dt) -> {cue, roof, say}   assist() on the nearest pad, and the one-time "Landing on
  *                 <name>'s HQ" (say: the text, once per approach; again only after you leave LEAVE m or climb CEIL m)
+ *   R.dock (YOUR HQ only, 3.38.0)  the suit dock: a cantilevered platform off the deck's side away from the lift
+ *                 {x, z, hw, hd, y, rot, s, sx, sz}, its gantry spot (sx, sz); onDeck counts it, so you walk onto it
  *   spotBeside(R)                where you step out of a helicopter on the pad: on the deck by the lift's door
  * Helicopters only (a plane never lands here: hqcity3d calls this from heliMove's hook only).
  */
@@ -37,12 +39,23 @@ function roofOf(E, B, toWorld){
     pad: {x: pw.x, z: pw.z, y: y0 + P.y, r: P.r},
     deck: {x: dw.x, z: dw.z, hw: D.hw, hd: D.hd, r: D.r || 0, y: y0 + D.y, rot: +E.rot || 0},
     lift: lw ? {x: lw.x, z: lw.z, y: y0 + L.y} : null,
+    dock: h.isYou ? dockOf(dw, D, L ? toWorld(E, L.x, L.z) : null, y0 + D.y, +E.rot || 0) : null,
     house: L ? (function(){ var hw = L.hx != null ? toWorld(E, L.hx, L.hz) : toWorld(E, L.x, L.z - 0.9); return {x: hw.x, z: hw.z, r: 0.75}; })() : null};
 }
-// (x, z) in the deck's own frame
+// (x, z) in the deck's own frame, and back (world)
 function local(D, x, z){ var dx = x - D.x, dz = z - D.z, c = Math.cos(-D.rot), s = Math.sin(-D.rot); return {x: dx*c + dz*s, z: -dx*s + dz*c}; }
+function world(D, lx, lz){ var c = Math.cos(-D.rot), s = Math.sin(-D.rot); return {x: D.x + lx*c - lz*s, z: D.z + lx*s + lz*c}; }
+// [3.38.0] the suit dock: DOCK_H m square, overlapping the deck's edge by DOCK_IN, on the side away from the lift
+var DOCK_H = 1.7, DOCK_IN = 0.5;
+function dockOf(dw, D, lw, y, rot){
+  var F = {x: dw.x, z: dw.z, rot: rot}, s = lw && local(F, lw.x, lw.z).x > 0 ? -1 : 1, edge = D.r > 0 ? D.r : D.hw;
+  var c = world(F, s*(edge + DOCK_H - DOCK_IN), 0), sp = world(F, s*(edge + DOCK_H - DOCK_IN + 0.35), 0);
+  return {x: c.x, z: c.z, hw: DOCK_H, hd: DOCK_H, y: y, rot: rot, s: s, sx: sp.x, sz: sp.z};
+}
+function onDock(R, x, z){ if(!R || !R.dock) return false; var q = local(R.dock, x, z); return Math.abs(q.x) <= R.dock.hw && Math.abs(q.z) <= R.dock.hd; }
 function onDeck(R, x, z){
   if(!R) return false;
+  if(onDock(R, x, z)) return true;                                                                 // [3.38.0] the suit dock
   if(R.deck.r > 0){ if(Math.hypot(x - R.deck.x, z - R.deck.z) > R.deck.r) return false; }        // the helideck: a disc
   else { var q = local(R.deck, x, z); if(Math.abs(q.x) > R.deck.hw || Math.abs(q.z) > R.deck.hd) return false; }
   if(R.house && Math.hypot(x - R.house.x, z - R.house.z) < R.house.r) return false;
@@ -87,6 +100,6 @@ function spotBeside(R){
   return {x: x, z: z, y: R.deck.y, yaw: Math.atan2(dx, dz)};
 }
 
-HQV.hqRoof = {roofOf: roofOf, onDeck: onDeck, deckAt: deckAt, padAt: padAt, assist: assist, step: step, spotBeside: spotBeside,
+HQV.hqRoof = {roofOf: roofOf, onDeck: onDeck, deckAt: deckAt, padAt: padAt, assist: assist, step: step, spotBeside: spotBeside, onDock: onDock,
   APPROACH: APPROACH, CEIL: CEIL, LEAVE: LEAVE};
 })();

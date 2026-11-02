@@ -102,6 +102,7 @@ pub fn post_paths() -> Vec<&'static str> {
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
+    v.extend(crate::mcdesk::POSTS); // [3.38]
     v
 }
 
@@ -948,6 +949,10 @@ fn post_route(app: &Arc<App>, path: &str, body: &Value) -> Reply {
             Err(crate::app::SaveError::Bad(e)) => Reply::json(400, &json!({"error": format!("bad save: {}", e)})),
             Err(crate::app::SaveError::Io(e)) => Reply::json(500, &json!({"error": format!("could not write save: {}", e)})),
         },
+        p if p.starts_with("/api/mcdesk/") => {
+            let (c, r) = crate::mcdesk::post(p, body);
+            Reply::json(c, &r)
+        }
         "/api/notch/install" => {
             // HQ Notch from HQ (ext_notch.py): the same install as `python3 notch/tools/install.py`
             let (c, r) = app.notch_install();

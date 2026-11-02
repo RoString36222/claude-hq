@@ -813,7 +813,37 @@ function create(c, L, o){
   return api;
 }
 
-HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, roofAt: roofAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create,
+/* Solid AABBs of the terminal's masonry, in world metres: what a swing, a zip
+   or a free fall must stop at (the walk already refuses to cross these via
+   blockedAt). Rect blocks become their enclosing AABB in the site frame (they
+   are already axis-aligned in it); circular ones keep their radius. */
+function solidItems(P, x, y, z){
+  if(!P || !P.blocks || !P.F) return [];
+  var F = P.F, out = [], px = +x || 0, py = +y || 0, pz = +z || 0;
+  for(var i = 0; i < P.blocks.length; i++){
+    var b = P.blocks[i];
+    if(!b) continue;
+    var min, max;
+    if(b.c){
+      var cw = toW(F, b.c[0], b.c[1]);
+      var r = +b.r || 0;
+      min = {x: cw[0] - r, y: +b.y0 || 0, z: cw[1] - r};
+      max = {x: cw[0] + r, y: +b.y1 || 0, z: cw[1] + r};
+    } else {
+      // a rect in the site frame: its four world corners, then the enclosing AABB
+      var c0 = toW(F, b.u0, b.v0), c1 = toW(F, b.u1, b.v0), c2 = toW(F, b.u0, b.v1), c3 = toW(F, b.u1, b.v1);
+      var xs = [c0[0], c1[0], c2[0], c3[0]], zs = [c0[1], c1[1], c2[1], c3[1]];
+      min = {x: Math.min(xs[0], xs[1], xs[2], xs[3]), y: +b.y0 || 0, z: Math.min(zs[0], zs[1], zs[2], zs[3])};
+      max = {x: Math.max(xs[0], xs[1], xs[2], xs[3]), y: +b.y1 || 0, z: Math.max(zs[0], zs[1], zs[2], zs[3])};
+    }
+    if(Math.abs(min.x - px) > 42 && Math.abs(max.x - px) > 42) continue;
+    if(Math.abs(min.z - pz) > 42 && Math.abs(max.z - pz) > 42) continue;
+    out.push({id: "apb:" + i, min: min, max: max});
+  }
+  return out;
+}
+
+HQV.hqAirbldg = {plan: plan, floorAt: floorAt, blockedAt: blockedAt, roofAt: roofAt, gateSpot: gateSpot, bridgePose: bridgePose, cabBox: cabBox, create: create, solidItems: solidItems,
   NAVE: NAVE, toFrame: function(L, x, z){ return toF(frameOf(L), x, z); }, toWorld: function(L, u, v){ return toW(frameOf(L), u, v); },
   K: {DRUM_OUT: DRUM_OUT, DRUM_BACK: DRUM_BACK, DRUM_R: DRUM_R, COL_R: COL_R, CAB_D: CAB_D, CAB_W: CAB_W, BOGIE_R: BOGIE_R, BOGIE_BACK: BOGIE_BACK, RET_LEN: RET_LEN, DOOR: DOOR}};
 })();

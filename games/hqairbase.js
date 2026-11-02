@@ -253,6 +253,9 @@ function padModel(c, r, p, x, y, z, rot, glows){
 function create(c, S, o){
   var THREE = c.THREE, WD = HQV.world, H = HQV.hqheli, E = HQV.engine || {};
   var W = o.W, sea = o.sea, root = new THREE.Group(); root.name = "air"; S.add(root);
+  // blockR: the walk's blocked() rects. Each also carries y0..y1 (the masonry's
+  // vertical span, from the field level) so the air kit can treat it as a solid
+  // AABB — a hangar you can walk into the side of must also stop a swinging body.
   var blockR = [], floorR = [], groundR = [], pads = [], props = [], glows = [], nightM = [], anims = [];
   var radar = null, carrier = null, homeDone = false, night = o.night != null ? !!o.night : true, dead = false;
   var A = {base: null, carrier: null, home: null, pads: pads, seed: 0};
@@ -347,7 +350,7 @@ function create(c, S, o){
       K.box(9, 7.5, 0.3, darkS, hx - 5.5, 3.75, hz + 11.05); K.box(9, 7.5, 0.3, darkS, hx + 5.5, 3.75, hz + 11.2);
       K.box(4, 7, 0.2, inside, hx, 3.5, hz + 10.9);
       K.box(26.4, 0.6, 0.3, yellow, hx, 0.3, hz + 11.3);
-      var p = toW(F, hx, hz); blockR.push({x: p.x, z: p.z, hw: 13.2, hd: 11.2, rot: F.rot}); floorR.push({x: p.x, z: p.z, hw: 13, hd: 11, rot: F.rot, y: F.y + 10.8});
+      var p = toW(F, hx, hz); blockR.push({x: p.x, z: p.z, hw: 13.2, hd: 11.2, rot: F.rot, y0: F.y, y1: F.y + 11.2}); floorR.push({x: p.x, z: p.z, hw: 13, hd: 11, rot: F.rot, y: F.y + 10.8});
     });
     // the control tower
     var tx = 47, tz = -28;
@@ -355,7 +358,7 @@ function create(c, S, o){
     var cab = K.n(0x1c3a52, 0x9ad8ff, 0.2); nightM.push([cab, 1.1, 0.2]);
     K.cyl(4.2, 3.4, 3.4, cab, tx, 19.7, tz, null, 12); K.cyl(4.6, 4.6, 0.5, darkS, tx, 21.6, tz, null, 12);
     K.cyl(0.1, 0.1, 4, steel, tx, 23.8, tz, null, 6); K.box(0.4, 0.4, 0.4, K.n(0x400000, 0xff3030, 2.5), tx, 25.9, tz);
-    var tp = toW(F, tx, tz); blockR.push({x: tp.x, z: tp.z, hw: 3, hd: 3, rot: F.rot, circle: 3}); floorR.push({x: tp.x, z: tp.z, hw: 4.6, hd: 4.6, rot: F.rot, y: F.y + 21.9});
+    var tp = toW(F, tx, tz); blockR.push({x: tp.x, z: tp.z, hw: 3, hd: 3, rot: F.rot, circle: 3, y0: F.y, y1: F.y + 25}); floorR.push({x: tp.x, z: tp.z, hw: 4.6, hd: 4.6, rot: F.rot, y: F.y + 21.9});
     // the radar: a dish on a mast, turning
     var rx = 47, rz = 30;
     K.cyl(0.5, 0.8, 7, steel, rx, 3.5, rz);
@@ -472,6 +475,32 @@ function create(c, S, o){
     return props;
   };
   A.blocked = function(x, z){ for(var i = 0; i < blockR.length; i++) if(rectHit(blockR[i], x, z)) return true; return false; };
+  /* Solid AABBs for the body collider: the hangars and the control tower — the
+     masonry the walk already refuses to cross. ALL construction is opaque: a
+     swinging body must stop at a hangar wall just like at a downtown tower.
+     Each blockR that carries y0..y1 becomes a box (its turned rect is widened to
+     the AABB that encloses it; a circle keeps its radius). */
+  A.solidItems = function(x, y, z){
+    var out = [];
+    for(var i = 0; i < blockR.length; i++){
+      var R = blockR[i];
+      if(R.y0 == null || R.y1 == null) continue;
+      if(Math.abs(R.x - x) > 42 || Math.abs(R.z - z) > 42) continue;
+      var ex, ez;
+      if(R.circle){ ex = ez = +R.circle; }
+      else {
+        var c = Math.abs(Math.cos(R.rot || 0)), s = Math.abs(Math.sin(R.rot || 0));
+        ex = Math.abs(+R.hw || 0)*c + Math.abs(+R.hd || 0)*s;
+        ez = Math.abs(+R.hw || 0)*s + Math.abs(+R.hd || 0)*c;
+      }
+      out.push({
+        id: "air:" + i,
+        min: {x: R.x - ex, y: +R.y0 || 0, z: R.z - ez},
+        max: {x: R.x + ex, y: +R.y1 || 0, z: R.z + ez}
+      });
+    }
+    return out;
+  };
   A.groundAt = function(x, z){
     for(var i = 0; i < groundR.length; i++){ var R = groundR[i];
       if(R.circle ? Math.hypot(x - R.x, z - R.z) <= R.circle : rectHit(R, x, z)) return R.y; }

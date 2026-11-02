@@ -1126,7 +1126,7 @@ mod hq_lot_tests {
 
     fn layers4() -> &'static Layers {
         static L: std::sync::OnceLock<Layers> = std::sync::OnceLock::new();
-        L.get_or_init(|| layers("claude-hq@4", &[]).unwrap())
+        L.get_or_init(|| layers("claude-hq", &[]).unwrap())
     }
 
     /// A township's whole ground: its lot and its neighbouring plots.
@@ -1354,7 +1354,7 @@ mod hq_lot_tests {
     #[test]
     fn townships_keep_off_water_airport_and_stations() {
         let l = layers4();
-        let city = super::super::City::plan("claude-hq@4").unwrap();
+        let city = super::super::City::plan("claude-hq").unwrap();
         let ap = l.sites.iter().find_map(|s| s.runway.as_ref()).map(|r| r.area.iter().map(|v| (v[0], v[1])).collect::<Vec<P>>()).unwrap();
         let metro = l.metro.as_ref().unwrap();
         let rail = l.rail.as_ref().unwrap();

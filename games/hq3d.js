@@ -5931,6 +5931,8 @@ function mount(el, api){
       if(w.camModes) rigEnter(w);
       if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
       if(w.onEnter){ try { w.onEnter(from, {k: E.calm() ? 0 : 1}); } catch(e){} }   // [basement 3.4] where from, and Calm
+      // [island trains] a ride carried into this world (onEnter adopts it): your seat from its first frame, not its spawn
+      if(instant && w.carry){ var cp0 = null; try { cp0 = w.carry(); } catch(e){} if(cp0){ moveAvatar(0); view.target.copy(view.goal); } }
       if(carry) liftLand(w, name, carry);   // [basement 3.4] your ride arrives with you
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);

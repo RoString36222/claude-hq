@@ -140,7 +140,22 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
 
     let districts = districts_of(&land, &landuse.cells, hub);
     let zones = Some(zones::layer(land.seed, &doc.blocks));
-    let mut tr = transit::generate(&roads, &doc.sites, &doc.lots, None, &[]);
+    // [3.37] the bus stops on the avenues' kerbs (the stations' and landmarks' first), and the bus loops through them
+    {
+        let mut anchors: Vec<P> = metro.stations.iter().map(|s| s.c).collect();
+        anchors.extend(rail.iter().flat_map(|l| l.stations.iter().copied()));
+        anchors.extend(doc.sites.iter().filter(|s| matches!(s.kind, "transit" | "fountain" | "port" | "airport")).map(|s| (s.x, s.z)));
+        let mut avoid: Vec<P> = metro.stations.iter().flat_map(|s| s.entrances.iter().copied()).collect();
+        avoid.extend(metro.lines.iter().filter_map(|l| l.depot.as_ref().map(|d| d.portal.at)));
+        avoid.extend(rail.iter().flat_map(|l| l.portals.iter().map(|p| p.at)));
+        let stops = super::bus::stops(&roads, &doc.lots, &doc.sites, &anchors, &avoid);
+        for (k, b) in stops.iter().enumerate() {
+            let mut s = site(&format!("busstop:{k}"), "busstop", b.at, gy(b.at), super::bus::W_CM, super::bus::D_CM, None, b.front);
+            s.tier = Some(transit::BUS_TIER);
+            doc.sites.push(s);
+        }
+    }
+    let mut tr = transit::generate_avenues(&roads, &doc.sites, &doc.lots);
     let isl = land.coast.as_ref().map(|co| island::grow(&p, co, &mut roads, &mut doc, &mut tr));
 
     let mut terrain = land.t.clone();

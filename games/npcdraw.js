@@ -16,6 +16,7 @@
  * [play-street] rows with dog (a dog walker) get a dog on a lead ahead of them, rows with isDog are a loose dog (one
  * instanced dog, DOG_FAR m, MAX_DOGS); draw.setExtras(fn) adds rows (city play's buskers and the like), draw.setOverride(fn)
  * moves this frame's rows before they are drawn (city play's people running from a blast): view only, the sim never moves.
+ * [island trains] draw.addExtras(fn) -> remove(): more rows the same way, beside setExtras' (the Island Link station's passengers).
  * A near resident whose character is still loading is drawn as a body until it is ready. Drivers
  * (anim "drive") are inside their cars, which games/traffic.js draws; riders on a bus are not in sim.at.
  *   draw.update(tMs, cam {x, y?, z}, player {x, z} | null, dt)   once a frame; tMs is the City's local clock
@@ -371,6 +372,7 @@ function create(THREE, parent, sim, opts){
 
   var drawn = [];   // this frame's drawn residents (near + far), for talk()
   var extrasFn = null, overrideFn = null;   // [play-street] setExtras, setOverride
+  var extraFns = [];                        // [island trains] addExtras: more rows beside setExtras' (the Island Link station's passengers)
 
   /* [play-street] dogs: one instanced low-poly dog (a trot bob from its speed) and their leads, one line segment each */
   var DG = dogGeometry(), dgeo = new THREE.BufferGeometry();
@@ -416,8 +418,9 @@ function create(THREE, parent, sim, opts){
     // [play-street] the street's own people and loose dogs (city play: buskers, a driver by a broken-down car), then its
     // view-side reactions (people running from a blast, stepping out of a speeding car's way): rows are fresh each frame,
     // so a reaction moves only what is drawn, never the sim
-    if(extrasFn){
-      var ex = null; try { ex = extrasFn(tMs, cam); } catch(e){ ex = null; }
+    if(extrasFn || extraFns.length){
+      var ex = null; try { ex = extrasFn ? extrasFn(tMs, cam) : null; } catch(e){ ex = null; }
+      extraFns.forEach(function(f){ var e2 = null; try { e2 = f(tMs, cam); } catch(e){ e2 = null; } if(e2 && e2.length) ex = (ex || []).concat(e2); });
       if(ex && ex.length){
         var cx0 = +cam.x || 0, cz0 = +cam.z || 0;
         ex.forEach(function(r){ if(!r) return; var dx = r.x - cx0, dz = r.z - cz0; r.d2 = dx*dx + dz*dz; if(r.d2 <= FAR*FAR) list.push(r); });
@@ -473,6 +476,7 @@ function create(THREE, parent, sim, opts){
   // wear, say: their line for talk(); isDog: a loose dog, not a person); fn(rows, tMs, dt, player) moves rows (view only)
   draw.setExtras = function(fn){ extrasFn = typeof fn === "function" ? fn : null; };
   draw.setOverride = function(fn){ overrideFn = typeof fn === "function" ? fn : null; };
+  draw.addExtras = function(fn){ if(typeof fn !== "function") return function(){}; extraFns.push(fn); return function(){ var i = extraFns.indexOf(fn); if(i >= 0) extraFns.splice(i, 1); }; };
   draw.drawn = function(){ return drawn; };
   draw.dispose = function(){
     draw.dead = true;

@@ -722,6 +722,7 @@ function skirtQuad(g, ia, ib, ta, tb, out, depth){
 /* ---------- roads ---------- */
 // @2's classes: a local road is marked and furnished like a street, an arterial like an avenue
 function streetish(cls){ return cls === "street" || cls === "local"; }
+var RUN_W = 2.75, PARK_W = 2.1;          // [3.37] a running lane's least width, a parking lane's (citylife.js parked)
 function aveish(cls){ return cls === "avenue" || cls === "arterial"; }
 // [3.20.1] lanes each way on a carriageway `cw` m from centre to kerb: one per 3.3 m, two or three on @3's avenues
 // and boulevards (traffic.js lanesEach drives in them the same way)
@@ -3562,7 +3563,10 @@ function allProps(W){
         }
       });
     }
-    if(E.walk > 0 && streetish(E.cls)){
+    // [3.37] @2 on: only where a parking lane (PARK_W) each side leaves two running lanes (RUN_W) between them, never in a
+    // lane traffic drives (cityLife.parked's rule; a 6.5 m local street has no room, its cars stand in bays off it). @1
+    // keeps its own (its golden tiles)
+    if(E.walk > 0 && streetish(E.cls) && (!v2 || 2*E.cw - 2*PARK_W >= 2*RUN_W)){
       // parked cars: 7 m slots, both kerbs, residential/commercial frontage, never near a junction or an HQ lot
       for(var k = 0, s2; (s2 = 12 + 3.5 + 7*k) <= E.len - 12 - 3.5; k++){
         [1, -1].forEach(function(sg){

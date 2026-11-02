@@ -82,9 +82,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # the vehicle garage (3.4); City 3.2: the weather, the landmarks and the amusement park
                           "hqcarpark", "hqweather", "hqspectacle",
                           # transport (3.18): the ride core and commuters, the tramway and coaches, the metro and the
-                          # underground, City Line, its tunnel mouths and the gondola, water buses, cabs and heli calling, the phone and its apps,
-                          # the gallery, and the City's transport glue; all before the City that wires them
-                          "hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqportals",
+                          # underground, City Line, the Island Link's stations, its tunnel mouths and the gondola, water buses, cabs and heli
+                          # calling, the phone and its apps, the gallery, and the City's transport glue; all before the City that wires them
+                          "hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqilstation", "hqportals",
                           "hqgondola", "hqferries", "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery",
                           "hqtransit",
                           # the stunts, then (3.16) the grenade launcher and the tank, then (3.21) the street
@@ -97,7 +97,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         m = re.search(r"var HQ_SCRIPTS_3D = \{([^}]*)\};", read(HQ_UI))
         self.assertTrue(m)
         for n in ("hqride", "hqcommute", "hqtramway", "hqcoach", "hqmetro", "hqunderground", "hqcityrail", "hqgondola", "hqferries",
-                  "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery", "hqtransit"):
+                  "hqcabs", "hqhelicall", "hqphone", "hqphoneapps", "hqphonecabs", "hqphonecomms", "hqgallery", "hqilstation", "hqtransit"):
             self.assertIn(n + ":1", m.group(1), n)
         # and each is feature-detected where the City uses it
         city = read(os.path.join(ROOT, "games", "hqcity3d.js"))

@@ -103,6 +103,19 @@ var HQV = root.HQV = root.HQV || {};
 
 /* ---------- constants ---------- */
 var ARTERIAL = {arterial: 1, avenue: 1, highway: 1, ring: 1};
+// [3.37] City Gen v5 lays a two-tier grid: avenues (class arterial) and plain local streets, with no collector tier, lanes
+// or shared streets (City Gen v4's classes for the streets that carry a neighbourhood's traffic, and for the quiet ones).
+// There the locals are the street network: they carry cars too, a lane each way. In older docs the collectors do that
+// and the locals stay as they were
+function twoTier(edges){
+  var n = 0;
+  for(var i = 0; i < (edges || []).length; i++){
+    var e = edges[i], v = e && e.v4, cls = String(e && (e["class"] || e.cls) || "");
+    if(!v || v === "lane" || v === "shared" || (v === "collector" && ARTERIAL[cls])) return false;
+    n++;
+  }
+  return n > 0;
+}
 // lengths, widths m; vmax m/s; acc m/s^2
 var SPEC = {
   car:       {len: 3.8, wid: 1.85, vmax: 12, acc: 2.2, wb: 2.4},
@@ -150,7 +163,7 @@ var CAP = {car: 320, bus: 32, tram: 16, fire: 6, ambulance: 6, police: 6, van: 1
 // periods (each divides the next, and the cycle), the most cars in a platoon (on a ring through lights; elsewhere),
 // the share of a platoon's places j that hold a car ([3.22.3] a little fuller: left-hand traffic's shorter laps hold fewer
 // slots, and the City keeps the density it had)
-var SIG_BACK = 1.5, SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.98, 0.96, 0.93, 0.88, 0.83];
+var QBUDGET = 4e6, SIG_BACK = 1.5, SIG_EPS = 0.05, QSOFT = 1.2, QSTEP = 0.25, SIG_C = 60, SIG_LEAD = 1.2, SIG_DIVS = [7.5, 15, 30, 60], PMAX = 6, PRING = 2, FILL = [1, 0.98, 0.96, 0.93, 0.88, 0.83];
 // [3.22.3] the side of the road traffic keeps to: -1 the left (left-hand traffic), 1 the right. The kerb of the way
 // of travel is SIDE x its right; the vehicles' models (the bus's doors, seats and driver, games/hqcoach.js) are drawn
 // for the right and mirrored by it. The one switch: citylife.js, hqtramway.js, hqcoach.js, hqcabs.js and the rest
@@ -294,6 +307,14 @@ function loopPts(p0, d0, R){
   }
   return out;
 }
+// [3.37] does a polyline turn back on itself anywhere (two consecutive steps more than 90 degrees apart)?
+function folds(P){
+  for(var i = 2; i < P.length; i++){
+    var ax = P[i-1][0] - P[i-2][0], az = P[i-1][2] - P[i-2][2], bx = P[i][0] - P[i-1][0], bz = P[i][2] - P[i-1][2];
+    if(ax*bx + az*bz < 0) return true;
+  }
+  return false;
+}
 function turnAngle(d0, d1){ return Math.atan2(d0[0]*d1[1] - d0[1]*d1[0], d0[0]*d1[0] + d0[1]*d1[1]); }
 function segDist(ax, az, bx, bz, cx, cz, dx, dz){
   function pd(px, pz, x0, z0, x1, z1){
@@ -312,6 +333,20 @@ function pathDist(A, B){
     if(d < best) best = d;
   }
   return best;
+}
+// [3.37] is pathDist(A, B) < lim: their boxes first (kept on the arrays), and out at the first pair that comes that close
+function bboxOf(A){
+  if(A.bb) return A.bb;
+  var b = [Infinity, -Infinity, Infinity, -Infinity];
+  for(var i = 0; i < A.length; i++){ var p = A[i]; if(p[0] < b[0]) b[0] = p[0]; if(p[0] > b[1]) b[1] = p[0]; if(p[2] < b[2]) b[2] = p[2]; if(p[2] > b[3]) b[3] = p[2]; }
+  return (A.bb = b);
+}
+function pathNear(A, B, lim){
+  var a = bboxOf(A), b = bboxOf(B);
+  if(a[0] - b[1] >= lim || b[0] - a[1] >= lim || a[2] - b[3] >= lim || b[2] - a[3] >= lim) return false;
+  for(var i = 1; i < A.length; i++) for(var j = 1; j < B.length; j++)
+    if(segDist(A[i-1][0], A[i-1][2], A[i][0], A[i][2], B[j-1][0], B[j-1][2], B[j][0], B[j][2]) < lim) return true;
+  return false;
 }
 
 /* ---------- speed profiles: constant-acceleration pieces ---------- */
@@ -409,7 +444,7 @@ function create(doc, o){
     if((n.junction === "mini" || n.junction === "roundabout") && n.island > 0) nodes[n.id].rb = {full: n.junction === "roundabout", r: n.island/100};
     nodeIds.push(n.id);
   });
-  var edges = [];
+  var edges = [], grid = twoTier(R.edges);
   (R.edges || []).forEach(function(e){
     if(e.min_tier != null && (e.min_tier | 0) > tier) return;
     var A = nodes[e.a], B = nodes[e.b];
@@ -417,7 +452,7 @@ function create(doc, o){
     var pts = e.points && e.points.length >= 2 ? e.points.map(function(p){ return [num(p[0], 0)/100, num(p[1], 0)/100, num(p[2], 0)/100]; })
       : (e.pts ? ptsOfPacked(e.pts) : [[A.x, A.y, A.z], [B.x, B.y, B.z]]);
     var width = num(e.width, 1200), walk = num(e.walk, 200), cls = String(e["class"] || e.cls || "street");
-    var E = {i: edges.length, id: e.id, a: e.a, b: e.b, cls: cls, art: !!ARTERIAL[cls], pts: pts, len: len2(pts),
+    var E = {i: edges.length, id: e.id, a: e.a, b: e.b, cls: cls, art: !!ARTERIAL[cls] || (grid && cls === "local"), pts: pts, len: len2(pts),
              c: Math.max(1.5, (width - 2*walk)/200), bus: [false, false], tram: false,
              // City Gen v4 (HQ 3.25): its lanes each way and its raised median's half width (m)
              lanesV4: e.v4 ? Math.max(1, e.lanes|0) : 0, med: e.median > 0 ? e.median/200 : 0,
@@ -498,6 +533,9 @@ function create(doc, o){
     if(anyBus) carOff = in2 + cw/2 + 0.1;
     var carEdge = carOff + cw/2;
     E.cars = E.art && carEdge <= c + 0.05 && (!anyBus || carEdge + 0.25 + bw <= c);
+    // [3.37] a two-tier grid's local street with a bend too tight for its lanes (an offset lane folding back on itself, a
+    // cul-de-sac's loop): no cars (one would spin on the spot there, and the next in its platoon run into it)
+    if(E.cars && !ARTERIAL[E.cls] && (folds(offsetPts(E.pts, carOff)) || folds(offsetPts(E.pts, -carOff)))) E.cars = false;
     E.carOff = E.cars ? carOff : null;
     // [3.29] every lane the sim drives a way, from the kerb in (kerb first, then each lane's width further in); a one-way
     // road's across its whole carriageway, centred
@@ -542,7 +580,9 @@ function create(doc, o){
   Object.keys(used).forEach(function(id){
     var list = used[id], deg = nodes[id].inc.filter(function(i){ return edges[i].ev || list.indexOf(edges[i]) >= 0; }).length, maxC = 0, minLen = 1e9;
     list.forEach(function(E){ maxC = Math.max(maxC, E.c); minLen = Math.min(minLen, E.len); });
-    radius[id] = Math.min(deg >= 3 ? maxC + 2 : deg === 2 ? 2.5 : 1, 0.4*minLen);
+    // ([3.37] a two-tier grid's corner, where two streets meet at an angle with no junction, turns as wide as a junction:
+    // its inner lanes would otherwise turn on the spot and a platoon's cars run into each other round it)
+    radius[id] = Math.min(deg >= 3 || (grid && deg === 2) ? maxC + 2 : deg === 2 ? 2.5 : 1, 0.4*minLen);
     // [3.26] a full roundabout's box is its whole circle (as worldgeom.js trims the roads to its rim)
     var rb = nodes[id].rb;
     if(rb && rb.full) radius[id] = Math.min(Math.max(radius[id], rb.r + RB_LANE + 0.5), 0.45*minLen);
@@ -969,12 +1009,12 @@ function create(doc, o){
   }
   function bodyClash(p, q){
     var lim = q.wid/2 + CLASH, T = tracks(p);
-    for(var i = 0; i < T.length; i++) if(pathDist(T[i], q.curve) < lim) return true;
+    for(var i = 0; i < T.length; i++) if(pathNear(T[i], q.curve, lim)) return true;
     return false;
   }
   function clash(p, q){
     if(p.transit || q.transit) return (p.transit && bodyClash(p, q)) || (q.transit && bodyClash(q, p));
-    return pathDist(p.curve, q.curve) < (p.wid + q.wid)/2 + CLASH;
+    return pathNear(p.curve, q.curve, (p.wid + q.wid)/2 + CLASH);
   }
   // [3.22] at a node with lights, movements coming in on different axes never share a window (each colour is one
   // axis's); sigAxis is the light's own (cityLife.sigAxis)
@@ -1293,20 +1333,38 @@ function create(doc, o){
   // at() holds it back nose to tail behind the one ahead (softly: smin, QSOFT m), never ahead of its own timetable. A
   // ring may space its platoons so (queueOk) only when the held-back platoons never stand in a box: every platoon
   // k slots apart (k*Hr s), as at() places them, each lap's sample QSTEP s apart.
-  function smin(a, b){ var m = Math.min(a, b), d = Math.abs(a - b); return m - QSOFT*Math.log(1 + Math.exp(-d/QSOFT)); }
+  // (past 40 QSOFT apart the soft term is below a double's precision at these sizes: the min itself, without exp/log)
+  function smin(a, b){ var m = Math.min(a, b), d = Math.abs(a - b); return d > 40*QSOFT ? m : m - QSOFT*Math.log(1 + Math.exp(-d/QSOFT)); }
+  // [3.37] the lap's positions at every QSTEP s of the lap, once per profile (queueOk samples S(t - j*k*Hr) on that grid
+  // over and over: a lookup instead of a search; S is linear in whole laps)
+  function lapGrid(P){
+    if(P.qg) return P.qg;
+    var N = Math.max(1, Math.round(P.T/QSTEP)), g = new Float64Array(N), o = {};
+    for(var i = 0; i < N; i++) g[i] = P.S(i*QSTEP, o).s;
+    return (P.qg = {N: N, g: g, exact: Math.abs(N*QSTEP - P.T) < 1e-9});
+  }
   // ([3.22.3] nn: that many slots k apart, the rest of the lap left empty)
   function queueOk(r, k, Pn, nn){
     var P = r.prof, Lr = r.pl.len, fr = SPEC.car.len/2, ext = LP(Pn), n = nn || Math.floor(Math.round(P.T/r.Hr)/k), o = {}, x = [], y = [];
     if(n < 2) return true;
     if(n*(ext + GAP) > Lr) return false;                 // (the ring holds them all, queued)
+    // [3.37] a ring hours round (City Gen v5's local streets join into a few very long rings) would take n x lap/QSTEP
+    // samples, quadratic in its length: past QBUDGET it is spaced wider instead (as when the queues would not fit)
+    if(n*P.T/QSTEP > QBUDGET) return false;
     var B = r.passes.filter(function(p){ return standOff(p.node); }).map(function(p){ return [p.sIn + fr, p.sOut]; });
     function inBox(c){
       var a = c + fr - ext, b = c + fr;
       for(var i = 0; i < B.length; i++) for(var w = -1; w <= 1; w++){ var lo = B[i][0] + w*Lr, hi = B[i][1] + w*Lr; if(b > lo && a < hi) return true; }
       return false;
     }
-    for(var t = 0; t < P.T; t += QSTEP){
-      for(var j = 0; j < n; j++){ x[j] = P.S(t - j*k*r.Hr, o).s; y[j] = x[j]; }
+    var QG = lapGrid(P), sh = k*r.Hr/QSTEP, grid = QG.exact && Math.abs(sh - Math.round(sh)) < 1e-9, it = 0;
+    sh = Math.round(sh);
+    for(var t = 0; t < P.T; t += QSTEP, it++){
+      for(var j = 0; j < n; j++){
+        if(grid){ var u = it - j*sh, w = Math.floor(u/QG.N); x[j] = QG.g[u - w*QG.N] + w*P.L; }
+        else x[j] = P.S(t - j*k*r.Hr, o).s;
+        y[j] = x[j];
+      }
       if(x[0] - x[n - 1] >= Lr - ext - GAP) return false;   // (slot order is road order: none a lap on)
       for(var pass = 0; pass < 2; pass++) for(j = 0; j < n; j++){
         var ahead = j ? y[j - 1] : y[n - 1] + Lr*Math.round((x[0] - y[n - 1])/Lr + 0.5);
@@ -1706,6 +1764,16 @@ function create(doc, o){
       else for(var k = 0; k <= r.q && o == null; k++){
         var c2 = mod(r.got[0] + round*r.q + (k % 2 ? (k + 1)/2 : -k/2), r.m);
         if(ownOk(r, c2) && fits(r, c2)) o = c2;
+      }
+      // [3.37] none near its place this round (another line's vehicles on the lanes they share): the free cycle farthest
+      // from its own vehicles, rather than none (a line's vehicles bunched in one stretch of the lap, then a long gap)
+      if(o == null && round){
+        var far = 0;
+        for(var c3 = 0; c3 < r.m; c3++){
+          var dmin = Infinity;
+          r.got.forEach(function(x){ var d = mod(c3 - x, r.m); dmin = Math.min(dmin, d, r.m - d); });
+          if(dmin > far && dmin >= Math.max(1, Math.floor(r.q/2)) && ownOk(r, c3) && fits(r, c3)){ far = dmin; o = c3; }
+        }
       }
       if(o == null){ r.full = true; return; }
       r.got.push(o);
@@ -2821,20 +2889,22 @@ function view(c){
 // street(THREE, scene, W, o) -> {group, update(localMs, cam), blocked(x, z), info(), drawCalls(), dispose()}
 // The lights of HQV.cityLife.signals(W): at each arm a pole on the kerb beside the stop line, a three-aspect head on top
 // facing the traffic coming in and a walk head facing across the arm, and the stop line across the lane coming in.
-// The parked cars of cityLife.parked(W). Four instanced meshes in all, built once: poles and housings, lenses (lit by
+// The parked cars of cityLife.parked(W). Five instanced meshes in all, built once: poles and housings, lenses (lit by
 // the light's state through their instance colours: near the camera every frame, the rest every LENS_ALL s), stop
 // lines, and the parked cars within PARK_NEAR m of the camera (rebuilt as it moves on; none on a street that is closed,
-// where the market stands). Poles and parked cars are solid (blocked). Below the street (the metro) none of it.
-var LENS_NEAR = 320, LENS_ALL = 2000, PARK_NEAR = 240, PARK_CAP = 900, PARK_MOVE = 24;
+// where the market stands), and ([3.37]) the paving of cityLife.bays(W) under the ones in bays off the carriageway, within
+// PARK_NEAR too. Poles and parked cars are solid (blocked). Below the street (the metro) none of it.
+var LENS_NEAR = 320, LENS_ALL = 2000, PARK_NEAR = 240, PARK_CAP = 900, BAY_CAP = 1100, PARK_MOVE = 24;
 var LENS_ON = [0xff2a1a, 0xffb020, 0x2aff6a, 0xff3a24, 0xe8fff0], LENS_OFF = [0x34100c, 0x34260c, 0x0c2e16, 0x2a0e0a, 0x1c2420];
 function street(THREE, scene, W, o){
   o = o || {};
   var CL = HQV.cityLife, WQ = HQV.world, group = new THREE.Group();
   group.name = "city-street";
   if(scene && scene.add) scene.add(group);
-  var SIGS = {}, PARK = [];
+  var SIGS = {}, PARK = [], BAYS = [];
   try { SIGS = CL && CL.signals ? CL.signals(W) || {} : {}; } catch(e){ SIGS = {}; }
   try { PARK = CL && CL.parked ? CL.parked(W) || [] : []; } catch(e){ PARK = []; }
+  try { BAYS = CL && CL.bays ? CL.bays(W) || [] : []; } catch(e){ BAYS = []; }
   var UP = WQ && WQ.SIDEWALK_UP != null ? WQ.SIDEWALK_UP : 0.15;
   function roadY(x, z, d){ var n = WQ && WQ.nearestRoad ? WQ.nearestRoad(W, x, z, 30) : null; return n ? n.y : d; }
   // each arm: its pole (on the kerb beside the stop line, a step back), the way its head faces, the ground there
@@ -2931,6 +3001,11 @@ function street(THREE, scene, W, o){
   var parkM = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.45, metalness: 0.25});
   var parkI = inst("parked", carG, Math.min(PARK_CAP, PARK.length), parkM);
   parkI.castShadow = true; parkI.receiveShadow = true;
+  // [3.37] a bay's paving: asphalt a little over the verge, a white line across each end (unit length, scaled per bay)
+  var bayG = merge([[bx(1, 0.1, 1), 0x4a4d53, 0, 0, 0], [bx(1, 0.1, 0.02), 0xe6e6df, 0, 0.004, 0.49], [bx(1, 0.1, 0.02), 0xe6e6df, 0, 0.004, -0.49]]);
+  var bayM = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.95, metalness: 0});
+  var bayI = inst("bays", bayG, Math.min(BAY_CAP, BAYS.length), bayM);
+  bayI.receiveShadow = true;
   var SZ = {car: [1, 1, 1], van: [1.08, 1.3, 1.19]}, DIM = {car: [SPEC.car.wid, SPEC.car.len], van: [SPEC.van.wid, SPEC.van.len]};
   // solid things in 16 m cells: [kind, index]
   var cells = {};
@@ -2958,6 +3033,13 @@ function street(THREE, scene, W, o){
     parkI.count = n; shown = n;
     parkI.instanceMatrix.needsUpdate = true;
     if(parkI.instanceColor) parkI.instanceColor.needsUpdate = true;
+    var nb = [];
+    BAYS.forEach(function(B, k){ var d = Math.hypot(B.x - cx, B.z - cz); if(d <= PARK_NEAR) nb.push([d, k]); });
+    nb.sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; });
+    var m = Math.min(nb.length, bayI.instanceMatrix.count);
+    for(i = 0; i < m; i++){ var B = BAYS[nb[i][1]]; put(bayI, i, B.x, B.y, B.z, B.yaw, num(B.wid, 2.5), 1, num(B.len, 6)); }
+    bayI.count = m;
+    bayI.instanceMatrix.needsUpdate = true;
   }
   function update(localMs, cam){
     if(!CL || !W) return;
@@ -2998,10 +3080,10 @@ function street(THREE, scene, W, o){
     return false;
   }
   function drawCalls(){ var n = 0; group.children.forEach(function(m){ if(m.count > 0) n++; }); return group.visible ? n : 0; }
-  function info(){ return {lights: Object.keys(SIGS).length, heads: arms.length, parked: PARK.length, shown: shown, closed: Object.keys(closedNow).length, drawCalls: drawCalls()}; }
+  function info(){ return {lights: Object.keys(SIGS).length, heads: arms.length, parked: PARK.length, bays: BAYS.length, shown: shown, baysShown: bayI.count, closed: Object.keys(closedNow).length, drawCalls: drawCalls()}; }
   function dispose(){
     group.children.slice().forEach(function(m){ m.geometry.dispose(); if(m.dispose) m.dispose(); });
-    mat.dispose(); lensM.dispose(); lineM.dispose(); parkM.dispose();
+    mat.dispose(); lensM.dispose(); lineM.dispose(); parkM.dispose(); bayM.dispose();
     if(group.parent) group.parent.remove(group);
   }
   return {group: group, update: update, blocked: blocked, info: info, drawCalls: drawCalls, dispose: dispose, arms: arms};

@@ -548,6 +548,12 @@ function session(o){
             arrive: num(trip.arrive, 0), depart: num(trip.depart, 0),         // when it reaches your stop and leaves it, and where you board
             door: {x: num(at.x, 0), z: num(at.z, 0)}};                         // (the tour waits there and skips ahead)
   };
+  // [island trains] the City that carries the ride on (the far world, after the swap mid-sea) hands in its own view and end
+  S.rebind = function(p){
+    if(!p) return;
+    for(var k in p) if(Object.prototype.hasOwnProperty.call(p, k)) o[k] = p[k];
+    if(focused && o.view && typeof o.view.focus === "function"){ try { o.view.focus(trip.vehicle); } catch(e){} }
+  };
   S.trip = trip;
   return S;
 }

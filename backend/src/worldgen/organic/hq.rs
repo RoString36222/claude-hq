@@ -587,7 +587,7 @@ fn rest_of(st: &Streets, t: &Terrain, l: &Lot, win: &[P]) -> Vec<Lot> {
                     id: 0, block: l.block, kind: "building", district: l.district, x: c.0, z: c.1, w: len(sub(b, a)), d: hi - lo,
                     facing: if f.1 >= 0 { Facing::North } else { Facing::South },
                     door: [door.0, t.height_at(door.0, door.1), door.1], floors: l.floors, rank: None, tier: None,
-                    poly: Some(piece.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), grow: None, min_tier: None, gates: None,
+                    poly: Some(piece.iter().map(|q| [q.0, q.1]).collect()), front: Some([f.0, f.1]), grow: None, min_tier: None, gates: None, annex: None,
                 });
             }
         }
@@ -639,7 +639,7 @@ fn carves(st: &Streets, t: &Terrain, blocks: &[Block], sites: &[Site], lots: &[L
                     id: 0, block: b.id, kind: "building", district: b.district, x: centre.0, z: centre.1, w, d: hi - lo,
                     facing: if front[1] >= 0 { Facing::North } else { Facing::South },
                     door: [door.0, t.height_at(door.0, door.1), door.1], floors: 0, rank: None, tier: None,
-                    poly: Some(r.iter().map(|q| [q.0, q.1]).collect()), front: Some(front), grow: None, min_tier: None, gates: None,
+                    poly: Some(r.iter().map(|q| [q.0, q.1]).collect()), front: Some(front), grow: None, min_tier: None, gates: None, annex: None,
                 };
                 if !ok(&lot) || !fits(&lot) {
                     continue;
@@ -808,7 +808,7 @@ mod tests {
         let poly = vec![[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]];
         Lot {
             id: 0, block: 0, kind: "building", district: 0, x: 0, z: 0, w, d, facing: Facing::North, door: [0, 0, d / 2], floors: 1,
-            rank: None, tier: None, poly: Some(poly), front: Some([0, ONE]), grow: None, min_tier: None, gates: None,
+            rank: None, tier: None, poly: Some(poly), front: Some([0, ONE]), grow: None, min_tier: None, gates: None, annex: None,
         }
     }
 

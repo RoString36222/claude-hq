@@ -59,7 +59,7 @@ var FADE_TAU = 0.083;       // the fade's time constant (s): ~95% of the way in 
 var HQ_FAR = 250;           // an HQ (and its lot extras) further than this from the camera is not drawn (m)
 var HQ_FAR_HYST = 10;       // ... and comes back inside HQ_FAR - this (no flicker on the edge)
 var HQ_LOD = 120;           // [hq revamp] an HQ further than this shows only its masses (its detail comes back inside HQ_LOD - HQ_FAR_HYST)
-var LOT_REACH = 60;         // [townships] what stands on an HQ lot (88 x 56 m) is looked up within this of its HQ's middle (m, each axis)
+var LOT_REACH = 115;        // [townships] what stands on an HQ lot (88 x 56 m, with its two 55 m plots: HQ 3.37) is looked up within this of its HQ's middle (m, each axis)
 // an HQ lot's paving tint by its district (legend name), over the paving texture; others plain
 var PAVE = {hq: 0xffffff, plaza: 0xf2ece2, civic: 0xe8ecef, commercial: 0xdde4ec, residential: 0xefe2d0, industrial: 0xd2d0cb};
 
@@ -144,10 +144,27 @@ function polyOf(lot){ return lot.poly.map(function(q){ return [q[0]/100, q[1]/10
 // [townships] A township lot's plan (hqcityparts townPlan: its wall, gateways and drive, from the doc's gates) for a lot placed
 // at p, at its owner's dress tier (-1 free); null on a lot too small to be one (older worlds). townKeep: what a garage stands
 // clear of there (the drive, the gateways, the parking; the booth's spot too, whatever the tier)
-function townOf(lot, p, tier){
+function townOf(lot, p, tier, ring){
   var T = HQV.hqCityParts; if(!T || !T.townPlan || !lot || !lot.poly || lot.poly.length < 3) return null;
-  return T.townPlan(lotRing(lot, p), T.townGates(lot, p), tier);
+  return T.townPlan(ring || lotRing(lot, p), T.townGates(lot, p), tier);
 }
+// [growth 3.37] An HQ's township as it has grown (hqgrowth): its build (the Arena's, checked), its plots in the lot's frame,
+// the ground its wall runs round (its lot and the plots it has added), where its builders work, and each plot's plan.
+// owner: the HQ's user id ("" for a free lot: its plots fenced off, no one building). -> null without hqgrowth or plots
+function growthOf(lot, p, h, R){
+  var G = HQV.hqGrowth; if(!G || !lot || !R || R.length < 3) return null;
+  var rings = G.annexRings(lot, p); if(!rings.length) return null;
+  var B = h ? G.buildOf(h) : G.buildOf(null), A = h ? G.activeSite(B) : null, uid = h && typeof h.userId === "string" ? h.userId : "";
+  var plans = rings.map(function(r, k){
+    if(!r) return null;
+    var bx = r.reduce(function(a, q){ return a + q[0]; }, 0)/r.length;
+    return G.sitePlan(r, B.stages[k], {seed: uid + ":" + k, side: bx >= 0 ? 1 : -1, active: !!A && A.k === k && A.mode === "build"});
+  });
+  return {B: B, A: A, rings: rings, ground: G.groundRing(R, rings, B.lots - 1), plans: plans,
+    blocks: plans.reduce(function(a, P){ return P ? a.concat(P.blocks) : a; }, [])};
+}
+// how many builders an HQ's township shows: its live sessions (working or waiting on you), at most hqgrowth's CREW_MAX
+function crewCount(h){ var crew = (h && h.crew) || {}, G = HQV.hqGrowth; return Math.max(0, Math.min(G ? G.CREW_MAX : 8, (crew.working | 0) + (crew.needs | 0))); }
 function townKeep(lot, p){ var T = townOf(lot, p, 3); return T ? T.keep : []; }
 // Where an HQ's car-lift bay goes on a v2 lot for an HQ of this size (grand, its wings): where it stood before the
 // HQ revamp while that spot is still clear of the bigger building and its run out; else the best spot for the new
@@ -376,8 +393,9 @@ function snapShadow(p, dir, texel){
   return {x: a*xx + b*yx + d*zx, y: b*yy + d*zy, z: a*xz + b*yz + d*zz};
 }
 // what is part of an HQ's look (its building is rebuilt when it changes); crew counts are not
-function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou, h.garage || null]); }   // [3.33] a moved garage too
-function crewText(h){ var crew = (h && h.crew) || {}; return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them"; }
+function hqKey(E){ var h = E.h || {}, G = HQV.hqGrowth, B = G ? G.buildOf(h) : null; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou, h.garage || null, B ? [B.lots, B.stages] : null]); }   // [3.33] a moved garage too; [growth 3.37] its plots and stages (not its points)
+function crewText(h){ var crew = (h && h.crew) || {}, G = HQV.hqGrowth, gt = G && h && h.build ? G.growthText(G.buildOf(h)) : "";
+  return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them" + (gt ? " · " + gt : ""); }
 // [lot marks] An HQ lot's number (its rank + 1, the same for everyone), its owner's display name (as typed: canvas text and
 // textContent only), what the HUD says as you step onto it, and the line the minimap shows while you stand on it
 function lotNo(lot){ return ((lot && lot.rank) | 0) + 1; }
@@ -728,7 +746,7 @@ HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorl
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, garagePlace: garagePlace, garageFits: garageFits, garageOf: garageOf, garageStored: garageStored, garageLocal: garageLocal,
-  toGarage: toGarage, garageR: garageR, lotKeep: lotKeep, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  toGarage: toGarage, garageR: garageR, lotKeep: lotKeep, growthOf: growthOf, crewCount: crewCount, crewText: crewText, townOf: townOf, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
   lotNo: lotNo, ownerName: ownerName, lotNotice: lotNotice, lotLine: lotLine, dressKeep: dressKeep,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats, citySound: citySound};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
@@ -1079,13 +1097,15 @@ HQV.hqWorlds.city3d = function(c, w){
     E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
     // the lot's finish by its owner's level (lawns, trees, lamps; forecourt, fountain, flags; marble, gold, valet cars)
     // [townships] a township lot: its wall, gateways (its name over the way in) and drive, the finish round them
-    E.town = R && R.length >= 3 && parts.townPlan ? townOf(E.lot, p, parts.dressTier(h.level)) : null;
+    E.grow = growthOf(E.lot, p, h, R);                                           // [growth 3.37] its plots, as far as it has grown
+    E.town = R && R.length >= 3 && parts.townPlan ? townOf(E.lot, p, parts.dressTier(h.level), E.grow && E.grow.ground) : null;
     var tkeep = E.town ? E.town.keep : [];
     E.dress = R && R.length >= 3 && parts.lotDress ? parts.lotDress(c, g, R, h.level | 0, h.userId, lotKeep(B.grand, E.garage).concat(tkeep), night, E.town) : null;
     if(E.dress) E.glows = E.glows.concat(E.dress.glows);
     // [lot marks] its kerb all round and its plaque at the street: the lot's number and its owner (yours amber)
     E.marks = R && R.length >= 3 && parts.lotMarks ? parts.lotMarks(c, g, R, {n: lotNo(E.lot), owner: ownerName(h) || name, mine: !!h.isYou,
       keep: lotKeep(B.grand, E.garage).concat(dressKeep(E.dress)), night: false, town: E.town, name: name}) : null;   // unlit until merged (below)
+    if(E.grow) growthBuild(E, g);                                                 // [growth 3.37] its plots and their builders
     (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
     if(X.move){ hits.push(X.move); B.hits.push(X.move); }                          // [3.33] your bay's Move garage plate
     (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
@@ -1094,6 +1114,7 @@ HQV.hqWorlds.city3d = function(c, w){
     merge(B.g, null, B);
     var roots = {}; roots[B.g.uuid] = 1; X.items.forEach(function(b){ roots[b.g.uuid] = 1; });
     if(E.marks) (E.marks.booms || []).forEach(function(b){ roots[b.g.uuid] = 1; });   // [townships] the booms lift
+    if(E.crewG) roots[E.crewG.g.uuid] = 1;                                         // [growth 3.37] the builders and the crane move
     merge(g, roots);
     tagFade(E);
     if(E.marks) E.marks.setNight(night);
@@ -1102,10 +1123,29 @@ HQV.hqWorlds.city3d = function(c, w){
   function crewUpdate(E, h){
     E.h = h; var crew = h.crew || {}, t = crewText(h);
     E.B.setLive((crew.working | 0) + (crew.needs | 0));
+    if(E.grow && crewCount(h) !== E.crewN) crewMake(E);                            // [growth 3.37] a session started or ended: its builders
     if(t === E.subText) return;
     var old = E.sub; E.subText = t;
     E.sub = c.label(t, HEX.green, 0.7); E.sub.position.copy(old.position); E.g.add(E.sub);
     E.g.remove(old); disposeTree(old);
+  }
+  // [growth 3.37] a township's plots (hqgrowth sitePlan: fenced off, or built to their stage) into its lot's group g (merged
+  // with it), and its builders and crane (crewMake)
+  function growthBuild(E, g){
+    var G = HQV.hqGrowth;
+    E.grow.plans.forEach(function(P){ if(P) G.siteBuild(c, g, P, parts.DRESS_Y); });
+    E.growth = {blocks: E.grow.blocks};
+    crewMake(E);
+  }
+  // its builders (one for each live session, crewCount) at the plot being built, and the crane over it; animated (never merged)
+  function crewMake(E){
+    var G = HQV.hqGrowth; if(!G || !E.grow || !E.g) return;
+    if(E.crewG){ E.g.remove(E.crewG.g); disposeTree(E.crewG.g); E.crewG = null; }
+    E.crewN = crewCount(E.h);
+    var P = E.grow.plans[E.grow.A ? E.grow.A.k : 0]; if(!P) return;
+    var crew = G.crewPlan(E.crewN, P, E.h && E.h.userId);
+    if(!crew.length && !P.crane) return;
+    E.crewG = G.crewBuild(c, P, crew, parts.DRESS_Y); E.g.add(E.crewG.g);
   }
   function unbuild(E){
     E.B.hits.forEach(function(o){ var i = hits.indexOf(o); if(i >= 0) hits.splice(i, 1); });
@@ -1115,7 +1155,7 @@ HQV.hqWorlds.city3d = function(c, w){
   function build(){
     if(!W) return;
     var list = (api.city && api.city()) || [];
-    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.style || null, h.cos, h.crew, !!h.isYou, h.garage || null]; }));
+    var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.style || null, h.cos, h.crew, !!h.isYou, h.garage || null, h.build || null]; }));
     if(key === sig && !forceYou) return; sig = key;
     var old = {}; hqs.forEach(function(E){ old[E.oid] = E; });
     var next = [], made = [];
@@ -1191,7 +1231,9 @@ HQV.hqWorlds.city3d = function(c, w){
       if(!R || R.length < 3) return;
       var fg = new THREE.Group(); fg.position.set(p.x, p.y + PAD_UP, p.z); fg.rotation.y = p.rot; lotsG.add(fg);
       var M = parts.lotMarks(c, fg, R, {n: lotNo(l), owner: "", mine: false, keep: [[0, HQ_DOOR + 6, 1.6, 6]], night: false, town: townOf(l, p, -1), name: ""});
-      freeMarks.push({x: p.x, z: p.z, rot: p.rot, g: fg, marks: M});
+      var FG = growthOf(l, p, null, R);                                            // [growth 3.37] its plots, fenced off
+      if(FG) FG.plans.forEach(function(P){ if(P) HQV.hqGrowth.siteBuild(c, fg, P, parts.DRESS_Y); });
+      freeMarks.push({x: p.x, z: p.z, rot: p.rot, g: fg, marks: M, growth: FG ? {blocks: FG.blocks} : null});
     });
     var froots = {}; freeMarks.forEach(function(F){ (F.marks.booms || []).forEach(function(b){ froots[b.g.uuid] = 1; }); });   // [townships] the booms lift
     merge(lotsG, froots);                                  // built unlit, so every kerb merges; then lit as the hour is
@@ -1251,12 +1293,14 @@ HQV.hqWorlds.city3d = function(c, w){
       }
       if(L.dress && parts.dressBlocked(L.dress, lx, lz)) return true;                // its lot's trees, lamps, fountain, planters, flags, valet cars
       if(L.marks && parts.dressBlocked(L.marks, lx, lz)) return true;                // [lot marks] its plaque
+      if(L.growth && parts.dressBlocked(L.growth, lx, lz)) return true;              // [growth 3.37] what stands on its plots
     }
     for(var fi = 0; fi < freeMarks.length; fi++){                                     // [lot marks] a free lot's plaque
       var FM = freeMarks[fi], fx0 = x - FM.x, fz0 = z - FM.z;
       if(Math.abs(fx0) > LOT_REACH || Math.abs(fz0) > LOT_REACH) continue;
       var fc = Math.cos(-FM.rot), fsn = Math.sin(-FM.rot);
       if(parts.dressBlocked(FM.marks, fx0*fc + fz0*fsn, -fx0*fsn + fz0*fc)) return true;
+      if(FM.growth && parts.dressBlocked(FM.growth, fx0*fc + fz0*fsn, -fx0*fsn + fz0*fc)) return true;   // [growth 3.37] its plots' fences and signs
     }
     for(var j = 0; j < civic.length; j++){
       var C = civic[j];
@@ -2091,6 +2135,17 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     hqs.forEach(function(E){ step(E, E.marks); });
     freeMarks.forEach(function(F){ step(F, F.marks); });
+  }
+  // [growth 3.37] each township's builders and crane near the camera (CREW_NEAR) step on (hqgrowth crewStep; Calm: still)
+  function crewSteps(t, cam, map){
+    var G = HQV.hqGrowth; if(!G) return;
+    var calm = !!(c.E && c.E.calm && c.E.calm());
+    hqs.forEach(function(E){
+      var C = E.crewG; if(!C) return;
+      var near = !map && !!cam && cam.x != null && Math.hypot(E.x - cam.x, E.z - cam.z) < G.CREW_NEAR;
+      if(C.g.visible !== near) C.g.visible = near;
+      if(near) G.crewStep(C, t, calm);
+    });
   }
   // AIR: what only a vehicle runs into: the terminal hall (its nave is walked, its glass front drawn only) and the
   // platform's land edge (the fence over its retaining wall: a drop of up to 9 m, or a step up onto the slab);
@@ -3755,14 +3810,17 @@ HQV.hqWorlds.city3d = function(c, w){
   function navRefresh(){
     if(!mm) return;
     var hqName = function(E){ return E.name || (HQV.hqCityName ? HQV.hqCityName(E.h) : ""); };
-    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id) + ":" + hqName(E); }).join(",");
+    var G = HQV.hqGrowth, lotsOf = function(h){ return G && h ? G.buildOf(h).lots : 1; };
+    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id) + ":" + hqName(E) + ":" + lotsOf(E.h); }).join(",");
     if(key === navSig) return; navSig = key;
     try { mm.setWorld(W, navTier, {places: navPlaces()}); } catch(e){}
     // [lot marks] the HQ lots, each a township filled in the map's township colour (yours strongest), named by its HQ
     var names = {}; hqs.forEach(function(E){ if(E.lot) names[E.lot.id] = hqName(E); });
     if(mm.setLots) try { mm.setLots(lotEntries().map(function(e){ var l = e.lot;
       return {id: l.id, n: lotNo(l), poly: lotRing(l, {x: 0, z: 0, rot: 0}), mine: !!(e.h && e.h.isYou), owned: !!e.h, name: e.h ? names[l.id] || "" : "",
-              gates: (l.gates || []).map(function(q){ return {x: q.x/100, z: q.z/100, dir: q.dir, kind: q.kind, w: q.w/100}; })}; })); } catch(e){}
+              gates: (l.gates || []).map(function(q){ return {x: q.x/100, z: q.z/100, dir: q.dir, kind: q.kind, w: q.w/100}; }),
+              // [growth 3.37] its neighbouring plots, the ones its township has grown over open
+              plots: (Array.isArray(l.annex) ? l.annex : []).map(function(an, k){ return {poly: (an && Array.isArray(an.poly) ? an.poly : []).map(function(q){ return [q[0]/100, q[1]/100]; }), open: k < lotsOf(e.h) - 1}; })}; })); } catch(e){}
   }
   function typingIn(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || !!(t && t.isContentEditable); }
   // While a stop's or a terminal's menu or the Go to panel is open, no key reaches the page's shortcuts (W is not
@@ -4315,6 +4373,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(P.visible !== vis){ P.visible = vis; (F.marks.near || []).forEach(function(o){ o.visible = vis; }); }   // [townships] its arch's sign, booms and lamps
     });
     townBooms(dt);
+    crewSteps(t, cam, mode === "map");                                   // [growth 3.37] the builders at work
     // the sun's shadow box follows you (the whole map in map mode), on its texel grid
     var me = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0}, map = mode === "map", R = map ? 1024 : 60, D = map ? 1500 : 120;
     var ay = me.y != null ? me.y : groundY(me.x, me.z);

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.38.8** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.39.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -365,6 +365,11 @@ transit and lots are planned like a real city. The detail is in [docs/plans/city
   routes follow the main desire lines between districts, with stations about 600 m apart.
 - **Movable garages:** you can move your HQ's car-lift bay anywhere on your lot that keeps 8 m clear in front of its
   door and a way out to the street.
+- **HQ growth (3.37):** every township has two neighbouring plots reserved beside it on its street. Your Claude
+  worker-hours (at most 24 a day) add them one at a time: each plot added climbs bare ground, foundations, buildings,
+  amenities and a landmark (a clock tower, a spire or a glass dome), then the next is added, and the township's wall
+  moves out round it. Every live session is a builder on the site, in a hard hat, carrying planks or hammering under a
+  tower crane. Visitors see your plots, your stage and your builders; the minimap draws the plots with your lot.
 - **HQ spacing (3.35.0):** HQs are spread by a minimum gap, front local streets or collectors only and sit near a stop;
   each lot holds the tower, garage, apron and driveway. HQs move to new lots with this update.
 - **Graphics budgets:** at most 1,200 draw calls a frame above ground and 240 below, sized for an M3 Pro and up, with
@@ -453,6 +458,11 @@ names, session ids and titles stay local. [AGENTS.md](AGENTS.md) (invariant 2) i
     bay's position inside it in decimetres, its quarter turns), to `/v1/hq/me/garage` via
     `POST /api/arena/hq/garage` (`/reset` clears it; the body is rebuilt from that allowlist), shown to visitors as
     `garage` in the HQ listing.
+  - **HQ growth (3.37):** while your HQ is open to the city, its heartbeat also sends your Claude **worker-hours** for
+    yesterday and today (UTC): two dates and two whole numbers, each the count of (session, hour) pairs with activity
+    that day, at most 24 (`{"days": [{"day", "hours"}]}` to `/v1/hq/me/work`, rebuilt from that allowlist; the Arena
+    refuses any other key). No session ids, titles, paths or text. The Arena keeps one number per day and shows
+    visitors your township's `build` (`{pts, lots, stages}`) beside the live session counts it already showed.
 - **Live weather (3.23):** the **Arena server**, not your machine, fetches one fixed place's reading (Koramangala,
   Bengaluru, by latitude and longitude) from Zomato's Weather Union at the start of every hour with the server's own
   key (`WEATHERUNION_API_KEY` in the host's `backend/.env`, never logged or sent to a player). The page reads it only
@@ -840,6 +850,7 @@ The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
   - **100%** fills every road to the plan's comfortable level (at most 22 cars a km of lane).
   - **0%** leaves the roads to the buses, trams and you.
 
+- **3.39.0** — HQ growth: townships grow over two neighbouring plots with your Claude work; every live session is a builder.
 - **3.38.8** — Strike Zone: the dance pose is fixed (nobody dances at kick-off), six joke totems — banana, lava, goose, reverse, black hole, roulette — that actually drop, and totem effects that stack instead of replacing each other.
 - **3.38.7** — Strike Zone: drone wreck totems no longer vanish when the next drone falls.
 - **3.38.6** — Strike Zone: the Disco totem — everyone but you dances and can't shoot for 8 s.

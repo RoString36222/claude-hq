@@ -23,11 +23,12 @@ class ArenaGarageRoutes(unittest.TestCase):
         self.assertIn('"/v1/hq/me/garage"', hq)
         for h in ("get_mine", "put_mine", "delete_mine"):
             self.assertIn("crate::hqgarage::" + h, hq)
-        # garage is the last field of HqOut, after style, and skipped when unset
+        # garage comes after style (and before HQ 3.37's build, the last), skipped when unset
         out = hq[hq.index("struct HqOut {"):]
         out = out[:out.index("\n}\n")]
         self.assertLess(out.index("style: Option<Value>"), out.index("garage: Option<crate::hqgarage::GarageSpot>"))
-        self.assertTrue(out.rstrip().endswith("garage: Option<crate::hqgarage::GarageSpot>,"))
+        self.assertLess(out.index("garage: Option<crate::hqgarage::GarageSpot>"), out.index("build: Option<crate::hqwork::Build>"))
+        self.assertTrue(out.rstrip().endswith("build: Option<crate::hqwork::Build>,"))
         self.assertEqual(hq.count("out.garage = "), 4, "/me, PUT /me, the open list and a visit")
         g = read("backend", "src", "hqgarage.rs")
         self.assertIn("pub(crate) const X_MAX: i64 = 400;", g)

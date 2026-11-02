@@ -268,6 +268,8 @@ function create(ctx){
   function save(s){ if(ctx.store) ctx.store.set(STORE, s); }
   function changed(){ listeners.slice().forEach(function(fn){ try { fn(); } catch(e){} }); }
   function say(t){ if(ctx.say) try { ctx.say(t); } catch(e){} }
+  // the "Achievement:" line (a toast and a spoken line) only with the Settings switch (CONFIG.achievementToasts, off by default)
+  function achToasts(){ var C = root.CONFIG; return !!(C && C.achievementToasts === true); }
   function hud(t, col){ if(t === lastHud || !ctx.hud) return; lastHud = t; if(t) ctx.hud.set(HUD, t, col ? {colour: col} : null); else ctx.hud.clear(HUD); }
   function local(){ return localMs != null ? localMs : ctx.local ? ctx.local(nowMs) : nowMs; }
   function list(){
@@ -316,7 +318,7 @@ function create(ctx){
     else if(!dead){ hud(state === "cancel" ? "" : NAMES[j.kind] + (reason === "blocked" ? ": the way is blocked" : reason === "late" ? ": out of time" : ": over"), "#ffb0a0"); say(NAMES[j.kind] + (state === "cancel" ? " cancelled." : " failed.")); }
     hudUntil = nowMs + 4000;
     var after = achList(s);
-    after.forEach(function(a, i){ if(a.done && !before[i].done) say("Achievement: " + a.name); });
+    if(achToasts()) after.forEach(function(a, i){ if(a.done && !before[i].done) say("Achievement: " + a.name); });
     changed();
   }
   function start(arg){

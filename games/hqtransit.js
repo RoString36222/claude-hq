@@ -84,6 +84,8 @@ function create(c, o){
   function night(){ return tryf(function(){ return !!(o.night && o.night()); }, false); }
   function say(t){ if(t && o.say) tryf(function(){ o.say(t); }); }
   function announce(t){ if(t && o.announce) tryf(function(){ o.announce(t); }); }
+  // achievement pop-ups and their spoken line only with the Settings switch (CONFIG.achievementToasts, off by default)
+  function achToasts(){ var C = root.CONFIG; return !!(C && C.achievementToasts === true); }
   function me(){ return tryf(function(){ return o.me ? o.me() : null; }, null) || {x: 0, y: 0, z: 0, yaw: 0}; }
   function audio(){ var E = HQV.engine; return tryf(function(){ return E && E.audioOut ? E.audioOut() : null; }, null); }
   function sfx(name, so){
@@ -254,7 +256,7 @@ function create(c, o){
     catalogue: function(){ return c.catalogue ? c.catalogue() : null; }, models: HQV.hqVehicleModels, heli: heli, water: water, fade: o.fade,
     showRoute: function(pts, label){ if(o.showRoute) tryf(function(){ o.showRoute(pts, label); }); }, sfx: sfxM,
     tickets: R && R.tickets, achievements: R && R.achievements, seatCam: R && R.seatCam}); }, null);
-  if(R && R.achievements && R.achievements.onUnlock) T.unAch = tryf(function(){ return R.achievements.onUnlock(function(a){ if(a && a.name){ if(o.toast) tryf(function(){ o.toast("🏅 " + a.name); }); announce("Achievement: " + a.name); } }); }, null);
+  if(R && R.achievements && R.achievements.onUnlock) T.unAch = tryf(function(){ return R.achievements.onUnlock(function(a){ if(a && a.name && achToasts()){ if(o.toast) tryf(function(){ o.toast("🏅 " + a.name); }); announce("Achievement: " + a.name); } }); }, null);
 
   /* ---------- riding ---------- */
   function viewFor(mode){ return {bus: V.coach, tram: V.coach, metro: V.metro, rail: V.cityrail, gondola: V.gondola, ferry: V.ferries, link: V.link}[mode] || null; }

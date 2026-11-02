@@ -114,7 +114,7 @@ function bracket(sn, rt){
 /* ---------- sound (HQ 2.1 sound pack): every sound is synthesised, no files ---------- */
 // One volume for every game and the HQ: localStorage hq_sfx (0..1). Off by default under Calm
 // mode or reduced motion (until you set a volume yourself). Audio starts after your first click.
-var SND = {ctx: null, master: null, amb: null, woke: -Infinity, bctx: null, nbuf: {}, nn: 0, lbuf: {}, ln: 0};
+var SND = {ctx: null, master: null, amb: null, lim: null, woke: -Infinity, bctx: null, nbuf: {}, nn: 0, lbuf: {}, ln: 0};
 function sfxVolume(){
   var v = null; try { v = localStorage.getItem("hq_sfx"); } catch(e){}
   if(v === null || v === "") return calm() ? 0 : 0.5;
@@ -150,9 +150,23 @@ function audio(force){
     return SND.ctx;
   }
   var C = window.AudioContext || window.webkitAudioContext; if(!C) return null;
-  try { SND.ctx = new C(); SND.master = SND.ctx.createGain(); SND.master.gain.value = sfxVolume(); SND.master.connect(SND.ctx.destination); } catch(e){ return null; }
+  try { SND.ctx = new C(); SND.master = SND.ctx.createGain(); SND.master.gain.value = sfxVolume(); SND.master.connect(masterOut(SND.ctx)); } catch(e){ return null; }
   try { SND.amb = SND.ctx.createGain(); SND.amb.gain.value = ambientVolume(); SND.amb.connect(SND.master); } catch(e){ SND.amb = null; }
   return SND.ctx;
+}
+// The master's way out: a brick-wall limiter (just under full scale), so everything summed at once (engines, rain,
+// thunder, a shot, a chime, at 100% volume) can never clip at the output, which crackles. Below its threshold it is
+// transparent: the compressor's automatic makeup gain (Web Audio spec: (1/curve(1.0))^0.6) is taken back off by LIM.trim.
+var LIM = {threshold: -3, knee: 0, ratio: 20, attack: 0.002, release: 0.12};
+LIM.trim = Math.pow(10, (LIM.threshold - LIM.threshold/LIM.ratio)/20*0.6);   // = curve(1.0)^0.6, the makeup's inverse
+function masterOut(ac){
+  if(!ac.createDynamicsCompressor) return ac.destination;
+  try {
+    var c = ac.createDynamicsCompressor(), g = ac.createGain();
+    c.threshold.value = LIM.threshold; c.knee.value = LIM.knee; c.ratio.value = LIM.ratio; c.attack.value = LIM.attack; c.release.value = LIM.release;
+    g.gain.value = LIM.trim; c.connect(g); g.connect(ac.destination); SND.lim = c;
+    return c;
+  } catch(e){ return ac.destination; }
 }
 // tone() and noise() build the named sfx; sfxAt() points them at a spatial voice (DEST) and its sound-travel delay (OFF)
 var DEST = null, OFF = 0;
@@ -488,7 +502,9 @@ function engineVoice(kind, ex, real){
   o.connect(drv); o2.connect(o2g); o2g.connect(drv); os.connect(sg); sg.connect(drv);
   if(subClean > 0){ var sc = a.createGain(); sc.gain.value = SUB_CLEAN*subClean; os.connect(sc); sc.connect(f); }
   var sh = a.createWaveShaper ? a.createWaveShaper() : null;
-  if(sh){ sh.curve = engineCurve(B, P.grit || 1); drv.connect(sh); sh.connect(f); } else drv.connect(f);
+  // 4x oversampled: the drive clips the buzzy wave hard, and at 1x its harmonics past Nyquist fold back as an
+  // inharmonic fizz that crackles at high revs (about -34 dB at a V8's redline; -76 dB at 4x)
+  if(sh){ sh.curve = engineCurve(B, P.grit || 1); sh.oversample = "4x"; drv.connect(sh); sh.connect(f); } else drv.connect(f);
   f.connect(amp); amp.connect(cut); cut.connect(g); if(pn){ g.connect(pn); pn.connect(B.out); } else g.connect(B.out);
   o.start(); o2.start(); os.start(); nodes.push(o, o2, os);
   // lope: the gain wobbles (a cam's lope, a bike's idle), or a prop's blade-pass buzz, or a rotor's slap
@@ -585,7 +601,7 @@ function engineVoice(kind, ex, real){
           cut.gain.setTargetAtTime(0.3, t, 0.012); cut.gain.setTargetAtTime(1, t + cs, 0.04);
           if(P.bang && on && !calm()) bang(t + cs*0.4);
           if(bov && S.boost > 0.3) blowOff(t);
-        } else { S.blip = 0.16; if(P.pops && on) crackle(t + 0.12); }
+        } else { S.blip = 0.16; if(P.pops && on && !calm()) crackle(t + 0.12); }
       }
       if(opt.gear != null) S.gear = opt.gear;
       // on the rev limiter: the ignition cuts in a fast stutter, and a sporty one pops through it
@@ -1255,7 +1271,7 @@ function watchBar(stage, opts){
 HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, say: say, tokens: tokens, myClock: myClock,
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
-              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, shaperDrive: shaperDrive, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
+              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, shaperDrive: shaperDrive, limiter: LIM, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
               noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
               ambientVolume: ambientVolume, ambientSetVolume: ambientSetVolume, ambientPreview: ambientPreview,
               // spatial sound (above): the listener, positional one-shots, loops and pools, and the test seam

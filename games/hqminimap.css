@@ -83,4 +83,11 @@ html.hq-calm .hq3d-minimap.hq3d-minimap-big::after{animation:none}
 .hq3d-minimap-big .hq3d-minimap-place{display:none}
 @media (max-width:699.98px){ .hq3d-minimap-place{left:30px;font-size:10px} }
 @container hq3d (max-height: 440px){ .hq3d-minimap-place{left:30px;font-size:10px} }
+/* the townships' highlight on the map (games/hqminimap.js palette(): every HQ lot filled in it, yours strongest): one
+   colour per theme, apart from the land, the sea, the roads, the route and the transit lines on that theme's map */
+:root{--hq-map-town:#c0267f}
+@media (prefers-color-scheme: dark){ :root{--hq-map-town:#ff5cc8} }
+:root[data-theme="midnight"]{--hq-map-town:#ff5cc8}
+:root[data-theme="contrast"]{--hq-map-town:#9c005c}
+@media (prefers-color-scheme: dark){ :root[data-theme="contrast"]{--hq-map-town:#ff7ad9} }
 /* ==== end of the 3D City minimap ==== */

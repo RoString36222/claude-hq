@@ -37,8 +37,11 @@
  *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, dt?})   view: the camera's heading (heading-up turns
  *                    by it; default yaw); yaw: where you face (the arrow)
  *     mm.setMode("heading" | "north"), mm.mode(), mm.zoom(+1 | -1), mm.view(), mm.destroy()
- *     mm.setLots([{id, n, poly: [[x, z]...] m, mine, owned}])   the HQ lots, outlined over the map (free ones dashed, yours
- *                    amber); frame's f.lot (a lot id) is the one you stand on, drawn bold
+ *     mm.setLots([{id, n, poly: [[x, z]...] m, mine, owned, name, gates}])   the HQ lots (townships), filled in the one
+ *                    township colour (the --hq-map-town token; free ones faint and dashed, yours strongest), named by their HQ
+ *                    zoomed in, their gateways marked; frame's f.lot (a lot id) is the one you stand on, edged bold
+ *     The bitmap covers worldBox(W, coast, river, airfield): the world's square and whatever is built past it (the runway
+ *                    on its pier, its approach lights), so nothing is trimmed. Labels never overlap (drawLabels, by priority).
  *     mm.setPlace({area, use, street, lot: {text, mine} | null})   the strip along the map's foot: the lot you are on, the
  *                    neighbourhood, its land use and the street (aria-live polite; written only on a change)
  *   HQV.hqminimap.locality(W, x, z, {sea, y, area}) -> {area, use, street}: the neighbourhood (seeded names per world,
@@ -61,6 +64,9 @@ var BIG_FILL = 0.8;                           // the big map (M): the world's wi
 var SWING_K = 6, PAN_K = 10;                  // 1/s: the big map swings north-up / glides to a pan
 var BITMAP_MAX = 3072, BITMAP_PX_M = 2;       // the static bitmap: device px at most, px per m at most
 var MARGIN = 60;                              // m of sea round the world in the bitmap
+var BOX_CAP = 3;                              // the bitmap never reaches past 3 x W.half (a stray far point)
+var LOT_NAME_PX = 16;                         // a lot's on-screen radius (px) from which it carries its HQ's name
+var LABEL_PAD = 2;                            // CSS px kept clear round every label
 var ICON = 18;                                // CSS px: a POI icon's disc
 var UNDER_DIM = 0.3;                          // underground mode: the surface's alpha
 var PIER_M = 3;                               // m: a pier's dot radius in the bitmap (at least 1.5 px)
@@ -86,12 +92,12 @@ var PAL = {
          station: "#ffffff",
          road: {highway: "#c99a4a", ring: "#b08a50", arterial: "#8d939c", avenue: "#8d939c", local: "#5d636b", street: "#5d636b"},
          casing: "#0b0d10", bridge: "#d8d2c4", route: "#e2805e", routeCase: "#3a1c10", you: "#ffffff", youEdge: "#e2805e",
-         pin: "#e2805e", rim: "#ecebe8", other: "#5fd3e6", lot: "#5fd3e6", lotFree: "#8d939c", lotMine: "#ffb347", lotHere: "#ffffff"},
+         pin: "#e2805e", rim: "#ecebe8", other: "#5fd3e6", town: "#ff5cc8", lotHere: "#ffffff"},
   light: {sea: "#a9cfe6", land: "#eef0e6", landEdge: "#c9d3bf", water: "#8cc0e0", bank: "#6aa3c8", quay: "#8f897c", pier: "#9a7b4a",
           station: "#ffffff",
           road: {highway: "#e3a64a", ring: "#d6a35c", arterial: "#ffffff", avenue: "#ffffff", local: "#fbfbf8", street: "#fbfbf8"},
           casing: "#b9b4aa", bridge: "#7b7466", route: "#b64e2b", routeCase: "#ffffff", you: "#1d1c1a", youEdge: "#ffffff",
-          pin: "#b64e2b", rim: "#1d1c1a", other: "#1f7a8c", lot: "#1f7a8c", lotFree: "#8f897c", lotMine: "#c46a12", lotHere: "#1d1c1a"}
+          pin: "#b64e2b", rim: "#1d1c1a", other: "#1f7a8c", town: "#c0267f", lotHere: "#1d1c1a"}
 };
 
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -229,14 +235,19 @@ function locality(W, x, z, o){
 
 // ---- the static layer -----------------------------------------------------------------------
 
+// The canvas palette for the page's theme: dark or light by --bg, the townships' highlight from --hq-map-town
+// (games/hqminimap.css, every theme) when the page has it
 function palette(el){
-  var dark = true;
+  var dark = true, town = null;
   try {
-    var bg = window.getComputedStyle(el).getPropertyValue("--bg");
-    var m = /#([0-9a-f]{6})/i.exec(String(bg || ""));
+    var cs = window.getComputedStyle(el);
+    var m = /#([0-9a-f]{6})/i.exec(String(cs.getPropertyValue("--bg") || ""));
     if(m){ var v = parseInt(m[1], 16); dark = (0.299*(v >> 16) + 0.587*(v >> 8 & 255) + 0.114*(v & 255)) < 128; }
+    var t = /#[0-9a-f]{6}/i.exec(String(cs.getPropertyValue("--hq-map-town") || ""));
+    if(t) town = t[0].toLowerCase();
   } catch(e){}
-  return dark ? PAL.dark : PAL.light;
+  var base = dark ? PAL.dark : PAL.light;
+  return town ? Object.assign({}, base, {town: town}) : base;
 }
 
 function polyPath(g, poly, ox, oz, k){
@@ -248,31 +259,74 @@ function polyPath(g, poly, ox, oz, k){
   g.closePath();
 }
 
-// The world bitmap: north-up, bitmap px (bx, by) = ((x1 - x)*k, (z1 - z)*k) for world m (x, z). reuse: a canvas
-// to draw into again (setAirfield) instead of a new one.
-function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
-  var half = num(W && W.half, 1024) + MARGIN, span = 2*half;
-  var k = Math.min(BITMAP_PX_M, (dpr >= 2 ? BITMAP_MAX : BITMAP_MAX*2/3)/span);
-  var n = Math.max(1, Math.ceil(span*k));
+// The box (m) the world bitmap covers: the world's square and everything painted into it that reaches past it (the
+// coast, the river, the lakes and the breakwater, the piers, the roads, and the airfield L: its runway on a pier out at
+// sea, its approach lights), with MARGIN m of sea round it, never past BOX_CAP x W.half. -> {x0, x1, z0, z1}
+function worldBox(W, coast, river, L){
+  var h = num(W && W.half, 1024), cap = BOX_CAP*h + MARGIN;
+  var b = {x0: -h, x1: h, z0: -h, z1: h};
+  function add(x, z){
+    if(!isFinite(x) || !isFinite(z)) return;
+    if(x < b.x0) b.x0 = x; if(x > b.x1) b.x1 = x; if(z < b.z0) b.z0 = z; if(z > b.z1) b.z1 = z;
+  }
+  function ring(P){ if(Array.isArray(P)) for(var i = 0; i < P.length; i++) if(P[i]) add(+P[i][0]/100, +P[i][1]/100); }
+  ring(coast);
+  if(river) ring(river.poly);
+  var WL = W && W.water;
+  if(WL){
+    (WL.bodies || []).forEach(function(o){ if(o) ring(o.poly); });
+    ring(WL.breakwater);
+    (WL.piers || []).forEach(function(p){ if(p) add(+p.x/100, +p.z/100); });
+  }
+  ((W && W.edges) || []).forEach(function(e){
+    var P = e && e.pts;
+    if(P) for(var i = 0; i + 2 < P.length; i += 3) add(P[i]/100, P[i + 2]/100);
+  });
+  // the airfield (m): every [x, z] pair in what paintAirfield paints (not its approach paths, keep-outs or frame)
+  function walk(v, d){
+    if(!v || typeof v !== "object" || d > 5) return;
+    if(Array.isArray(v)){
+      if(v.length === 2 && typeof v[0] === "number" && typeof v[1] === "number"){ add(v[0], v[1]); return; }
+      for(var i = 0; i < v.length; i++) walk(v[i], d + 1);
+      return;
+    }
+    for(var key in v) if(Object.prototype.hasOwnProperty.call(v, key)) walk(v[key], d + 1);
+  }
+  if(L && L.ok !== false){
+    ["platform", "apron", "service", "lines", "curves", "serviceRoad", "landside", "concourse"].forEach(function(key){ walk(L[key], 0); });
+    ((L.runway && L.runway.ends) || []).forEach(function(e){ if(e){ walk(e.thr, 0); walk(e.pad, 0); walk(e.approach, 0); } });
+  }
+  return {x0: Math.max(-cap, b.x0 - MARGIN), x1: Math.min(cap, b.x1 + MARGIN), z0: Math.max(-cap, b.z0 - MARGIN), z1: Math.min(cap, b.z1 + MARGIN)};
+}
+
+// The world bitmap: north-up, bitmap px (bx, by) = ((x1 - x)*k, (z1 - z)*k) for world m (x, z), over worldBox (with
+// the airfield L when it is on this world). reuse: a canvas to draw into again (setAirfield) instead of a new one.
+function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse, L){
+  var box = worldBox(W, coast, river, L), wx = box.x1 - box.x0, wz = box.z1 - box.z0;
+  var k = Math.min(BITMAP_PX_M, (dpr >= 2 ? BITMAP_MAX : BITMAP_MAX*2/3)/Math.max(wx, wz));
+  var nx = Math.max(1, Math.ceil(wx*k));
+  k = nx/wx;                                      // whole px across: the scale is exactly the bitmap's width over the box
+  var nz = Math.max(1, Math.ceil(wz*k));
   var cv = reuse || doc.createElement("canvas");
-  if(cv.width !== n) cv.width = n;
-  if(cv.height !== n) cv.height = n;
+  if(cv.width !== nx) cv.width = nx;
+  if(cv.height !== nz) cv.height = nz;
   var g = cv.getContext("2d");
-  var B = {cv: cv, g: g, k: k, x1: half, z1: half, n: n};
+  var half = box.x1, halfZ = box.z1;              // the bitmap's top-left corner (world m): +x is left, +z is up
+  var B = {cv: cv, g: g, k: k, x1: box.x1, z1: box.z1, nx: nx, nz: nz, wm: Math.max(wx, wz)};
   if(!g) return B;
-  g.fillStyle = pal.sea; g.fillRect(0, 0, n, n);
+  g.fillStyle = pal.sea; g.fillRect(0, 0, nx, nz);
   // the land: the island's coast, else (claude-hq@1) the whole square
   if(Array.isArray(coast) && coast.length > 2){
-    polyPath(g, coast, half, half, k);
+    polyPath(g, coast, half, halfZ, k);
     g.fillStyle = pal.land; g.fill();
     g.lineWidth = Math.max(1, 3*k); g.strokeStyle = pal.landEdge; g.stroke();
   } else {
     var h0 = num(W && W.half, 1024);
-    g.fillStyle = pal.land; g.fillRect((half - h0)*k, (half - h0)*k, 2*h0*k, 2*h0*k);
+    g.fillStyle = pal.land; g.fillRect((half - h0)*k, (halfZ - h0)*k, 2*h0*k, 2*h0*k);
   }
   // the river and its harbour basin: one water outline
   if(river && Array.isArray(river.poly) && river.poly.length > 2){
-    polyPath(g, river.poly, half, half, k);
+    polyPath(g, river.poly, half, halfZ, k);
     g.fillStyle = pal.water; g.fill();
     g.lineWidth = Math.max(1, 2*k); g.strokeStyle = pal.bank; g.stroke();
   }
@@ -281,12 +335,12 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
   if(WL && Array.isArray(WL.bodies)){
     WL.bodies.forEach(function(b){
       if(!b || !Array.isArray(b.poly) || b.poly.length < 3) return;
-      polyPath(g, b.poly, half, half, k);
+      polyPath(g, b.poly, half, halfZ, k);
       g.fillStyle = pal.water; g.fill();
       g.lineWidth = Math.max(1, (b.edge === "quay" ? 2.5 : 2)*k); g.strokeStyle = b.edge === "quay" ? pal.quay : pal.bank; g.stroke();
       (b.islands || []).forEach(function(I){
         if(!Array.isArray(I) || I.length < 3) return;
-        polyPath(g, I, half, half, k);
+        polyPath(g, I, half, halfZ, k);
         g.fillStyle = pal.land; g.fill();
         g.lineWidth = Math.max(1, 2*k); g.strokeStyle = pal.bank; g.stroke();
       });
@@ -294,7 +348,7 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
     var bw = WL.breakwater;
     if(Array.isArray(bw) && bw.length >= 2){
       g.beginPath();
-      bw.forEach(function(p, i){ var bx = (half - p[0]/100)*k, by = (half - p[1]/100)*k; if(i) g.lineTo(bx, by); else g.moveTo(bx, by); });
+      bw.forEach(function(p, i){ var bx = (half - p[0]/100)*k, by = (halfZ - p[1]/100)*k; if(i) g.lineTo(bx, by); else g.moveTo(bx, by); });
       g.lineCap = "round"; g.lineWidth = Math.max(1.5, 8*k); g.strokeStyle = pal.quay; g.stroke();
     }
   }
@@ -305,7 +359,7 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
     var P = e.pts;
     g.beginPath();
     for(var i = 0; i + 2 < P.length; i += 3){
-      var bx = (half - P[i]/100)*k, by = (half - P[i + 2]/100)*k;
+      var bx = (half - P[i]/100)*k, by = (halfZ - P[i + 2]/100)*k;
       if(i) g.lineTo(bx, by); else g.moveTo(bx, by);
     }
   }
@@ -322,9 +376,9 @@ function buildStatic(doc, W, tier, coast, river, pal, dpr, reuse){
   // @3: the piers, as dots at their heads
   if(WL && Array.isArray(WL.piers)) WL.piers.forEach(function(p){
     if(!p || !isFinite(+p.x) || !isFinite(+p.z)) return;
-    var f = p.front || [0, 65536], fl = Math.hypot(+f[0] || 0, +f[1] || 0) || 1, L = (+p.len || 0)/2;
-    var x = (+p.x + (+f[0] || 0)/fl*L)/100, z = (+p.z + (+f[1] || 0)/fl*L)/100;
-    g.beginPath(); g.arc((half - x)*k, (half - z)*k, Math.max(1.5, PIER_M*k), 0, 2*PI);
+    var f = p.front || [0, 65536], fl = Math.hypot(+f[0] || 0, +f[1] || 0) || 1, hl = (+p.len || 0)/2;
+    var x = (+p.x + (+f[0] || 0)/fl*hl)/100, z = (+p.z + (+f[1] || 0)/fl*hl)/100;
+    g.beginPath(); g.arc((half - x)*k, (halfZ - z)*k, Math.max(1.5, PIER_M*k), 0, 2*PI);
     g.fillStyle = pal.pier; g.fill(); g.lineWidth = Math.max(1, 0.8*k); g.strokeStyle = pal.casing; g.stroke();
   });
   return B;
@@ -422,6 +476,8 @@ function paintAirfield(B, L){
     E.forEach(function(e){ if(e.pad && e.pad.length >= 2) strip(e.pad[0], e.pad[1], rw, 0, AIR_COL.pad); });
     strip(E[0].thr, E[1].thr, rw, 0, AIR_COL.runway);
     line([E[0].thr, E[1].thr], 0.9, AIR_COL.paint, "butt");
+    // the approach lights, a line of them out from each threshold
+    E.forEach(function(e){ if(Array.isArray(e.approach) && e.approach.length) line([e.thr].concat(e.approach), 3, AIR_COL.paint, "butt"); });
   }
   line(L.serviceRoad, num(L.serviceRoadW, 6), AIR_COL.road);
   // landside: the roads, the car park, the terminal and its canopy, the skybridge, the concourse
@@ -622,7 +678,7 @@ function mount(el, opts){
 
   // ---- input ----
   function zoom(d){
-    if(big){ bigLevel = clamp(bigLevel + (d > 0 ? 1 : d < 0 ? -1 : 0), -1, 5); return bigLevel; }
+    if(big){ bigLevel = clamp(bigLevel + (d > 0 ? 1 : d < 0 ? -1 : 0), -1, 6); return bigLevel; }   // 6: a township up close on the bigger box
     var nl = clamp(level + (d > 0 ? 1 : d < 0 ? -1 : 0), ZOOM_MIN, ZOOM_MAX);
     if(nl === level) return level;
     level = nl;
@@ -716,7 +772,7 @@ function mount(el, opts){
     var coast = Array.isArray(o.coast) ? o.coast : (W.island && W.island.coast) || null;
     var river = o.river || W.river || null;
     coastW = coast; riverW = river;
-    stat = buildStatic(doc, W, tier, coast, river, pal, dpr);
+    stat = buildStatic(doc, W, tier, coast, river, pal, dpr, null, airHere() ? airL : null);
     if(airHere()) paintAirfield(stat, airL);
     atlas = buildAtlas(doc, dpr);
     var src = Array.isArray(o.places) ? o.places : sitePlaces(W, tier);
@@ -753,7 +809,8 @@ function mount(el, opts){
     place.hidden = !(area || use || st || L);
     return changed;
   }
-  // The HQ lots drawn over the map: [{id, n (its number), poly: [[x, z]...] (m), mine, owned}]
+  // The HQ lots (each a township) drawn over the map: [{id, n (its number), poly: [[x, z]...] (m), mine, owned,
+  // name (its HQ's name, the label), gates: [{x, z (m), dir: [dx, dz] (out to the street), kind: "in" | "out", w (m)}]}]
   function setLots(list){
     lots = [];
     (Array.isArray(list) ? list : []).forEach(function(l){
@@ -763,13 +820,18 @@ function mount(el, opts){
       var x = 0, z = 0, r = 0;
       P.forEach(function(q){ x += q[0]/P.length; z += q[1]/P.length; });
       P.forEach(function(q){ r = Math.max(r, Math.hypot(q[0] - x, q[1] - z)); });
-      lots.push({id: l.id, n: l.n | 0, poly: P, x: x, z: z, r: r, mine: !!l.mine, owned: !!l.owned});
+      var name = typeof l.name === "string" ? l.name.replace(/\s+/g, " ").trim().slice(0, 36) : "";
+      var G = (Array.isArray(l.gates) ? l.gates : []).filter(function(q){ return q && isFinite(+q.x) && isFinite(+q.z) && Array.isArray(q.dir); })
+        .slice(0, 4).map(function(q){ var dl = Math.hypot(+q.dir[0] || 0, +q.dir[1] || 0) || 1;
+          return {x: +q.x, z: +q.z, dx: (+q.dir[0] || 0)/dl, dz: (+q.dir[1] || 0)/dl, out: q.kind === "out", w: clamp(num(q.w, 8), 2, 30)}; });
+      lots.push({id: l.id, n: l.n | 0, poly: P, x: x, z: z, r: r, mine: !!l.mine, owned: !!l.owned, name: name, gates: G});
     });
     lots.sort(function(a, b){ return (a.mine ? 1 : 0) - (b.mine ? 1 : 0); });   // yours drawn last, on top
     return lots.length;
   }
-  // the lots in view: outlines (dashed when free), yours filled amber, the one you stand on bold; the number once a lot
-  // is big enough on screen to hold it
+  // the lots (townships) in view, filled in the one township colour (pal.town): free ones faint with a dashed edge,
+  // taken ones fuller, yours strongest, the one you stand on edged bold; once a lot is LOT_NAME_PX across on screen its
+  // HQ's name goes in the label queue (yours first, and on the big map always)
   function drawLots(s, c, n, ax, ay, here){
     if(!lots.length) return;
     var lim = Math.max(cssW, cssH);
@@ -782,18 +844,51 @@ function mount(el, opts){
       g.beginPath();
       L.poly.forEach(function(q, k){ var p = P(q); if(k) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); });
       g.closePath();
-      if(L.mine){ g.globalAlpha = 0.35; g.fillStyle = pal.lotMine; g.fill(); g.globalAlpha = 1; }
+      g.globalAlpha = L.mine ? 0.55 : L.owned ? 0.3 : 0.14; g.fillStyle = pal.town; g.fill(); g.globalAlpha = 1;
       g.setLineDash && g.setLineDash(L.owned || L.mine ? [] : [3, 2]);
-      if(cur){ g.lineWidth = 4.5; g.strokeStyle = pal.casing; g.stroke(); }
-      g.lineWidth = cur ? 2.5 : L.mine ? 2 : 1.2;
-      g.strokeStyle = cur ? pal.lotHere : L.mine ? pal.lotMine : L.owned ? pal.lot : pal.lotFree;
+      if(cur || L.mine){ g.lineWidth = cur ? 4.5 : 4; g.strokeStyle = pal.casing; g.stroke(); }
+      g.lineWidth = cur ? 2.5 : L.mine ? 2.5 : 1.2;
+      g.strokeStyle = cur ? pal.lotHere : pal.town;
       g.stroke();
       g.setLineDash && g.setLineDash([]);
-      if(L.n > 0 && (big || rp > 15)){
-        g.font = "700 " + (cur ? 11 : 10) + "px system-ui, sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
-        g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(String(L.n), m0[0], m0[1]);
-        g.fillStyle = L.mine ? pal.lotMine : pal.rim; g.fillText(String(L.n), m0[0], m0[1]);
-      }
+      // its gateways, once it is big enough to show them: a bar across the opening and a tick, in for the way in
+      if(rp >= 2*LOT_NAME_PX) L.gates.forEach(function(q){
+        var a = P([q.x - q.dz*q.w/2, q.z + q.dx*q.w/2]), b = P([q.x + q.dz*q.w/2, q.z - q.dx*q.w/2]);
+        var sg = q.out ? 1 : -1, t0 = P([q.x - q.dx*3*sg, q.z - q.dz*3*sg]), t1 = P([q.x + q.dx*3*sg, q.z + q.dz*3*sg]);
+        g.lineCap = "round";
+        g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.moveTo(t0[0], t0[1]); g.lineTo(t1[0], t1[1]);
+        g.lineWidth = 5; g.strokeStyle = pal.casing; g.stroke();
+        g.lineWidth = 2.5; g.strokeStyle = pal.lotHere; g.stroke();
+      });
+      if(L.name && (rp >= LOT_NAME_PX || (big && L.mine)))
+        label(L.name, m0[0], m0[1] + Math.min(rp*0.5, 14), "center", L.mine ? 100 : cur ? 90 : 30, L.mine ? 12 : 11, L.mine ? pal.town : pal.rim);
+    }
+  }
+  // Labels: queued while a frame draws (text, its anchor in CSS px, align "left" | "center", priority, size, colour),
+  // then placed highest priority first, each only where its box (LABEL_PAD clear) overlaps none already placed
+  var labelQ = [];
+  function label(text, x, y, align, pri, size, col){
+    if(!text || !isFinite(x) || !isFinite(y) || x < -200 || y < -20 || x > cssW + 200 || y > cssH + 20) return;
+    labelQ.push({t: String(text), x: x, y: y, a: align === "center" ? "center" : "left", p: +pri || 0, f: (size | 0) || 11, col: col || pal.rim, i: labelQ.length});
+  }
+  function drawLabels(){
+    if(!labelQ.length) return;
+    var Q = labelQ.sort(function(a, b){ return (b.p - a.p) || (a.i - b.i); }), put = [];
+    labelQ = [];
+    g.textBaseline = "middle";
+    for(var i = 0; i < Q.length; i++){
+      var q = Q[i];
+      g.font = "700 " + q.f + "px system-ui, sans-serif";
+      var w = num(g.measureText(q.t).width, q.t.length*q.f*0.55), h = q.f + 2;
+      var x0 = (q.a === "center" ? q.x - w/2 : q.x) - LABEL_PAD, y0 = q.y - h/2 - LABEL_PAD, x1 = x0 + w + 2*LABEL_PAD, y1 = y0 + h + 2*LABEL_PAD;
+      if(x1 < 0 || y1 < 0 || x0 > cssW || y0 > cssH) continue;
+      var hit = false;
+      for(var j = 0; j < put.length && !hit; j++){ var b = put[j]; hit = x0 < b[2] && x1 > b[0] && y0 < b[3] && y1 > b[1]; }
+      if(hit) continue;
+      put.push([x0, y0, x1, y1]);
+      g.textAlign = q.a;
+      g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(q.t, q.x, q.y);
+      g.fillStyle = q.col; g.fillText(q.t, q.x, q.y);
     }
   }
 
@@ -805,7 +900,7 @@ function mount(el, opts){
     airL = next;
     if(!W || !stat) return;
     // the bitmap again, into the same canvas: with the airfield on top, or without it
-    stat = buildStatic(doc, W, tier, coastW, riverW, pal, dpr, stat.cv);
+    stat = buildStatic(doc, W, tier, coastW, riverW, pal, dpr, stat.cv, airHere() ? airL : null);
     if(airHere()) paintAirfield(stat, airL);
   }
 
@@ -818,9 +913,9 @@ function mount(el, opts){
     g.lineWidth = 2; g.strokeStyle = pal.youEdge; g.stroke();
     g.restore();
   }
-  // m across for the big map: the whole world (the static bitmap's box) fits the shorter side
+  // m across for the big map: the whole world (the static bitmap's box, its runway out at sea too) fits the shorter side
   function bigSpan(){
-    var wm = stat && stat.k ? stat.n/stat.k : 2400;
+    var wm = stat && stat.wm ? stat.wm : 2400;
     return wm/BIG_FILL*Math.max(1, cssW/Math.max(1, cssH));
   }
   function frame(f){
@@ -847,6 +942,7 @@ function mount(el, opts){
     pan.x += (panTo.x - pan.x)*ease(PAN_K, dt); pan.z += (panTo.z - pan.z)*ease(PAN_K, dt);
     V.x += pan.x; V.z += pan.z;
     var s = cssW/span, c = Math.cos(V.rot), n = Math.sin(V.rot), ax = cssW/2, ay = cssH*V.ay;
+    labelQ = [];
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = pal.sea; g.fillRect(0, 0, cssW, cssH);
     // underground: the surface dims, the metro comes up bright (a flag on the box for the stylesheet too)
@@ -866,7 +962,7 @@ function mount(el, opts){
         if(wp[0] < x0) x0 = wp[0]; if(wp[0] > x1) x1 = wp[0]; if(wp[1] < z0) z0 = wp[1]; if(wp[1] > z1) z1 = wp[1];
       }
       var k = stat.k, sx = Math.max(0, Math.floor((stat.x1 - x1)*k) - 1), sy = Math.max(0, Math.floor((stat.z1 - z1)*k) - 1);
-      var ex = Math.min(stat.n, Math.ceil((stat.x1 - x0)*k) + 1), ey = Math.min(stat.n, Math.ceil((stat.z1 - z0)*k) + 1);
+      var ex = Math.min(stat.nx, Math.ceil((stat.x1 - x0)*k) + 1), ey = Math.min(stat.nz, Math.ceil((stat.z1 - z0)*k) + 1);
       if(ex > sx && ey > sy){
         // bitmap px -> CSS px: u = (bx/k - (x1 - vx))*s, v = (by/k - (z1 - vz))*s, then turned by -rot
         var u0 = -(stat.x1 - V.x)*s, v0 = -(stat.z1 - V.z)*s, q = s/k;
@@ -897,11 +993,8 @@ function mount(el, opts){
         var P = places[p], uu = -(P.x - V.x)*s, vv = -(P.z - V.z)*s, qx = ax + uu*c + vv*n, qy = ay - uu*n + vv*c;
         if(qx < -half || qy < -half || qx > lim + half || qy > lim + half) continue;
         g.drawImage(atlas.cv, P.i*cell, 0, cell, cell, qx - half, qy - half, 2*half, 2*half);
-        if(big && P.label){                        // the big map names its places
-          g.font = "600 11px system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
-          g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(P.label, qx + half + 3, qy);
-          g.fillStyle = pal.rim; g.fillText(P.label, qx + half + 3, qy);
-        }
+        // the big map names its places; an HQ is named by its lot (drawLots) when there are lots, never twice
+        if(big && P.label && !(lots.length && (P.kind === "hq" || P.kind === "myhq"))) label(P.label, qx + half + 3, qy, "left", 50 + P.i, 11);
       }
     }
     // other players
@@ -932,6 +1025,7 @@ function mount(el, opts){
         g.beginPath(); g.arc(e[0], e[1] - 14, 2.5, 0, 2*PI); g.fillStyle = pal.youEdge; g.fill();
       }
     }
+    drawLabels();
     // you: the arrow points where you face (up in heading-up)
     arrow(ax, ay, -num(f.yaw, 0) - V.rot, 8);
     // the N marker on the rim, where north (+z) lies from the map's centre
@@ -970,12 +1064,7 @@ function mount(el, opts){
         g.fillStyle = pal.station; g.fill();
         g.lineWidth = 2; g.strokeStyle = L.col; g.stroke();
       });
-      if(big && L.stations.length){
-        var q0 = P(L.stations[0]);
-        g.font = "700 11px system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
-        g.lineWidth = 3; g.strokeStyle = pal.casing; g.strokeText(L.id, q0[0] + 7, q0[1] - 8);
-        g.fillStyle = pal.rim; g.fillText(L.id, q0[0] + 7, q0[1] - 8);
-      }
+      if(big && L.stations.length){ var q0 = P(L.stations[0]); label(L.id, q0[0] + 7, q0[1] - 8, "left", 45, 11); }
     });
     g.globalAlpha = 1;
   }
@@ -1010,5 +1099,5 @@ function mount(el, opts){
 }
 
 HQV.hqminimap = {mount: mount, toMini: toMini, fromMini: fromMini, zoomFor: zoomFor, viewFor: viewFor,
-                 edgeClamp: edgeClamp, sitePlaces: sitePlaces, locality: locality, neighbourhoods: neighbourhoods, USE_NAME: USE_NAME, POI: POI, AIR_COL: AIR_COL, transitLines: transitLines, LINE_COL: LINE_COL};
+                 edgeClamp: edgeClamp, worldBox: worldBox, PAL: PAL, sitePlaces: sitePlaces, locality: locality, neighbourhoods: neighbourhoods, USE_NAME: USE_NAME, POI: POI, AIR_COL: AIR_COL, transitLines: transitLines, LINE_COL: LINE_COL};
 })();

@@ -192,6 +192,7 @@ out.T = {left: kinds(T, S0, {x: 95, z: 100}), right: kinds(T, S0, {x: -95, z: 10
   times.sort(function(a, b){ return a - b; });
   out.perf = {build: build, median: times[7], max: times[14], len: R ? R.len : null};
 })();
+out.hqLabel = ["Ada", "Lena HQ", "Bob's HQ", "Your HQ", "", "  Mia  ", "HQ"].map(function(n){ return N.hqLabel(n); });
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -300,6 +301,10 @@ class HqNavTest(unittest.TestCase):
         self.assertFalse(r["back"], "back on the route")
 
     # ---------- places ----------
+    def test_hq_label_never_doubles(self):
+        # a person's name gets "'s HQ"; an HQ's own name (its sign, "Lena HQ", or "Bob's HQ") is used as it is
+        self.assertEqual(self.out["hqLabel"], ["Ada's HQ", "Lena HQ", "Bob's HQ", "Your HQ", "HQ", "Mia's HQ", "HQ"])
+
     def test_places(self):
         P, tiers = self.out["places"], self.out["siteTiers"]
         allowed = {"dock", "port", "transit", "airport", "townhall", "hospital", "clinic", "police", "fire", "school",

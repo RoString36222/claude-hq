@@ -179,8 +179,9 @@ fn specs_are_sane() {
             assert_eq!((cc, sp["cyl"].as_i64().unwrap(), s(&sp["layout"]), s(&sp["aspiration"]), s(&v["sound"])), (0, 0, "electric", "electric", "electric"), "{id}");
             assert_eq!(gears, 1, "{id}");
         } else {
-            // a scooter's CVT is one gear (games/hqvehiclephys.js: the revs climb with the speed)
-            let geared = (4..=10).contains(&gears) || (v["body"] == "scooter" && gears == 1);
+            // a scooter's CVT is one gear (games/hqvehiclephys.js: the revs climb with the speed), and so is a
+            // hybrid's direct drive (the Regera)
+            let geared = (4..=10).contains(&gears) || ((v["body"] == "scooter" || sp["hybrid"] == true) && gears == 1);
             assert!((50..=9000).contains(&cc) && (1..=16).contains(&sp["cyl"].as_i64().unwrap()) && geared, "{id}");
         }
         let (kw, kg, top) = (f(&sp["powerKw"]), f(&sp["massKg"]), f(&sp["topKmh"]));
@@ -188,7 +189,7 @@ fn specs_are_sane() {
             assert_eq!(sp["drive"], "rwd", "{id}");
             assert!((5.0..=200.0).contains(&kw) && (90.0..=350.0).contains(&kg) && (60.0..=330.0).contains(&top), "{id}");
         } else {
-            assert!((30.0..=1500.0).contains(&kw) && (700.0..=3500.0).contains(&kg) && (60.0..=460.0).contains(&top), "{id}");
+            assert!((30.0..=1500.0).contains(&kw) && (700.0..=3500.0).contains(&kg) && (60.0..=540.0).contains(&top), "{id}");
         }
         if !sp["torqueNm"].is_null() {
             assert!((10.0..=2000.0).contains(&f(&sp["torqueNm"])), "{id}");
@@ -344,7 +345,7 @@ fn loader_helpers_under_node() {
     assert_eq!(sale, full);
     assert!(full.len() >= 10 && full.contains(&"car.formula.2000"));
     assert_eq!(o["formula"], 11, "all 11 of the grid are listed");
-    assert_eq!(o["hyper"], serde_json::json!([["bugatti-chiron-super-sport", 1], ["bugatti-tourbillon", 2], ["bugatti-veyron", "reserve"]]));
+    assert_eq!(o["hyper"], serde_json::json!([["bugatti-chiron-super-sport", 1], ["bugatti-tourbillon", 2], ["koenigsegg-jesko-absolut", 3], ["koenigsegg-agera-rs", 4], ["koenigsegg-one-1", 5], ["koenigsegg-regera", 6], ["bugatti-veyron", "reserve"]]));
     assert_eq!(o["get"], "390 Duke");
     assert!(o["none"].is_null());
     assert_eq!(o["empty"], serde_json::json!([0, 0, 0]));

@@ -492,6 +492,17 @@ html.hq-calm .vg-fps-blind .vg-fps-blind-ov{opacity:.28}
 .vg-fps-dis-ov[data-dis="absolutezero"]{opacity:1;background:color-mix(in srgb,var(--brand-soft) 14%,transparent)}
 .vg-fps-dis-ov[data-dis="sinkhole"]{opacity:1;background:color-mix(in srgb,var(--panel2) 26%,transparent)}
 .vg-fps-dis-ov[data-dis="emp"]{opacity:1;background:color-mix(in srgb,var(--brand) 14%,transparent)}
+/* concurrent-disaster log: one chip per live disaster + the recent start/over feed.
+   Bottom-right (above the ammo card), so it is clear of the kill feed that owns the top-right. */
+.vg-fps-dis-log{position:absolute;bottom:64px;right:12px;max-width:min(320px,42vw);
+  margin:0;padding:0;list-style:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;
+  font:600 12px/1.35 var(--mono,var(--ui,system-ui,monospace));letter-spacing:.02em;
+  color:var(--ink);text-align:right;pointer-events:none}
+.vg-fps-dis-log.hidden{display:none}
+.vg-fps-dis-log li{padding:2px 8px;border-radius:6px;background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);box-shadow:0 1px 6px color-mix(in srgb,var(--ink) 12%,transparent)}
+.vg-fps-dis-log li.dl-warn{border-color:var(--gold, var(--brand))}
+.vg-fps-dis-log li:empty{display:none}
 /* EMP Apocalypse: the tracking display goes dark (scope / radar / score strip) */
 .vg-fps-emp .vg-fps-radar{opacity:.18;filter:grayscale(1)}
 .vg-fps-emp .vg-fps-top{opacity:.2}
@@ -594,6 +605,21 @@ html.hq-calm .vg-warden-hp{transition:none}
 @keyframes hq-fps-stam{from{opacity:1}to{opacity:.25}}
 html.hq-calm .vg-fps-stam.low i{animation:none}
 @media (prefers-reduced-motion:reduce){ .vg-fps-stam.low i{animation:none} }
+/* stacked totem effect chips — every live totem gets its own chip and they all show
+   at once (taking a second totem never removes the first). --eff-c is the totem hue. */
+.vg-fps-effs{position:absolute;left:8px;top:8px;display:flex;flex-wrap:wrap;align-content:flex-start;
+  gap:5px;max-width:min(42%,320px);z-index:2;pointer-events:none}
+.vg-fps-effs.hidden{display:none}
+.vg-fps-eff{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
+  background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid color-mix(in srgb,var(--eff-c,var(--brand)) 70%,var(--line));
+  color:var(--ink);font-size:12px;line-height:1.2;white-space:nowrap;
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--eff-c,var(--brand)) 22%,transparent)}
+.vg-fps-eff b{font-weight:700;font-size:12px}
+.vg-fps-eff i{font-style:normal;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}
+/* Large-text: chips wrap instead of clipping */
+html.hq-large .vg-fps-eff{font-size:13px;padding:4px 11px}
+html.hq-large .vg-fps-eff b{font-size:13px}
+html.hq-large .vg-fps-eff i{font-size:12px}
 .vg-fps-pause{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:16px;text-align:center;
   background:color-mix(in srgb,var(--bg2) 55%,transparent);color:var(--ink);cursor:pointer;z-index:2}
 .vg-fps-pause b{font-size:22px}

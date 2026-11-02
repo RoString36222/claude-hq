@@ -203,7 +203,7 @@ impl Desk {
     pub fn decide(&self, id: u64, session: &str, decision: &str) -> Resp {
         let Some(reply) = reply_for(decision) else { return (400, json!({"error": "decision must be allow or deny"})) };
         let mut map = self.pending.lock().unwrap();
-        if !map.get(&id).is_some_and(|p| p.session == session) {
+        if map.get(&id).is_none_or(|p| p.session != session) {
             return (404, json!({"error": "that request is no longer waiting"}));
         }
         let mut p = map.remove(&id).unwrap();

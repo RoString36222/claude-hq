@@ -564,7 +564,7 @@ fn rays_and_los() {
     let d = dir_of(90.0, 0.0);
     assert!((d[0] - 1.0).abs() < 1e-12 && d[2].abs() < 1e-12);
     let (t, head) = ray_player([0.0, EYE, 10.0], dir_of(0.0, (1.65f64 - EYE).atan2(10.0).to_degrees()),
-                               0.0, 0.0, 0.0, 100.0).unwrap();
+                               0.0, 0.0, 0.0, 100.0, 1.0).unwrap();
     assert!(head && t < 10.0);
 }
 
@@ -1006,6 +1006,48 @@ fn the_snap_carries_the_wave_c_world_and_flag_bits() {
 }
 
 #[test]
+fn a_rift_is_a_standing_portal_pair_you_walk_through() {
+    // User bug: "i see rifft create 1 purple circle in ground and nothing happens in that".
+    // The Rift totem now plants a STANDING ring in front of the taker and its twin
+    // somewhere random on the map; walking into either exits the other. pos() must
+    // accept that hop (otherwise the referee rubber-bands the prediction back).
+    let (mut s, t) = started(2, 2, 0.0);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let u0 = s.players[i0].0.clone();
+    // stand u0 at a known spot facing -Z, then plant the pair
+    put(&mut s, &u0, 0.0, 0.0, 0.0, t, Some(0));
+    assert!(s.take_totem(i0, "rift", t + 0.1), "the rift totem applies");
+    assert_eq!(s.portals.len(), 2, "a Rift is a pair of standing rings");
+    let near = s.portals[0].clone();
+    let far = s.portals[1].clone();
+    // the near ring stands in FRONT of the taker (not 8 m ahead as a flat disc)
+    let nd = (near.x - 0.0).hypot(near.z - 0.0);
+    assert!((nd - RIFT_FRONT).abs() < 0.6, "the near ring is ~RIFT_FRONT ahead: {nd}");
+    // the far ring is a hashed open spot, not a second disc a few metres further on
+    let span = (far.x - near.x).hypot(far.z - near.z);
+    assert!(span > 4.0, "the far ring is somewhere across the map: {span}");
+    // stand in the near ring, then hop to the far ring's step-out (past it, along the
+    // pair axis) — pos() must accept that as a legal move
+    put(&mut s, &u0, near.x, 0.0, near.z, t + 0.2, Some(0));
+    let (mut ax, mut az) = (far.x - near.x, far.z - near.z);
+    let aln = ax.hypot(az);
+    assert!(aln > 0.01);
+    ax /= aln;
+    az /= aln;
+    let (ex, ez) = (far.x + ax * (RIFT_R + 0.35), far.z + az * (RIFT_R + 0.35));
+    let (ok, fix) = s.pos(&u0, &json!({"x": cm(ex), "y": cm(0.0), "z": cm(ez), "r": 0, "p": 0, "q": 30}), t + 0.3);
+    assert!(ok, "the walk-in hop is a legal move (fix={:?})", fix);
+    let p = s.player(&u0).unwrap();
+    // cm() carries two decimals, so the wire rounds the hop to 0.01 m
+    assert!((p.x - ex).abs() < 0.011 && (p.z - ez).abs() < 0.011,
+            "the body is at the exit: got ({}, {}) want ({}, {}); near=({}, {}) far=({}, {})",
+            p.x, p.z, ex, ez, near.x, near.z, far.x, far.z);
+    // the same jump WITHOUT standing in a ring is still refused
+    let (ok2, _) = s.pos(&u0, &json!({"x": cm(0.0), "y": cm(0.0), "z": cm(0.0), "r": 0, "p": 0, "q": 60}), t + 0.6);
+    assert!(!ok2, "a teleport with no ring under you is still refused");
+}
+
+#[test]
 fn a_shed_roof_stops_an_overhead_impact_but_not_a_quake() {
     // "any solid roof overhead" is the cover rule. On the dockyard a catwalk slab
     // already is one; on the dune we added three open-air sheds (kind "shed") whose
@@ -1067,6 +1109,7 @@ fn a_shield_totem_makes_you_immune_to_every_disaster() {
     s.warns.push(WarnMark {
         id: 999, x: mx, y: 0.0, z: mz, hit_at: t_imp + 0.01,
         r: DD_METEOR_R * 2.0, dmg: DD_METEOR_DMG, overhead: true, quake: false,
+        dis: "meteorshower",
     });
     // stand both on the mark
     put(&mut s, "u0", mx, 0.0, mz, t_imp, Some(0));
@@ -1111,42 +1154,59 @@ fn a_disaster_kill_names_the_disaster_and_pays_no_team_point() {
 }
 
 #[test]
-fn one_disaster_at_a_time_and_the_clock_is_independent() {
+fn several_disasters_run_at_once_and_the_clock_is_independent() {
+    // 3.37.2: "there is no thing that only 1 disaster can happen at a time, multiple
+    // can happen too at same time". A new disaster ADDS to the list — it never stops
+    // the old one — and the snap ships one row per live disaster so the client can
+    // paint and log every one of them.
     let (mut s, t) = started(2, 2, 0.0);
-    assert!(s.disaster.is_none(), "no disaster is live at round start");
+    assert!(s.disasters.is_empty(), "no disaster is live at round start");
     assert!(s.disaster_at.is_some(), "the disaster clock is armed");
     assert!(s.start_disaster("sandstorm", t + 0.1), "the first disaster starts");
-    assert!(!s.start_disaster("thunder", t + 0.2), "a second disaster is refused while one is live");
-    assert_eq!(s.disaster.as_ref().unwrap().kind, "sandstorm", "the live one is kept");
+    assert!(s.start_disaster("thunder", t + 0.2), "a second disaster starts alongside the first");
+    assert_eq!(s.disasters.len(), 2, "both are live at once");
+    assert_eq!(s.disasters[0].kind, "sandstorm", "the first is kept");
+    assert_eq!(s.disasters[1].kind, "thunder", "the second joins it");
+    // past the warn window both count as live (disaster_live = inside the hold)
+    assert!(s.disaster_live("sandstorm", t + 0.1 + DIS_WARN + 0.5), "sandstorm is still live");
+    assert!(s.disaster_live("thunder", t + 0.2 + DIS_WARN + 0.5), "thunder is live too");
     // the warn window is 2 s, then the hold
-    let d = s.disaster.as_ref().unwrap();
+    let d = &s.disasters[0];
     assert!((d.warn_at - (t + 0.1) - DIS_WARN).abs() < 1e-6, "warn_at is t + DIS_WARN");
     assert!((d.until - (t + 0.1) - DIS_WARN - DIS_SANDSTORM).abs() < 1e-6, "until is the hold");
-    // the snap ships "di" (never "ev") and "dm"
+    // the snap ships "di" (never "ev") as a LIST of rows — one per live disaster
     s.mark_all();
-    let snap = s.snap(t + 0.2);
+    let snap = s.snap(t + 0.3);
     assert!(snap.get("ev").is_none(), "the snap never emits a data key named \"ev\"");
-    let di = snap["di"].as_array().expect("the live disaster ships as \"di\"");
-    assert_eq!(di[0].as_str().unwrap(), "sandstorm", "di[0] is the kind");
-    assert_eq!(di.len(), 8, "di is [kind, warn, hold, ring, ms-to-next, seed, zones, pit]");
+    let di = snap["di"].as_array().expect("live disasters ship as \"di\"");
+    assert_eq!(di.len(), 2, "one row per live disaster");
+    let r0 = di[0].as_array().expect("row");
+    assert_eq!(r0[0].as_str().unwrap(), "sandstorm", "row[0] is the kind");
+    assert_eq!(r0.len(), 8, "row is [kind, warn, hold, ring, ms-to-next, seed, zones, pit]");
+    assert!(di[1].as_array().expect("row")[0].as_str().unwrap() == "thunder", "the second row is thunder");
     assert!(snap["dm"].is_array(), "impact marks ship as \"dm\"");
     // and when nothing is live the countdown row still ships so the top bar can tick
-    s.disaster = None;
+    s.disasters.clear();
     s.disaster_at = Some(t + 5.0);
     let snap2 = s.snap(t + 0.4);
     let di2 = snap2["di"].as_array().expect("the countdown row ships even with nothing live");
-    assert!(di2[0].is_null(), "no kind when nothing is live");
-    assert!(di2[4].as_i64().unwrap_or(0) > 4000, "di[4] is the ms until the next one");
-    // the clock fires on its own once the current one is gone
+    assert_eq!(di2.len(), 1, "just the countdown row");
+    assert!(di2[0].as_array().expect("row")[0].is_null(), "no kind when nothing is live");
+    assert!(di2[0].as_array().expect("row")[4].as_i64().unwrap_or(0) > 4000, "row[4] is the ms until the next one");
+    // the clock fires on its own once the current one is gone — and does not need
+    // the list to be empty to do so
     s.disaster_at = Some(t + 0.3);
-    s.disaster = None;
-    s.tick(t + 0.3, true);
-    assert!(s.disaster.is_some(), "the clock starts one by itself");
-    // and a totem can start one too
+    s.start_disaster("hurricane", t + 0.35);
+    s.tick(t + 0.5, true);
+    assert!(!s.disasters.is_empty(), "the clock starts one by itself alongside what is live");
+    // and a totem can start one too — without stopping whatever is already running
     let (mut s2, t2) = started(2, 2, 0.0);
+    assert!(s2.start_disaster("sandstorm", t2 + 0.1));
     let i0 = s2.players.iter().position(|(u, _)| u == "u0").unwrap();
     assert!(s2.take_totem(i0, "meteorshower", t2 + 0.1), "grabbing a Disaster totem starts it");
-    assert_eq!(s2.disaster.as_ref().unwrap().kind, "meteorshower", "the taker set off a meteor shower");
+    assert_eq!(s2.disasters.len(), 2, "the totem ADDS a disaster, it does not replace");
+    assert!(s2.disaster_live("meteorshower", t2 + 0.1 + DIS_WARN + 0.5), "the taker set off a meteor shower");
+    assert!(s2.disaster_live("sandstorm", t2 + 0.1 + DIS_WARN + 0.5), "and the first one is still running");
 }
 
 #[test]
@@ -1351,6 +1411,7 @@ fn thunder_hits_harder_near_the_bolt_and_stuns() {
     s.warns.push(WarnMark {
         id: 1, x: mx, y: 0.0, z: mz, hit_at: t_hit + 0.01,
         r: DD_THUNDER_R, dmg: DD_THUNDER_DMG, overhead: false, quake: false,
+        dis: "thunder",
     });
     s.disaster_tick(t_hit + 0.05);
     let dmg0 = 100 - s.players[0].1.hp;
@@ -1372,7 +1433,7 @@ fn disaster_hazards_are_frozen_and_shared_with_the_visual() {
     put(&mut s, "u0", 3.0, 0.0, 4.0, t, Some(0));
     s.player_mut("u0").unwrap().protect = 0.0; // not spawn-protected
     assert!(s.start_disaster("toxicfog", t), "toxic fog starts");
-    let d = s.disaster.clone().unwrap();
+    let d = s.disasters.last().unwrap().clone();
     assert_eq!(d.zones.len(), DD_TOXIC_ZONES, "three sticky clouds");
     // zones are near live bodies (first few) — not a fresh roll every pulse
     let near = d.zones.iter().filter(|(x, z)| {
@@ -1386,38 +1447,153 @@ fn disaster_hazards_are_frozen_and_shared_with_the_visual() {
     let (mut s2, t2) = started(2, 2, 0.0);
     s2.player_mut("u0").unwrap().protect = 0.0;
     assert!(s2.start_disaster("sinkhole", t2));
-    let d2 = s2.disaster.clone().unwrap();
+    let d2 = s2.disasters.last().unwrap().clone();
     let pit1 = d2.pit;
     s2.disaster_tick(t2 + DIS_WARN + 0.5);
-    let pit2 = s2.disaster.as_ref().unwrap().pit;
+    let pit2 = s2.disasters.last().unwrap().pit;
     assert_eq!(pit1, pit2, "the pit must not move mid-hold");
 
     // snap ships the frozen geometry so the client paints the same spots
     let snap = s2.snap(t2 + DIS_WARN + 0.5);
-    let di = snap["di"].as_array().expect("di row");
-    assert!(di.len() >= 8, "di carries seed/zones/pit, got {}", di.len());
-    assert!(di[5].is_number(), "di[5] is the frozen seed");
-    assert!(di[6].is_array(), "di[6] is the toxic cloud centres");
-    assert!(di[7].is_array(), "di[7] is the sinkhole pit");
+    let di = snap["di"].as_array().expect("di list");
+    assert_eq!(di.len(), 1, "one live disaster ships one row");
+    let row = di[0].as_array().expect("di row");
+    assert!(row.len() >= 8, "di row carries seed/zones/pit, got {}", row.len());
+    assert!(row[5].is_number(), "di[5] is the frozen seed");
+    assert!(row[6].is_array(), "di[6] is the toxic cloud centres");
+    assert!(row[7].is_array(), "di[7] is the sinkhole pit");
 }
 
 #[test]
 fn every_disaster_kind_chips_or_hits_hp() {
     // Standing rule: every disaster is visual AND impact on players and bots.
     // Hurricane used to shove with no damage ("what is even disaster without impact").
+    // Every one of the ten kinds must chip or hit — not just the one we used to test.
+    // Local hazards (quake cracks, the sinkhole pit, toxic clouds) only connect with
+    // a body standing on them, so put one there; global ones (sand / wind / EMP / …)
+    // reach everyone.
+    for kind in DISASTERS {
+        let (mut s, t) = started(2, 2, 0.0);
+        for (_, p) in s.players.iter_mut() {
+            p.hp = 100;
+            p.protect = 0.0;
+            p.shield_totem_until = 0.0;
+            p.slow_until = 0.0;
+            p.blind_until = 0.0;
+        }
+        assert!(s.start_disaster(kind, t), "{kind} starts");
+        // stand a body on this kind's frozen hazard, if it has one
+        if kind == "sinkhole" {
+            let pit = s.disasters.last().unwrap().pit;
+            let p = s.player_mut("u0").unwrap();
+            p.x = pit.0;
+            p.z = pit.1;
+            p.protect = 0.0;
+        } else if kind == "toxicfog" {
+            let zone = s.disasters.last().unwrap().zones.first().copied();
+            if let Some((zx, zz)) = zone {
+                let p = s.player_mut("u0").unwrap();
+                p.x = zx;
+                p.z = zz;
+                p.protect = 0.0;
+            }
+        }
+        // walk past the warn window and several one-second pulses
+        for k in 0..40 {
+            if kind == "earthquake" || kind == "meteorshower" || kind == "thunder" {
+                let mark = s.warns.first().cloned();
+                if let Some(w) = mark {
+                    let p = s.player_mut("u0").unwrap();
+                    p.x = w.x;
+                    p.z = w.z;
+                }
+            }
+            s.disaster_tick(t + DIS_WARN + k as f64 * 0.25);
+        }
+        let chipped = s.players.iter().any(|(_, p)| {
+            p.hp < 100 || p.slow_until > t || p.blind_until > t
+        });
+        assert!(chipped, "{kind} must chip HP, slow or blind");
+    }
+}
+
+#[test]
+fn a_earthquake_crack_hits_and_throws_your_step() {
+    // User report: "earthquake … i dont see any visual effect or health effect".
+    // The health half must never be optional: a crack that lands on you is
+    // DD_QUAKE_DMG of proximity crush plus DD_QUAKE_SLOW of a thrown step.
     let (mut s, t) = started(2, 2, 0.0);
-    for (_, p) in s.players.iter_mut() {
+    {
+        let p = s.player_mut("u0").unwrap();
         p.hp = 100;
         p.protect = 0.0;
         p.shield_totem_until = 0.0;
+        p.slow_until = 0.0;
     }
-    assert!(s.start_disaster("hurricane", t));
-    // walk past the warn window and several one-second pulses
-    for k in 0..40 {
+    assert!(s.start_disaster("earthquake", t));
+    // park the body on the next mark's spot so the strike connects
+    let mut hit = false;
+    for k in 0..60 {
+        let now = t + DIS_WARN + k as f64 * 0.25;
+        // put the player on whatever mark is about to land
+        let mark = s.warns.first().cloned();
+        {
+            let p = s.player_mut("u0").unwrap();
+            if let Some(w) = mark {
+                p.x = w.x;
+                p.z = w.z;
+            }
+        }
+        s.disaster_tick(now);
+        let p = s.player("u0").unwrap();
+        if p.hp < 100 {
+            assert!(p.slow_until > now, "a quake throw slows you at {now}");
+            assert!(p.hp <= 100 - (DD_QUAKE_DMG as f64 * 0.4) as i64, "a crack underfoot hurts");
+            hit = true;
+            break;
+        }
+    }
+    assert!(hit, "a quake must connect with a live body at least once in 15s");
+}
+
+#[test]
+fn a_sinkhole_pulls_and_bites_at_the_frozen_pit() {
+    // User report: "sink hole … i dont see any visual effect or health effect".
+    // The judge's pit is the geometry the FX paints (frozen at start_disaster); a
+    // body standing on that point must be pulled, slowed and bitten DD_SINK_DMG.
+    let (mut s, t) = started(2, 2, 0.0);
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.hp = 100;
+        p.protect = 0.0;
+        p.shield_totem_until = 0.0;
+        p.slow_until = 0.0;
+    }
+    assert!(s.start_disaster("sinkhole", t));
+    let pit = s.disasters.last().unwrap().pit;
+    // stand ON the frozen pit — the point the FX mesh sits at
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.x = pit.0;
+        p.z = pit.1;
+        p.protect = 0.0;
+        p.hp = 100;
+        p.slow_until = 0.0;
+    }
+    for k in 0..24 {
         s.disaster_tick(t + DIS_WARN + k as f64 * 0.25);
     }
-    let chipped = s.players.iter().any(|(_, p)| p.hp < 100);
-    assert!(chipped, "hurricane must chip HP while it shoves");
+    let p = s.player("u0").unwrap();
+    assert!(p.hp < 100, "standing in the pit must bite, got hp={}", p.hp);
+    assert!(p.hp <= 100 - DD_SINK_DMG, "the bite is DD_SINK_DMG={DD_SINK_DMG}, hp={}", p.hp);
+    assert!(p.slow_until > t + DIS_WARN, "stumbling toward the pit slows you");
+    // the pull drags you toward the pit centre (you are already on it, so it holds)
+    assert!(
+        (p.x - pit.0).abs() < 0.5,
+        "the pull holds you at the pit, got x={} vs {}",
+        p.x,
+        pit.0
+    );
 }
 
 #[test]
@@ -1694,7 +1870,7 @@ fn only_the_warden_calls_disasters_and_only_it_drops_boosts() {
     }
     assert_eq!(totems, 0, "no ordinary totem falls while the Warden lives");
     assert_eq!(packs, 0, "no ordinary pack falls while the Warden lives");
-    assert!(s.disaster.is_none(), "nobody but the Warden starts a disaster");
+    assert!(s.disasters.is_empty(), "nobody but the Warden starts a disaster");
 
     // the Warden itself calls a disaster on its own clock
     {
@@ -1702,7 +1878,7 @@ fn only_the_warden_calls_disasters_and_only_it_drops_boosts() {
         wd.dis_at = t + 0.1;
     }
     let evs = s.tick(t + 20.2, true);
-    assert!(s.disaster.is_some(), "only the Warden starts a disaster: {:?}", evs);
+    assert!(!s.disasters.is_empty(), "only the Warden starts a disaster: {:?}", evs);
 
     // checkpoints spill non-disaster loot + a health pack in a ring
     let before = s.items.len();
@@ -1888,9 +2064,147 @@ fn a_drone_hook_lifts_and_starts_a_swing() {
     assert!(shot.is_some(), "the hook fires at the drone");
     let p = s.player("u0").unwrap();
     assert!(p.swing_until > t, "the shooter is swinging");
+    assert!(p.hook_drone.is_some(), "the hook names the hull it is on: {:?}", p.hook_drone);
     assert!((p.swing_y - c[1]).abs() < 0.05, "climb target is the drone ({} vs {})", p.swing_y, c[1]);
     assert!(p.y < c[1] - 0.2, "altitude eases up — no teleport ({} -> {})", p.y, c[1]);
     assert!(p.hook_until <= t, "the swinger is not trigger-locked");
+}
+
+#[test]
+fn shooting_a_drone_down_drops_loot_detaches_the_swing_and_starts_a_disaster() {
+    // 3.37.2 user ask: "the drones can be shot just like in blaster arena, but when
+    // shot down, then any player who was attached to it while swinging should be
+    // detached and brought down in ground like there was no drone. / on shooting down
+    // drone it should fall down 3 non disaster totems where that drone was shot down,
+    // also any drone is shot down any random disaster should happen in game arena"
+    let (mut s, t) = started(2, 2, 0.0);
+    let routes = s.drones.clone();
+    assert!(!routes.is_empty());
+    let mt = 0.1;
+    let c = drone_at(&routes[0], mt);
+    // u0 swings on drone 0
+    put(&mut s, "u0", c[0], c[1] - EYE, c[2] + 2.0, t, None);
+    hold_grapple(&mut s, "u0");
+    let o = [c[0], c[1], c[2] + 2.0];
+    let hook_msg = json!({"w": GRAPPLE_W, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                          "r": 0, "p": 0, "q": 10, "ip": 0});
+    let (shot, _) = s.fire("u0", &hook_msg, t + 0.1);
+    assert!(shot.is_some(), "the hook fires");
+    assert!(s.player("u0").unwrap().swing_until > t, "u0 is swinging");
+    let hooked = s.player("u0").unwrap().hook_drone.expect("the hook names its hull");
+
+    // u1 stands south of the drone and shoots THAT hull down (weapon 0)
+    let hc = drone_at(&routes[hooked], mt);
+    put(&mut s, "u1", hc[0], 0.0, hc[2] + 8.0, t, Some(0));
+    {
+        let p = s.player_mut("u1").unwrap();
+        p.w = 0;
+        p.mag[0] = WEAPONS[0].mag;
+        p.protect = 0.0;
+    }
+    let n_dis0 = s.disasters.len();
+    let totem_lo = s.drop_rings().0;
+    let totem_hi = totem_lo + DROP_SLOTS;
+    let o1 = eye(&s, "u1");
+    let yaw = (hc[0] - o1[0]).atan2(-(hc[2] - o1[2])).to_degrees();
+    let pitch = (hc[1] - o1[1]).atan2((hc[0] - o1[0]).hypot(hc[2] - o1[2])).to_degrees();
+    let (dy, dp) = spread_of(1, 0);
+    let fire_msg = json!({"w": 0, "ox": cm(o1[0]), "oy": cm(o1[1]), "oz": cm(o1[2]),
+                          "r": ((yaw - dy) * 100.0) as i64, "p": ((pitch - dp) * 100.0) as i64,
+                          "q": 20, "ip": 0});
+    let (bullet, _) = s.fire("u1", &fire_msg, t + 0.2);
+    assert!(bullet.is_some(), "the bullet goes out");
+    assert!(s.drone_down[hooked] > t + 0.2, "the hooked hull is a wreck");
+    // the swinger is detached and falling, as if the drone had never existed
+    let p = s.player("u0").unwrap();
+    assert!(p.swing_until <= t + 0.2, "the swing dies with the hull");
+    assert!(p.hook_drone.is_none(), "no hook_drone left");
+    assert_eq!(p.swing_y, 0.0, "the climb target is cleared");
+    // 3 non-disaster totems land in their own one-shot slots PAST the drop rings,
+    // never in the recycled totem ring (a second drone must not overwrite these)
+    let mut n_drops = 0;
+    for i in totem_hi..s.kinds.len() {
+        if !s.kinds[i].is_empty() {
+            assert!(!DISASTERS.contains(&s.kinds[i]),
+                    "a drone drop is never a disaster kind: {}", s.kinds[i]);
+            n_drops += 1;
+        }
+    }
+    assert_eq!(n_drops, DRONE_TOTEMS, "exactly {} totems fall", DRONE_TOTEMS);
+    for i in totem_lo..totem_hi {
+        assert!(s.kinds[i].is_empty(), "the recycled totem ring is untouched by drone loot");
+    }
+    // and a random disaster joins whatever is already running
+    assert_eq!(s.disasters.len(), n_dis0 + 1, "the shoot-down starts one disaster");
+    // the wreck is un-hookable and blocks nothing: a grapple at it now is a miss
+    let (shot2, _) = s.fire("u0", &hook_msg, t + 0.5);
+    // (u0 is on the ground now; the point is the hull is skipped)
+    assert!(s.drone_down[hooked] > t + 0.5, "still a wreck");
+    let _ = shot2;
+    // and it comes back after DRONE_DOWN_SECS
+    s.tick(t + DRONE_DOWN_SECS + 0.2, true);
+    assert!(s.drone_down[hooked] <= t + DRONE_DOWN_SECS + 0.2, "the hull is back after DRONE_DOWN_SECS");
+}
+
+#[test]
+fn a_second_drone_shot_down_leaves_the_first_wrecks_loot_alone() {
+    // User bug: "when i destroy any drone, it drops totems, then when i destroy another
+    // drone, old totems (dropped by previous drone) are removed" — drone loot used to
+    // round-robin into the 3-slot recycled totem ring, so a later drone overwrote an
+    // earlier one's unclaimed totems. They must stay until someone takes them.
+    let (mut s, t) = started(2, 2, 0.0);
+    let routes = s.drones.clone();
+    assert!(routes.len() >= 2);
+
+    // shoot drone 0 down at t+0.2 (the judge samples the hull at t_fire - go_at)
+    let f0 = t + 0.2;
+    let c0 = drone_at(&routes[0], f0 - t);
+    put(&mut s, "u1", c0[0], 0.0, c0[2] + 8.0, t, Some(0));
+    {
+        let p = s.player_mut("u1").unwrap();
+        p.w = 0;
+        p.mag[0] = WEAPONS[0].mag;
+        p.protect = 0.0;
+    }
+    let o0 = eye(&s, "u1");
+    let yaw0 = (c0[0] - o0[0]).atan2(-(c0[2] - o0[2])).to_degrees();
+    let pitch0 = (c0[1] - o0[1]).atan2((c0[0] - o0[0]).hypot(c0[2] - o0[2])).to_degrees();
+    let (dy0, dp0) = spread_of(1, 0);
+    let msg0 = json!({"w": 0, "ox": cm(o0[0]), "oy": cm(o0[1]), "oz": cm(o0[2]),
+                      "r": ((yaw0 - dy0) * 100.0) as i64, "p": ((pitch0 - dp0) * 100.0) as i64,
+                      "q": 20, "ip": 0});
+    let (b0, _) = s.fire("u1", &msg0, f0);
+    assert!(b0.is_some(), "the first bullet goes out");
+    assert!(s.drone_down[0] > f0, "drone 0 is a wreck");
+    let ring = s.drop_rings();
+    let mut first: Vec<String> = Vec::new();
+    for i in ring.3..s.kinds.len() {
+        if !s.kinds[i].is_empty() {
+            first.push(s.kinds[i].to_string());
+        }
+    }
+    assert_eq!(first.len(), DRONE_TOTEMS, "the first drone drops {} totems", DRONE_TOTEMS);
+
+    // knock drone 1 down a moment later (the fire path is covered by the test above;
+    // what matters here is that the SECOND wreck's loot lands past the first's)
+    let f1 = t + 1.5;
+    let c1 = drone_at(&routes[1], f1 - t);
+    assert!(s.drone_down(1, c1, f1).is_some(), "drone 1 comes apart");
+    assert!(s.drone_down[1] > f1, "drone 1 is a wreck too");
+    assert!(s.drone_down[0] > f1, "drone 0 is still a wreck — its loot must survive");
+
+    // every totem the first drone dropped is still sitting there, unclaimed
+    for i in ring.3..ring.3 + first.len() {
+        assert_eq!(s.kinds[i], first[i - ring.3].as_str(),
+                   "the first drone's totem {} is still there after the second shoot-down", i);
+        assert!(s.items[i].is_none(), "and it is still live");
+    }
+    // and the second drone dropped its own three PAST them
+    let mut n_new = 0;
+    for i in ring.3 + first.len()..s.kinds.len() {
+        if !s.kinds[i].is_empty() { n_new += 1; }
+    }
+    assert_eq!(n_new, DRONE_TOTEMS, "the second drone appends {} more", DRONE_TOTEMS);
 }
 
 #[test]
@@ -1911,4 +2225,682 @@ fn no_foe_hook_while_the_warden_lives() {
     assert!(shot.is_some(), "the hook still fires");
     assert!(s.player("u1").unwrap().hook_until <= t, "no foe hook while The Warden lives");
     assert_eq!(s.warden.as_ref().unwrap().hp, hp_before, "zero damage to The Warden");
+}
+
+// ------------------------------------------------ the "nothing happens" totems --
+// User report: "nothing happens in gravity flip and time rewind, not sure if bullet
+// magnet, hunter mark, bubble fortress, rally, kingmaker ... do anything in game".
+// Each test drives the real judge (fire / tick / take_totem) and asserts a number.
+
+#[test]
+fn time_rewind_travels_a_full_three_seconds() {
+    // the old code took hist[len-3] = 3 FRAMES (~0.05 s); the help promises 3 s
+    let (mut s, t) = started(1, 1, 0.0);
+    // one put() to place the body, then feed the trail directly — put() resets
+    // hist every call, so it cannot be the loop's transport
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    let mut x = 0.0f64;
+    let mut tt = t;
+    for _ in 0..32 {
+        x += 0.6;   // ~6 m/s
+        tt += 0.1;
+        let p = s.player_mut("u0").unwrap();
+        p.x = x;
+        p.y = 0.0;
+        p.z = 0.0;
+        p.hist.push_back((tt, x, 0.0, 0.0));
+        while p.hist.len() > 2 && tt - p.hist[0].0 > HIST_S {
+            p.hist.pop_front();
+        }
+    }
+    let before = s.player("u0").unwrap().x;
+    assert!(before > 15.0, "the body walked a real distance: {before}");
+    assert!(s.player("u0").unwrap().hist.len() > 10, "the trail is real");
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "rewind", tt + 0.05), "the rewind totem applies");
+    let p = s.player("u0").unwrap();
+    let back = before - p.x;
+    // 3 s at ~6 m/s is ~18 m; cm() rounding lets us land within 0.5 m
+    assert!(back > 15.0, "Time Rewind travels ~3 s of movement ({back} m back from {before})");
+    assert!(back < 22.0, "and it does not overshoot the promised window ({back} m)");
+    assert!(p.second_wind, "the next killing blow is cancelled too");
+}
+
+#[test]
+fn bubble_fortress_blocks_incoming_fire_but_not_outgoing() {
+    // a live bubble on u1's side eats u0's shot; u1 still shoots out
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    put(&mut s, "u1", -6.0, 0.0, -3.0, t, Some(0));
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.gone = true;
+        }
+    }
+    // u1 takes bubble: a sphere around u1's own position
+    let i1 = s.players.iter().position(|(u, _)| u == "u1").unwrap();
+    assert!(s.take_totem(i1, "bubble", t + 0.1), "the bubble totem applies");
+    assert_eq!(s.bubbles.len(), 1, "one sphere is planted");
+    let b = s.bubbles[0].clone();
+    assert!((b.r - 4.0).abs() < 0.01, "the sphere is the 4 m radius the help promises");
+    assert_eq!(b.team, s.player("u1").unwrap().team, "it defends the taker's side");
+
+    // u0 fires straight at u1: the bubble eats it
+    let o = eye(&s, "u0");
+    let tgt = chest(&s, "u1");
+    let yaw = (tgt[0] - o[0]).atan2(-(tgt[2] - o[2])).to_degrees();
+    let pitch = (tgt[1] - o[1]).atan2((tgt[0] - o[0]).hypot(tgt[2] - o[2])).to_degrees();
+    let (dy, dp) = spread_of(1, 0);
+    let msg = json!({"w": 0, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                     "r": ((yaw - dy) * 100.0) as i64, "p": ((pitch - dp) * 100.0) as i64, "q": 10, "ip": 0});
+    let hp1 = s.player("u1").unwrap().hp;
+    let _ = s.fire("u0", &msg, t + 0.15);
+    assert_eq!(s.player("u1").unwrap().hp, hp1, "the bubble eats the incoming shot");
+
+    // u1 fires back out at u0 (u0 is outside their sphere): the shot lands
+    let o2 = eye(&s, "u1");
+    let tgt2 = chest(&s, "u0");
+    let yaw2 = (tgt2[0] - o2[0]).atan2(-(tgt2[2] - o2[2])).to_degrees();
+    let pitch2 = (tgt2[1] - o2[1]).atan2((tgt2[0] - o2[0]).hypot(tgt2[2] - o2[2])).to_degrees();
+    let (dy2, dp2) = spread_of(2, 0);
+    let msg2 = json!({"w": 0, "ox": cm(o2[0]), "oy": cm(o2[1]), "oz": cm(o2[2]),
+                      "r": ((yaw2 - dy2) * 100.0) as i64, "p": ((pitch2 - dp2) * 100.0) as i64, "q": 20, "ip": 0});
+    let hp0 = s.player("u0").unwrap().hp;
+    let _ = s.fire("u1", &msg2, t + 0.25);
+    assert!(s.player("u0").unwrap().hp < hp0, "the bubble does not trap your own fire");
+}
+
+#[test]
+fn kings_reserve_is_topped_up_and_the_window_is_flagged() {
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.gone = true;
+        }
+    }
+    // burn some reserve first so the top-up is visible
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.res = [10, 2, 4, 1, 1];
+    }
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "king", t + 0.1), "the king totem applies");
+    let p = s.player("u0").unwrap();
+    assert!(p.king_until > t, "the window is live");
+    assert!(p.res[0] > 10, "reserve ammo is topped up ({} > 10)", p.res[0]);
+    assert!(p.res[0] <= WEAPONS[0].reserve * 2, "and it never exceeds 2x reserve");
+    assert_eq!(s.beacons.len(), 1, "a king beacon is planted");
+    assert_eq!(s.beacons[0].kind, "king");
+    // the whole side gets the window
+    let team = p.team;
+    assert!(s.players.iter().all(|(_, q)| q.team != team || q.gone || q.king_until > t),
+            "every living mate is royalty");
+    // the flag rides the snap
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    let rows = snap["p"].as_array().unwrap();
+    let flagged = rows.iter().any(|r| r[8].as_i64().unwrap_or(0) & FLAG_KING != 0);
+    assert!(flagged, "FLAG_KING rides the snap row");
+}
+
+#[test]
+fn rally_drops_a_beacon_that_heals_and_flags_its_taker() {
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.gone = true;
+        }
+    }
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.hp = 50;
+    }
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "rally", t + 0.1), "the rally totem applies");
+    assert_eq!(s.beacons.len(), 1, "a rally beacon is planted");
+    assert_eq!(s.beacons[0].kind, "rally");
+    assert!(s.player("u0").unwrap().rally_until > t, "the taker's FLAG_RALLY window is set");
+    // the beacon heals the side near it: 6 hp/s for one second of ticks
+    for k in 0..20 {
+        s.tick(t + 0.1 + (k as f64) * 0.05, true);
+    }
+    let p = s.player("u0").unwrap();
+    assert!(p.hp > 50, "the beacon heals slowly (hp {} > 50)", p.hp);
+    assert!(p.hp <= 100, "and it never overheals");
+}
+
+#[test]
+fn hunters_mark_strips_cloak_and_flags_the_enemy() {
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    put(&mut s, "u1", -6.0, 0.0, -3.0, t, Some(0));
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.gone = true;
+        }
+    }
+    // u1 is cloaked
+    {
+        let p = s.player_mut("u1").unwrap();
+        p.cloak_until = t + CLOAK;
+    }
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "mark", t + 0.1), "the mark totem applies");
+    let p = s.player("u1").unwrap();
+    assert!(p.hunter_until > t, "the enemy is painted for the window");
+    assert!(p.cloak_until <= t, "their cloak is stripped — they can't hide");
+    // the flag rides the snap
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    let rows = snap["p"].as_array().unwrap();
+    let flagged = rows.iter().any(|r| r[8].as_i64().unwrap_or(0) & FLAG_HUNTER != 0);
+    assert!(flagged, "FLAG_HUNTER rides the snap row");
+}
+
+#[test]
+fn bullet_magnet_steals_the_hit() {
+    // A magnet-holder on the victim's side, standing near the line, takes the hit
+    // instead of the aimed mate. (The holder cannot be on the shooter's side:
+    // both twins skip the shooter's own team.)
+    // teams are k % 2: u0 -> 0, u1 -> 1, u2 -> 0, u3 -> 1. So u0 shoots, u1 is
+    // the aimed victim, u3 is the magnet-holder on the same side as u1.
+    let (mut s, t) = started(4, 2, 0.0);
+    put(&mut s, "u0", -6.0, 0.0, -9.0, t, Some(0));
+    put(&mut s, "u1", -6.0, 0.0, -3.0, t, Some(0));
+    put(&mut s, "u2", -30.0, 0.0, -30.0, t, Some(0));
+    put(&mut s, "u3", -6.0, 0.0, -3.4, t, Some(0));
+    for (_, p) in s.players.iter_mut() {
+        if p.is_bot() {
+            p.gone = true;
+        }
+    }
+    assert_eq!(s.player("u0").unwrap().team, 0);
+    assert_eq!(s.player("u1").unwrap().team, 1);
+    assert_eq!(s.player("u3").unwrap().team, 1, "the holder shares the victim's side");
+    // give the holder the magnet window
+    let i3 = s.players.iter().position(|(u, _)| u == "u3").unwrap();
+    assert!(s.take_totem(i3, "magnet", t + 0.1), "the magnet totem applies");
+    assert!(s.player("u3").unwrap().magnet_until > t, "the holder's window is live");
+    // u0 fires straight at u1 — the bullet should land on u3
+    let o = eye(&s, "u0");
+    let tgt = chest(&s, "u1");
+    let yaw = (tgt[0] - o[0]).atan2(-(tgt[2] - o[2])).to_degrees();
+    let pitch = (tgt[1] - o[1]).atan2((tgt[0] - o[0]).hypot(tgt[2] - o[2])).to_degrees();
+    let (dy, dp) = spread_of(1, 0);
+    let msg = json!({"w": 0, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                     "r": ((yaw - dy) * 100.0) as i64, "p": ((pitch - dp) * 100.0) as i64, "q": 30, "ip": 0});
+    let hp1 = s.player("u1").unwrap().hp;
+    let hp3 = s.player("u3").unwrap().hp;
+    let _ = s.fire("u0", &msg, t + 0.15);
+    assert_eq!(s.player("u1").unwrap().hp, hp1, "the aimed mate is untouched");
+    assert!(s.player("u3").unwrap().hp < hp3, "the magnet-holder took the hit instead");
+    // and the flag ships on the snap
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    let rows = snap["p"].as_array().unwrap();
+    let flagged = rows.iter().any(|r| r[8].as_i64().unwrap_or(0) & FLAG_MAGNET != 0);
+    assert!(flagged, "FLAG_MAGNET rides the snap row");
+}
+
+#[test]
+fn reload_mult_shortens_the_clock_under_king_and_rally() {
+    let (mut s, t) = started(1, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    // baseline: 1.0
+    assert!((s.reload_mult(0, 0.0, 0.0, t) - 1.0).abs() < 1e-9, "no buffs: plain reload");
+    // king alone: 0.6
+    s.player_mut("u0").unwrap().king_until = t + 15.0;
+    assert!((s.reload_mult(0, 0.0, 0.0, t) - 0.6).abs() < 1e-9, "king is a 0.6x reload");
+    // rally near its beacon: 0.7
+    s.player_mut("u0").unwrap().king_until = 0.0;
+    s.player_mut("u0").unwrap().rally_until = t + 10.0;
+    s.world_k += 1;
+    s.beacons.push(Beacon {
+        id: s.world_k, x: 1.0, y: 0.0, z: 0.0, kind: "rally",
+        team: 0, owner: "u0".into(), until: t + 10.0,
+    });
+    assert!((s.reload_mult(0, 0.0, 0.0, t) - 0.7).abs() < 1e-9, "rally near its beacon is 0.7x");
+    // far from the beacon: no bonus
+    assert!((s.reload_mult(0, 50.0, 50.0, t) - 1.0).abs() < 1e-9, "rally is local to the beacon");
+    // both together: 0.42
+    s.player_mut("u0").unwrap().king_until = t + 15.0;
+    assert!((s.reload_mult(0, 0.0, 0.0, t) - 0.42).abs() < 1e-9, "king and rally stack");
+}
+
+// ------------------------------------------------------------- Big Head totem --
+#[test]
+fn the_big_head_totem_doubles_every_skull_in_the_arena() {
+    // The geometry: the head AABB grows outward and upward only, the body box never
+    // moves. A chest shot must not become a headshot; a near-miss must.
+    let (body1, head1) = hit_boxes(0.0, 0.0, 0.0, 1.0);
+    let (body2, head2) = hit_boxes(0.0, 0.0, 0.0, BIG_HEAD_S);
+    assert_eq!(body1, body2, "the body box never moves");
+    assert_eq!(head1[3] - head1[0], 0.5, "ordinary head is 0.5 m wide");
+    assert_eq!(head2[3] - head2[0], 1.0, "the big head is 1.0 m wide");
+    assert_eq!(head1[4], HEAD_TOP, "ordinary top is 1.9");
+    assert_eq!(head2[4], 2.4, "the big top is 2.4");
+    assert_eq!(head2[1], BODY_H, "the head still starts at BODY_H");
+    // a near-miss: 0.40 m off-centre at head height
+    let o = [0.40, 1.65, 10.0];
+    let d = [0.0, 0.0, -1.0];
+    assert!(ray_player(o, d, 0.0, 0.0, 0.0, 20.0, 1.0).is_none(), "misses an ordinary head");
+    let (th, head) = ray_player(o, d, 0.0, 0.0, 0.0, 20.0, BIG_HEAD_S).unwrap();
+    assert!(head, "the same shot is a headshot on a big head");
+    assert!(th > 9.0 && th < 10.0);
+    // a chest shot stays a body shot at both scales
+    for hs in [1.0, BIG_HEAD_S] {
+        let (_t, head) = ray_player([0.0, 1.0, 10.0], [0.0, 0.0, -1.0], 0.0, 0.0, 0.0, 20.0, hs).unwrap();
+        assert!(!head, "a chest shot is never a headshot (hs={hs})");
+    }
+}
+
+#[test]
+fn the_big_head_totem_is_arena_wide_and_rides_the_snapshot() {
+    let (mut s, t) = started(4, 2, 0.0);
+    for (i, u) in ["u0", "u1", "u2", "u3"].iter().enumerate() {
+        put(&mut s, u, 0.0, 0.0, -8.0 + i as f64, t, None);
+    }
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "bighead", t + 0.1), "the totem applies");
+    assert_eq!(s.big_head_until, t + 0.1 + BIG_HEAD, "the world clock is set for everyone");
+    assert!((s.head_scale(t + 0.2) - BIG_HEAD_S).abs() < 1e-9, "live window: big heads");
+    assert!((s.head_scale(t + 0.1 + BIG_HEAD + 0.1) - 1.0).abs() < 1e-9, "past the window: ordinary");
+    // every living player's snap row carries FLAG_BIGHEAD (the taker included)
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    let rows = snap["p"].as_array().unwrap();
+    assert_eq!(rows.len(), 4);
+    for r in rows {
+        let f = r[8].as_i64().unwrap_or(0);
+        assert!(f & FLAG_BIGHEAD != 0, "FLAG_BIGHEAD rides every living row");
+    }
+    // and it leaves when the window does
+    s.big_head_until = t;
+    s.mark_all();
+    let snap = s.snap(t + 0.3);
+    for r in snap["p"].as_array().unwrap() {
+        let f = r[8].as_i64().unwrap_or(0);
+        assert!(f & FLAG_BIGHEAD == 0, "the flag drops with the window");
+    }
+}
+
+#[test]
+fn the_big_head_window_makes_the_judge_call_near_misses_headshots() {
+    // End to end through fire(): a shot that misses an ordinary skull lands as a
+    // headshot while the window is open. Same muzzle, same aim, different hs.
+    //
+    // Aim geometry: the victim stands on the centreline; the SHOT is aimed 0.38 m
+    // beside their head — outside the ordinary half-width 0.25, inside the big 0.50.
+    // Marksman spread is 0.3 deg (0.05 m at 10 m), so the jitter stays in that gap:
+    // the ray passes x in [0.33, 0.43] whatever spread_of rolls.
+    // The match clock only ever runs forward (lead_ok / qmax), so the two shots are
+    // given two rising q anchors and the second is fired far enough later that the
+    // marksman's 0.8 s fire-rate gap has closed.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, Some(0));
+    put(&mut s, "u1", 0.0, 0.0, -10.0, t, Some(0));   // 10 m downrange, on the centreline
+    s.player_mut("u1").unwrap().hp = 200;             // room for a 112 headshot, not a clamp
+    let o = eye(&s, "u0");
+    let off = 0.38f64;
+    let yaw = off.atan2(10.0).to_degrees();
+    let pitch = ((1.65 - o[1]) / 10.0).atan().to_degrees();
+    let p = s.player_mut("u0").unwrap();
+    p.w = 1;            // marksman: spread 0.3 deg
+    p.ready = 0;
+    p.mag[1] = 5;
+
+    // --- shot 1: no window, must miss ---
+    let msg = json!({"w": 1, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                     "r": (yaw * 100.0) as i64, "p": (pitch * 100.0) as i64, "q": 0, "ip": 0});
+    let hp0 = s.player("u1").unwrap().hp;
+    let (shot, refuse) = s.fire("u0", &msg, t + 0.1);
+    assert!(shot.is_some(), "the first shot is accepted (refuse: {refuse:?})");
+    assert_eq!(s.player("u1").unwrap().hp, hp0,
+               "an ordinary skull is missed by {:.2} m at 10 m", off);
+
+    // --- shot 2: window open, same aim, must land as a headshot ---
+    s.big_head_until = t + 100.0;
+    let p = s.player_mut("u0").unwrap();
+    p.ready = 0;
+    let msg2 = json!({"w": 1, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                      "r": (yaw * 100.0) as i64, "p": (pitch * 100.0) as i64,
+                      "q": 200, "ip": 0});   // q=2.00 s, 2 s past the first
+    let (shot, refuse) = s.fire("u0", &msg2, t + 2.2);
+    assert!(shot.is_some(), "the second shot is accepted (refuse: {refuse:?})");
+    let p1 = s.player("u1").unwrap();
+    assert!(p1.hp < hp0, "the big skull ate the shot (hp {} -> {})", hp0, p1.hp);
+    let dealt = hp0 - p1.hp;
+    assert_eq!(dealt, WEAPONS[1].head, "a headshot pays the head number");
+}
+
+// ------------------------------------------------------------- Disco totem --
+#[test]
+fn the_disco_totem_puts_the_whole_arena_on_the_floor_but_the_taker() {
+    // Everyone except the taker dances and cannot shoot. Both teams, bots included.
+    // The taker keeps their gun.
+    let (mut s, t) = started(4, 2, 0.0);
+    for (i, u) in ["u0", "u1", "u2", "u3"].iter().enumerate() {
+        put(&mut s, u, 0.0, 0.0, -8.0 + i as f64, t, None);
+    }
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "disco", t + 0.1), "the totem applies");
+    assert_eq!(s.player("u0").unwrap().dance_until, 0.0, "the taker never dances");
+    for u in ["u1", "u2", "u3"] {
+        let p = s.player(u).unwrap();
+        assert!((p.dance_until - (t + 0.1 + DISCO)).abs() < 1e-9, "{u} dances for DISCO seconds");
+        assert!(p.dance_until > t + 0.1, "{u} is still dancing a moment later");
+    }
+    // the window lapses
+    let late = t + 0.1 + DISCO + 0.1;
+    for u in ["u1", "u2", "u3"] {
+        assert!(s.player(u).unwrap().dance_until <= late, "{u} stops dancing with the window");
+    }
+}
+
+#[test]
+fn the_disco_totem_rides_the_snapshot_and_leaves_with_the_window() {
+    let (mut s, t) = started(4, 2, 0.0);
+    for (i, u) in ["u0", "u1", "u2", "u3"].iter().enumerate() {
+        put(&mut s, u, 0.0, 0.0, -8.0 + i as f64, t, Some(i as i64));
+    }
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "disco", t + 0.1));
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    let rows = snap["p"].as_array().unwrap();
+    let mut dancing = 0;
+    for r in rows {
+        let f = r[8].as_i64().unwrap_or(0);
+        if f & FLAG_DISCO != 0 {
+            dancing += 1;
+        }
+    }
+    assert_eq!(dancing, 3, "the taker's row is the only one without FLAG_DISCO");
+    // and it leaves when the window does
+    for (_, v) in s.players.iter_mut() {
+        v.dance_until = t;
+    }
+    s.mark_all();
+    let snap = s.snap(t + 0.3);
+    for r in snap["p"].as_array().unwrap() {
+        let f = r[8].as_i64().unwrap_or(0);
+        assert!(f & FLAG_DISCO == 0, "the flag drops with the window");
+    }
+}
+
+#[test]
+fn a_dancing_player_cannot_pull_the_trigger() {
+    // End to end through fire(): the taker's gun still works, the dancer's does not.
+    // The match clock only runs forward (lead_ok / qmax) and the marksman's 0.8 s
+    // fire-rate gap must be closed before each of the three shots, so each is given
+    // its own rising q anchor 2 s past the last (the same shape the Big Head test uses).
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, Some(0));
+    put(&mut s, "u1", 0.0, 0.0, -6.0, t, Some(0));
+    let o = eye(&s, "u0");
+    let shot = |q: i64| json!({"w": 1, "ox": cm(o[0]), "oy": cm(o[1]), "oz": cm(o[2]),
+                               "r": 0, "p": 0, "q": q, "ip": 0});
+    s.player_mut("u0").unwrap().w = 1;
+    s.player_mut("u0").unwrap().mag[1] = 5;
+    s.player_mut("u0").unwrap().ready = 0;
+
+    // --- shot 1: free, must fire ---
+    let (a, refuse) = s.fire("u0", &shot(0), t + 0.1);
+    assert!(a.is_some(), "the taker still shoots (refuse: {refuse:?})");
+
+    // --- shot 2: the Disco landed on u0, the trigger must be locked ---
+    s.player_mut("u0").unwrap().dance_until = t + DISCO;
+    s.player_mut("u0").unwrap().ready = 0;
+    let (b, _) = s.fire("u0", &shot(200), t + 2.2);   // 2 s past the first: the gap is closed
+    assert!(b.is_none(), "a dancer cannot pull the trigger");
+
+    // --- shot 3: the dance window has lapsed, the trigger comes back ---
+    s.player_mut("u0").unwrap().dance_until = t;
+    s.player_mut("u0").unwrap().ready = 0;
+    let (c, refuse) = s.fire("u0", &shot(400), t + 4.3);   // 2 s past the locked attempt
+    assert!(c.is_some(), "the trigger comes back when the dance ends (refuse: {refuse:?})");
+}
+
+#[test]
+fn a_dancing_bot_holds_still_and_holds_its_fire() {
+    let (mut s, mut t) = started(2, 2, 0.0);
+    let bot = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone()).unwrap();
+    let (x, z) = (s.player(&bot).unwrap().x, s.player(&bot).unwrap().z);
+    s.player_mut(&bot).unwrap().dance_until = t + DISCO;
+    for _ in 0..50 {
+        t += 1.0 / HZ;
+        s.tick(t, true);
+    }
+    let p = s.player(&bot).unwrap();
+    assert_eq!((p.x, p.z), (x, z), "a dancing bot does not move");
+    // and it recovers
+    for _ in 0..(DISCO as usize * HZ as usize + 20) {
+        t += 1.0 / HZ;
+        s.tick(t, true);
+    }
+    let p = s.player(&bot).unwrap();
+    assert!((p.x - x).hypot(p.z - z) > 0.0 || p.dance_until <= t, "the dance ends with the window");
+}
+
+// -------------------------------------------------- Wave F: joke world totems --
+#[test]
+fn banana_panic_scatters_deterministic_peels() {
+    // The peels come from the world counter + clock, never Math.random — the same
+    // seed always paints the same ten peels. Twin: the JS totemApply "banana" arm.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -4.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "banana", t + 0.1), "the totem applies");
+    assert_eq!(s.bananas.len(), BANANA_N, "BANANA_N peels land");
+    // a second take with the same clock is a different world_k — still BANANA_N peels
+    let before: Vec<_> = s.bananas.iter().map(|b| (b.x, b.z)).collect();
+    assert!(s.take_totem(i0, "banana", t + 0.1));
+    assert_eq!(s.bananas.len(), 2 * BANANA_N, "the second take appends, never replaces");
+    assert_ne!(s.bananas[BANANA_N].x, before[0].0, "a fresh world_k scatters fresh peels");
+    // the snapshot carries them
+    let snap = s.snap(t + 0.2);
+    assert_eq!(snap["bn"].as_array().unwrap().len(), 2 * BANANA_N, "snap key bn");
+}
+
+#[test]
+fn a_banana_slip_locks_the_slide_and_spins_the_body() {
+    // Stepping on a peel: slip_until opens, the slide direction is locked, and the
+    // bot's physics body (not just the rendered copy) is the thing that moves.
+    let (mut s, t) = started(2, 2, 0.0);
+    let bot = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone()).unwrap();
+    put(&mut s, &bot, 2.0, 0.0, 2.0, t, None);
+    // plant a peel right under the bot and force a slip
+    s.world_k += 1;
+    s.bananas.push(BananaPeel { id: 1, x: 2.0, z: 2.0 });
+    let t2 = t + 0.2;
+    s.tick(t2, true);
+    let p = s.player(&bot).unwrap();
+    assert!(p.slip_until > t2, "the slip window opens");
+    assert!(p.slip_vx.abs() > 0.01 || p.slip_vz.abs() > 0.01, "the slide direction is locked");
+    let b = p.bot.as_ref().unwrap();
+    assert!((b.body.vx - p.vx).abs() < 1e-9, "the body carries the slide, not just the row");
+    assert!((b.body.vz - p.vz).abs() < 1e-9, "the body carries the slide, not just the row");
+    // the spin writes aim_y, which is what p.r is made from
+    let r0 = p.r;
+    for _ in 0..10 {
+        s.tick(t2 + 0.1, true);
+    }
+    let p = s.player(&bot).unwrap();
+    assert!(p.r != r0, "the slipped body spins");
+}
+
+#[test]
+fn floor_is_lava_launches_and_burns_but_higher_ground_saves() {
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 5.0, 3.0, 5.0, t, None);   // up on a ledge
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "lava", t + 0.1), "the totem applies");
+    assert_eq!(s.lava_zones.len(), LAVA_ZONES, "LAVA_ZONES patches land");
+    // force a patch right under u0
+    s.lava_zones.push(LavaZone { id: 99, x: 0.0, z: 0.0, r: LAVA_R });
+    let hp0 = s.player("u0").unwrap().hp;
+    let mut t2 = t + 0.2;
+    for _ in 0..((LAVA_HOLD as usize + 2) * HZ as usize) {
+        t2 += 1.0 / HZ;
+        s.tick(t2, true);
+    }
+    let p = s.player("u0").unwrap();
+    assert!(p.hp < hp0, "standing in the lava burns ({} -> {})", hp0, p.hp);
+    assert!(p.y > 0.0, "and it launches you upward");
+    let q = s.player("u1").unwrap();
+    assert_eq!(q.hp, HP, "higher ground saves you");
+}
+
+#[test]
+fn the_goose_chases_the_nearest_and_headbutts_once() {
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 20.0, 0.0, 20.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "goose", t + 0.1), "the totem applies");
+    let g = s.geese.first().cloned().expect("a goose spawns");
+    assert!(g.until > t + 0.1, "the goose lives for GOOSE seconds");
+    let hp0 = s.player("u0").unwrap().hp;
+    let mut t2 = t + 0.2;
+    for _ in 0..(GOOSE_SPEED as usize * HZ as usize * 2) {
+        t2 += 1.0 / HZ;
+        s.tick(t2, true);
+        if s.geese.is_empty() {
+            break;
+        }
+    }
+    let p = s.player("u0").unwrap();
+    assert!(
+        p.hp < hp0 || s.geese.iter().all(|g| g.until <= t2),
+        "the nearest player eats a headbutt"
+    );
+    // one headbutt and the goose is satisfied
+    assert!(
+        s.geese.is_empty() || s.geese.iter().all(|g| g.until <= t2),
+        "the goose stands down"
+    );
+}
+
+#[test]
+fn reverse_controls_flips_the_bot_wish_and_the_snapshot_flag() {
+    let (mut s, t) = started(2, 2, 0.0);
+    let bot = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone()).unwrap();
+    put(&mut s, &bot, 0.0, 0.0, 0.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "reverse", t + 0.1), "the totem applies");
+    assert!(s.reverse_until > t + 0.1, "the arena-wide window opens");
+    s.mark_all();
+    let snap = s.snap(t + 0.2);
+    let mut flagged = 0;
+    for r in snap["p"].as_array().unwrap() {
+        if r[8].as_i64().unwrap_or(0) & FLAG_REVERSE != 0 {
+            flagged += 1;
+        }
+    }
+    assert_eq!(flagged, s.players.len(), "FLAG_REVERSE rides every living row");
+    // and the window closes
+    s.reverse_until = t;
+    s.mark_all();
+    let snap = s.snap(t + 0.3);
+    for r in snap["p"].as_array().unwrap() {
+        assert!(r[8].as_i64().unwrap_or(0) & FLAG_REVERSE == 0, "the flag drops with the window");
+    }
+}
+
+#[test]
+fn the_black_hole_sucks_bodies_toward_the_centre() {
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 8.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", -8.0, 0.0, 0.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "blackhole", t + 0.1), "the totem applies");
+    let h = s.blackholes.first().cloned().expect("a hole opens");
+    assert!(h.until > t + 0.1, "it lives for BLACKHOLE seconds");
+    assert!((h.x).abs() < 1e-9 && (h.z).abs() < 1e-9, "it sits at the arena centre");
+    let x0 = s.player("u0").unwrap().x;
+    let mut t2 = t + 0.2;
+    for _ in 0..(2 * HZ as usize) {
+        t2 += 1.0 / HZ;
+        s.tick(t2, true);
+    }
+    let x1 = s.player("u0").unwrap().x;
+    assert!(x1.abs() < x0.abs(), "u0 is pulled inward ({} -> {})", x0, x1);
+    // and the bot body goes with it (not just the rendered copy)
+    let bot = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone());
+    if let Some(bid) = bot {
+        let p = s.player(&bid).unwrap();
+        if let Some(b) = p.bot.as_ref() {
+            assert!((b.body.x - p.x).abs() < 1e-6, "the body tracks the pull");
+        }
+    }
+}
+
+/// User bug: "black hole doesn't seem to be working". The pull was capped at
+/// `HOLE_R * 8` = 17.6 m from the centre — on the dockyard map (84 x 60 m) that is a
+/// bubble nobody spawns inside, so the totem did nothing. The help promises
+/// "everything and everyone", so the reach has to cover the whole arena. Someone
+/// standing 30 m out must still feel it.
+#[test]
+fn the_black_hole_reaches_across_the_whole_arena() {
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 8.0, 0.0, 0.0, t, None);
+    // a long way out — past the old 17.6 m bubble, well inside HOLE_REACH
+    put(&mut s, "u1", 30.0, 0.0, 10.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "blackhole", t + 0.1), "the totem applies");
+    let far0 = s.player("u1").unwrap().x.hypot(s.player("u1").unwrap().z);
+    let mut t2 = t + 0.2;
+    for _ in 0..(2 * HZ as usize) {
+        t2 += 1.0 / HZ;
+        s.tick(t2, true);
+    }
+    let p1 = s.player("u1").unwrap();
+    let far1 = p1.x.hypot(p1.z);
+    assert!(
+        far1 < far0,
+        "a body 30 m out is still pulled in ({} -> {}) — the reach must cover the arena",
+        far0,
+        far1
+    );
+}
+
+#[test]
+fn weapon_roulette_re_rolls_and_refills_the_mag() {
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -4.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "roulette", t + 0.1), "the totem applies");
+    assert!(s.roulette_until > t + 0.1, "the arena-wide window opens");
+    // park everyone on weapon 0 with an empty mag so a switch is visible
+    for (_, p) in s.players.iter_mut() {
+        p.w = 0;
+        p.mag[0] = 0;
+    }
+    let mut t2 = t + 0.1 + ROULETTE_GAP - 0.05;
+    s.tick(t2, true);
+    t2 = t + 0.1 + ROULETTE_GAP + 0.05;
+    s.tick(t2, true);
+    let mut any_swapped = false;
+    for (_, p) in s.players.iter() {
+        if p.w != 0 {
+            any_swapped = true;
+        }
+        assert!(p.mag[p.w] == WEAPONS[p.w].mag, "the mag is refilled on every switch");
+    }
+    assert!(any_swapped, "every gun re-rolls");
+    // FLAG_ROULETTE rides every row while the window runs
+    s.mark_all();
+    let snap = s.snap(t2 + 0.05);
+    let mut flagged = 0;
+    for r in snap["p"].as_array().unwrap() {
+        if r[8].as_i64().unwrap_or(0) & FLAG_ROULETTE != 0 {
+            flagged += 1;
+        }
+    }
+    assert_eq!(flagged, s.players.len(), "FLAG_ROULETTE rides every living row");
 }

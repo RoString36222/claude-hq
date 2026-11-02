@@ -215,6 +215,102 @@ class StrikeSync(unittest.TestCase):
         self.assertIn("grappling gun", js)
         self.assertIn("Grappling gun", js)
 
+    def test_drones_can_be_shot_down_loot_and_detaches_the_swing(self):
+        """3.37.2 user ask: a shot-down drone drops 3 non-disaster totems at the wreck,
+        detaches anyone swinging on that hull (they fall as if the drone never existed),
+        and fires a random disaster. Both judges must do it."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        # the shoot-down helpers on the client
+        self.assertIn("DRONE_DOWN_SECS = 6", js)
+        self.assertIn("DRONE_TOTEMS = 3", js)
+        self.assertIn("function nonDisTotems(", js)
+        self.assertIn("function droneTotemDrop(", js)
+        self.assertIn("function droneDetach(", js)
+        self.assertIn("function droneShootDown(", js)
+        # the shooter records which hull it is on, so a down can detach it
+        self.assertIn("V.hookDrone", js)
+        self.assertIn("hook_drone", rs)
+        self.assertIn("pub hook_drone: Option<usize>", rs)
+        # on shoot-down: detach + 3 non-disaster totems + a random disaster
+        self.assertIn("droneDetach(D, t);", js)
+        self.assertIn("droneTotemDrop(x, z, s, t);", js)
+        self.assertIn("disStart(dkind, t);", js)
+        self.assertIn("pub fn drone_down(&mut self, di: usize", rs)
+        self.assertIn("fn drone_totem_drop(", rs)
+        self.assertIn("fn drone_detach(", rs)
+        self.assertIn("self.start_disaster(dkind, t);", rs)
+        self.assertIn("DRONE_TOTEMS: usize = 3", rs)
+        self.assertIn("DRONE_DOWN_SECS: f64 = 6.0", rs)
+        # the drop never rolls a disaster kind (those have their own ring)
+        self.assertIn("!DISASTERS.contains(k)", rs)
+        self.assertIn("nonDisTotems", js)
+        # the bullet path ray-tests the match drones in every mode that has them
+        self.assertIn("droneShootDown(aimedDrone, aimedDPos, t);", js)
+        self.assertIn("if let Some((end, di, c)) = best {", rs)
+        self.assertIn("self.drone_down(di, c, t);", rs)
+        # the grapple skips a wreck and the snap ships a down flag (index 4)
+        self.assertIn("downed", rs)
+        self.assertIn("downUntil", js)
+        self.assertIn("down_ms", rs)
+
+    def test_a_second_drone_never_overwrites_the_first_wrecks_loot(self):
+        """User bug: "when i destroy any drone, it drops totems, then when i destroy
+        another drone, old totems (dropped by previous drone) are removed". Drone loot
+        must land in one-shot slots appended past the drop rings (the Warden loot rule),
+        never the recycled totem ring — so a later drone appends more, it never
+        overwrites an unclaimed wreck's totems. They stay until someone takes them."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        # the client's drone drop appends past MAP.pickups, never the recycled ring
+        self.assertIn("var idx = MAP.pickups.length;", js)
+        self.assertNotIn("pl.totems[0] + (totemCount - 1) % DROP_SLOTS",
+                         js.split("function droneTotemDrop")[1].split("function droneDetach")[0])
+        # and it no longer bumps the shared totem counter (that one drives the ring)
+        self.assertNotIn("totemCount", js.split("function droneTotemDrop")[1].split("function droneDetach")[0])
+        # the judge appends too: kinds.push / items.push / spots.push, no DROP_SLOTS wrap
+        drop_fn = rs.split("fn drone_totem_drop")[1].split("fn drone_detach")[0]
+        self.assertIn("self.kinds.push(kind);", drop_fn)
+        self.assertIn("self.items.push(None);", drop_fn)
+        self.assertIn("self.spots.push([tx, 0.0, tz]);", drop_fn)
+        self.assertNotIn("% DROP_SLOTS", drop_fn)
+        self.assertNotIn("self.totem_k", drop_fn)
+        # the slot is taken (not respawned in place) exactly like the Warden's loot ring
+        self.assertIn("self.items[j] = Some(t + 1e9);", rs)
+
+    def test_disasters_run_concurrently_and_the_log_shows_them(self):
+        """3.37.2 user ask: "there is no thing that only 1 disaster can happen at a
+        time, multiple can happen too at same time, just their logs should be shown
+        there so players can know what all is happening"."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        # the client keeps a LIST of live disasters (never one slot)
+        self.assertIn("V.disasters", js)
+        self.assertIn("V.disasters.push(D)", js)
+        self.assertIn("V.disasters.length > 6", js, "cap at DIS_MAX")
+        self.assertIn("V.disasterLog", js, "the HUD log of what is happening")
+        self.assertIn("function disLog(", js)
+        self.assertIn("vg-fps-dis-log", js)
+        self.assertIn("function disStart(", js)
+        self.assertIn("function disClear(t, kind)", js, "clear one kind, not all")
+        self.assertIn("function disKindLive(", js)
+        # the auto-clock does NOT refuse while one is live
+        self.assertIn("pub disasters: Vec<Disaster>", rs)
+        self.assertIn("DIS_MAX: usize = 6", rs)
+        self.assertIn("pub fn start_disaster(&mut self, kind: &'static str, t: f64) -> bool", rs)
+        self.assertIn("fn disaster_live(&self, kind: &str, t: f64) -> bool", rs)
+        self.assertIn("self.disasters.push(", rs)
+        self.assertIn("self.disasters.retain", rs, "expire finished ones one by one")
+        # the snap "di" is a list of rows — one per live disaster
+        self.assertIn('json!([[Value::Null, 0, 0, 0, dis_next]])', rs)
+        self.assertIn("let rows: Vec<Value> = self", rs)
+        # and each row carries its kind so the client can start/stop per-kind FX
+        self.assertIn("fxList", js)
+        self.assertIn("fxStart(kind, D)", js)
+        self.assertIn("fxStop(kind)", js)
+        self.assertIn("fxTick(dt, t, quiet)", js)
+        self.assertIn("R.disaster = function", js)
+
     def test_map_file_is_mirrored(self):
         for a, b in ((MAP, SERVER_MAP), (MAP_SAND, SERVER_MAP_SAND)):
             with open(a, "rb") as fa, open(b, "rb") as fb:
@@ -653,6 +749,22 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("if(R3 && R3.addRift) R3.addRift(rfMP)", js)
         self.assertIn("if(R3 && R3.addRift) R3.addRift(rfSnap)", js)
         self.assertIn("(V.rifts || []).forEach", js, "2D map must show the rift pair")
+        # 1b. The Rift is a STANDING portal pair the PLAYER walks through (user-reported:
+        #     "1 purple circle in ground and nothing happens in that"). One ring in front
+        #     of the taker, its twin at a hashed open spot; walking into either exits the
+        #     other. Rockets hop the same pair. The far ring's facing is derived from the
+        #     pair's own geometry so a snapshot repaint still walks through.
+        self.assertIn("RIFT_R = 1.15", js, "the portal aperture is a shared constant")
+        self.assertIn("RIFT_FRONT = 2.4", js, "the near ring stands in front of the taker")
+        self.assertIn("RIFT_COOL = 0.45", js, "a hop has a post-hop lockout")
+        self.assertIn("function riftPair(", js)
+        self.assertIn("function riftAt(", js)
+        self.assertIn("function riftHop(", js)
+        self.assertIn("function riftProjectileHop(", js)
+        self.assertIn("FS.riftHop(", js, "the local move step walks the body through")
+        self.assertIn("FS.riftPair(", js, "every plant path goes through the shared pair")
+        # the rings stand upright (a CircleGeometry facing yaw), never a flat ground disc
+        self.assertIn("TorusGeometry(FS.RIFT_R * 0.72", js, "the opening is an upright ring")
         # 2. Shockwave has a real ring, not just one small boom
         self.assertIn("R.ring = function", js, "Shockwave totem must paint a ground ring")
         self.assertIn("V.rings = V.rings || []", js)
@@ -667,18 +779,354 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn('(dis === "hurricane" ? DD_WIND_DMG', js, "hurricane chip")
         # hurricane must shove bots in solo too (it used to only shove you / MP players)
         self.assertIn("shoveHB", js, "hurricane must shove solo bots")
-        # sandstorm is denser than the old 140-sprite wall
-        self.assertIn("n = 320", js)
+        # sandstorm is denser than the old 140-sprite wall (3.38.3 raised it to 420)
+        self.assertIn("n = 420", js)
+        # 3.38.3: every disaster paints a real scene, not a tint
+        self.assertIn("F.throat", js, "the sinkhole must have a throat cone")
+        self.assertIn("F.coreGlow", js, "the sinkhole must glow at its core")
+        self.assertIn("F.plates", js, "the earthquake must heave floor plates")
+        self.assertIn("F.sheath", js, "the hurricane must have a dark outer sheath")
+        self.assertIn("F.boltBranch2", js, "thunder must fork")
+        self.assertIn("F.flash", js, "thunder must flash the ground at the strike")
+        self.assertIn("F.ring2", js, "the shockwave must trail rings")
+        self.assertIn("F.ring3", js, "the shockwave must trail rings")
+        self.assertIn("F.wall", js, "the sandstorm must have a windward wall")
+        self.assertIn("F.sheet", js, "the freeze must have a glassy ice sheet")
+        self.assertIn("F.wash", js, "the EMP must black out the floor")
+        self.assertIn("dl-warn", js, "the disaster log chips must flag a warn")
+        # the two HUD columns must not overlap: kill feed top-right, disaster log bottom-right
+        css = read("games/games.css")
+        self.assertIn(".vg-fps-feed{position:absolute;right:8px;top:8px", css)
+        self.assertIn(".vg-fps-dis-log{position:absolute;bottom:64px;right:12px", css,
+                      "disaster log must sit bottom-right, clear of the top-right kill feed")
         # the game-info card must explain each disaster under the Disaster totems grid
         self.assertIn('"What each disaster does"', js)
         self.assertIn("TOTEM_HELP[k]", js)
         # Rust twin
         rs = read(STRIKE_RS)
+        self.assertIn("RIFT_R: f64 = 1.15", rs, "the Rust twin keeps the same aperture")
+        self.assertIn("RIFT_FRONT: f64 = 2.4", rs)
+        self.assertIn("RIFT_COOL: f64 = 0.45", rs)
+        self.assertIn("rift_hop", rs, "pos() must accept the walk-in hop")
         self.assertIn("DD_SAND_DMG: i64 = 3", rs)
         self.assertIn("DD_ZERO_DMG: i64 = 4", rs)
         self.assertIn("DD_EMP_DMG: i64 = 2", rs)
         self.assertIn("DD_WIND_DMG: i64 = 3", rs)
         self.assertIn('"sandstorm" | "absolutezero" | "emp" if t >= d.hit_at =>', rs)
+
+    def test_the_nothing_happens_totems_are_wired_on_both_sides(self):
+        """User report: "nothing happens in gravity flip and time rewind, not sure if
+        bullet magnet, hunter mark, bubble fortress, rally, kingmaker ... do anything
+        in game". Each named totem needed a live READER (movement / combat / radar /
+        reload), not just a flag write — and the beacon / bubble / mine / meteor
+        world objects needed meshes, or taking the totem still looked like nothing.
+
+        Three classes of bug, all confirmed at runtime (tests/probe_totems.js):
+        1. Time Rewind took hist[len-3] = 3 FRAMES (~0.05 s), not 3 s. histPush /
+           histAt (timestamped) are the fix; the probe drives the real helpers and
+           measures 17.9 m of travel back over 3.0 s (was 0.2 m / 0.033 s).
+        2. Rally's 6 hp/s truncated to 0 every tick in BOTH twins (6*dt is 0.3 at
+           20 Hz, and `|0` / `as i64` throws it away) — hp never moved. hp_acc /
+           V.hpAcc accumulate the fraction and pay out whole points.
+        3. Bubble Fortress / Kingmaker / Rally / Trapmaster / Meteor Call pushed
+           V.bubbles / V.beacons / V.mines / V.meteors and exported snapshot rows,
+           but nothing drew them. R.addBeacon / addBubble / addMine / addMeteorMark
+           are the meshes; the probe's `allDrawn` gate is true.
+
+        Plus the JS twins of Rust behaviour that was already live: a magnet
+        hit-steal on the victim's side, a bubble damage gate on BOTH shooters,
+        hunter mark stripping cloak, king reserve top-up, and a beacon-keyed
+        rally reload/heal (the taker's personal clock never reached a mate).
+        """
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        # 1. Time Rewind is a TIMESTAMPED 3 s trail on both sides
+        self.assertIn("REWIND_S = 3.0", js, "the help promises 3 s")
+        self.assertIn("HIST_S = 3.0", js, "the buffer must cover the rewind window")
+        self.assertIn("function histPush(", js)
+        self.assertIn("function histAt(", js)
+        self.assertIn("FS.histPush(V.hist", js, "the move step must feed the trail")
+        self.assertIn("FS.histAt(V.hist, t - FS.REWIND_S)", js, "the totem must rewind 3 s")
+        self.assertIn("REWIND_S: f64 = 3.0", rs, "the Rust twin keeps the same window")
+        self.assertIn("HIST_S: f64 = 3.0", rs)
+        self.assertIn("where_at(t - REWIND_S)", rs)
+        # 2. Rally heal accumulates its fraction (it used to truncate to 0)
+        self.assertIn("V.hpAcc", js, "rally's 6 hp/s must not truncate away")
+        self.assertIn("hp_acc", rs, "the Rust twin accumulates the same fraction")
+        self.assertIn("p.hp_acc += 6.0 * dt", rs)
+        # 3. every world object the totems plant is DRAWN (take hooks + snap repaint)
+        for fn in ("R.addBeacon = function", "R.addBubble = function",
+                   "R.addMine = function", "R.addMeteorMark = function"):
+            self.assertIn(fn, js, fn.split("=")[0].strip() + " must paint its world object")
+        for hook in ("if(R3 && R3.addBeacon) R3.addBeacon(", "if(R3 && R3.addBubble) R3.addBubble(",
+                     "if(R3 && R3.addMine) R3.addMine(", "if(R3 && R3.addMeteorMark) R3.addMeteorMark("):
+            self.assertIn(hook, js, hook + " — take path must paint")
+        for snap_hook in ("R3.clearBeacons()", "R3.clearBubbles()",
+                          "R3.clearMines()", "R3.clearMeteorMarks()"):
+            self.assertIn(snap_hook, js, "snapshot repaint must clear before painting")
+        # 4. the JS twins of the behaviour the Rust judge always had
+        self.assertIn("function inBubble(", js, "the bubble damage gate")
+        self.assertIn("if(inBubble(tv.x, tv.y + 0.9, tv.z, tv.team, t)", js,
+                      "the player's own fire() must gate on the bubble too")
+        self.assertIn("function reloadMult(", js, "king/rally shorten a reload")
+        self.assertIn("B.kind !== \"rally\"", js, "the rally reload is keyed off the BEACON")
+        self.assertIn("RB.kind !== \"rally\"", js, "so is the rally heal — a mate gets it")
+        self.assertIn("function hunterMarked(", js)
+        self.assertIn("hunterMarked(P, t)", js, "the radar must paint the gold ring")
+        self.assertIn("v.cloak_until = 0.0", rs, "mark strips cloak")
+        self.assertIn("fn in_bubble(", rs, "the Rust twin of the bubble gate")
+        self.assertIn("fn reload_mult(", rs, "the Rust twin of king/rally reload")
+        # magnet steal is on the VICTIM's side, never the shooter's own team
+        self.assertIn("kv.team == team || kv.magnet_until <= t", rs,
+                      "the magnet holder must share the victim's side")
+        self.assertIn("Q.team === (P && P.team)", js, "the JS twin skips the shooter's team too")
+        # king tops up reserve on take
+        self.assertIn("WEAPONS[wi].reserve", rs, "king tops up the reserve")
+        self.assertIn("rally_until = t + RALLY", rs, "rally sets the taker's FLAG_RALLY clock")
+
+    def test_the_big_head_totem_doubles_every_skull(self):
+        """User ask: a funny "big head" totem — after taking it everyone's head is
+        double size for a while, so headshots get easier. The hitbox must grow WITH
+        the head (outward and upward only: the bottom stays on the shoulders, so a
+        chest shot can never become a headshot). Arena-wide clock, personal drop
+        roster, FLAG_BIGHEAD on every living row. Geometric numbers live in
+        backend/src/strike/tests.rs; this locks the twins agree."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        src = block()
+        # 1. the scale constant is shared and is exactly 2
+        self.assertIn("var BIG_HEAD_S = 2;", src)
+        self.assertIn("BIG_HEAD_S: BIG_HEAD_S", js, "FS must export the shared scale")
+        self.assertIn("pub const BIG_HEAD_S: f64 = 2.0;", rs)
+        # 2. the window is 10 s on both sides
+        self.assertIn('bighead:   {hue: "#ff8fab", n: "Big Head",    dur: 10, c: 0xff8fab},', js)
+        self.assertIn("pub const BIG_HEAD: f64 = 10.0;", rs)
+        self.assertIn("big_head_until = t + BIG_HEAD", rs, "the Rust take sets the arena clock")
+        # 3. the head AABB grows OUTWARD and UPWARD only — the body box never moves
+        self.assertIn("function hitBoxes(x, y, z, hs){", src)
+        self.assertIn("var s = (hs != null && hs > 0) ? +hs : 1;", src)
+        self.assertIn("var hr = HEAD_R * s, ht = BODY_H + (HEAD_TOP - BODY_H) * s;", src,
+                      "head half-width and top scale; the bottom stays at BODY_H")
+        self.assertIn("y + BODY_H, z - hr, x + hr, y + ht, z + hr", src)
+        self.assertIn("pub fn hit_boxes(x: f64, y: f64, z: f64, hs: f64)", rs)
+        self.assertIn("pub fn ray_player(o: [f64; 3], d: [f64; 3], x: f64, y: f64, z: f64, maxd: f64, hs: f64)", rs)
+        self.assertIn("function rayPlayer(o, d, x, y, z, maxd, hs){", src)
+        # 4. every hit test threads the live scale (no call site may forget hs)
+        for call in ("FS.rayPlayer(e, d, V2.x, V2.y, V2.z, end, headScaleAt(t))",
+                     "FS.hitBoxes(P.x, P.y, P.z, headScaleAt(t))",
+                     "FS.rayPlayer(e, d, P.x, P.y, P.z, end, headScaleAt(t))"):
+            self.assertIn(call, js, call + " must pass the live head scale")
+        self.assertGreaterEqual(js.count("headScaleAt(t)"), 5, "every hit site threads the scale")
+        self.assertIn("fn head_scale(&self, t: f64) -> f64", rs)
+        self.assertIn("let hs = self.head_scale(t);", rs, "fire / bot_fire / rockets all bind hs")
+        self.assertGreaterEqual(rs.count("ray_player(o, d,"), 4, "every Rust hit site threads hs")
+        self.assertIn("hit_boxes(v.x, v.y, v.z, hs)", rs, "the rocket splash does too")
+        # 5. the clock is arena-wide and does not pop on death
+        self.assertIn("V.bigHeadUntil = t + TOTEMS.bighead.dur;", js)
+        self.assertIn("headScaleAt(t)", js)
+        self.assertIn("return (V.bigHeadUntil && t < V.bigHeadUntil) ? FS.BIG_HEAD_S : 1;", js)
+        self.assertIn("big_head_until: 0.0,", rs, "Strike::new seeds the clock")
+        self.assertNotIn("big_head_until = 0.0;", rs.replace("big_head_until: 0.0,", ""),
+                         "nothing may clear the window mid-match (no pop on death)")
+        # 6. FLAG_BIGHEAD rides EVERY living row so every client agrees
+        self.assertIn("FLAG_BIGHEAD", js)
+        self.assertIn("FLAG_BIGHEAD = 134217728;", js)
+        self.assertIn("pub const FLAG_BIGHEAD: i64 = 134_217_728;", rs)
+        self.assertIn("if(has(FLAG_BIGHEAD)) V.bigHeadUntil = Math.max(V.bigHeadUntil||0, t + 0.45);", js,
+                      "the client renews a short TTL off the snapshot, never Infinity")
+        self.assertIn("if self.big_head_until > t { FLAG_BIGHEAD } else { 0 }", rs)
+        # 7. it is on the PERSONAL roster in both languages (a joke power-up, not a disaster)
+        self.assertEqual(js.count('"king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
+                         "all three JS drop rosters (totemSpawn / wardenLoot / nonDisTotems) name it")
+        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
+                         "exactly the three personal rosters")
+        self.assertIn("\"bighead\",", rs)
+        self.assertIn("totemSpawn", js)
+        self.assertIn("function wardenLoot", js)
+        self.assertIn("function nonDisTotems", js)
+        # 8. help text + status string present (and esc()'d at paint time, like every other totem)
+        self.assertIn('bighead: "For 10s EVERY head in the arena doubles', js)
+        self.assertIn('return "Big Head: EVERY head doubles for "', js)
+        # 9. the 3D skull really scales: the head bone, the tag lift, and decoys
+        self.assertIn("headBone", js, "addPlayer must capture the head bone")
+        self.assertIn('n.name === "head"', js)
+        self.assertIn("m.headBone.scale.setScalar(m.headS)", js)
+        self.assertIn("var tagY = 2.15;", js, "the name tag starts at the ordinary height")
+        self.assertIn("tagY += (m.headS - 1) * 0.95;", js, "the name tag lifts with the skull")
+        self.assertIn("__headBone", js, "decoys grow too")
+
+    def test_the_disco_totem_makes_everyone_else_dance(self):
+        """User ask: one more disco totem — getting it, everyone (except the player
+        who took it) starts disco dancing for some time, and those players/bots only
+        dance, they can't shoot anyone for that time. The taker keeps their gun.
+        Per-player clocks (the taker is the one who stays armed), FLAG_DISCO on every
+        dancer's row, the trigger locked on both sides, and a real dance pose on the
+        3D bones. Numbers live in backend/src/strike/tests.rs; this locks the twins."""
+        js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
+        # 1. the window is 8 s on both sides
+        self.assertIn('disco:     {hue: "#ff2d95", n: "Disco",      dur: 8,  c: 0xff2d95},', js)
+        self.assertIn("pub const DISCO: f64 = 8.0;", rs)
+        # 2. the taker never dances — everyone else does, both teams, bots included
+        self.assertIn("others().forEach(function(P){ if(P && !P.gone){ P.danceUntil = t + d;", js,
+                      "solo apply stamps every OTHER player, never the taker")
+        self.assertIn("if u.as_str() != me && !v.dead && !v.gone", rs, "the Rust take skips the taker")
+        self.assertIn("v.dance_until = t + DISCO;", rs)
+        # 3. a dancer cannot shoot — the trigger is locked on BOTH sides
+        self.assertIn("function danceOn(t){", js)
+        self.assertIn("if(danceOn(t)) return false;", js, "canShoot must refuse a dancer")
+        self.assertIn("p.dance_until > t", rs, "fire_inner must refuse a dancer")
+        self.assertIn("if self.players[i].1.dance_until > t {", rs, "bot_fire must refuse a dancer")
+        # 4. a dancer also holds still (like the Paralyser) — bots stop stepping
+        self.assertIn("if(P.danceUntil && t < P.danceUntil) return;", js)
+        self.assertIn("if self.players[i].1.dance_until > t {", rs)
+        self.assertIn("var canMove = !V.watch && !V.dead && !V.paused && !danceOn(t)", js,
+                      "the local player cannot walk while dancing either")
+        # 5. FLAG_DISCO is a per-player bit, never on the taker's row
+        self.assertIn("FLAG_DISCO = 268435456;", js)
+        self.assertIn("pub const FLAG_DISCO: i64 = 268_435_456;", rs)
+        self.assertIn("if(has(FLAG_DISCO)){ if(!P.danceUntil && R3) R3.charm(P, \"disco\"); P.danceUntil = Infinity; }", js)
+        self.assertIn("else if(P.danceUntil){ clearMarks(P, \"disco\"); P.danceUntil = 0; }", js)
+        self.assertIn("if p.dance_until > t { FLAG_DISCO } else { 0 }", rs)
+        # 6. the window is per-player and pops on the DANCER's death (not the taker's)
+        self.assertIn("dance_until: 0.0,", rs, "Player::new seeds the clock")
+        self.assertIn("self.dance_until = 0.0;", rs, "place() clears it on respawn")
+        self.assertIn("vic.danceUntil = 0; clearMarks(vic, \"disco\");", js)
+        self.assertIn("V.danceUntil = 0;", js)
+        # 7. personal drop roster in both languages, never a disaster kind
+        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
+                         "all three personal rosters end with Wave F")
+        self.assertIn("\"disco\",", rs)
+        self.assertIn("\"bighead\", \"disco\",", rs, "TOTEM_KINDS carries it next to Big Head")
+        self.assertIn("pub const TOTEM_KINDS: [&str; 55]", rs, "the roster grew with Wave F")
+        kinds_blk = rs.split("TOTEM_KINDS")[1].split("];")[0]
+        self.assertIn('"disco"', kinds_blk, "disco is one of TOTEM_KINDS")
+        # 8. help text + status string present
+        self.assertIn('disco: "For 8s everyone but you breaks into a disco dance', js)
+        self.assertIn('return "Disco: everyone but you dances for "', js)
+        # 9. a real dance pose on the 3D bones, and it survives idle/walk
+        self.assertIn("var bones = {armL: null, armR: null, legL: null, legR: null, torso: null, root: null};", js)
+        self.assertIn('n.name === "arm-left"', js)
+        self.assertIn('n.name === "arm-right"', js)
+        self.assertIn('n.name === "leg-left"', js)
+        self.assertIn('n.name === "leg-right"', js)
+        self.assertIn("bones: bones,", js)
+        # arms pump up and down alternately (overhead raise driven by opposite phases)
+        self.assertIn("m.bones.armL.rotation.x = -0.35 - Math.max(0, sw) * 2.35;", js)
+        self.assertIn("m.bones.armR.rotation.x = -0.35 - Math.max(0, sw2) * 2.35;", js)
+        self.assertIn("m.headBone.rotation.z = quiet ? 0.10 : Math.sin(dancePh * 1.35) * 0.28;", js,
+                      "the head wobbles too")
+        self.assertIn("if(m.gun) m.gun.forEach(function(gn){ if(gn) gn.visible = false; });", js,
+                      "the gun hand is busy dancing")
+        # the pose is written ONLY while dancing — the mixer keeps idle/walk otherwise
+        self.assertIn("} else if(m.headBone && m.danceHead){", js,
+                      "on exit only the head wobble is cleared, never every bone")
+        self.assertNotIn("m.bones.armL.rotation.z = 0; m.bones.armR.rotation.z = 0;", js,
+                         "zeroing every bone each frame was what made everyone look like they dance")
+        # the disco ball hangs over a dancer's head
+        self.assertIn("m.discoBall", js, "addPlayer must build a disco ball")
+        self.assertIn("m.discoBall.visible = dancing && !P.dead;", js)
+        # 10. the disco mark is its own kind (a charm drop must not clear it)
+        self.assertIn('clearMarks(P, "disco")', js)
+        self.assertIn('clearMarks(P, "charm")', js, "charm and disco marks clear independently")
+        self.assertIn("tag.__kind = mk;", js)
+
+    def test_the_six_joke_world_totems_are_wired_on_both_sides(self):
+        """User ask: six more funny totems — Banana Panic (10s, peels you slip on),
+        Floor Is Lava (8s, patches that launch you), Goose Attack (10s, one angry
+        goose), Reverse Controls (8s, WASD backwards), Black Hole (6s, sucks the
+        arena in) and Random Weapon Roulette (10s, your gun re-rolls every 2s).
+        Geometry constants are STRIKE-SHARED twins; windows live in TOTEMS and
+        strike.rs; the personal roster ends with all six; flags ride every living
+        row for the arena-wide ones. Numbers live in backend/src/strike/tests.rs;
+        this locks the twins."""
+        js = read(STRIKE_JS)
+        src = block()
+        rs = read(STRIKE_RS)
+        # 1. the geometry is one frozen set of numbers on both sides (JS packs the
+        # names onto a few var lines, so lock the `NAME = value` pair, not `var NAME`)
+        for name, val in (
+            ("BANANA_N", "10"), ("BANANA_R", "14.0"), ("BANANA_SLIP", "1.1"),
+            ("BANANA_SLIDE", "9.0"), ("BANANA_SPIN", "2.2"),
+            ("LAVA_ZONES", "5"), ("LAVA_R", "3.2"), ("LAVA_HOLD", "1.4"),
+            ("LAVA_DMG", "12"), ("LAVA_LAUNCH", "8.0"),
+            ("GOOSE_SPEED", "11.0"), ("GOOSE_HIT_R", "1.3"),
+            ("GOOSE_DMG", "18"), ("GOOSE_KNOCK", "6.0"),
+            ("HOLE_R", "2.2"), ("HOLE_PULL", "14.0"), ("HOLE_REACH", "56.0"),
+            ("ROULETTE_GAP", "2.0"),
+        ):
+            self.assertIn("%s = %s" % (name, val), src, name)
+            self.assertIn("pub const %s: %s = %s;" % (
+                name,
+                "usize" if name in ("BANANA_N", "LAVA_ZONES") else
+                "i64" if name in ("LAVA_DMG", "GOOSE_DMG") else "f64",
+                val), rs, name)
+        # 2. the windows
+        for kind, dur in (("banana", 10), ("lava", 8), ("goose", 10),
+                          ("reverse", 8), ("blackhole", 6), ("roulette", 10)):
+            self.assertIn("dur: %d," % dur, js, "TOTEMS.%s.dur" % kind)
+        for name, val in (("BANANA", "10.0"), ("LAVA", "8.0"), ("GOOSE", "10.0"),
+                          ("REVERSE", "8.0"), ("BLACKHOLE", "6.0"), ("ROULETTE", "10.0")):
+            self.assertIn("pub const %s: f64 = %s;" % (name, val), rs, name)
+        # 3. TOTEM_KINDS grew by six, in roster order, and the JS rosters match
+        self.assertIn("pub const TOTEM_KINDS: [&str; 55]", rs)
+        self.assertIn("\"banana\", \"lava\", \"goose\", \"reverse\", \"blackhole\", \"roulette\",", rs)
+        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
+                         "all three JS drop rosters (totemSpawn / wardenLoot / nonDisTotems) end with Wave F")
+        # 4. every one of the six has a help line and a totemApply arm
+        for kind, word in (("banana", "Banana peels scatter"), ("lava", "random patches of the floor turn to lava"),
+                           ("goose", "An angry goose spawns"), ("reverse", "everyone's WASD is reversed"),
+                           ("blackhole", "A tiny black hole opens"), ("roulette", "every player's weapon randomly switches")):
+            self.assertIn(word, js, "TOTEM_HELP." + kind)
+            self.assertIn('kind === "%s"' % kind, js, "totemApply arm for " + kind)
+        # 5. the two arena-wide windows ride FLAG_REVERSE / FLAG_ROULETTE on every row
+        self.assertIn("FLAG_REVERSE = 536870912;", js)
+        self.assertIn("pub const FLAG_REVERSE: i64 = 536_870_912;", rs)
+        self.assertIn("FLAG_ROULETTE = 1073741824;", js)
+        self.assertIn("pub const FLAG_ROULETTE: i64 = 1_073_741_824;", rs)
+        self.assertIn("if(has(FLAG_REVERSE)) V.reverseUntil = Math.max(V.reverseUntil||0, t + 0.45);", js)
+        self.assertIn("if self.reverse_until > t { FLAG_REVERSE } else { 0 }", rs)
+        self.assertIn("if self.roulette_until > t { FLAG_ROULETTE } else { 0 };", rs)
+        # 6. Reverse Controls flips the wish on both sides — player AND bot
+        self.assertIn("if(V.reverseUntil && t < V.reverseUntil){ ax = -ax; ay = -ay; }", js)
+        self.assertIn("if(V.reverseUntil && t < V.reverseUntil){ ai.wx = -ai.wx; ai.wz = -ai.wz; }", js)
+        rs_flat = re.sub(r"\s+", " ", rs)
+        self.assertIn("if self.reverse_until > t { wx = -wx; wz = -wz; }", rs_flat)
+        # 7. the four world objects ride snapshot keys and get meshes
+        for key, fn in (("bn", "addBanana"), ("lz", "addLavaZone"), ("gs", "addGoose"), ("bh", "addBlackHole")):
+            self.assertIn('m.%s' % key, js, "snapshot key %s" % key)
+            self.assertIn("R.%s" % fn, js, "mesh builder %s" % fn)
+        self.assertIn('self.bananas', rs)
+        self.assertIn('self.lava_zones', rs)
+        # goose / black hole are LISTS now — a second take stacks, it never replaces
+        self.assertIn('pub geese: Vec<Goose>', rs)
+        self.assertIn('pub blackholes: Vec<BlackHole>', rs)
+        self.assertIn('self.geese.push(', rs)
+        self.assertIn('self.blackholes.push(', rs)
+        self.assertIn('R.moveGeese', js)
+        self.assertIn('R.moveBlackHoles', js)
+        # 8. the slip holds and spins — it is not a one-tick impulse the wish eats
+        self.assertIn("B.slipVx = (svx/sln) * FS.BANANA_SLIDE;", js)
+        self.assertIn("if(slipMe){ V.me.vx = V.me.slipVx; V.me.vz = V.me.slipVz; }   // the slide holds", js)
+        self.assertIn("if(slipMe) V.yaw += FS.BANANA_SPIN * dt;   // …and you spin", js)
+        self.assertIn("p.slip_vx = sx;", rs)
+        self.assertIn("b.body.vx = svx;", rs)
+        self.assertIn("aim_y = (aim_y + BANANA_SPIN.to_degrees() * dt).rem_euclid(360.0);", rs)
+        # 9. a bot's physics body owns its motion — knock/pull write the body too
+        self.assertIn("if let Some(b) = p.bot.as_mut() {", rs)
+        self.assertIn("b.body.vx = dx / ln * GOOSE_KNOCK;", rs)
+        self.assertIn("b.body.x += px;", rs)
+        # 10. env kills, not a shooter's kill: lava and the goose name the disaster
+        self.assertIn('self.env_kill(j, "lava", t);', rs)
+        self.assertIn('self.env_kill(j, "goose", t);', rs)
+        # 11. the hole's pull covers the ARENA (HOLE_REACH), never a bubble of
+        # HOLE_R * k — the first cut was `HOLE_R * 8` = 17.6 m on an 84 x 60 m map,
+        # which is why "black hole doesn't seem to be working"
+        self.assertIn("if(hlen > FS.HOLE_REACH) return;", js)
+        self.assertIn("if ln > HOLE_REACH {", rs)
+        self.assertNotIn("HOLE_R * 8", js)
+        self.assertNotIn("HOLE_R * 8.0", rs)
+        self.assertIn("pub const HOLE_REACH: f64 = 56.0;", rs)
 
     def test_lightning_is_zigzag_and_near_strikes_hit_harder(self):
         """User ask: lightning must zig-zag (not a straight line), and the blast must
@@ -690,8 +1138,8 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("function boltPts(", js, "the bolt path must be a hashed zig-zag")
         self.assertIn("function boltBranch(", js, "the bolt needs a side fork")
         self.assertIn("boltPts(seedB, 7, skyX, 22, skyZ, mx, 0.2, mz, 9, 1.8)", js)
-        self.assertIn("fxBoltHalo", js, "the bolt has a bright core + halo")
-        self.assertIn("fxBoltBranch", js)
+        self.assertIn("F.boltHalo", js, "the bolt has a bright core + halo")
+        self.assertIn("F.boltBranch", js)
         # comments may name Math.random() as the thing to avoid; only flag real calls
         js_code = re.sub(r"/\*[\s\S]*?\*/", "", js)
         js_code = re.sub(r"//.*?$", "", js_code, flags=re.M)
@@ -729,7 +1177,7 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("disAimScatter(t)", js)
         self.assertIn("fn disaster_scatter(&self, t: f64) -> f64", rs)
         self.assertIn("fn bot_aim_mult(&self, t: f64, blind: bool) -> f64", rs)
-        self.assertIn('aimX = (V.disaster === "emp" && disLive(t)) ? 3', js)
+        self.assertIn('aimX = disKindLive(t, "emp") ? 3', js)
         self.assertIn('"hurricane" => 2.0,', rs)
         # the white-out veil is mounted and toggled
         self.assertIn("vg-fps-blind", js)
@@ -751,24 +1199,41 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("function disZonesNear(", js)
         self.assertIn("fn dis_spot(", rs)
         self.assertIn("fn dis_zones_near(", rs)
-        # frozen at start — never re-rolled mid-hold
-        self.assertIn("V.disasterSeed", js)
-        self.assertIn("V.disasterZones", js)
-        self.assertIn("V.disasterPit", js)
+        # frozen at start — never re-rolled mid-hold (each entry of V.disasters)
+        self.assertIn("D.seed", js)
+        self.assertIn("D.zones", js)
+        self.assertIn("D.pit", js)
         self.assertIn("pub seed: u32", rs)
         self.assertIn("pub zones: Vec<(f64, f64)>", rs)
         self.assertIn("pub pit: (f64, f64)", rs)
         # impact marks aim at live bodies so a shower can connect
-        self.assertIn("ptsD.length && (V.disasterMarkK % 3) === 1", js)
+        self.assertIn("ptsD.length && (D.markK % 3) === 1", js)
         self.assertIn("d.mark_k % 3 == 1", rs)
         # MP snap ships the shared geometry + mark damage
-        self.assertIn("d.seed, d.zones.iter()", rs)
-        self.assertIn("w.dmg, w.quake as i64", rs)
-        self.assertIn("V.disasterSeed = (+m.di[5] || 0) >>> 0", js)
+        self.assertIn("d.zones.iter().map(|z| json!([cm(z.0), cm(z.1)])", rs)
+        self.assertIn("w.quake as i64,", rs)
+        self.assertIn("w.dis", rs)
+        self.assertIn("D.seed", js)
         self.assertIn("dmg: (r[6]|0) || 0", js)
         # hurricane chip on both sides
         self.assertIn("DD_WIND_DMG", js)
         self.assertIn("DD_WIND_DMG", rs)
+        # D.pit is ALWAYS [x, z] — the judge and the FX both index it that way.
+        # (disSpot returns [x, 0, z]; disStart drops the 0. A 3-tuple made the sinkhole
+        # damage zone sit at (x, 0) while the mesh sat at (x, z) — the user saw a pit
+        # and took no damage from it.)
+        self.assertIn("D.pit = [pitS[0], pitS[2]]", js)
+        self.assertIn("return [spS[0], spS[2]];", js)
+        self.assertIn("pub pit: (f64, f64)", rs)
+        # sinkhole damage reads that same point
+        self.assertIn("let (zx, zz) = d.pit;", rs)
+        self.assertIn("DD_SINK_DMG", js)
+        self.assertIn("DD_SINK_DMG", rs)
+        # earthquake damage reads the mark, and the mark's slow is applied
+        self.assertIn("DD_QUAKE_DMG", js)
+        self.assertIn("DD_QUAKE_DMG", rs)
+        self.assertIn("DD_QUAKE_SLOW", js)
+        self.assertIn("DD_QUAKE_SLOW", rs)
 
     def test_r3_disaster_is_defined_not_just_called(self):
         """Wave F: `if(R3 && R3.disaster) R3.disaster(...)` is called from four sites.

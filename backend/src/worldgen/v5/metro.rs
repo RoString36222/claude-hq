@@ -216,8 +216,8 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
         stations.push(Station { id: stations.len(), c: q, heading: 0.0, lines: Vec::new(), rail_y: Vec::new(), entrances: Vec::new(), hall_y: 0 });
         stations.len() - 1
     };
-    // what a line passes under (the water's level, the airport's box, the rail's tunnels): their boxes' bounds and bottoms
-    let under: Vec<(Vec<P>, (i64, i64, i64, i64), i64, i64)> = space.solids.iter().filter(|o| matches!(o.kind, "water" | "airport" | "rail")).map(|o| {
+    // what a line passes under (the water's level, the airport's box, the rail's and the Island Link's tunnels): their boxes' bounds and bottoms
+    let under: Vec<(Vec<P>, (i64, i64, i64, i64), i64, i64)> = space.solids.iter().filter(|o| matches!(o.kind, "water" | "airport" | "rail" | "link")).map(|o| {
         let (xs, zs) = (o.poly.iter().map(|q| q.0), o.poly.iter().map(|q| q.1));
         (o.poly.clone(), (xs.clone().min().unwrap_or(0), zs.clone().min().unwrap_or(0), xs.max().unwrap_or(0), zs.max().unwrap_or(0)), o.y0, o.y1)
     }).collect();
@@ -282,7 +282,9 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
         // grades within GRADE: each pass only lowers, until nothing moves
         // (and under the water, the airport and the rail, and a level under every line laid before it where they cross)
         let reach = 2 * TUNNEL_HW_CM + 100;
-        let cap: Vec<f64> = at.iter().map(|a| {
+        // (the caps are taken again each pass from the line's level then: a deep rail box the line first passed over
+        // can come to meet it once a grade has lowered it, and the line goes under that box instead)
+        let caps = |at: &[(Pose, f64, Option<usize>)]| -> Vec<f64> { at.iter().map(|a| {
             let q = (a.0 .0 as i64, a.0 .1 as i64);
             let mut c = land.height(q) - TUNNEL_UP_CM - COVER_CM;
             for l in &lines {
@@ -305,10 +307,11 @@ pub fn plan(land: &Land, lu: &LandUse, ap: &Airport, space: &mut Space) -> Metro
                 }
             }
             c as f64
-        }).collect();
+        }).collect() };
         let step: Vec<f64> = (0..at.len()).map(|i| if i == 0 { 0.0 } else { (at[i].0 .0 - at[i - 1].0 .0).hypot(at[i].0 .1 - at[i - 1].0 .1) }).collect();
         for _ in 0..16 {
             let before: f64 = at.iter().map(|a| a.1).sum();
+            let cap = caps(&at);
             for (a, &c) in at.iter_mut().zip(&cap) {
                 a.1 = a.1.min(c);
             }

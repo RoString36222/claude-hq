@@ -226,7 +226,7 @@ pub fn generate(seed: u64, p: &Profile, base: &Terrain, river: Option<&River>, w
                 facing: if cut.front.1 >= 0 { Facing::North } else { Facing::South },
                 door: [cut.door.0, base.height_at(cut.door.0, cut.door.1), cut.door.1], floors,
                 rank: None, tier: None, poly: Some(cut.poly.iter().map(|q| [q.0, q.1]).collect()), front: Some([cut.front.0, cut.front.1]),
-                grow: None, min_tier: None,
+                grow: None, min_tier: None, gates: None, annex: None,
             });
         }
     }

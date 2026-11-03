@@ -25,7 +25,9 @@
  *                             the same local time; closed -> {edge id: event kind} (v4: a closed segment's capacity is 0)
  *   signals(W), signalAt(sig, ms, heading), walkAt(sig, ms, heading)  [3.22] traffic lights at the real junctions, a
  *                             60 s two-phase cycle each with a rough green wave along the main roads (see there)
- *   parked(W)                 [3.22] cars parked along the kerbs of the local and shopping streets
+ *   parked(W)                 [3.22] cars parked along the local and shopping streets: [3.37] in a parking lane at the kerb
+ *                             where the street has room for one beside two running lanes, else in bays in the verge
+ *   bays(W)                   [3.37] those bays' paving (drawn by traffic.js street())
  * Units: metres (W stores cm), yaw 0 faces +z, the local clock in ms (npcsim.localMs), hours 0..24.
  */
 (function(){
@@ -627,25 +629,48 @@ function walkAt(sig, ms, heading){
 }
 
 /* ---------- [3.22] parked cars ---------- */
-// parked(W) -> [{x, y, z, yaw, type: "car" | "van", paint (0..1), edge, side}]: cars along the kerbs of local and
-// shopping streets (not shared streets, slip roads or anything with a bus or tram on it), facing the way the traffic
-// on their side goes, a bay every PARK_STEP m, clear of the junctions (and their zebras), the stops, the doors and
-// driveways of the lots behind and the hq lots, each bay full by a hash and the place (downtown most). Every car is
-// wholly on its own street's carriageway. Drawn and made solid by traffic.js street(); hidden while its street is
-// closed (cityLife.closed: the market's stalls stand there).
+// parked(W) -> [{x, y, z, yaw, type: "car" | "van", paint (0..1), edge, side, bay}]: cars parked along local and shopping
+// streets (not shared streets, slip roads or anything with a bus or tram on it), facing the way the traffic on their side
+// goes, a place every PARK_STEP m, clear of the junctions (and their zebras), the stops, the doors and driveways of the
+// lots behind and the hq lots, each place full by a hash and the place (downtown most). Drawn and made solid by traffic.js
+// street(); hidden while its street is closed (cityLife.closed: the market's stalls stand there).
+// [3.37] Never in a running lane. A car parks at the kerb only in a parking lane: PARK_W wide, where the carriageway keeps
+// two running lanes RUN_W wide beside it (one each way) and every lane traffic.js drives there stays clear of it. Where a
+// street has no room for that (City Gen v4's and v5's 6.5 m locals) the cars stand in bays off the carriageway instead
+// (bay: true): a paved lay-by BAY_W wide in the verge between the pavement and the lots, in runs of BAY_RUN places, only
+// where all of it is open ground (no lot, site, building, tree, hole, water, road or pavement under it or within
+// BAY_CLEAR m of a tree), level, and clear of every door. bays(W) -> [{x, y, z, yaw, edge, side, len, wid}] the bays'
+// paving (empty ones too).
+var PARK_GATE = 12;          // [townships] no parked car within this (m) of a township gateway's middle
 var PARK_STEP = 6.2, PARK_IN = 1.05, PARK_FILL = {centre: 0.72, home: 0.6, work: 0.5, civic: 0.45, industry: 0.35, green: 0.2};
+var RUN_W = 2.75, PARK_W = 2.1, BAY_W = 2.5, BAY_KERB = 0.3, BAY_RUN = 3, BAY_CLEAR = 1.8, BAY_LEVEL = 0.3, BAY_DOOR = 3;
+var BAY_P = {centre: 0.35, home: 0.75, work: 0.55, civic: 0.4, industry: 0.45, green: 0.25}, BAY_FULL = 0.8;
 var PARK_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
-function parked(W){
+function parkPlan(W){
   var out = PARK_CACHE && W && typeof W === "object" ? PARK_CACHE.get(W) : null;
   if(out) return out;
-  out = [];
+  out = {cars: [], bays: []};
   if(!W || !W.edges) return out;
-  var Q = WQ(), F = facts(W), pair = {}, transit = {}, inc = {};
+  var Q = WQ(), F = facts(W), pair = {}, transit = {}, inc = {}, TR = HQV.traffic, laneOf = null;
   W.edges.forEach(function(e){ pair[Math.min(e.a, e.b) + ":" + Math.max(e.a, e.b)] = e.id; (inc[e.a] = inc[e.a] || []).push(e); (inc[e.b] = inc[e.b] || []).push(e); });
   ((W.transit && W.transit.lines) || []).forEach(function(l){
     var P = l.path || [];
     for(var i = 1; i < P.length; i++){ var id = pair[Math.min(P[i - 1], P[i]) + ":" + Math.max(P[i - 1], P[i])]; if(id != null) transit[id] = true; }
   });
+  // the lanes traffic.js drives (m out from the centre line, the body's half width added): only asked for when a street
+  // is wide enough for a parking lane at all
+  function driven(e){
+    if(laneOf === null){
+      laneOf = {};
+      try { (TR && TR.lanes ? TR.lanes(W, 5) : []).forEach(function(l){ laneOf[l.id] = l; }); } catch(err){ laneOf = {}; }
+    }
+    var l = laneOf[e.id], o = 0;
+    if(!l) return 0;
+    if(l.cars) o = Math.max(o, (l.carOff || 0) + (TR.SPEC.car.wid/2) + 0.15);
+    if(l.bus && (l.bus[0] || l.bus[1])) o = Math.max(o, (l.busOff || 0) + TR.SPEC.bus.wid/2 + 0.15);
+    if(l.tram) o = Math.max(o, (l.tramOff || 0) + TR.SPEC.tram.wid/2 + 0.15);
+    return o;
+  }
   // how far from a node its junction (patch and zebra) reaches along e
   var SG = signals(W);
   function clearOf(node, e){
@@ -654,11 +679,56 @@ function parked(W){
     m = (inc[node] || []).length >= 3 ? m + 7 : (inc[node] || []).length === 2 ? 3 : 2;
     return SG[node] ? Math.max(m, SG[node].r + 3) : m;                 // (a light: clear of its whole junction)
   }
+  // doors (lots' and sites') and trees, in 16 m cells
+  var doors = {}, trees = {}, lights = {}, sgR = 0;
+  function cellKey(x, z){ return Math.floor(x/16) + ":" + Math.floor(z/16); }
+  function addTo(G, x, z, v){ var k = cellKey(x, z); (G[k] = G[k] || []).push(v); }
+  function near(G, x, z, r, fn){
+    for(var i = Math.floor((x - r)/16); i <= Math.floor((x + r)/16); i++) for(var j = Math.floor((z - r)/16); j <= Math.floor((z + r)/16); j++){
+      var L = G[i + ":" + j]; if(!L) continue;
+      for(var k = 0; k < L.length; k++) if(fn(L[k])) return true;
+    }
+    return false;
+  }
+  (W.lots || []).forEach(function(l){ if(l && l.door) addTo(doors, cm(l.door[0]), cm(l.door[2]), {x: cm(l.door[0]), z: cm(l.door[2])}); });
+  (W.sites || []).forEach(function(st){ if(st) addTo(doors, cm(st.x), cm(st.z), {x: cm(st.x), z: cm(st.z)}); });
+  (Q.trees ? Q.trees(W) : []).forEach(function(t){ addTo(trees, t.x, t.z, t); });
+  Object.keys(SG).forEach(function(id){ var L = SG[id]; addTo(lights, L.x, L.z, L); sgR = Math.max(sgR, L.r); });
+  var OPEN = {grass: 1, park: 1, forest: 1};
+  var PORT = HQV.hqPortals && HQV.hqPortals.blocked ? HQV.hqPortals.blocked : null;
+  // a bay's paving at (x, z) along (dx, dz), lx/lz across: all of it open, level ground clear of trees, doors and holes
+  function bayOk(x, z, p){
+    var hl = PARK_STEP/2, hw = BAY_W/2, y0 = Q.groundAt(W, x, z), ok = true;
+    if(y0 == null || !isFinite(y0)) return null;
+    [[-1, -1], [-1, 1], [1, -1], [1, 1], [0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]].forEach(function(c){
+      if(!ok) return;
+      var qx = x + p.dx*c[0]*hl + p.lx*c[1]*hw, qz = z + p.dz*c[0]*hl + p.lz*c[1]*hw;
+      if(!OPEN[Q.surfaceAt(W, qx, qz)] || Q.blockedAt(W, qx, qz) || (Q.holeAt && Q.holeAt(W, qx, qz)) || (PORT && PORT(W, qx, qz))) ok = false;
+      else { var gy = Q.groundAt(W, qx, qz); if(gy == null || Math.abs(gy - y0) > BAY_LEVEL) ok = false; }
+      // (and a step further out: a hole's rim, a tunnel mouth's fence)
+      var ox = x + p.dx*c[0]*(hl + 1) + p.lx*c[1]*(hw + 1), oz = z + p.dz*c[0]*(hl + 1) + p.lz*c[1]*(hw + 1);
+      if(ok && ((Q.holeAt && Q.holeAt(W, ox, oz)) || (PORT && PORT(W, ox, oz)))) ok = false;
+    });
+    if(!ok) return null;
+    if(near(trees, x, z, hl + BAY_CLEAR + 1, function(t){
+      var ax = t.x - x, az = t.z - z, u = Math.abs(ax*p.dx + az*p.dz) - hl, v = Math.abs(ax*p.lx + az*p.lz) - hw;
+      return Math.hypot(Math.max(0, u), Math.max(0, v)) < BAY_CLEAR;
+    })) return null;
+    if(near(doors, x, z, hl + BAY_DOOR + 6, function(d){
+      var ax = d.x - x, az = d.z - z, u = Math.abs(ax*p.dx + az*p.dz) - hl, v = Math.abs(ax*p.lx + az*p.lz) - hw;
+      return u < BAY_DOOR && v < 8;                                    // (the walk from the door out to the pavement)
+    })) return null;
+    return y0;
+  }
   W.edges.forEach(function(e){
     var c = normCls(e.cls), k = road(c).kind;
     if((k !== "res" && k !== "shop") || c === "shared" || c === "lane" || transit[e.id]) return;
-    var half = (cm(e.width) - 2*cm(e.walk))/2;
-    if(half < 2.9) return;
+    var half = (cm(e.width) - 2*cm(e.walk))/2, outer = cm(e.width)/2;
+    if(half < 1.5) return;
+    // a parking lane each side, one (the a->b left), or none: two running lanes always left beside them, clear of every
+    // lane the traffic drives there
+    var sides = 2*half - 2*PARK_W >= 2*RUN_W ? 2 : 2*half - PARK_W >= 2*RUN_W ? 1 : 0;
+    if(sides && driven(e) > half - PARK_W) sides = 0;
     var P = edgePts(e);
     if(P.length < 2) return;
     var y0 = P[0].y, L = 0;
@@ -667,35 +737,52 @@ function parked(W){
     if(L - from - to < PARK_STEP) return;
     walkAlong(P, PARK_STEP, from, to, function(p, s){
       [1, -1].forEach(function(sg){
-        var o = sg*(half - PARK_IN), x = p.x + p.lx*o, z = p.z + p.lz*o;
+        var kerb = sides === 2 || (sides === 1 && sg > 0);
+        // the place: in the parking lane, else in a bay in the verge
+        var o = kerb ? sg*(half - PARK_IN) : sg*(outer + BAY_KERB + BAY_W/2), x = p.x + p.lx*o, z = p.z + p.lz*o;
         var h = hash01(W.hash + ":park:" + e.id + ":" + Math.round(s*10) + ":" + sg);
-        var bx = p.x + p.lx*sg*(cm(e.width)/2 + 3), bz = p.z + p.lz*sg*(cm(e.width)/2 + 3), lot = Q.lotAt(W, bx, bz);
+        var bx = p.x + p.lx*sg*(outer + (kerb ? 3 : BAY_KERB + BAY_W + 2)), bz = p.z + p.lz*sg*(outer + (kerb ? 3 : BAY_KERB + BAY_W + 2)), lot = Q.lotAt(W, bx, bz);
         if(lot && (lot.kind === "hq" || lot.kind === "garage")) return;
+        if(Q.gateNear && Q.gateNear(W, x, z, PARK_GATE)) return;            // [townships] a gateway's way in and out kept clear
         var u = lot ? landUse(W)[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name);
-        if(h >= (PARK_FILL[g] != null ? PARK_FILL[g] : 0.4)) return;
         if(F.stopDist(x, z) < 14) return;
-        for(var sid in SG) if(Math.hypot(SG[sid].x - x, SG[sid].z - z) < SG[sid].r + 4) return;     // (another street's light)
-        // a door or a loading bay: its kerb kept clear
-        if(lot && lot.door && Math.hypot(cm(lot.door[0]) - x, cm(lot.door[2]) - z) < cm(e.width)/2 + 5) return;
-        // wholly on this street's carriageway: both ends and the middle
-        for(var q = -1; q <= 1; q++){
-          var qx = x + p.dx*q*2.4, qz = z + p.dz*q*2.4, n = Q.nearestRoad(W, qx, qz, 12);
-          if(!n || n.edge !== e.id || Q.surfaceAt(W, qx, qz) !== "road") return;
-        }
-        // (sg > 0 is the left of a->b: [3.22.3] with traffic on the left, its cars face a->b)
+        if(near(lights, x, z, sgR + 4, function(L){ return Math.hypot(L.x - x, L.z - z) < L.r + 4; })) return;     // (another street's light)
         var yaw = sg*driveSide() < 0 ? Math.atan2(p.dx, p.dz) : Math.atan2(-p.dx, -p.dz), t2 = hash01(W.hash + ":parkt:" + e.id + ":" + Math.round(s*10) + ":" + sg);
-        var ny = Q.nearestRoad(W, x, z, 12);
-        out.push({x: x, y: ny ? ny.y : y0, z: z, yaw: yaw, type: t2 < (g === "industry" ? 0.3 : 0.1) ? "van" : "car", paint: t2, edge: e.id, side: sg});
+        var type = t2 < (g === "industry" ? 0.3 : 0.1) ? "van" : "car";
+        if(kerb){
+          if(h >= (PARK_FILL[g] != null ? PARK_FILL[g] : 0.4)) return;
+          // a door or a loading bay: its kerb kept clear
+          if(lot && lot.door && Math.hypot(cm(lot.door[0]) - x, cm(lot.door[2]) - z) < cm(e.width)/2 + 5) return;
+          // wholly on this street's carriageway: both ends and the middle
+          for(var q = -1; q <= 1; q++){
+            var qx = x + p.dx*q*2.4, qz = z + p.dz*q*2.4, n = Q.nearestRoad(W, qx, qz, 12);
+            if(!n || n.edge !== e.id || Q.surfaceAt(W, qx, qz) !== "road") return;
+          }
+          var ny = Q.nearestRoad(W, x, z, 12);
+          out.cars.push({x: x, y: ny ? ny.y : y0, z: z, yaw: yaw, type: type, paint: t2, edge: e.id, side: sg, bay: false});
+          return;
+        }
+        // (bays come in runs: one hash a run)
+        var run = Math.floor(s/(PARK_STEP*BAY_RUN));
+        if(hash01(W.hash + ":bay:" + e.id + ":" + run + ":" + sg) >= (BAY_P[g] != null ? BAY_P[g] : 0.4)) return;
+        var gy = bayOk(x, z, p);
+        if(gy == null) return;
+        out.bays.push({x: x, y: gy, z: z, yaw: Math.atan2(p.dx, p.dz), edge: e.id, side: sg, len: PARK_STEP - 0.2, wid: BAY_W});
+        if(h >= BAY_FULL) return;
+        out.cars.push({x: x, y: gy + 0.05, z: z, yaw: yaw, type: type, paint: t2, edge: e.id, side: sg, bay: true});
       });
     });
   });
   if(PARK_CACHE) PARK_CACHE.set(W, out);
   return out;
 }
+function parked(W){ return parkPlan(W).cars; }
+function bays(W){ return parkPlan(W).bays; }
 
 HQV.cityLife = {ROAD: ROAD, normCls: normCls, road: road, groupOfName: groupOfName, facts: facts,
   USES: USES, GROUNDS: GROUNDS, LIT: LIT, landUse: landUse, litShare: litShare, litCode: litCode, litAt: litAt, LIT_GLSL: LIT_GLSL,
   furniture: furniture, hotspots: hotspots, crowd: crowd, hourOf: hourOf, weekday: weekday,
   demand: demand, mix: mix, pick: pick, events: events, closed: closed,
-  SIG: SIG, signals: signals, signalAt: signalAt, walkAt: walkAt, sigAxis: sigAxis, parked: parked};
+  SIG: SIG, signals: signals, signalAt: signalAt, walkAt: walkAt, sigAxis: sigAxis, parked: parked, bays: bays,
+  PARK: {RUN_W: RUN_W, PARK_W: PARK_W, BAY_W: BAY_W, BAY_KERB: BAY_KERB, STEP: PARK_STEP}};
 })();

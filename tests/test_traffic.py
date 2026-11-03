@@ -484,7 +484,9 @@ Object.keys(worlds).forEach(function(name){
     // a trip and its pose, seats and door
     var l0 = lines[lines.length - 1], trip = S.trip(l0.id, l0.stops[0], l0.stops[Math.min(3, l0.stops.length - 1)], ms), bigJump = 0, outSeat = 0, checked = 0, doorFar = 0, prev = null;
     r.tripKeys = Object.keys(trip).sort();
-    r.trip = {order: trip.arrive <= trip.depart && trip.depart < trip.reach && trip.arrive >= ms - 60000, last: trip.stops[trip.stops.length - 1].id === trip.to,
+    // (the vehicle came in at most a minute ago, or ([3.37] more of them now on the lines that share lanes) still stands
+    // there boarding: held at its first stop while its lap is padded to the shared period)
+    r.trip = {order: trip.arrive <= trip.depart && trip.depart < trip.reach && (trip.arrive >= ms - 60000 || trip.depart > ms), last: trip.stops[trip.stops.length - 1].id === trip.to,
               stopsSorted: trip.stops.every(function(x, i){ return !i || trip.stops[i-1].at <= x.at; }), seats: trip.seats, standing: trip.standing, fare: "fare" in trip || "pay" in trip};
     var spec = T.SPEC[kind], vehById = function(t2){ return S.vehicles(t2).filter(function(v){ return v.id === trip.vehicle; })[0]; };
     for(var tm = trip.arrive; tm <= trip.reach; tm += 100){

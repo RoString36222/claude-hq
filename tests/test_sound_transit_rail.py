@@ -204,7 +204,7 @@ plat.live = accP; plat.leaks = leaks(now); plat.platY = p0.y0;
 out.platform = plat;
 // ---- 2: the walker at a gate line: one beep, at the gate ----
 const cst = Lay.byId['metro:1'];
-const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw); return {x: h.cx + s*cst.gu + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*cst.gu - s*(-4.4 + 0.55)}; })();   // [transit pass] the gate line sits at the station's gu
+const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw), gu = cst.gates.filter(q => q.u > 0)[0].u; return {x: h.cx + s*gu + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*gu - s*(-4.4 + 0.55)}; })();   // [transit pass] on the hall's + gate line
 avatar = {x: gate.x, z: gate.z, hy: cst.hallY};
 const gk = CALLS.length, gearE = {x: gate.x, y: cst.hallY + 1.6, z: gate.z}, gm = mk();
 check(gm, frame(T0 + 301e3, gearE, cst.hall.yaw), gearE, T0 + 301e3, {});
@@ -329,7 +329,7 @@ function ride(trip, cam){
   const k0 = CALLS.length, v0 = VO.length, door = trip.door(trip.arrive), me = {x: door.x, y: trip.pose(trip.arrive).y, z: door.z};
   const S = RD.session({trip, sfx: tsfx, me: () => me, calm: () => false, announce: () => {}});
   let far = 0;
-  [trip.arrive - 5000, trip.arrive, trip.arrive + 1500, trip.depart - 3000, trip.reach, trip.reach + 1300].forEach(ms => {
+  [trip.arrive - 5000, trip.arrive, trip.arrive + 1500, trip.depart - 3000, trip.reach, trip.reach + 8100].forEach(ms => {
     now = ms/1000;
     const c = S.camPose(ms, {yaw: 0, pitch: 0}, cam), p = trip.pose(ms), i = S.info(ms);
     if(c) E.listener({x: c.pos.x, y: c.pos.y, z: c.pos.z, yaw: Math.atan2(c.look.x - c.pos.x, c.look.z - c.pos.z)}, null, Infinity);

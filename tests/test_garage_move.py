@@ -346,7 +346,7 @@ class GarageModel(unittest.TestCase):
         c3 = read("games", "hqcity3d.js")
         self.assertIn("E.garage = garageOf(E.lot, p, h, B.wings, B.grand);", c3)
         self.assertIn("garageLocal(GP, lx, lz)", c3)
-        self.assertIn("h.garage || null]", c3)                                   # hqKey and build()'s signature
+        self.assertEqual(c3.count("h.garage || null"), 2)                        # hqKey and build()'s signature
         hq = read("games", "hq3d.js")
         for want in ("inst.garageView = function", "garageCam();", "if(d.garage)", "o.garageMove", 'KeyR: "rotate"', "hqs-placing"):
             self.assertIn(want, hq)

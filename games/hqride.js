@@ -38,6 +38,7 @@ var CHANGE_R = 220;            // m: a change may walk to another stop this clos
 var PER_END = 5;               // nearest stops per service tried at each end
 var MAX_OPTS = 3;
 var BOARD_S = 1.2, ALIGHT_S = 1.2;
+var STEP_V = 3.0, STEP_MAX = 8;  // [stations] m/s and s: the walk on and off takes at least BOARD_S / ALIGHT_S, longer walks are walked at STEP_V (never a jump)
 var AT_STOP = 12, LEFT_STOP = 40;   // m: at the stop / walked away from it
 // [3.25] a bus or tram stop's waiting area: its berths, and (City Gen v4's wider roads) a light's box it is moved out of
 var AT_STOP_ROAD = 25;
@@ -250,8 +251,11 @@ function seatCam(seatPose, vehiclePose, look, mode, calm, extra){
     pitch = -4*DEG + clamp(lp, -30*DEG, 30*DEG);
   } else {
     pos = v3(sx, sy + eye, sz);
-    yaw = num(seatPose.yaw, vyaw) + ly;
-    pitch = lp + num(vp.pitch, 0);
+    // [stations] extra.along (a metro's benches face across the car): look half way to the front, along the car, so its
+    // seats, poles and windows are what you see, not the tunnel wall through the window opposite
+    var sy0 = num(seatPose.yaw, vyaw);
+    yaw = (extra.along ? sy0 + wrap(vyaw - sy0)*0.6 : sy0) + ly;
+    pitch = lp + num(vp.pitch, 0) + (extra.along ? -6*DEG : 0);
   }
   var upv = v3(0, 1, 0);
   if(!still){
@@ -266,7 +270,7 @@ function seatCam(seatPose, vehiclePose, look, mode, calm, extra){
   }
   var cp = Math.cos(pitch);
   return {camera: true, pos: pos, look: v3(pos.x + Math.sin(yaw)*cp*10, pos.y + Math.sin(pitch)*10, pos.z + Math.cos(yaw)*cp*10),
-          up: upv, fov: FOV, mode: mode === "window" ? "window" : "seat"};
+          up: upv, fov: FOV, mode: mode === "window" ? "window" : "seat", near: 0.08};
 }
 
 /* ---------- the ride session ---------- */
@@ -315,6 +319,7 @@ function session(o){
   var say = o.announcer && typeof o.announcer.say === "function" ? function(t){ o.announcer.say(t, {chime: true}); } : announce;
   var S = {phase: "walk"}, t0 = 0, pick = null, lastUnder = null, handed = false, annK = -1, closing = false, arrivedSaid = !!o.hop;   // o.hop: you step onto a train already standing there
   var boardFrom = null, alightPath = null, endIdx, endAt, stopReq = false, ended = false, focused = false, lastMs = null, hereK = -1;
+  var boardMs = BOARD_S*1000, alightMs = ALIGHT_S*1000, doorAt = null;   // [stations] how long the walk on / off takes; the door you walk in at
   var stops = Array.isArray(trip.stops) ? trip.stops : [];
   var fromIdx = 0;
   for(var i = 0; i < stops.length; i++) if(stops[i] && stops[i].id === trip.from){ fromIdx = i; break; }
@@ -381,6 +386,28 @@ function session(o){
     if(!pick) return null;
     return call(trip, "seat", pick.seat, ms);
   }
+  function startBoard(ms, me, p, door){
+    var occ = null;
+    var C = HQV.hqCommute;
+    if(C && typeof C.occupied === "function") occ = C.occupied(trip.mode, trip.vehicle, String(trip.vehicle) + ":" + num(trip.depart, 0), trip.seats, trip.standing, num(trip.depart, 0), o.seed != null ? o.seed : "");
+    doorAt = door || null;
+    pick = chooseSeat(trip, occ, ms, door);
+    boardFrom = me ? {x: me.x, y: num(me.y, num(p.y, 0)), z: me.z} : {x: at.x, y: num(p.y, 0), z: at.z};
+    var dr = door || call(trip, "door", ms) || at, sp = seatPose(ms) || dr;
+    boardMs = clamp((d2(boardFrom, dr) + d2(dr, sp))/STEP_V, BOARD_S, STEP_MAX)*1000;
+    t0 = ms; S.phase = "board"; sfx("validator");
+    if(o.view && typeof o.view.focus === "function"){ try { o.view.focus(trip.vehicle); focused = true; } catch(e){} }
+  }
+  // [stations] walked up to an open door of this trip's train while waiting for it: in through that door
+  S.boardAt = function(door, ms, me){
+    if(ended || (S.phase !== "walk" && S.phase !== "wait")) return false;
+    ms = num(ms, lastMs != null ? lastMs : 0); me = me || meF();
+    if(ms < num(trip.arrive, 0) || ms > num(trip.depart, 0)) return false;
+    arrivedSaid = true;
+    startBoard(ms, me, poseAt(ms), door || null);
+    return true;
+  };
+  S.walkOn = !!o.walkOn;
   S.step = function(ms, me){
     ms = num(ms, 0); me = me || meF(); lastMs = ms;
     if(ended) return S.phase;
@@ -393,24 +420,17 @@ function session(o){
           var mins = Math.max(0, Math.round((num(trip.arrive, ms) - ms)/MIN));
           if(!o.hop) say(modeWord + " " + label + " to " + (trip.toName || trip.to) + (mins > 0 ? " comes in " + mins + " min." : " is due."));
         }
-      } else if(me && d2(me, at) > LEFT_STOP && !(waitAt && d2(me, waitAt) <= LEFT_STOP)){ say("You left the stop."); end("left"); return S.phase; }
+      } else if(!o.walkOn && me && d2(me, at) > LEFT_STOP && !(waitAt && d2(me, waitAt) <= LEFT_STOP)){ say("You left the stop."); end("left"); return S.phase; }
       if(S.phase === "wait" && ms >= num(trip.arrive, 0)){
         p = poseAt(ms);
-        if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open."); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime", mine(ms)); }
-        if(num(p.doors, 1) >= 0.5 || ms >= num(trip.arrive, 0) + 1500){
-          var occ = null;
-          var C = HQV.hqCommute;
-          if(C && typeof C.occupied === "function") occ = C.occupied(trip.mode, trip.vehicle, String(trip.vehicle) + ":" + num(trip.depart, 0), trip.seats, trip.standing, num(trip.depart, 0), o.seed != null ? o.seed : "");
-          pick = chooseSeat(trip, occ, ms, o.boardDoor || null);
-          boardFrom = me ? {x: me.x, y: num(me.y, num(p.y, 0)), z: me.z} : {x: at.x, y: num(p.y, 0), z: at.z};
-          t0 = ms; S.phase = "board"; sfx("validator");
-          if(o.view && typeof o.view.focus === "function"){ try { o.view.focus(trip.vehicle); focused = true; } catch(e){} }
-        }
+        if(!arrivedSaid){ arrivedSaid = true; say(modeWord + " " + label + " to " + (trip.toName || trip.to) + " arriving, doors open." + (o.walkOn ? " Walk in through any open door." : "")); sfx(trip.mode === "tram" ? "tram-bell" : "door-chime", mine(ms)); }
+        // [stations] o.walkOn: you board by walking up to a door (S.boardAt), never from wherever you stand
+        if(!o.walkOn && (num(p.doors, 1) >= 0.5 || ms >= num(trip.arrive, 0) + 1500)) startBoard(ms, me, p, o.boardDoor || null);
       }
       return S.phase;
     }
     if(S.phase === "board"){
-      if(ms - t0 >= BOARD_S*1000){
+      if(ms - t0 >= boardMs){
         S.phase = pick.standing ? "standing" : "seated";
         lastUnder = !!poseAt(ms).under;
         say((o.hop ? "On the " + label + " to " + (trip.toName || trip.to) + ". " : "") + (pick.standing ? "No seats free: you stand and hold the rail." : "You take a seat.")
@@ -441,13 +461,14 @@ function session(o){
         var right = lat < -0.2 ? -1.6 : 1.6;     // out of the door you use: a platform on the left (an island) is left of travel
         var kerb = {x: door.x + rx*right, y: num(p.y, 0), z: door.z + rz*right};
         alightPath = {a: {x: sp.x, y: num(p.y, 0), z: sp.z}, b: {x: door.x, y: num(p.y, 0), z: door.z}, c: kerb};
+        alightMs = clamp((d2(alightPath.a, alightPath.b) + d2(alightPath.b, kerb))/STEP_V, ALIGHT_S, STEP_MAX)*1000;
         t0 = ms; S.phase = "alight"; sfx("door-chime", mine(ms));
         var es = stops[endIdx] || {};
         say("This is " + (es.name || trip.toName || trip.to) + ". Doors open.");
       }
       return S.phase;
     }
-    if(S.phase === "alight" && ms - t0 >= ALIGHT_S*1000){ say("You're at " + ((stops[endIdx] || {}).name || trip.toName || trip.to) + "."); end("done"); }
+    if(S.phase === "alight" && ms - t0 >= alightMs){ say("You're at " + ((stops[endIdx] || {}).name || trip.toName || trip.to) + "."); end("done"); }
     return S.phase;
   };
   // the 1.2 s scripted walks: a -> b over the first 40 %, b -> c after
@@ -461,8 +482,8 @@ function session(o){
   S.carry = function(ms){
     ms = num(ms, 0);
     if(S.phase === "board" && pick){
-      var door = o.boardDoor || call(trip, "door", ms) || at, sp = seatPose(ms) || door, vp = poseAt(ms);
-      var w = walkAlong(boardFrom, {x: door.x, y: num(vp.y, 0), z: door.z}, {x: sp.x, y: num(vp.y, 0), z: sp.z}, (ms - t0)/(BOARD_S*1000));
+      var door = doorAt || o.boardDoor || call(trip, "door", ms) || at, sp = seatPose(ms) || door, vp = poseAt(ms);
+      var w = walkAlong(boardFrom, {x: door.x, y: num(vp.y, 0), z: door.z}, {x: sp.x, y: num(vp.y, 0), z: sp.z}, (ms - t0)/boardMs);
       return {x: w.x, y: w.y, z: w.z, yaw: w.yaw, anim: "walk"};
     }
     if(S.phase === "seated" || S.phase === "standing"){
@@ -472,7 +493,7 @@ function session(o){
       return r;
     }
     if(S.phase === "alight" && alightPath){
-      var a = walkAlong(alightPath.a, alightPath.b, alightPath.c, (ms - t0)/(ALIGHT_S*1000));
+      var a = walkAlong(alightPath.a, alightPath.b, alightPath.c, (ms - t0)/alightMs);
       return {x: a.x, y: a.y, z: a.z, yaw: a.yaw, anim: "walk"};
     }
     return null;
@@ -484,7 +505,7 @@ function session(o){
     var vp = poseAt(ms), prev = poseAt(ms - 400), v = {};
     for(var k in vp) v[k] = vp[k];
     v.accel = (num(vp.speed, 0) - num(prev.speed, 0))/0.4;
-    return seatCam(s, v, look, CAM_MODES.indexOf(mode) >= 0 ? mode : "seat", !!calm(), {standing: S.phase === "standing", t: ms, reduced: !!o.reduced});
+    return seatCam(s, v, look, CAM_MODES.indexOf(mode) >= 0 ? mode : "seat", !!calm(), {standing: S.phase === "standing", t: ms, reduced: !!o.reduced, along: trip.mode === "metro"});
   };
   S.requestStop = function(){
     if(S.phase !== "seated" && S.phase !== "standing") return false;
@@ -526,6 +547,12 @@ function session(o){
             atStop: (S.phase === "seated" || S.phase === "standing") && dwellIdx(ms) >= 0 ? (stops[dwellIdx(ms)].name || "") : null,   // doors open at a stop on the way
             arrive: num(trip.arrive, 0), depart: num(trip.depart, 0),         // when it reaches your stop and leaves it, and where you board
             door: {x: num(at.x, 0), z: num(at.z, 0)}};                         // (the tour waits there and skips ahead)
+  };
+  // [island trains] the City that carries the ride on (the far world, after the swap mid-sea) hands in its own view and end
+  S.rebind = function(p){
+    if(!p) return;
+    for(var k in p) if(Object.prototype.hasOwnProperty.call(p, k)) o[k] = p[k];
+    if(focused && o.view && typeof o.view.focus === "function"){ try { o.view.focus(trip.vehicle); } catch(e){} }
   };
   S.trip = trip;
   return S;

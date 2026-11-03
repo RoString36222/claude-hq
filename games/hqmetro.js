@@ -25,9 +25,16 @@
  *     walkable(x, y, z) -> {y, kind, station} | null (the highest floor at most STEP_UP over y; null on the track,
  *     in a wall, or out of every station), isUnder(x, y, z), entranceAt(x, z, r), rampAt(x, z), stationAt(x, y, z),
  *     exitTo(stationId, x?, z?) -> {x, y, z, yaw} (the street side of the nearest entrance).
- *     [transit pass] each station's gate lines at +-gu across the hall (past every entrance's foot), its 8 lanes and 4
- *     ticket machines; gateAt(x, y, z) -> {station, e, lane (-1: cabinet or glass), u, v} | null; paidAt(x, y, z)
- *     -> true beyond the gates (and on the stairs and platforms), false on the street side, null outside.
+ *     [transit pass] each station's gate lines across the hall (S.gates [{u, e}]: past every entrance's foot and every
+ *     entrance stair hanging below the ceiling, 3 m short of every stair head; S.paid per end the paid stretch), its 8
+ *     lanes, a bank of 4 ticket machines by each way in, and a short line across any stair head left on the street side
+ *     (S.heads); gateAt(x, y, z) -> {station, e, lane (-1: cabinet or glass), u, v} | null; paidAt(x, y, z) -> true
+ *     beyond the gates (and on the stairs and platforms), false on the street side, null outside.
+ *     [stations] the rooms below the street (S.rooms: the hall, passages, platform rooms, the stairs' closed tubes, the
+ *     entrance stairs): roomAt / camInside(x, y, z, m) (inside one, m clear of its walls), camHit(from, to) (how far a
+ *     camera may go: inside the rooms, never through a stair's walls, floor or ceiling), ceilAt(x, y, z); stepBlocked(ax,
+ *     az, bx, bz, y) (a stair is walked on and off at its ends only, never under its low end); the hall's floor is open
+ *     over each stair's well (overWell).
  *   sim.doorsOf(v) (a standing train's open doors), sim.runOf(v) ({key, last, lastName}), sim.platNo(stop, line, run)
  *   and sim.streetNear(x, z); station names: "Central" for the most-lined, else the nearest road ("Birch Street"), a
  *   landmark's word ("Airport") when one is beside it (stationNames(W) shares them with the City Line).
@@ -52,8 +59,12 @@ var STEP_UP = 0.75;       // m: walkable() finds floors up to this much above yo
 var HALL_HL = 20;         // m: a ticket hall's half length along the station
 var GATE_U = 10;          // m: the gate lines across the hall, either side of the middle
 var STAIR_U = 17;         // m: where the platform stairs leave the hall floor (along the station axis)
-var GATE_N = 8, GATE_BAND = 0.45, LANE_HW = 0.3;   // [transit pass] lanes a gate line, the barrier's half depth, a lane's half width
+var GATE_N = 8, GATE_BAND = 0.45, LANE_HW = 0.4;   // [transit pass] lanes a gate line, the barrier's half depth, a lane's half width ([stations] 0.4: easy to walk through)
 var STAIR_SLOPE = 0.6;    // rise per metre of the stairs (about 31 degrees)
+var HALL_H = 3.6, PASS_H = 3.0, PLAT_H = 4.5;   // [stations] ceiling heights over the hall, a passage and a platform's floor
+var TUBE_H = 3.2;         // m: a stair's closed tube, floor to ceiling, below the hall
+var WELL_L = TUBE_H/STAIR_SLOPE;   // m: the open well at a stair's head (where its tube's ceiling meets the hall's floor)
+var CAM_M = 0.3;          // m: the camera keeps this far inside a station's walls, floors and ceilings
 var CHUNK = 50;           // m: tunnel LOD chunks
 var LOD_R = 400;          // m: tunnel within this of the camera is built
 var UNDER_KINDS = {bored: 1, cutcover: 1};
@@ -571,6 +582,64 @@ function inRect(r, x, z, pad){ pad = pad || 0; var l = rLocal(r, x, z); return M
 function rPoint(r, u, v){ return {x: r.cx + u*r.s + v*r.c, z: r.cz + u*r.c - v*r.s}; }
 // a rect from (ax, az) to (bx, bz), hw wide each side
 function rectAB(ax, az, bx, bz, hw){ var L = hyp(bx - ax, bz - az) || 0.01; return rect((ax + bx)/2, (az + bz)/2, Math.atan2(bx - ax, bz - az), hw, L/2); }
+// the part of the segment a -> b inside rect r (pad m beyond its edges): [t0, t1] (0..1 along it) | null (Liang-Barsky)
+function segRect(ax, az, bx, bz, r, pad){
+  pad = pad || 0;
+  var A = rLocal(r, ax, az), B = rLocal(r, bx, bz), du = B.u - A.u, dv = B.v - A.v, t0 = 0, t1 = 1;
+  var P = [-du, du, -dv, dv], Q = [A.u + r.hl + pad, r.hl + pad - A.u, A.v + r.hw + pad, r.hw + pad - A.v];
+  for(var i = 0; i < 4; i++){
+    if(Math.abs(P[i]) < 1e-12){ if(Q[i] < 0) return null; continue; }
+    var t = Q[i]/P[i];
+    if(P[i] < 0){ if(t > t1) return null; if(t > t0) t0 = t; } else { if(t < t0) return null; if(t < t1) t1 = t; }
+  }
+  return t1 - t0 > 1e-9 ? [t0, t1] : null;
+}
+// [stations] convex polygons ([[x, z], ...]) less a rect: the half-plane clip (Sutherland-Hodgman) in the rect's frame
+function clipHalf(poly, r, ax, k, keepOut){
+  // the side of the line u = k (ax "u") or v = k (ax "v") in rect r's frame: keepOut keeps coord > k, else coord <= k
+  var out = [], n = poly.length;
+  function c(p){ var l = rLocal(r, p[0], p[1]); var w = ax === "u" ? l.u : l.v; return keepOut ? w - k : k - w; }
+  for(var i = 0; i < n; i++){
+    var P = poly[i], Q = poly[(i + 1) % n], a = c(P), b = c(Q);
+    if(a >= 0) out.push(P);
+    if((a >= 0) !== (b >= 0)){ var t = a/(a - b); out.push([P[0] + (Q[0] - P[0])*t, P[1] + (Q[1] - P[1])*t]); }
+  }
+  return out;
+}
+function polyArea(p){ var a = 0; for(var i = 0; i < p.length; i++){ var q = p[(i + 1) % p.length]; a += p[i][0]*q[1] - q[0]*p[i][1]; } return Math.abs(a)/2; }
+function minusRect(poly, r){
+  var pieces = [], rem = poly;
+  [["u", r.hl, true], ["u", -r.hl, false], ["v", r.hw, true], ["v", -r.hw, false]].forEach(function(h){
+    if(rem.length < 3) return;
+    var o = clipHalf(rem, r, h[0], h[1], h[2]); if(o.length >= 3 && polyArea(o) > 1e-4) pieces.push(o);
+    rem = clipHalf(rem, r, h[0], h[1], !h[2]);
+  });
+  return pieces;
+}
+// [stations] a polygon less a convex one (both [[a, b], ...], counter-clockwise or not): the pieces outside it
+function minusConvex(poly, cv){
+  var n = cv.length, area = 0, i;
+  for(i = 0; i < n; i++){ var q = cv[(i + 1) % n]; area += cv[i][0]*q[1] - q[0]*cv[i][1]; }
+  var sg = area >= 0 ? 1 : -1, pieces = [], rem = poly;
+  function clip(P, a, b, keepOut){
+    var out = [], m = P.length;
+    function side(p){ var v = ((b[0] - a[0])*(p[1] - a[1]) - (b[1] - a[1])*(p[0] - a[0]))*sg; return keepOut ? -v : v; }   // >= 0: kept
+    for(var k = 0; k < m; k++){
+      var A = P[k], B = P[(k + 1) % m], sa = side(A), sb = side(B);
+      if(sa >= 0) out.push(A);
+      if((sa >= 0) !== (sb >= 0)){ var t = sa/(sa - sb); out.push([A[0] + (B[0] - A[0])*t, A[1] + (B[1] - A[1])*t]); }
+    }
+    return out;
+  }
+  for(i = 0; i < n && rem.length >= 3; i++){
+    var a = cv[i], b = cv[(i + 1) % n], o = clip(rem, a, b, true);
+    if(o.length >= 3 && polyArea(o) > 1e-5) pieces.push(o);
+    rem = clip(rem, a, b, false);
+  }
+  return pieces;
+}
+function minusRects(polys, rs){ rs.forEach(function(r){ var nx = []; polys.forEach(function(p){ nx = nx.concat(minusRect(p, r)); }); polys = nx; }); return polys; }
+function rectPoly(r, u0, u1, v0, v1){ return [[u0, v0], [u1, v0], [u1, v1], [u0, v1]].map(function(k){ var P = rPoint(r, k[0], k[1]); return [P.x, P.z]; }); }
 
 // Every station's floors. A floor: {r (rect), y0, y1 (heights at u = -hl and +hl), kind, station, line?}.
 function layout(sim, W){
@@ -586,11 +655,54 @@ function layout(sim, W){
   }
   D.stations.forEach(function(s){
     if(!s.lines.length) return;
-    var yaw0 = s.at[s.lines[0]].yaw, floors = [], plats = [], stairs = [], extra = [];
-    var multi = s.lines.length > 1, hw = multi ? 20 : 12;
-    var hall = rect(s.x, s.z, yaw0, hw, HALL_HL);
-    floors.push({r: hall, y0: s.hallY, y1: s.hallY, kind: "hall", station: s.id});
-    s.lines.forEach(function(lid){
+    // [stations] the station's own frame (u along its first line, v across), then in order: the entrance stairs (fixed by
+    // the doc), the gate lines (past every foot and every entrance stair that hangs below the hall's ceiling, so no gate
+    // stands under one), the platform stairs (their heads 4.5 m past the gates), and the hall round all of it (the open
+    // wells at the stair heads inside it); passages from the feet outside it run straight on into it
+    var yaw0 = s.at[s.lines[0]].yaw, floors = [], plats = [], stairs = [], extra = [], rooms = [];
+    var multi = s.lines.length > 1, hw = multi ? 20 : 12, SF = rect(s.x, s.z, yaw0, 0, 0), hy = s.hallY;
+    var ents = s.ents.map(function(e){
+      var drop = e.y - hy, run = e.kind === "lift" ? 2.4 : Math.max(e.d, drop/0.7), sy = Math.sin(e.yaw), cy = Math.cos(e.yaw);
+      var foot = {x: e.x + sy*run, z: e.z + cy*run};
+      var ramp = e.kind === "lift" ? rect(e.x + sy*1.2, e.z + cy*1.2, e.yaw, 1.3, 1.2) : rectAB(e.x, e.z, foot.x, foot.z, e.w/2);
+      return {e: e, drop: drop, run: run, sy: sy, cy: cy, foot: foot, ramp: ramp};
+    });
+    // what must stay on the street side, per end of the hall (|u| intervals): every foot (with room either side), every
+    // passage's way in, every entrance stair that hangs below the hall's ceiling
+    var blocks = {"-1": [], "1": []}, feet = {"-1": [], "1": []};
+    function block(u, a0, b0, foot){ var e = u >= 0 ? 1 : -1, au = Math.abs(u); blocks[e].push([au - a0, au + b0]); if(foot) feet[e].push(au); if(au < a0){ blocks[-e].push([0, a0 - au]); } }
+    ents.forEach(function(q){
+      var fl = rLocal(SF, q.foot.x, q.foot.z);
+      if(Math.abs(fl.v) > hw + 0.5){
+        // a foot beside the hall: its passage runs straight on and comes in through the side wall there
+        var dv = q.sy*SF.c - q.cy*SF.s, du = q.sy*SF.s + q.cy*SF.c, tv = dv*fl.v < 0 ? (Math.abs(fl.v) - hw)/Math.abs(dv) : -1;
+        block(tv > 0 && tv < 200 ? fl.u + du*tv : fl.u, 3.5, 3.5, true);
+      } else block(fl.u, 3.5, 3.5, true);
+      if(q.e.kind === "lift" || q.drop <= 0) return;
+      var up = Math.min(q.run, (HALL_H + 0.3)/(q.drop/q.run));
+      for(var k = 1; k <= 8; k++){ var d = up*k/8, P = {x: q.foot.x - q.sy*d, z: q.foot.z - q.cy*d}, l = rLocal(SF, P.x, P.z); if(Math.abs(l.v) <= hw + q.e.w/2) block(l.u, 2.5, 2.5, false); }
+    });
+    // per end: the stair head (su) and the paid stretch round its well, [su - 3, su + well + 3]: clear of every foot,
+    // then of everything else, nearest STAIR_U; a gate line at each end of it that has the street side beyond it
+    var half0 = s.len/2, run0 = Math.max(2, (hy - (s.at[s.lines[0]].rail + FLOOR))/STAIR_SLOPE), suMax = Math.max(9, half0 - run0 - 3), well0 = Math.min(run0, WELL_L);
+    var SUe = {}, paid = {}, lines = [];
+    [-1, 1].forEach(function(e){
+      var best = null, bc = Infinity;
+      for(var su0 = 9; su0 <= suMax + 1e-6; su0 += 0.25){
+        var lo = su0 - 3, hi = su0 + well0 + 3, cost = Math.abs(su0 - STAIR_U)*0.01;
+        feet[e].forEach(function(f){ if(f > lo - 0.5 && f < hi + 0.5) cost += 1e5; else cost += 1000*Math.max(0, 3 - Math.max(lo - f, f - hi)); });
+        blocks[e].forEach(function(bk){ cost += 10*Math.max(0, Math.min(hi, bk[1]) - Math.max(lo, bk[0])); });
+        if(cost < bc - 1e-9){ bc = cost; best = su0; }
+      }
+      var su1 = best == null ? Math.min(STAIR_U, suMax) : best, lo1 = su1 - 3, hi1 = su1 + well0 + 3;
+      var outer = blocks[e].some(function(bk){ return (bk[0] + bk[1])/2 > hi1; });
+      SUe[e] = su1; paid[e] = [lo1, outer ? hi1 : Infinity];
+      lines.push({u: e*lo1, e: e});
+      if(outer) lines.push({u: e*hi1, e: -e});
+    });
+    var gu = Math.max(paid[-1][0], paid[1][0]), su = Math.max(SUe[-1], SUe[1]);
+    var ub = HALL_HL, vb = hw;   // the hall's half extents, grown round the wells
+    s.lines.forEach(function(lid, li){
       var a = s.at[lid], plat = a.rail + FLOOR, half = s.len/2;
       var lats = s.platform === "island" ? [0] : [-(TRACK + CAR_HW + 0.1 + 2.3), TRACK + CAR_HW + 0.1 + 2.3];
       var phw = s.platform === "island" ? TRACK - CAR_HW - 0.1 : 2.3;
@@ -599,37 +711,58 @@ function layout(sim, W){
         var c = rPoint(rect(cp.x, cp.z, a.yaw, 0, 0), 0, v), pr = rect(c.x, c.z, a.yaw, phw, half);
         var P = {r: pr, y0: plat, y1: plat, kind: "platform", station: s.id, line: lid, lat: v, side: s.platform === "island" ? 0 : (v < 0 ? -1 : 1)};
         floors.push(P); plats.push(P);
-        // two stairs (stairs and an escalator side by side), leaving the hall at +-STAIR_U and running outwards
-        var drop = s.hallY - plat, run = Math.max(2, drop/STAIR_SLOPE), shw = Math.min(phw - 0.15, 1.5);
+        // two stairs (stairs and an escalator side by side), leaving the hall past the gates and running outwards
+        // ([stations] on an island 4 m wide the stairs are 2.2 m wide: 0.9 m of platform either side, to the doors beside them)
+        var drop = hy - plat, run = Math.max(2, drop/STAIR_SLOPE), shw = s.platform === "island" ? Math.min(phw - 0.9, 1.1) : Math.min(phw - 0.15, 1.5), off = rLocal(SF, pr.cx, pr.cz).u;
         [1, -1].forEach(function(e){
-          var u0 = e*STAIR_U, u1 = e*(STAIR_U + run), A = rPoint(pr, u0, 0), B = rPoint(pr, u1, 0);
+          var u0 = li === 0 ? e*SUe[e] - off : e*Math.min(STAIR_U, half - run - 3), u1 = u0 + e*run, A = rPoint(pr, u0, 0), B = rPoint(pr, u1, 0);
           var sr = rectAB(A.x, A.z, B.x, B.z, shw);
-          var S = {r: sr, y0: s.hallY, y1: plat, kind: "stairs", station: s.id, line: lid, plat: pi};
+          var S = {r: sr, y0: hy, y1: plat, kind: "stairs", station: s.id, line: lid, plat: pi, well: Math.min(2*sr.hl, WELL_L)};
           floors.push(S); stairs.push(S);
+          // the hall reaches past the well (its open part) by 0.6 m
+          [[-sr.hl, -1], [-sr.hl, 1], [-sr.hl + S.well, -1], [-sr.hl + S.well, 1]].forEach(function(k){ var W = rPoint(sr, k[0], k[1]*(shw + 0.6)), l = rLocal(SF, W.x, W.z); ub = Math.max(ub, Math.abs(l.u) + (k[0] > -sr.hl ? 0.6 : 0)); vb = Math.max(vb, Math.abs(l.v)); });
         });
       });
     });
-    // entrances: the stair (or lift) down from the street, then a passage to the hall
-    s.ents.forEach(function(e){
-      var drop = e.y - s.hallY, run = e.kind === "lift" ? 2.4 : Math.max(e.d, drop/0.7), sy = Math.sin(e.yaw), cy = Math.cos(e.yaw);
-      var foot = {x: e.x + sy*run, z: e.z + cy*run};
-      var ramp = e.kind === "lift" ? rect(e.x + sy*1.2, e.z + cy*1.2, e.yaw, 1.3, 1.2) : rectAB(e.x, e.z, foot.x, foot.z, e.w/2);
-      var F = {r: ramp, y0: e.kind === "lift" ? s.hallY : e.y, y1: s.hallY, kind: e.kind === "lift" ? "lift" : "entrance", station: s.id, ent: e.id};
+    [-1, 1].forEach(function(e){ if(paid[e][1] < Infinity) ub = Math.max(ub, paid[e][1] + 11.5); feet[e].forEach(function(f){ if(f < ub + 6) ub = Math.max(ub, f + 0.5); }); });
+    var hall = rect(s.x, s.z, yaw0, vb, ub);
+    hw = vb;
+    var hallF = {r: hall, y0: hy, y1: hy, kind: "hall", station: s.id, wells: stairs};
+    floors.unshift(hallF);
+    rooms.push({kind: "box", r: hall, y0: hy, y1: hy + HALL_H, what: "hall"});
+    // entrances: the stair (or lift) down from the street, then (a foot outside the hall) a passage on into it
+    ents.forEach(function(q){
+      var e = q.e, sy = q.sy, cy = q.cy, foot = q.foot, run = q.run;
+      var F = {r: q.ramp, y0: e.kind === "lift" ? hy : e.y, y1: hy, kind: e.kind === "lift" ? "lift" : "entrance", station: s.id, ent: e.id};
       floors.push(F);
+      if(e.kind !== "lift") rooms.push({kind: "tube", r: q.ramp, f: F, top: e.y - 0.25, street: e.y, what: "entrance"});
       var pass = null;
       if(!inRect(hall, foot.x, foot.z, -0.5)){
-        var hl = rLocal(hall, foot.x, foot.z), tu = clamp(hl.u, -HALL_HL + 3, HALL_HL - 3)*0.4, tv = clamp(hl.v, -hw + 2, hw - 2)*0.4, T = rPoint(hall, tu, tv);
-        pass = {r: rectAB(foot.x - sy*0.3, foot.z - cy*0.3, T.x, T.z, Math.min(2.2, Math.max(1.6, e.w/2))), y0: s.hallY, y1: s.hallY, kind: "passage", station: s.id, ent: e.id};
+        // straight on from the foot to where that meets the hall (else toward the hall's middle)
+        // (far enough that both its walls reach into the hall: an oblique way in leaves no wedge open at its end)
+        var phw0 = Math.min(2.2, Math.max(1.6, e.w/2)), T = null, tin = -1;
+        [-phw0, 0, phw0].forEach(function(o){ var ox = cy*o, oz = -sy*o, ht = segRect(foot.x + ox, foot.z + oz, foot.x + ox + sy*200, foot.z + oz + cy*200, hall); tin = ht && tin > -2 ? Math.max(tin, ht[0]*200) : -2; });
+        if(tin >= 0){ var t1 = Math.min(tin + 0.6, 200); T = {x: foot.x + sy*t1, z: foot.z + cy*t1}; }
+        else { var hl = rLocal(hall, foot.x, foot.z), tu = clamp(hl.u, -hall.hl + 3, hall.hl - 3)*0.4, tv = clamp(hl.v, -hw + 2, hw - 2)*0.4; T = rPoint(hall, tu, tv); }
+        pass = {r: rectAB(foot.x - sy*0.3, foot.z - cy*0.3, T.x, T.z, Math.min(2.2, Math.max(1.6, e.w/2))), y0: hy, y1: hy, kind: "passage", station: s.id, ent: e.id, wells: stairs};
         floors.push(pass);
+        rooms.push({kind: "box", r: pass.r, y0: hy, y1: hy + PASS_H, what: "passage"});
       }
+      if(e.kind === "lift") rooms.push({kind: "box", r: q.ramp, y0: hy, y1: hy + PASS_H, what: "lift"});
       // where E at the entrance lands you: 1.2 m past the foot of the stairs, on the hall's (or the passage's) floor; when
       // the hall's edge is nearer than that, the last step of the stairs (always a floor at the hall's level)
       var fx = foot.x + sy*1.2, fz = foot.z + cy*1.2;
       if(!inRect(hall, fx, fz, 0) && !(pass && inRect(pass.r, fx, fz, 0))){ fx = foot.x - sy*0.6; fz = foot.z - cy*0.6; }
       var E = {id: e.id, station: s.id, kind: e.kind, x: e.x, y: e.y, z: e.z, yaw: e.yaw, w: e.w, d: e.d, run: run, ramp: F, pass: pass,
-               foot: {x: fx, y: s.hallY, z: fz, yaw: e.yaw}, hole: e.hole};
+               foot: {x: fx, y: hy, z: fz, yaw: e.yaw}, hole: e.hole};
       ENTS.push(E);
     });
+    // the platform rooms (the track bed to the ceiling, wall to wall) and the stairs' closed tubes
+    s.lines.forEach(function(lid){
+      var a = s.at[lid], L = sim.lineData(lid), cp = pathAt(L.P, a.s), W = s.platform === "island" ? TRACK + 2.1 : TRACK + 1.5 + 4.6;
+      rooms.push({kind: "box", r: rect(cp.x, cp.z, a.yaw, W, s.len/2 + 6), y0: a.rail - 0.5, y1: a.rail + FLOOR + PLAT_H, what: "platform", line: lid});
+    });
+    stairs.forEach(function(f){ rooms.push({kind: "tube", r: f.r, f: f, well: f.well, what: "stairs"}); });
     // the Island Link's underground platforms near the hall (part rail's trains): a passage, a stair and its platform
     (railD || []).forEach(function(r){
       if(hyp(r.x - s.x, r.z - s.z) > 300) return;
@@ -638,41 +771,161 @@ function layout(sim, W){
       if(nearer) return;
       // a railway platform at the hall's own level or above it would put its box through the hall (and be out of
       // reach up a wall): only one below the hall is joined to it
-      if(r.y > s.hallY - 3 && hyp(r.x - s.x, r.z - s.z) < HALL_HL + r.len/2) return;
+      if(r.y > hy - 3 && hyp(r.x - s.x, r.z - s.z) < hall.hl + r.len/2) return;
       var plat = r.y, n = r.platforms, phw = 2.6, half = r.len/2, rr = rect(r.x, r.z, r.yaw, n*4.4, half);
       var pr = rect(r.x, r.z, r.yaw, phw, half);
       floors.push({r: pr, y0: plat, y1: plat, kind: "platform", station: s.id, rail: r.id});
-      var drop = s.hallY - plat;
+      rooms.push({kind: "box", r: rect(r.x, r.z, r.yaw, 4.2 + 2.1, half + 6), y0: plat - FLOOR - 0.5, y1: plat + PLAT_H, what: "platform", rail: r.id});
+      var drop = hy - plat;
       if(drop > 0.5){
         var run = drop/STAIR_SLOPE, A = rPoint(pr, -half + 6, 0), B = rPoint(pr, -half + 6 + run, 0);
-        floors.push({r: rectAB(A.x, A.z, B.x, B.z, 1.5), y0: s.hallY, y1: plat, kind: "stairs", station: s.id, rail: r.id});
-        if(!inRect(hall, A.x, A.z, -1)) floors.push({r: rectAB(s.x, s.z, A.x, A.z, 2.2), y0: s.hallY, y1: s.hallY, kind: "passage", station: s.id, rail: r.id});
-      } else floors.push({r: rectAB(s.x, s.z, r.x, r.z, 2.2), y0: s.hallY, y1: s.hallY, kind: "passage", station: s.id, rail: r.id});
+        var ILs = {r: rectAB(A.x, A.z, B.x, B.z, 1.5), y0: hy, y1: plat, kind: "stairs", station: s.id, rail: r.id, well: 0};
+        floors.push(ILs); rooms.push({kind: "tube", r: ILs.r, f: ILs, well: 0, what: "stairs"});
+        if(!inRect(hall, A.x, A.z, -1)){ var pA = {r: rectAB(s.x, s.z, A.x, A.z, 2.2), y0: hy, y1: hy, kind: "passage", station: s.id, rail: r.id, wells: stairs}; floors.push(pA); rooms.push({kind: "box", r: pA.r, y0: hy, y1: hy + PASS_H, what: "passage"}); }
+      } else { var pB = {r: rectAB(s.x, s.z, r.x, r.z, 2.2), y0: hy, y1: hy, kind: "passage", station: s.id, rail: r.id, wells: stairs}; floors.push(pB); rooms.push({kind: "box", r: pB.r, y0: hy, y1: hy + PASS_H, what: "passage"}); }
       extra.push({id: r.id, x: r.x, y: plat, z: r.z, yaw: r.yaw, len: r.len, platforms: n, box: rr, lines: r.lines});
     });
     // [transit pass] the gate lines across the hall at +-gu: every entrance's foot inside the hall lands on the street
     // (unpaid) side of them, between them; the stairs to the platforms leave beyond them (the paid side). Eight lanes a
     // line between nine cabinets; the ticket machines on the hall's -v wall, in the unpaid middle.
-    var gu = GATE_U;
-    ENTS.forEach(function(E){ if(E.station !== s.id || E.pass) return; var fl = rLocal(hall, E.foot.x, E.foot.z); if(Math.abs(fl.v) <= hw + 0.5) gu = Math.max(gu, Math.abs(fl.u) + 2); });
-    gu = Math.min(gu, STAIR_U - 2.5);
     var lanes = []; for(var g = 0; g < GATE_N; g++) lanes.push(-GATE_N*0.55 + 0.55 + g*1.1);
-    var machines = []; for(var mi = 0; mi < 4; mi++){ var mu = -4.2 + mi*2.8, MP = rPoint(hall, mu, -hw + 1.2); machines.push({x: MP.x, z: MP.z, u: mu, yaw: wrapA(yaw0 - PI/2)}); }
+    // [stations] a stair whose head is on the street side of those lines (another line's, crossing the hall) has its own
+    // short gate line across its head: two lanes between three cabinets
+    var heads = [];
+    function paidU(u){ var e = u >= 0 ? 1 : -1, au = Math.abs(u); return au > paid[e][0] && au < paid[e][1]; }
+    stairs.forEach(function(f){
+      var A = rPoint(f.r, -f.r.hl, 0), l = rLocal(SF, A.x, A.z);
+      if(!paidU(l.u)) heads.push({f: f, r: rect(A.x, A.z, f.r.yaw, f.r.hw + 0.05, GATE_BAND), lanes: [-0.6, 0.6]});
+    });
+    // the ticket machines on the hall's -v wall, in the middle of the street side's widest stretch
+    // (on the street side, near a way in and with no gate between them)
+    var fu = []; [-1, 1].forEach(function(e){ feet[e].forEach(function(f){ fu.push(e*f); }); }); if(!fu.length) fu.push(0);
+    // one bank of four for every stretch of the street side a way in comes into (at most two)
+    var groups = [];
+    fu.forEach(function(f){
+      var best = null, bs = -Infinity;
+      for(var mu0 = -hall.hl + 5.5; mu0 <= hall.hl - 5.5; mu0 += 0.5){
+        var okM = true; for(var dm = -5.2; dm <= 5.2; dm += 0.4) if(paidU(mu0 + dm)) okM = false;
+        for(var dm2 = -5.2; dm2 <= 5.2 && okM; dm2 += 0.8) [-hw + 0.4, -hw + 2.4].forEach(function(vm){ var Q = rPoint(hall, mu0 + dm2, vm); if(stairs.some(function(f2){ return inRect(f2.r, Q.x, Q.z, 0.8); })) okM = false; });
+        if(!okM) continue;
+        var free = true; for(var w = Math.min(f, mu0); w <= Math.max(f, mu0); w += 0.5) if(paidU(w)) free = false;
+        var sc = (free ? 0 : -1e4) - Math.abs(mu0 - f) - 0.01*Math.abs(mu0);
+        if(sc > bs){ bs = sc; best = mu0; }
+      }
+      var same = function(g){ for(var w2 = Math.min(g, best); w2 <= Math.max(g, best); w2 += 0.5) if(paidU(w2)) return false; return true; };   // the same stretch
+      if(best != null && bs > -1e4 && !groups.some(same) && groups.length < 2) groups.push(best);
+    });
+    if(!groups.length) groups.push(0);
+    var machines = [];
+    groups.forEach(function(mcU){ for(var mi = 0; mi < 4; mi++){ var mu = mcU - 4.2 + mi*2.8, MP = rPoint(hall, mu, -hw + 1.2); machines.push({x: MP.x, z: MP.z, u: mu, yaw: wrapA(yaw0 - PI/2)}); } });
     var ext = 0;
     floors.forEach(function(f){ ext = Math.max(ext, hyp(f.r.cx - s.x, f.r.cz - s.z) + f.r.hl + f.r.hw); });
+    rooms.forEach(function(R0){ ext = Math.max(ext, hyp(R0.r.cx - s.x, R0.r.cz - s.z) + R0.r.hl + R0.r.hw); });
     var low = Infinity; floors.forEach(function(f){ low = Math.min(low, f.y0, f.y1); });
-    ST.push({id: s.id, name: sim.names[s.id], x: s.x, z: s.z, yaw: yaw0, street: s.street, hallY: s.hallY, hall: hall, hw: hw, len: s.len,
+    ST.push({id: s.id, name: sim.names[s.id], x: s.x, z: s.z, yaw: yaw0, street: s.street, hallY: hy, hall: hall, hw: hw, len: s.len,
              platform: s.platform, lines: s.lines.slice(), at: s.at, floors: floors, plats: plats, stairs: stairs, il: extra, ext: ext, low: low,
-             gu: gu, lanes: lanes, machines: machines});
+             gu: gu, su: su, paid: paid, gates: lines, lanes: lanes, heads: heads, machines: machines, rooms: rooms});
   });
   var BY = {}; ST.forEach(function(s){ BY[s.id] = s; });
   function fy(f, l){ return f.y0 + (f.y1 - f.y0)*clamp((l.u + f.r.hl)/(2*f.r.hl || 1), 0, 1); }
+  // [stations] the hall's floor is open over a stair's well (past its first step)
+  function overWell(f, x, z){
+    for(var k = 0; k < f.wells.length; k++){ var w = f.wells[k], l = inRect(w.r, x, z); if(l && l.u + w.r.hl <= w.well && fy(w, l) < f.y0 - 0.25) return true; }
+    return false;
+  }
+  // [stations] the rooms below the street (the hall, passages, platform rooms, the stairs' tubes and the entrance stairs)
+  // a camera may be in: the lowest and highest y in room R over (x, z) (l: its local), or null outside its footprint
+  function roomSpan(R, l){
+    if(R.kind === "box") return [R.y0, R.y1];
+    var fl = fy(R.f, l);
+    return [fl, R.top != null ? R.top : fl + TUBE_H];
+  }
+  // is (x, y, z) inside a room, m (default CAM_M) clear of its walls, floor and ceiling? -> the room | null
+  function roomAt(x, y, z, m){
+    m = m == null ? CAM_M : m;
+    for(var i = 0; i < ST.length; i++){
+      var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
+      for(var j = 0; j < s.rooms.length; j++){
+        var R = s.rooms[j], l = inRect(R.r, x, z, -m); if(!l) continue;
+        var sp = roomSpan(R, l);
+        if(y >= sp[0] + m && y <= sp[1] - m) return R;
+      }
+    }
+    return null;
+  }
+  // a tube's walls (its sides, its floor, its ceiling past the open well) between two points: does a -> b go through one?
+  function tubeWall(s, a, b){
+    for(var j = 0; j < s.rooms.length; j++){
+      var R = s.rooms[j]; if(R.kind !== "tube") continue;
+      var la = rLocal(R.r, a.x, a.z), lb = rLocal(R.r, b.x, b.z);
+      var ina = Math.abs(la.u) <= R.r.hl && Math.abs(la.v) <= R.r.hw, inb = Math.abs(lb.u) <= R.r.hl && Math.abs(lb.v) <= R.r.hw;
+      if(!ina && !inb) continue;
+      if(ina !== inb){
+        // through a side (not an open end): below its top (the hall's floor along the well, else the tube's ceiling)
+        var o = ina ? lb : la, at = ina ? la : lb, y = ina ? b.y : a.y;
+        if(Math.abs(o.u) > R.r.hl) continue;
+        var spS = roomSpan(R, at), wellS = R.well && at.u + R.r.hl <= R.well;
+        if(y < (wellS ? R.f.y0 : spS[1]) && y > spS[0] - 0.3) return true;
+        continue;
+      }
+      var sa = roomSpan(R, la), sb = roomSpan(R, lb), wa = R.well && la.u + R.r.hl <= R.well;
+      if((a.y >= sa[0]) !== (b.y >= sb[0])) return true;                       // the steps
+      if(!wa && (a.y <= sa[1]) !== (b.y <= sb[1])) return true;                 // the tube's ceiling
+    }
+    return false;
+  }
+  // how far along from -> to (0..1) a camera may go below the street: inside the rooms, CAM_M clear, never through a wall
+  function camHit(from, to){
+    var dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z, len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if(!(len > 1e-6)) return 1;
+    var st = null;
+    for(var i = 0; i < ST.length; i++){ var s0 = ST[i]; if(hyp(from.x - s0.x, from.z - s0.z) <= s0.ext + 1){ st = s0; break; } }
+    if(!st) return 1;
+    var n = Math.max(4, Math.ceil(len/0.12)), prev = {x: from.x, y: from.y, z: from.z};
+    for(var k = 1; k <= n; k++){
+      var t = k/n, p = {x: from.x + dx*t, y: from.y + dy*t, z: from.z + dz*t};
+      if(!roomAt(p.x, p.y, p.z) || tubeWall(st, prev, p)) return Math.max(0, (k - 1)/n);
+      prev = p;
+    }
+    return 1;
+  }
+  // the ceiling over (x, z) of the room holding (x, y, z) (y: your head), else null
+  function ceilAt(x, y, z){
+    var best = null;
+    for(var i = 0; i < ST.length; i++){
+      var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
+      for(var j = 0; j < s.rooms.length; j++){
+        var R = s.rooms[j], l = inRect(R.r, x, z); if(!l) continue;
+        var sp = roomSpan(R, l); if(y < sp[0] - 0.2 || y > sp[1]) continue;
+        var top = R.kind === "tube" && R.well && l.u + R.r.hl <= R.well ? R.f.y0 + HALL_H : sp[1];
+        if(best == null || top > best) best = top;
+      }
+    }
+    return best;
+  }
+  // [stations] a step from (ax, az) to (bx, bz) by someone whose feet are at y: through the side of a stair (its walls, its
+  // balustrade: only its ends are ways on and off) within reach of it, or under one with too little headroom?
+  function stepBlocked(ax, az, bx, bz, y){
+    for(var i = 0; i < ST.length; i++){
+      var s = ST[i]; if(hyp(bx - s.x, bz - s.z) > s.ext + 1) continue;
+      for(var j = 0; j < s.floors.length; j++){
+        var f = s.floors[j]; if(f.kind !== "entrance" && f.kind !== "stairs") continue;
+        var la = rLocal(f.r, ax, az), lb = rLocal(f.r, bx, bz);
+        if(Math.abs(lb.u) > f.r.hl + 0.05 && Math.abs(la.u) > f.r.hl + 0.05) continue;
+        var ia = Math.abs(la.v) <= f.r.hw, ib = Math.abs(lb.v) <= f.r.hw, fb = fy(f, Math.abs(lb.u) <= f.r.hl ? lb : la);
+        if(ia !== ib && Math.abs(lb.u) <= f.r.hl && Math.abs(la.u) <= f.r.hl && fb > y - 3.0 && fb < y + 2.2) return true;
+        if(ib && Math.abs(lb.u) <= f.r.hl && fb - 0.3 > y + STEP_UP && fb - 0.3 < y + 2.0) return true;   // its underside at your head
+      }
+    }
+    return false;
+  }
   function walkable(x, y, z){
     var best = null;
     for(var i = 0; i < ST.length; i++){
       var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
       for(var j = 0; j < s.floors.length; j++){
         var f = s.floors[j], l = inRect(f.r, x, z); if(!l) continue;
+        if(f.wells && overWell(f, x, z)) continue;
         var h = fy(f, l);
         if(h <= y + STEP_UP && (!best || h > best.y)) best = {y: h, kind: f.kind, station: s.id};
       }
@@ -704,11 +957,18 @@ function layout(sim, W){
       var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
       if(y != null && isFinite(y) && Math.abs(y - s.hallY) > 0.6) continue;     // on the hall's floor (not up an entrance's stairs over it)
       var l = inRect(s.hall, x, z, 0); if(!l) continue;
-      for(var e = -1; e <= 1; e += 2){
-        if(Math.abs(l.u - e*s.gu) > GATE_BAND) continue;
+      for(var gi = 0; gi < s.gates.length; gi++){
+        if(s.heads.some(function(H){ return inRect(H.f.r, x, z, 0.2); })) break;   // a stair's well: not this line
+        var GL = s.gates[gi]; if(Math.abs(l.u - GL.u) > GATE_BAND) continue;
         var lane = -1;
         for(var k = 0; k < s.lanes.length; k++) if(Math.abs(l.v - s.lanes[k]) <= LANE_HW){ lane = k; break; }
-        return {station: s.id, e: e, lane: lane, u: l.u, v: l.v};
+        return {station: s.id, e: GL.e, lane: lane, u: l.u, v: l.v};
+      }
+      for(var hd = 0; hd < s.heads.length; hd++){
+        var H = s.heads[hd], lh = inRect(H.r, x, z); if(!lh) continue;
+        var ln = -1;
+        for(var q = 0; q < H.lanes.length; q++) if(Math.abs(lh.v - H.lanes[q]) <= LANE_HW){ ln = q; break; }
+        return {station: s.id, e: 0, lane: ln, u: lh.u, v: lh.v, head: true};
       }
     }
     return null;
@@ -722,9 +982,10 @@ function layout(sim, W){
       var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
       for(var j = 0; j < s.floors.length; j++){
         var f = s.floors[j], l = inRect(f.r, x, z); if(!l) continue;
+        if(f.wells && overWell(f, x, z)) continue;
         var h = fy(f, l);
         if(y != null && isFinite(y) && h > y + STEP_UP) continue;
-        if(h > by){ by = h; best = f.kind === "hall" ? Math.abs(l.u) > s.gu : (f.kind === "platform" || f.kind === "stairs") && !f.rail; }
+        if(h > by){ by = h; best = f.kind === "hall" ? (function(){ var e = l.u >= 0 ? 1 : -1, au = Math.abs(l.u); return au > s.paid[e][0] && au < s.paid[e][1]; })() : (f.kind === "platform" || f.kind === "stairs") && !f.rail; }
       }
     }
     return best;
@@ -766,13 +1027,14 @@ function layout(sim, W){
     return {x: E.x + Math.sin(E.yaw)*back, y: E.y, z: E.z + Math.cos(E.yaw)*back, yaw: wrapA(E.yaw + PI), id: E.id};
   }
   return {stations: ST, byId: BY, entrances: ENTS, walkable: walkable, isUnder: isUnder, tunnelAt: tunnelAt, entranceAt: entranceAt,
-          rampAt: rampAt, stationAt: stationAt, exitTo: exitTo, floorY: fy, gateAt: gateAt, paidAt: paidAt};
+          rampAt: rampAt, stationAt: stationAt, exitTo: exitTo, floorY: fy, gateAt: gateAt, paidAt: paidAt,
+          roomAt: roomAt, stepBlocked: stepBlocked, camInside: function(x, y, z, m){ var R = roomAt(x, y, z, m); return R ? R.what : null; }, camHit: camHit, ceilAt: ceilAt, overWell: overWell};
 }
 
 HQV.hqMetro = {
   create: create, layout: function(sim){ return sim && sim.layout ? sim.layout() : null; },
   normalize: normalize, legTime: legTime, legAt: legAt, pathAt: pathAt, nearestOn: nearestOn, nearLine: nearLine, runAt: runAt, linesText: linesText,
-  rect: rect, inRect: inRect, rLocal: rLocal, hash32: hash32, stationNames: stationNames, roadsNear: roadsNear,
+  rect: rect, inRect: inRect, rLocal: rLocal, hash32: hash32, segRect: segRect, minusRects: minusRects, rectPoly: rectPoly, stationNames: stationNames, roadsNear: roadsNear,
   SEATS: SEATS, STAND: STAND, DOORS_Z: DOORS_Z,
   HEADWAY: HEADWAY, DWELL: DWELL, VMAX: VMAX, ACC: ACC, REV: REV, CARS: CARS, CAR_L: CAR_L, CAR_GAP: CAR_GAP, PITCH: PITCH, TRAIN_L: TRAIN_L,
   TRACK: TRACK, FLOOR: FLOOR, CHUNK: CHUNK, LOD_R: LOD_R, LINE_STYLE: LINE_STYLE
@@ -1435,7 +1697,9 @@ function view(c, sim, opts){
   // a platform box along frame F (rail level `rail`): trackbed, tracks, platforms, tiled walls, ceiling, light strips,
   // screen doors, benches, the frieze, boards and way-out signs. kind "side" | "island"; trackOff: each track's offset.
   function platformBox(G, F, rail, half, kind, trackOff, o){
-    var plat = rail + FLOOR, ry = rail - F.y, py = plat - F.y, W = kind === "island" ? trackOff + 2.1 : trackOff + 1.5 + 4.6, top = py + 4.5, ext = half + 6;
+    // (an island's outer walls stand 2.55 m out from each track: past the headwall's tunnel opening (2.45), which would
+    // otherwise show a sliver of nothing beside the wall to a rider looking out of the tunnel at it)
+    var plat = rail + FLOOR, ry = rail - F.y, py = plat - F.y, W = kind === "island" ? trackOff + 2.55 : trackOff + 1.5 + 4.6, top = py + 4.5, ext = half + 6;
     var platLat = kind === "island" ? [[-(trackOff - 1.5), trackOff - 1.5]] : [[-W, -(trackOff + 1.5)], [trackOff + 1.5, W]];
     gbFlat(G.op, F, -W, W, -ext, ext, ry - 0.5, C.bed);
     [-trackOff, trackOff].forEach(function(lt){
@@ -1451,7 +1715,7 @@ function view(c, sim, opts){
       var edges = kind === "island" ? [pl[0] + 0.3, pl[1] - 0.3] : [pl[0] < 0 ? pl[1] - 0.3 : pl[0] + 0.3];
       edges.forEach(function(ex){ gbBox(G.op, F, ex, py + 0.004, 0, 0.25, 0.004, half, C.tactile); });
       // light strips over the platform, broken where the stairs come down
-      for(var z2 = -half + 2; z2 < half - 2; z2 += 10) gbBox(G.at, F, cx, top - 0.06, z2 + 4, 0.12, 0.03, 3.8, C.strip);
+      for(var z2 = -half + 2; z2 < half - 2; z2 += 10){ var Ls = tf(F, cx, top, z2 + 4); if((o.holes || []).some(function(r){ return inRect(r, Ls[0], Ls[2], 4); })) continue; gbBox(G.at, F, cx, top - 0.06, z2 + 4, 0.12, 0.03, 3.8, C.strip); }
       // benches every 15 m, clear of the stairs
       for(var bz = -half + 7; bz < half - 4; bz += 15){ if(o.clear && !o.clear(bz)) continue; gbBox(G.op, F, cx + (kind === "island" ? 0 : (pl[0] < 0 ? 0.9 : -0.9)), py + 0.42, bz, 0.22, 0.04, 0.9, C.bench); gbBox(G.op, F, cx + (kind === "island" ? 0 : (pl[0] < 0 ? 0.9 : -0.9)), py + 0.2, bz, 0.05, 0.2, 0.75, C.frame); }
       // platform boards (two-faced) at +-6 m and way-out signs at the stair feet
@@ -1460,9 +1724,28 @@ function view(c, sim, opts){
     });
     // walls (tiled; a band of the line's colour), the ceiling, end walls with the tunnel openings
     [-W, W].forEach(function(x){ gbWall(G.tile, F, x, -ext, x, ext, ry - 0.5, top, o.tile || C.tileW, 1.2); gbWall(G.op, F, x*0.999, -ext, x*0.999, ext, py + 2.25, py + 2.45, o.band || C.tactile); });
-    gbFlat(G.op, F, -W, W, -ext, ext, top, C.ceiling);
+    // [stations] the ceiling, open where a stair's tube comes down through it
+    if(o.holes && o.holes.length){
+      var Rc = rect(F.x, F.z, F.yaw, W, ext);
+      minusRects([rectPoly(Rc, -ext, ext, -W, W)], o.holes).forEach(function(P){ for(var k = 1; k + 1 < P.length; k++) gbTri(G.op, [P[0][0], top + F.y, P[0][1]], [P[k][0], top + F.y, P[k][1]], [P[k + 1][0], top + F.y, P[k + 1][1]], C.ceiling); });
+    } else gbFlat(G.op, F, -W, W, -ext, ext, top, C.ceiling);
     [-ext, ext].forEach(function(z){
       gbWall(G.tile, F, -W, z, W, z, ry + 4.8, top, o.tile || C.tileW, 1.2);
+      if(o.bores){
+        // [stations] the headwall closes round each track's bored tube exactly (its 12-sided ring), so no corner of the
+        // opening shows past the tunnel
+        var pcs = [[[-W, ry - 0.5], [W, ry - 0.5], [W, ry + 4.8], [-W, ry + 4.8]]];
+        var ryE = o.endRail ? o.endRail(z) - F.y : ry;
+        // (a terminus: no tunnel goes on past this end, the headwall is whole)
+        if(o.tunnelOn && !o.tunnelOn(z)){ /* whole */ }
+        else [-trackOff, trackOff].forEach(function(lt){ var ring = []; for(var i2 = 0; i2 < 12; i2++){ var t2 = i2/12*2*PI; ring.push([lt + Math.cos(t2)*2.45, ryE + 1.7 + Math.sin(t2)*2.45]); }   // (inside the bore's 2.85: it may turn where it starts)
+          var nx = []; pcs.forEach(function(P){ nx = nx.concat(minusConvex(P, ring)); }); pcs = nx; });
+        // (rings at the track's height at this end, where the tunnel starts)
+        var tc = o.tile || C.tileW;
+        pcs.forEach(function(P){ for(var k = 1; k + 1 < P.length; k++){ var A = P[0], B2 = P[k], C2 = P[k + 1];
+          gbTri(G.tile, tf(F, A[0], A[1], z), tf(F, B2[0], B2[1], z), tf(F, C2[0], C2[1], z), tc, [A[0]/1.2, A[1]/1.2], [B2[0]/1.2, B2[1]/1.2], [C2[0]/1.2, C2[1]/1.2]); } });
+        return;
+      }
       gbWall(G.tile, F, -W, z, -trackOff - 2.5, z, ry - 0.5, ry + 4.8, o.tile || C.tileW, 1.2);
       gbWall(G.tile, F, trackOff + 2.5, z, W, z, ry - 0.5, ry + 4.8, o.tile || C.tileW, 1.2);
       if(trackOff > 2.6) gbWall(G.tile, F, -trackOff + 2.5, z, trackOff - 2.5, z, ry - 0.5, ry + 4.8, o.tile || C.tileW, 1.2);
@@ -1487,6 +1770,18 @@ function view(c, sim, opts){
       });
     }
   }
+  // [stations] where each stair's tube goes through a ceiling at height top: the stretch of it whose underside is below
+  // the ceiling and whose own ceiling is above it
+  function tubeHoles(list, top){
+    var out = [];
+    list.forEach(function(f){
+      var r = f.r, dy = f.y1 - f.y0; if(Math.abs(dy) < 1e-6) return;
+      var ua = -r.hl + 2*r.hl*clamp((top + 0.3 - f.y0)/dy, 0, 1), ub = -r.hl + 2*r.hl*clamp((top - TUBE_H - f.y0)/dy, 0, 1);
+      var u0 = Math.min(ua, ub), u1 = Math.max(ua, ub); if(u1 - u0 < 0.05) return;
+      var A = rPoint(r, u0, 0), B = rPoint(r, u1, 0); out.push(rectAB(A.x, A.z, B.x, B.z, r.hw + 0.05));
+    });
+    return out;
+  }
   function buildStation(st){
     var G = {op: GB(), tile: GB(), at: GB(), gl: GB(), wf: GB()}, boards = [], psd = [], gates = [], tris = 0;
     var s = D.st[st.id], q = AP.station[st.id], frz = q ? atUv(q) : null;
@@ -1495,11 +1790,14 @@ function view(c, sim, opts){
     // gap" on the floor at every door of the train
     st.lines.forEach(function(lid){
       var a = s.at[lid], L = sim.lineData(lid), cp = pathAt(L.P, a.s), F = frame(cp.x, 0, cp.z, a.yaw);
-      var myStairs = st.stairs.filter(function(f){ return f.line === lid; }), runU = 0;
-      myStairs.forEach(function(f){ runU = Math.max(runU, 2*f.r.hl); });
-      var wz = [STAIR_U + runU + 1.2, -(STAIR_U + runU + 1.2)];
-      var stairClear = function(z){ return Math.abs(z) < STAIR_U - 1 || Math.abs(z) > STAIR_U + runU + 1; };
-      platformBox(G, F, a.rail, s.len/2, s.platform, TRACK, {frieze: frz, psd: psd, board: null, wayout: wz, band: rgb(hexNum(L.color, 0x888888)), clear: stairClear,
+      var myStairs = st.stairs.filter(function(f){ return f.line === lid; }), spans = [];
+      // each stair's span along the platform (the frame's z), its foot's way-out sign 1.2 m past it
+      var PF = rect(F.x, F.z, F.yaw, 0, 0), wz = [];
+      myStairs.forEach(function(f){ var a0 = rLocal(PF, rPoint(f.r, -f.r.hl, 0).x, rPoint(f.r, -f.r.hl, 0).z).u, b0 = rLocal(PF, rPoint(f.r, f.r.hl, 0).x, rPoint(f.r, f.r.hl, 0).z).u;
+        spans.push([Math.min(a0, b0), Math.max(a0, b0)]); if(f.plat === 0) wz.push(b0 + (b0 > a0 ? 1.2 : -1.2)); });
+      var stairClear = function(z){ return !spans.some(function(q){ return z > q[0] - 1 && z < q[1] + 1; }); };
+      platformBox(G, F, a.rail, s.len/2, s.platform, TRACK, {frieze: frz, psd: psd, board: null, wayout: wz, band: rgb(hexNum(L.color, 0x888888)), clear: stairClear, holes: tubeHoles(myStairs, a.rail + FLOOR + PLAT_H), bores: true, endRail: function(z){ return pathAt(L.P, clamp(a.s + z, 0, L.P.len)).y; },
+        tunnelOn: function(z){ var s2 = a.s + z + (z > 0 ? 3 : -3); if(s2 < 0 || s2 > L.P.len) return false; var g = segIdx(L.P, s2); return !!UNDER_KINDS[L.P.kinds[Math.min(g, L.P.kinds.length - 1)]]; },
         edge: function(Fe, ex, py, half, dir, opens){
           var R0 = sim.runs(lid), run = R0 ? (R0.out.dir === dir ? R0.out : R0.back) : null; if(!run) return;
           var key = lid + "|" + run.key, inward = ex < 0 ? 1 : -1, o2 = -inward, uvE = SU.edge[key];
@@ -1511,50 +1809,105 @@ function view(c, sim, opts){
           });
         }});
     });
-    // stairs + escalators from the hall to the platforms, with their shaft walls and balustrades round the opening
-    st.stairs.forEach(function(f){
-      var r = f.r, Fs = frame(r.cx, 0, r.cz, r.yaw), n = Math.max(6, Math.ceil((f.y0 - f.y1)/0.18)), escW = 1.0, hw = r.hw;
+    // [stations] stairs + escalators from the hall to the platforms: an open well at the head (tiled walls down from the
+    // hall's floor, glass balustrades round it), then a closed tube (walls, a sloped ceiling with its light, the soffit
+    // under the steps) down to the platform, where it comes in through the platform's ceiling
+    st.stairs.concat(st.floors.filter(function(f){ return f.rail && f.kind === "stairs"; })).forEach(function(f){
+      var r = f.r, Fs = frame(r.cx, 0, r.cz, r.yaw), n = Math.max(6, Math.ceil((f.y0 - f.y1)/0.18)), escW = f.rail ? 0 : 1.0, hw = r.hw, ww = hw + 0.05;
+      var yAt = function(u){ return f.y0 + (f.y1 - f.y0)*clamp((u + r.hl)/(2*r.hl || 1), 0, 1); }, uw = -r.hl + (f.well || 0);
       for(var i = 0; i < n; i++){
         var u0 = -r.hl + 2*r.hl*i/n, u1 = -r.hl + 2*r.hl*(i + 1)/n, y = f.y0 + (f.y1 - f.y0)*(i + 1)/n;
-        gbSlab(G.op, Fs, (-hw + escW + 0.15 + hw)/2, y - 0.1, (u0 + u1)/2, (hw - escW - 0.15)/2, 0.1, (u1 - u0)/2 + 0.01, C.step);
+        gbSlab(G.op, Fs, (-hw + escW + (escW ? 0.15 : 0) + hw)/2, y - 0.1, (u0 + u1)/2, (hw - escW - (escW ? 0.15 : 0))/2, 0.1, (u1 - u0)/2 + 0.01, C.step);
+        gbFlat(G.op, Fs, -hw + escW + (escW ? 0.15 : 0), hw, u0, u0 + 0.08, y + 0.004, C.nosing);
       }
-      gbQuad(G.op, tf(Fs, -hw, f.y0, -r.hl), tf(Fs, -hw + escW, f.y0, -r.hl), tf(Fs, -hw + escW, f.y1, r.hl), tf(Fs, -hw, f.y1, r.hl), C.esc);
-      [-hw + 0.03, -hw + escW].forEach(function(x){ gbQuad(G.gl, tf(Fs, x, f.y0, -r.hl), tf(Fs, x, f.y1, r.hl), tf(Fs, x, f.y1 + 1.0, r.hl), tf(Fs, x, f.y0 + 1.0, -r.hl), C.white);
-        gbQuad(G.op, tf(Fs, x - 0.04, f.y0 + 1.0, -r.hl), tf(Fs, x + 0.04, f.y0 + 1.0, -r.hl), tf(Fs, x + 0.04, f.y1 + 1.0, r.hl), tf(Fs, x - 0.04, f.y1 + 1.0, r.hl), C.black); });
-      [-hw - 0.05, hw + 0.05].forEach(function(x){
-        gbQuad(G.tile, tf(Fs, x, f.y0 - 0.3, -r.hl), tf(Fs, x, f.y1 - 0.3, r.hl), tf(Fs, x, f.y1 + 3.2, r.hl), tf(Fs, x, f.y0 - 0.05, -r.hl), C.tileW, [0, 0, 2*r.hl/1.2, 3]);
-        gbWall(G.gl, Fs, x, -r.hl, x, -r.hl + 3, f.y0, f.y0 + 1.1, C.white);
+      if(escW){
+        gbQuad(G.op, tf(Fs, -hw, f.y0, -r.hl), tf(Fs, -hw + escW, f.y0, -r.hl), tf(Fs, -hw + escW, f.y1, r.hl), tf(Fs, -hw, f.y1, r.hl), C.esc);
+        [-hw + 0.03, -hw + escW].forEach(function(x){ gbQuad(G.gl, tf(Fs, x, f.y0, -r.hl), tf(Fs, x, f.y1, r.hl), tf(Fs, x, f.y1 + 1.0, r.hl), tf(Fs, x, f.y0 + 1.0, -r.hl), C.white);
+          gbQuad(G.op, tf(Fs, x - 0.04, f.y0 + 1.0, -r.hl), tf(Fs, x + 0.04, f.y0 + 1.0, -r.hl), tf(Fs, x + 0.04, f.y1 + 1.0, r.hl), tf(Fs, x - 0.04, f.y1 + 1.0, r.hl), C.black); });
+      }
+      // the riser under the head (the first step is a step down from the hall's floor); a stair with no well (the Island
+      // Link's, at the end of its passage) closes its head over the passage's ceiling
+      gbWall(G.op, Fs, -ww, -r.hl, ww, -r.hl, f.y0 - 0.4, f.y0 + 0.002, C.step);
+      if(!(f.well > 0)) gbWall(G.tile, Fs, -ww, -r.hl, ww, -r.hl, f.y0 + PASS_H - 0.02, f.y0 + TUBE_H + 0.02, C.tileW, 1.2);
+      // the soffit under the whole flight
+      gbQuad(G.op, tf(Fs, -ww, f.y0 - 0.3, -r.hl), tf(Fs, ww, f.y0 - 0.3, -r.hl), tf(Fs, ww, f.y1 - 0.3, r.hl), tf(Fs, -ww, f.y1 - 0.3, r.hl), C.concreteD);
+      [-ww, ww].forEach(function(x){
+        // the well's walls: from under the steps up to the hall's floor
+        if(uw > -r.hl) gbQuad(G.tile, tf(Fs, x, f.y0 - 0.3, -r.hl), tf(Fs, x, yAt(uw) - 0.3, uw), tf(Fs, x, f.y0, uw), tf(Fs, x, f.y0, -r.hl), C.tileW, [0, 0, (uw + r.hl)/1.2, 2]);
+        // the tube's walls: from under the steps to its ceiling
+        gbQuad(G.tile, tf(Fs, x, yAt(uw) - 0.3, uw), tf(Fs, x, f.y1 - 0.3, r.hl), tf(Fs, x, f.y1 + TUBE_H, r.hl), tf(Fs, x, yAt(uw) + TUBE_H, uw), C.tileW, [0, 0, (r.hl - uw)/1.2, (TUBE_H + 0.3)/1.2]);
+        // glass balustrades along the well, at the hall's floor
+        if(uw > -r.hl){ gbWall(G.gl, Fs, x, -r.hl, x, uw, f.y0, f.y0 + 1.1, C.white); gbBox(G.op, Fs, x, f.y0 + 1.12, (uw - r.hl)/2, 0.04, 0.03, (uw + r.hl)/2, C.handrail); }
       });
-      gbFlat(G.at, Fs, -0.15, 0.15, -r.hl + 1, r.hl - 1, Math.max(f.y0, f.y1) + 3.3, C.strip);
+      if(uw > -r.hl){ gbWall(G.gl, Fs, -ww, uw, ww, uw, f.y0, f.y0 + 1.1, C.white); gbBox(G.op, Fs, 0, f.y0 + 1.12, uw, ww, 0.03, 0.04, C.handrail); }
+      // the tube's ceiling and its light
+      gbQuad(G.op, tf(Fs, -ww, yAt(uw) + TUBE_H, uw), tf(Fs, ww, yAt(uw) + TUBE_H, uw), tf(Fs, ww, f.y1 + TUBE_H, r.hl), tf(Fs, -ww, f.y1 + TUBE_H, r.hl), C.ceiling);
+      gbQuad(G.at, tf(Fs, -0.15, yAt(uw) + TUBE_H - 0.03, uw + 0.5), tf(Fs, 0.15, yAt(uw) + TUBE_H - 0.03, uw + 0.5), tf(Fs, 0.15, f.y1 + TUBE_H - 0.03, r.hl - 0.5), tf(Fs, -0.15, f.y1 + TUBE_H - 0.03, r.hl - 0.5), C.strip);
     });
     // over every stair head in the hall: the line it goes down to and both ways from its platform
     st.stairs.forEach(function(f){
       var uvL = SU.line[f.line]; if(!uvL) return;
       var A = rPoint(f.r, -f.r.hl - 0.4, 0); gbSign(G.wf, A.x, f.y0 + 2.95, A.z, f.r.yaw + PI, 4.4, 0.41, uvL);
     });
-    // the ticket hall: stone floor (open over the stairs), tiled walls (open where passages come in), lit ceiling
-    var h = st.hall, Fh = frame(h.cx, 0, h.cz, h.yaw), hy = st.hallY, cy = hy + 3.6;
-    var lows = st.floors.filter(function(f){ return f.kind === "stairs"; });
-    for(var gu = -h.hl; gu < h.hl - 0.01; gu += 2) for(var gv = -h.hw; gv < h.hw - 0.01; gv += 2){
-      var mid = rPoint(h, gu + 1, gv + 1), hole = false;
-      lows.forEach(function(f){ var l = inRect(f.r, mid.x, mid.z, 0.6); if(l && Lay.floorY(f, l) < hy - 0.3) hole = true; });
-      if(!hole) gbFlat(G.op, Fh, gv, gv + 2, gu, gu + 2, hy, ((gu + gv)/2) % 2 ? C.floorHall : C.platform);
-    }
-    gbFlat(G.op, Fh, -h.hw, h.hw, -h.hl, h.hl, cy, C.ceiling);
-    for(var lv = -h.hw + 3; lv < h.hw - 1; lv += 6) gbFlat(G.at, Fh, lv - 0.15, lv + 0.15, -h.hl + 1.5, h.hl - 1.5, cy - 0.02, C.strip);
-    var passes = st.floors.filter(function(f){ return f.kind === "passage" || f.kind === "entrance" && inRect(h, f.r.cx, f.r.cz, f.r.hl + 2); });
-    function openAt(u, v){ var P = rPoint(h, u, v), o2 = false; passes.forEach(function(f){ if(inRect(f.r, P.x, P.z, 0.8)) o2 = true; }); return o2; }
-    [[-1, "v"], [1, "v"], [-1, "u"], [1, "u"]].forEach(function(w){
-      var fixedV = w[1] === "v", span = fixedV ? h.hl : h.hw, at = fixedV ? w[0]*h.hw : w[0]*h.hl;
-      for(var t = -span; t < span - 0.01; t += 4){
-        var t1 = Math.min(span, t + 4), tm = (t + t1)/2;
-        if(fixedV ? openAt(tm, at) : openAt(at, tm)) continue;
-        if(fixedV) gbWall(G.tile, Fh, at, t, at, t1, hy, cy, C.tileW, 1.2); else gbWall(G.tile, Fh, t, at, t1, at, hy, cy, C.tileW, 1.2);
-      }
+    // [stations] the ticket hall: a stone floor open only over the wells, a lit ceiling open only where an entrance's stairs
+    // come down through it, tiled walls open exactly where a passage (or an entrance's stairs) comes in
+    var h = st.hall, Fh = frame(h.cx, 0, h.cz, h.yaw), hy = st.hallY, cy = hy + HALL_H;
+    var wells = st.stairs.filter(function(f){ return f.well > 0; }).map(function(f){ var r = f.r, A = rPoint(r, -r.hl, 0), B = rPoint(r, -r.hl + f.well, 0); return rectAB(A.x, A.z, B.x, B.z, r.hw + 0.05); });
+    var myEnts = Lay.entrances.filter(function(E){ return E.station === st.id && E.kind !== "lift"; });
+    var cHoles = [];
+    myEnts.forEach(function(E){
+      // the stretch of the entrance's stairs whose underside is below the hall's ceiling, up from its foot
+      var R = E.ramp.r, slope = (E.y - hy)/(2*R.hl || 1), up = clamp((HALL_H + 0.3)/(slope || 1e-6), 0, 2*R.hl);
+      var B = rPoint(R, R.hl, 0), A = rPoint(R, R.hl - up, 0);
+      if(up > 0.05 && segRect(A.x, A.z, B.x, B.z, h, R.hw)) cHoles.push(rectAB(A.x, A.z, B.x, B.z, R.hw));
     });
-    // [transit pass] the gate lines at +-gu (past every entrance's foot): nine cabinets, eight lanes, glass out to the walls
-    [-1, 1].forEach(function(e){
-      var u = e*st.gu, ng = st.lanes.length;
+    function polys(B, list, y, col){ list.forEach(function(P){ for(var k = 1; k + 1 < P.length; k++) gbTri(B, [P[0][0], y, P[0][1]], [P[k][0], y, P[k][1]], [P[k + 1][0], y, P[k + 1][1]], col); }); }
+    for(var gu = -h.hl; gu < h.hl - 0.01; gu += 2) for(var gv = -h.hw; gv < h.hw - 0.01; gv += 2){
+      var u2 = Math.min(h.hl, gu + 2), v2 = Math.min(h.hw, gv + 2), cell = [rectPoly(h, gu, u2, gv, v2)];
+      polys(G.op, minusRects(cell, wells), hy, (Math.round((gu + h.hl)/2) + Math.round((gv + h.hw)/2)) % 2 ? C.floorHall : C.platform);
+      polys(G.op, minusRects(cell, cHoles), cy, C.ceiling);
+    }
+    for(var lv = -h.hw + 3; lv < h.hw - 1; lv += 6) for(var lu = -h.hl + 1.5; lu < h.hl - 1.5; lu += 2){
+      var Lm = rPoint(h, lu + 1, lv); if(cHoles.some(function(r){ return inRect(r, Lm.x, Lm.z, 0.6); }) || wells.some(function(r){ return inRect(r, Lm.x, Lm.z, 0.3); })) continue;
+      gbFlat(G.at, Fh, lv - 0.15, lv + 0.15, lu, Math.min(lu + 2, h.hl - 1.5), cy - 0.02, C.strip);
+    }
+    // what comes in through the walls: passages (to their ceiling) and entrance stairs (from their steps up)
+    var opens = [];
+    st.floors.forEach(function(f){ if(f.kind === "passage") opens.push({r: f.r, lo: function(){ return hy; }, hi: function(){ return hy + PASS_H; }}); });
+    myEnts.forEach(function(E){ var R = E.ramp.r; opens.push({r: R, lo: function(P){ var l = rLocal(R, P.x, P.z); return Lay.floorY(E.ramp, l) - 0.3; }, hi: function(){ return E.y - 0.25; }}); });
+    function hallWall(u0, v0, u1, v1){
+      var A = rPoint(h, u0, v0), B = rPoint(h, u1, v1), L = hyp(B.x - A.x, B.z - A.z), cut = [];
+      opens.forEach(function(o){ var t = segRect(A.x, A.z, B.x, B.z, o.r); if(t) cut.push({t0: t[0], t1: t[1], o: o}); });
+      cut.sort(function(a2, b2){ return a2.t0 - b2.t0; });
+      function at(t){ return {x: A.x + (B.x - A.x)*t, z: A.z + (B.z - A.z)*t}; }
+      function quad(t0, t1, ya0, ya1, yb0, yb1){   // from t0 to t1: bottom ya0 -> ya1, top yb0 -> yb1
+        if(t1 - t0 < 1e-4 || (yb0 - ya0 < 0.005 && yb1 - ya1 < 0.005)) return;
+        var P0 = at(t0), P1 = at(t1);
+        gbQuad(G.tile, [P0.x, ya0, P0.z], [P1.x, ya1, P1.z], [P1.x, yb1, P1.z], [P0.x, yb0, P0.z], C.tileW, [t0*L/1.2, (ya0 - hy)/1.2, t1*L/1.2, (yb0 - hy)/1.2]);
+      }
+      var t = 0;
+      cut.forEach(function(c2){
+        if(c2.t0 > t) quad(t, c2.t0, hy, hy, cy, cy);
+        var s0 = Math.max(t, c2.t0), s1 = c2.t1; if(s1 <= s0){ t = Math.max(t, s1); return; }
+        var lo0 = clamp(c2.o.lo(at(s0)), hy, cy), lo1 = clamp(c2.o.lo(at(s1)), hy, cy), hi0 = clamp(c2.o.hi(at(s0)), hy, cy), hi1 = clamp(c2.o.hi(at(s1)), hy, cy);
+        quad(s0, s1, hy, hy, lo0, lo1);              // under the opening (an entrance's steps still above the floor)
+        quad(s0, s1, hi0, hi1, cy, cy);              // over it
+        t = s1;
+      });
+      if(t < 1) quad(t, 1, hy, hy, cy, cy);
+    }
+    hallWall(-h.hl, -h.hw, h.hl, -h.hw); hallWall(-h.hl, h.hw, h.hl, h.hw); hallWall(-h.hl, -h.hw, -h.hl, h.hw); hallWall(h.hl, -h.hw, h.hl, h.hw);
+    // [stations] a stair's own gate line across its head (another line's stairs on the street side of the hall's)
+    (st.heads || []).forEach(function(H){
+      var Fg = frame(H.r.cx, 0, H.r.cz, H.r.yaw);
+      [-1.2, 0, 1.2].forEach(function(v){ gbBox(G.op, Fg, v, hy + 0.5, -0.2, 0.13, 0.5, 0.55, C.gate); gbBox(G.at, Fg, v, hy + 1.01, -0.6, 0.1, 0.01, 0.12, C.screen); });
+      H.lanes.forEach(function(v){ var P = tf(Fg, v, hy, -0.2); gates.push({x: P[0], y: hy, z: P[2], yaw: H.r.yaw, e: 0, open: 0, beep: false}); });
+      var Wg = tf(Fg, 0, hy + 2.4, -0.4); gbSign(G.wf, Wg[0], Wg[1], Wg[2], H.r.yaw + PI, 3.0, 0.38, SU.gates);
+    });
+    // [transit pass] the gate lines (past every entrance's foot, short of every stair head): nine cabinets, eight lanes,
+    // glass out to the walls; e: the way to the paid side
+    st.gates.forEach(function(GL){
+      var e = GL.e, u = GL.u, ng = st.lanes.length;
       for(var g = 0; g <= ng; g++){ var v = -ng*0.55 + g*1.1; gbBox(G.op, Fh, v, hy + 0.5, u, 0.13, 0.5, 0.7, C.gate); gbBox(G.at, Fh, v, hy + 1.01, u - e*0.45, 0.1, 0.01, 0.12, C.screen); }
       st.lanes.forEach(function(gvv){ var P = tf(Fh, gvv, hy, u); gates.push({x: P[0], y: hy, z: P[2], yaw: h.yaw, e: e, open: 0, beep: false}); });
       gbWall(G.gl, Fh, -h.hw, u, -ng*0.55 - 0.15, u, hy, hy + 1.1, C.white); gbWall(G.gl, Fh, ng*0.55 + 0.15, u, h.hw, u, hy, hy + 1.1, C.white);
@@ -1568,9 +1921,10 @@ function view(c, sim, opts){
         var Wl = tf(Fh, vv, hy + 3.36, u - e*0.14); gbSign(G.wf, Wl[0], Wl[1], Wl[2], h.yaw + (e > 0 ? PI : 0), 4.4, 0.41, uvL); });
     });
     // ticket machines (screens lit) under a "Tickets" sign, the line map with "You are here", the name over the machines
-    for(var m = 0; m < 4; m++){ var mu = -4.2 + m*2.8; gbBox(G.op, Fh, -h.hw + 0.35, hy + 0.9, mu, 0.3, 0.9, 0.45, C.machine);
-      var S2 = tf(Fh, -h.hw + 0.66, hy + 1.3, mu); gbSign(G.at, S2[0], S2[1], S2[2], h.yaw + PI/2, 0.5, 0.4, null, C.screen); }
-    var Tk = tf(Fh, -h.hw + 0.05, hy + 2.2, 0); gbSign(G.wf, Tk[0], Tk[1], Tk[2], h.yaw + PI/2, 3.6, 0.45, SU.tickets);
+    // ([stations] where the layout put them: a bank of four on the street side by each way in)
+    st.machines.forEach(function(Mc, m){ var mu = Mc.u; gbBox(G.op, Fh, -h.hw + 0.35, hy + 0.9, mu, 0.3, 0.9, 0.45, C.machine);
+      var S2 = tf(Fh, -h.hw + 0.66, hy + 1.3, mu); gbSign(G.at, S2[0], S2[1], S2[2], h.yaw + PI/2, 0.5, 0.4, null, C.screen);
+      if(m % 4 === 1){ var Tk = tf(Fh, -h.hw + 0.05, hy + 2.2, mu + 1.4); gbSign(G.wf, Tk[0], Tk[1], Tk[2], h.yaw + PI/2, 3.6, 0.45, SU.tickets); } });
     var Mp = tf(Fh, h.hw - 0.04, hy + 1.75, 0); gbSign(G.wf, Mp[0], Mp[1], Mp[2], h.yaw - PI/2, 5.6, 1.57, SU.map);
     if(frz){ var Nm = tf(Fh, -h.hw + 0.04, hy + 2.95, 0); gbSign(G.at, Nm[0], Nm[1], Nm[2], h.yaw + PI/2, 4, 0.5, frz); }
     // every exit, by its street, over the foot of its stairs (read on the way out); the station's name on the back
@@ -1581,16 +1935,31 @@ function view(c, sim, opts){
       gbSign(G.wf, X + sy*0.02, hy + 2.6, Z + cy2*0.02, E.yaw, 3.4, 0.43, SU.exit[E.id]);
       gbSign(G.wf, X - sy*0.02, hy + 2.6, Z - cy2*0.02, E.yaw + PI, 3.4, 0.43, SU.here);
     });
-    // passages from the entrance stairs (and the Island Link) to the hall: floor, tiled walls, ceiling, a lit strip
+    // passages from the entrance stairs (and the Island Link) to the hall: floor, tiled walls, ceiling, a lit strip, each
+    // only up to the hall's wall (its opening there is cut to the passage exactly)
     st.floors.forEach(function(f){
       if(f.kind !== "passage" && f.kind !== "lift") return;
       var r = f.r, Fp = frame(r.cx, 0, r.cz, r.yaw), y = f.y0;
-      gbFlat(G.op, Fp, -r.hw, r.hw, -r.hl, r.hl, y, C.floorHall);
-      gbFlat(G.op, Fp, -r.hw, r.hw, -r.hl, r.hl, y + 3, C.ceiling);
-      gbFlat(G.at, Fp, -0.15, 0.15, -r.hl + 0.5, r.hl - 0.5, y + 2.98, C.strip);
-      [-r.hw, r.hw].forEach(function(x){ gbWall(G.tile, Fp, x, -r.hl, x, r.hl, y, y + 3, C.tileW, 1.2); });
-      if(f.kind === "lift") gbWall(G.op, Fp, -r.hw, -r.hl, r.hw, -r.hl, y, y + 3, C.frame);
+      if(f.kind === "lift"){
+        gbFlat(G.op, Fp, -r.hw, r.hw, -r.hl, r.hl, y, C.floorHall); gbFlat(G.op, Fp, -r.hw, r.hw, -r.hl, r.hl, y + PASS_H, C.ceiling);
+        [-r.hw, r.hw].forEach(function(x){ gbWall(G.tile, Fp, x, -r.hl, x, r.hl, y, y + PASS_H, C.tileW, 1.2); });
+        gbWall(G.op, Fp, -r.hw, -r.hl, r.hw, -r.hl, y, y + PASS_H, C.frame);
+        return;
+      }
+      var out = minusRects([rectPoly(r, -r.hl, r.hl, -r.hw, r.hw)], [h]);
+      polys(G.op, out, y, C.floorHall); polys(G.op, out, y + PASS_H, C.ceiling);
+      [-r.hw, r.hw].forEach(function(x){
+        var A = rPoint(r, -r.hl, x), B = rPoint(r, r.hl, x), t = segRect(A.x, A.z, B.x, B.z, h), lz0 = -r.hl, lz1 = r.hl;
+        if(t){ if(t[0] <= 1e-6) lz0 = -r.hl + 2*r.hl*t[1]; else lz1 = -r.hl + 2*r.hl*t[0]; }
+        if(lz1 - lz0 > 0.01) gbWall(G.tile, Fp, x, lz0, x, lz1, y, y + PASS_H, C.tileW, 1.2);
+      });
+      // (the Island Link's passage ends at its stair: closed round the stair's tube)
+      if(f.rail){ [[-r.hw, -1.55], [1.55, r.hw]].forEach(function(q2){ gbWall(G.tile, Fp, q2[0], r.hl, q2[1], r.hl, y, y + PASS_H, C.tileW, 1.2); }); }
+      var ls = segRect(rPoint(r, -r.hl, 0).x, rPoint(r, -r.hl, 0).z, rPoint(r, r.hl, 0).x, rPoint(r, r.hl, 0).z, h), le = ls && ls[0] > 1e-6 ? -r.hl + 2*r.hl*ls[0] : r.hl;
+      if(le + r.hl > 1.2) gbFlat(G.at, Fp, -0.15, 0.15, -r.hl + 0.5, le - 0.5, y + PASS_H - 0.02, C.strip);
     });
+    // [stations] below the street the open top of every entrance's stairs shows the daylight (the street is not drawn then)
+    myEnts.forEach(function(E){ var Fe = frame(E.x, E.y, E.z, E.yaw), hwE = E.w/2; gbFlat(G.at, Fe, -hwE - 0.4, hwE + 0.4, -1.2, E.run + 1.0, -0.06, C.glow); });
     // a lift from the hall to every platform (a glass shaft)
     st.plats.forEach(function(p, i){
       if(i % 2 && st.platform === "side") return;
@@ -1601,12 +1970,8 @@ function view(c, sim, opts){
     // the Island Link platforms (at railway depth; part rail draws its trains)
     st.il.forEach(function(r){
       var Fi = frame(r.x, 0, r.z, r.yaw);
-      platformBox(G, Fi, r.y - FLOOR, r.len/2, "island", 4.2, {frieze: atUv(AP.il), band: rgb(0x1f7a4a), wayout: [-(r.len/2 - 6)]});
       var stairsIL = st.floors.filter(function(f){ return f.rail === r.id && f.kind === "stairs"; });
-      stairsIL.forEach(function(f){ var rr = f.r, Fs = frame(rr.cx, 0, rr.cz, rr.yaw), n = Math.max(6, Math.ceil((f.y0 - f.y1)/0.18));
-        for(var i = 0; i < n; i++){ var u0 = -rr.hl + 2*rr.hl*i/n, u1 = -rr.hl + 2*rr.hl*(i + 1)/n; gbSlab(G.op, Fs, 0, f.y0 + (f.y1 - f.y0)*(i + 1)/n - 0.1, (u0 + u1)/2, rr.hw, 0.1, (u1 - u0)/2 + 0.01, C.step); }
-        [-rr.hw - 0.05, rr.hw + 0.05].forEach(function(x){ gbQuad(G.tile, tf(Fs, x, f.y0 - 0.3, -rr.hl), tf(Fs, x, f.y1 - 0.3, rr.hl), tf(Fs, x, f.y1 + 3.2, rr.hl), tf(Fs, x, f.y0 + 3, -rr.hl), C.tileW, [0, 0, 2*rr.hl/1.2, 3]); });
-      });
+      platformBox(G, Fi, r.y - FLOOR, r.len/2, "island", 4.2, {frieze: atUv(AP.il), band: rgb(0x1f7a4a), wayout: [-(r.len/2 - 6)], holes: tubeHoles(stairsIL, r.y + PLAT_H)});
     });
     var grp = new THREE.Group(); grp.name = "metro:station:" + st.id;
     var mOp = mesh(G.op, M.op, "op"), mTi = mesh(G.tile, M.tile, "tiles"), mAt = mesh(G.at, M.atlas, "signs"), mGl = mesh(G.gl, M.glass, "glass");

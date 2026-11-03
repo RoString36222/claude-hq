@@ -46,7 +46,7 @@ fn district_of(u: Use) -> u8 {
 /// The layers of world `seed` at generator version 4, with `edits` applied to its terrain.
 pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     let c = City::plan(seed)?;
-    let City { mut land, airport: ap, hub, port, rail, arterials, streets, landuse, metro, .. } = c;
+    let City { mut land, airport: ap, hub, port, rail, arterials, streets, landuse, metro, space, .. } = c;
     let p = profile_for(seed, 4);
 
     // the streets: the arterials first (their edges named avenues), then the local streets and links, and the port's
@@ -99,7 +99,7 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
         doc.lots.push(Lot {
             id: k as u32, block: k as u32, kind: "building", district: dist, x: b.c.0, z: b.c.1, w, d: dd, facing,
             door: [b.c.0, b.y, b.c.1 + dz], floors: (b.h / FLOOR_CM).max(1), rank: None, tier: None,
-            poly: Some(poly), front: Some(front), grow: Some(k as u32), min_tier: None,
+            poly: Some(poly), front: Some(front), grow: Some(k as u32), min_tier: None, gates: None, annex: None,
         });
     }
 
@@ -134,18 +134,34 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
         doc.sites.push(site("port:0", "port", at, gy(at), PORT_W_CM, PORT_D_CM, None, port_front(at, f)));
     }
 
-    // the HQ pool: the blocks nearest Central first (offices, then homes), each laid out in equal HQ lots along its
-    // streets (New York's), every lot's door out to a local street
-    hq_pool(&p, &roads, hub, &doc.sites, &landuse.buildings, &landuse.frames, &mut doc.lots)?;
+    // the HQ pool: a township each, spread over the residential blocks (nearest Central first), every one's door and
+    // gateways out to a local street
+    hq_pool(&p, &roads, hub, &doc.sites, &land, &space, &ap.poly, &landuse.buildings, &landuse.frames, &mut doc.lots, &mut doc.blocks)?;
 
     let districts = districts_of(&land, &landuse.cells, hub);
     let zones = Some(zones::layer(land.seed, &doc.blocks));
-    let mut tr = transit::generate(&roads, &doc.sites, &doc.lots, None, &[]);
+    // [3.37] the bus stops on the avenues' kerbs (the stations' and landmarks' first), and the bus loops through them
+    {
+        let mut anchors: Vec<P> = metro.stations.iter().map(|s| s.c).collect();
+        anchors.extend(rail.iter().flat_map(|l| l.stations.iter().copied()));
+        anchors.extend(doc.sites.iter().filter(|s| matches!(s.kind, "transit" | "fountain" | "port" | "airport")).map(|s| (s.x, s.z)));
+        let mut avoid: Vec<P> = metro.stations.iter().flat_map(|s| s.entrances.iter().copied()).collect();
+        avoid.extend(metro.lines.iter().filter_map(|l| l.depot.as_ref().map(|d| d.portal.at)));
+        avoid.extend(rail.iter().flat_map(|l| l.portals.iter().map(|p| p.at)));
+        let stops = super::bus::stops(&roads, &doc.lots, &doc.sites, &anchors, &avoid);
+        for (k, b) in stops.iter().enumerate() {
+            let mut s = site(&format!("busstop:{k}"), "busstop", b.at, gy(b.at), super::bus::W_CM, super::bus::D_CM, None, b.front);
+            s.tier = Some(transit::BUS_TIER);
+            doc.sites.push(s);
+        }
+    }
+    let mut tr = transit::generate_avenues(&roads, &doc.sites, &doc.lots);
     let isl = land.coast.as_ref().map(|co| island::grow(&p, co, &mut roads, &mut doc, &mut tr));
 
     let mut terrain = land.t.clone();
     grade_airport(&mut terrain, &land, &ap);
     grade_terminal(&mut terrain, tat, tn);
+    grade_townships(&mut terrain, &doc.lots);
     terrain.apply(edits)?;
     roads.seat(&terrain, &p)?;
     roads.carve(&mut terrain, |q| land.river.as_ref().is_some_and(|r| r.wet(q)));
@@ -206,6 +222,49 @@ fn grade_terminal(t: &mut super::super::terrain::Terrain, o: P, n: (f64, f64)) {
                 let h = &mut t.heights[iz * t.n + ix];
                 *h = (*h as f64 + (y - *h as f64) * w).round() as i32;
             }
+        }
+    }
+}
+
+/// Each township (an HQ lot with gates; with its neighbouring plots, `town_ground`) graded level at its door's height (the ground in the middle of its street front):
+/// the lot drawn flat on it (worldgeom.js), its HQ, drive and gardens on one level, easing back to the land over
+/// `TOWN_EASE_CM` round it (level out to a terrain cell and a half past its edge: the ground between the vertices is
+/// their blend, so its own edge is level too).
+const TOWN_EASE_CM: f64 = 1_000.0;
+fn grade_townships(t: &mut super::super::terrain::Terrain, lots: &[Lot]) {
+    use super::super::organic::geom::{inside, seg_dist2};
+    let flat = t.cell_cm as f64 * 1.5;
+    let m = (flat + TOWN_EASE_CM) as i64;
+    // each township: its outline, its level, its box grown by the grading's reach
+    let towns: Vec<(Vec<P>, f64, (i64, i64, i64, i64))> = lots.iter().filter(|l| l.kind == "hq" && l.gates.is_some()).filter_map(|l| {
+        let r: Vec<P> = town_ground(l)?;
+        let b = r.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
+        Some((r, t.height_at(l.door[0], l.door[2]) as f64, (b.0 - m, b.1 + m, b.2 - m, b.3 + m)))
+    }).collect();
+    // every vertex in reach takes the nearest township's level (two in one block each keep their own ground)
+    let mut grade: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
+    for (r, y, b) in &towns {
+        let n = r.len();
+        for iz in 0..t.n {
+            for ix in 0..t.n {
+                let q = t.vertex_pos(ix, iz);
+                if q.0 < b.0 || q.0 > b.1 || q.1 < b.2 || q.1 > b.3 {
+                    continue;
+                }
+                let d = if inside(q, r) { 0.0 } else { ((0..n).map(|e| seg_dist2(r[e], r[(e + 1) % n], q, q)).min().unwrap_or(i64::MAX) as f64).sqrt() };
+                let k = iz * t.n + ix;
+                if grade.get(&k).is_none_or(|g| d < g.0) {
+                    grade.insert(k, (d, *y));
+                }
+            }
+        }
+    }
+    for (k, (d, y)) in grade {
+        let e = (1.0 - (d - flat).max(0.0) / TOWN_EASE_CM).clamp(0.0, 1.0);
+        let w = e * e * (3.0 - 2.0 * e);
+        if w > 0.0 {
+            let h = &mut t.heights[k];
+            *h = (*h as f64 + (y - *h as f64) * w).round() as i32;
         }
     }
 }
@@ -373,9 +432,29 @@ fn fountain_at(roads: &Roads, hub: P, keep: &[(P, i64, i64)], lots: &[Lot]) -> O
 }
 
 /// Every HQ lot's size (cm), the same for every HQ (no one's lot is bigger than another's: the building on it grows
-/// with its owner's level, the lot does not): its frontage along its street and its depth back from it.
-pub const HQ_LOT_W: i64 = 3_600;
-pub const HQ_LOT_D: i64 = 3_400;
+/// with its owner's level, the lot does not): a township 88 m along its street and 56 m deep. 56 m is a home block's
+/// whole depth between its two streets' building lines (landuse.rs block_of: two 18 m rows and the 20 m between them),
+/// so a township fills its block through to the next street, two to a home block; 4 928 m2, four times the 36 x 34 m
+/// lot it replaces (1 224 m2), with room inside its wall for a drive round the HQ, parking and gardens.
+pub const HQ_LOT_W: i64 = 8_800;
+pub const HQ_LOT_D: i64 = 5_600;
+/// A township's two gateways on its street front: each one's middle this far in from the lot's side edge (cm), its
+/// opening this wide (the 5.5 m drive inside and its posts). The way in on the lot's -x side (its frame: +z out of its
+/// front), the way out on its +x side.
+pub const GATE_IN_CM: i64 = 650;
+pub const GATE_W_CM: i64 = 700;
+/// How far (cm) a gateway's middle may stand back from its street's edge (the lot's front is `FRONT_CM` from the street's
+/// centre line: the pavement between).
+pub const GATE_REACH_CM: i64 = 800;
+/// The townships spread over the city: the blocks holding them this far apart (centre to centre, cm) at first, then
+/// closer, step by step, until the profile's count is laid (0: anywhere they fit).
+const SPREAD_CM: [i64; 8] = [48_000, 40_000, 34_000, 28_000, 22_000, 16_000, 10_000, 0];
+/// Each township's two neighbouring plots (HQ 3.37, `Lot::annex`), flush with its sides along its street: this wide
+/// (cm) and as deep as it. A home block's row is 200 m between its streets' building lines, so a township and both its
+/// plots (88 + 2 x 55 m) fill it with a metre to spare: one township to a block, the block its to grow over.
+pub const HQ_ANNEX_W: i64 = 5_500;
+/// Two townships' outlines at least this far apart (cm): two walls, never one shared.
+const TOWN_GAP_CM: i64 = 300;
 
 /// How far (cm) an HQ lot stays out past a road's half width (its kerb and a hair: no pad over a pavement's edge).
 const LOT_ROAD_CM: i64 = 50;
@@ -401,18 +480,47 @@ fn convex_overlap(a: &[P], b: &[P]) -> bool {
     true
 }
 
-/// The HQ lots (see `layers`), New York style: the blocks nearest Central first (the offices, then the homes, then the
-/// sheds), each block (landuse.rs `Frame`: between its street centre lines, its buildings `FRONT_CM` in from them)
-/// laid out in equal `HQ_LOT_W` x `HQ_LOT_D` lots side by side along its long frontage, turned to the block's frame, a
-/// row on each long side where the block is deep enough for two back to back, else on the side that fronts more, every
-/// lot fronting a local street, its door on it. The block's buildings a lot stands on give way (the first lots take
-/// their places in the list, any more of them are dropped). Every lot clear of every road (its half width and
-/// `LOT_ROAD_CM`), the sites and the other lots, `hq::MIN_GAP_CM` from the next and with room for the HQ and its garage
-/// (`hq::fits`).
-fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, sites: &[Site], buildings: &[super::landuse::Building],
-    frames: &[super::landuse::Frame], lots: &mut Vec<Lot>) -> Result<(), String> {
+/// A township's gateways (see `Gate`): on its front edge, `GATE_IN_CM` in from each side, the way in at the -x side.
+/// `at(x, z)`: the world point (cm) at x across the lot's front (its frame's +x) and z out of its middle toward the street.
+pub fn township_gates(at: &dyn Fn(f64, f64) -> (f64, f64), front: [i64; 2]) -> Vec<super::super::city::Gate> {
+    let (gx, gz) = ((HQ_LOT_W - 2 * GATE_IN_CM) as f64 / 2.0, HQ_LOT_D as f64 / 2.0);
+    [(-gx, "in"), (gx, "out")].iter().map(|&(x, kind)| {
+        let q = at(x, gz);
+        super::super::city::Gate { x: q.0.round() as i64, z: q.1.round() as i64, dir: front, kind, w: GATE_W_CM }
+    }).collect()
+}
+
+/// The whole ground a township may grow over (cm, counter-clockwise, its street edge first): its lot and its
+/// neighbouring plots (`Lot::annex`) as one rectangle in the lot's frame; just its lot without plots; None off a township.
+pub fn town_ground(l: &Lot) -> Option<Vec<P>> {
+    let poly = l.poly.as_ref()?;
+    let f = l.front?;
+    let (fx, fz) = (f[0] as f64 / ONE as f64, f[1] as f64 / ONE as f64);
+    let (sx, sz) = (fz, -fx);
+    let pts: Vec<(f64, f64)> = poly.iter().chain(l.annex.iter().flatten().flat_map(|a| a.poly.iter()))
+        .map(|q| ((q[0] - l.x) as f64, (q[1] - l.z) as f64)).map(|(dx, dz)| (dx * sx + dz * sz, dx * fx + dz * fz)).collect();
+    let (u0, u1) = pts.iter().fold((f64::MAX, f64::MIN), |m, q| (m.0.min(q.0), m.1.max(q.0)));
+    let (v0, v1) = pts.iter().fold((f64::MAX, f64::MIN), |m, q| (m.0.min(q.1), m.1.max(q.1)));
+    let at = |u: f64, v: f64| ((l.x as f64 + u * sx + v * fx).round() as i64, (l.z as f64 + u * sz + v * fz).round() as i64);
+    let r = vec![at(u0, v1), at(u1, v1), at(u1, v0), at(u0, v0)];
+    Some(if super::super::organic::geom::area2(&r) < 0 { vec![r[1], r[0], r[3], r[2]] } else { r })
+}
+
+/// The HQ lots (see `layers`): a township each, every one the same `HQ_LOT_W` x `HQ_LOT_D`, spread over the city's
+/// residential blocks (then its industrial ones; an office block is too shallow for one), two or three to a block
+/// along its street, the blocks holding them `SPREAD_CM` apart (relaxed until the profile's count is laid), nearest
+/// Central first. Each turned to its block's frame (landuse.rs `Frame`), its front on one of the block's long sides,
+/// its two gateways (`township_gates`) and its door on a local street within `GATE_REACH_CM`; clear of every road (its
+/// half width and `LOT_ROAD_CM`), the sites, the airport, the other lots (townships `TOWN_GAP_CM` apart), the water
+/// and every solid in the volume but the block's own buildings and the roads (a metro entrance, a station, a railway
+/// over it); with room for the HQ and its garage (`hq::fits`). The block's buildings under a township give way (the
+/// first lots take their places in the list and their blocks, an outline the township's, the rest are dropped with
+/// their blocks).
+#[allow(clippy::too_many_arguments)]
+fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, sites: &[Site], land: &super::land::Land, space: &super::space::Space,
+    airport: &[P], buildings: &[super::landuse::Building], frames: &[super::landuse::Frame], lots: &mut Vec<Lot>, blocks: &mut Vec<Block>) -> Result<(), String> {
     use super::super::organic::geom::{inside, seg_dist2};
-    use super::super::organic::hq::{arterial, fits, Streets, MIN_GAP_CM};
+    use super::super::organic::hq::{arterial, fits, Streets};
     use super::landuse::FRONT_CM;
     let streets = Streets::new(roads);
     // every road's pieces, with their half widths, by 50 m cell
@@ -453,79 +561,128 @@ fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, sites: &[S
             by.entry((b.frame, b.block.0, b.block.1)).or_default().push(k);
         }
     }
-    let rank_of = |u: Use| match u { Use::Office => 0, Use::Home => 1, _ => 2 };
+    let rank_of = |u: Use| match u { Use::Home => 0, Use::Industry => 1, _ => 2 };
+    let centre_of = |key: (u32, i64, i64)| { let f = &frames[key.0 as usize]; f.at((key.1 as f64 + 0.5) * f.long, (key.2 as f64 + 0.5) * f.short) };
     let mut order: Vec<((u32, i64, i64), (i64, i64))> = by.keys().map(|&key| {
-        let f = &frames[key.0 as usize];
-        let c = f.at((key.1 as f64 + 0.5) * f.long, (key.2 as f64 + 0.5) * f.short);
-        (key, (rank_of(f.use_), ((c.0 - hub.0 as f64).hypot(c.1 - hub.1 as f64)) as i64))
+        let c = centre_of(key);
+        (key, (rank_of(frames[key.0 as usize].use_), ((c.0 - hub.0 as f64).hypot(c.1 - hub.1 as f64)) as i64))
     }).collect();
     order.sort_by_key(|&(key, r)| (r, key));
     let (w, d) = (HQ_LOT_W as f64, HQ_LOT_D as f64);
-    let mut chosen: Vec<P> = Vec::new();
-    let mut dead: BTreeSet<usize> = BTreeSet::new();
-    for (key, _) in order {
-        if chosen.len() as i64 >= p.hq_lots {
-            break;
-        }
+    let rnd = |q: (f64, f64)| (q.0.round() as i64, q.1.round() as i64);
+    // the townships one block may hold, in the block's own terms (its buildings `mine`, the townships laid so far)
+    let block_lots = |key: (u32, i64, i64), placed: &[Vec<P>]| -> Vec<Lot> {
         let f = frames[key.0 as usize];
         let mine = &by[&key];
         let (a, b) = (key.1 as f64, key.2 as f64);
         let fr = FRONT_CM as f64;
         let (a0, a1, b0, b1) = (a * f.long + fr, (a + 1.0) * f.long - fr, b * f.short + fr, (b + 1.0) * f.short - fr);
-        let n = ((a1 - a0) / w).floor() as i64;
-        if n == 0 || b1 - b0 < d {
-            continue;
+        // one township to a block, in the middle of its row, its two neighbouring plots (HQ_ANNEX_W) flush either side
+        let aw = HQ_ANNEX_W as f64;
+        if a1 - a0 < w + 2.0 * aw - 1.0 || b1 - b0 < d - 1.0 {
+            return Vec::new();
         }
         let across = (-f.u.1, f.u.0);
-        let rnd = |q: (f64, f64)| (q.0.round() as i64, q.1.round() as i64);
         let base = &lots[mine[0]];
-        // a row along one long side (s 1: the side at b1, fronting +across; -1: at b0): each lot that may stand there
-        let row = |s: f64| -> Vec<Lot> {
+        // the row along one long side (s 1: the side at b1, fronting +across; -1: at b0)
+        let row = |s: f64| -> Option<Lot> {
             let edge = if s > 0.0 { b1 } else { b0 };
             let front = q16(s * across.0, s * across.1);
-            let mut out = Vec::new();
-            for i in 0..n {
-                let la = (a0 + a1) / 2.0 - n as f64 * w / 2.0 + w / 2.0 + i as f64 * w;
-                let poly: Vec<P> = [(la - w / 2.0, edge), (la + w / 2.0, edge), (la + w / 2.0, edge - s * d), (la - w / 2.0, edge - s * d)]
-                    .iter().map(|&(x, z)| rnd(f.at(x, z))).collect();
-                let (at, door) = (rnd(f.at(la, edge - s * d / 2.0)), rnd(f.at(la, edge)));
-                if !off_roads(&poly) || !streets.fronted(door, front).is_some_and(|(_, _, class)| !arterial(class)) {
-                    continue;
-                }
-                if site_polys.iter().any(|sp| convex_overlap(sp, &poly))
-                    || lots.iter().enumerate().any(|(j, o)| !mine.contains(&j) && !dead.contains(&j) && o.poly.is_some() && convex_overlap(&poly_of(o), &poly))
-                    || chosen.iter().any(|q| (q.0 - at.0).pow(2) + (q.1 - at.1).pow(2) < MIN_GAP_CM * MIN_GAP_CM)
-                {
-                    continue;
-                }
-                let mut hq = base.clone();
-                (hq.x, hq.z, hq.w, hq.d) = (at.0, at.1, HQ_LOT_W, HQ_LOT_D);
-                (hq.poly, hq.front, hq.door) = (Some(poly.iter().map(|q| [q.0, q.1]).collect()), Some(front), [door.0, base.door[1], door.1]);
-                hq.facing = if front[1] < 0 { Facing::South } else { Facing::North };
-                (hq.kind, hq.floors) = ("hq", 0);
-                if fits(&hq) {
-                    out.push(hq);
-                }
+            let la = (a0 + a1) / 2.0;
+            // the lot's frame: x across its front (s along the block), z out of its middle to the street
+            let at = |x: f64, z: f64| f.at(la + s * x, edge - s * d / 2.0 + s * z);
+            // a rectangle x0..x1 across the front, the lot's depth (counter-clockwise, its front edge first)
+            let rect = |x0: f64, x1: f64| -> Vec<P> {
+                let r: Vec<P> = [(x0, d / 2.0), (x1, d / 2.0), (x1, -d / 2.0), (x0, -d / 2.0)].iter().map(|&(x, z)| rnd(at(x, z))).collect();
+                if super::super::organic::geom::area2(&r) < 0 { vec![r[1], r[0], r[3], r[2]] } else { r }
+            };
+            let poly = rect(-w / 2.0, w / 2.0);
+            // the whole ground it may grow over: the township and both its neighbouring plots
+            let full = rect(-w / 2.0 - aw, w / 2.0 + aw);
+            let (mid, door) = (rnd(at(0.0, 0.0)), rnd(at(0.0, d / 2.0)));
+            let gates = township_gates(&at, front);
+            let on_street = |q: P| streets.fronted(q, front).is_some_and(|(dd, _, class)| !arterial(class) && dd <= GATE_REACH_CM);
+            let fronts = [-w / 2.0 - aw / 2.0, w / 2.0 + aw / 2.0].iter().all(|&x| on_street(rnd(at(x, d / 2.0))));
+            if !off_roads(&full) || !on_street(door) || !fronts || !gates.iter().all(|g| on_street((g.x, g.z))) {
+                return None;
             }
-            out
+            // dry all over (a 5 m grid), clear of the airport, of every solid but this block's buildings and the roads
+            let fw = w + 2.0 * aw;
+            let dry = (0..=(fw / 500.0) as i64).all(|ix| (0..=(d / 500.0) as i64).all(|iz| land.dry(rnd(at(-fw / 2.0 + ix as f64 * 500.0, -d / 2.0 + iz as f64 * 500.0)))));
+            let y = land.height(mid);
+            if !dry || convex_overlap(airport, &full) || space.blocker_but(&full, y + super::space::GROUND.0, y + super::space::ABOVE.1, 100, &["building", "road"]).is_some() {
+                return None;
+            }
+            if site_polys.iter().any(|sp| convex_overlap(sp, &full))
+                || lots.iter().enumerate().any(|(j, o)| !mine.contains(&j) && o.kind == "building" && o.poly.is_some() && convex_overlap(&poly_of(o), &full))
+                || placed.iter().any(|q| super::space::near(q, &full, TOWN_GAP_CM))
+            {
+                return None;
+            }
+            let annex: Vec<super::super::city::Annex> = [(w / 2.0, w / 2.0 + aw), (-w / 2.0 - aw, -w / 2.0)].iter().map(|&(x0, x1)| {
+                let m = rnd(at((x0 + x1) / 2.0, 0.0));
+                super::super::city::Annex { x: m.0, z: m.1, poly: rect(x0, x1).iter().map(|q| [q.0, q.1]).collect() }
+            }).collect();
+            let mut hq = base.clone();
+            (hq.x, hq.z, hq.w, hq.d) = (mid.0, mid.1, HQ_LOT_W, HQ_LOT_D);
+            (hq.poly, hq.front, hq.door) = (Some(poly.iter().map(|q| [q.0, q.1]).collect()), Some(front), [door.0, base.door[1], door.1]);
+            hq.facing = if front[1] < 0 { Facing::South } else { Facing::North };
+            (hq.kind, hq.floors, hq.gates, hq.annex) = ("hq", 0, Some(gates), Some(annex));
+            fits(&hq).then_some(hq)
         };
-        let (hi, lo) = (row(1.0), row(-1.0));
-        let laid: Vec<Lot> = if b1 - b0 >= 2.0 * d { hi.into_iter().chain(lo).collect() } else if lo.len() > hi.len() { lo } else { hi };
-        let laid: Vec<Lot> = laid.into_iter().take((p.hq_lots - chosen.len() as i64).max(0) as usize).collect();
-        if laid.is_empty() {
-            continue;
+        row(1.0).or_else(|| row(-1.0)).into_iter().collect()
+    };
+    // lay them: the blocks in order, each `spread` from the blocks laid before it; the widest spread that lays them all
+    let mut laid: Vec<((u32, i64, i64), Vec<Lot>)> = Vec::new();
+    for &spread in &SPREAD_CM {
+        laid.clear();
+        let (mut count, mut placed, mut at): (i64, Vec<Vec<P>>, Vec<(f64, f64)>) = (0, Vec::new(), Vec::new());
+        for &(key, _) in &order {
+            if count >= p.hq_lots {
+                break;
+            }
+            let c = centre_of(key);
+            if at.iter().any(|q| (q.0 - c.0).hypot(q.1 - c.1) < spread as f64) {
+                continue;
+            }
+            let mut ls = block_lots(key, &placed);
+            ls.truncate((p.hq_lots - count).max(0) as usize);
+            if ls.is_empty() {
+                continue;
+            }
+            count += ls.len() as i64;
+            at.push(c);
+            placed.extend(ls.iter().filter_map(town_ground));
+            laid.push((key, ls));
         }
-        // the block's buildings under its lots give way: the first lots take their places, any more are dropped
-        let gone: Vec<usize> = mine.iter().copied().filter(|&j| { let q = poly_of(&lots[j]); laid.iter().any(|h| convex_overlap(&q, &poly_of(h))) }).collect();
-        let m = laid.len();
-        dead.extend(gone.iter().skip(m).copied());
-        for (i, mut hq) in laid.into_iter().enumerate() {
-            let r = chosen.len() as u32;
+        if count >= p.hq_lots {
+            break;
+        }
+    }
+    let mut dead: BTreeSet<usize> = BTreeSet::new();
+    let mut r = 0u32;
+    // (ranked nearest Central first, as the pool hands them out)
+    laid.sort_by_key(|(key, _)| { let c = centre_of(*key); (((c.0 - hub.0 as f64).hypot(c.1 - hub.1 as f64)) as i64, *key) });
+    for (key, ls) in laid {
+        // the block's buildings under its townships give way: the first townships take their places, any more are dropped
+        let mine = &by[&key];
+        let gone: Vec<usize> = mine.iter().copied().filter(|&j| { let q = poly_of(&lots[j]); ls.iter().filter_map(town_ground).any(|h| convex_overlap(&q, &h)) }).collect();
+        dead.extend(gone.iter().skip(ls.len()).copied());
+        for (i, mut hq) in ls.into_iter().enumerate() {
             (hq.rank, hq.tier) = (Some(r), Some(r / p.hq_tier.max(1) as u32));
-            chosen.push((hq.x, hq.z));
+            r += 1;
+            // its block: the whole ground the township may grow over (its own lot and its neighbouring plots)
+            let ring: Vec<[i64; 2]> = town_ground(&hq).map_or_else(|| hq.poly.clone().unwrap_or_default(), |g| g.iter().map(|q| [q.0, q.1]).collect());
+            let (x0, x1) = (ring.iter().map(|q| q[0]).min().unwrap_or(hq.x), ring.iter().map(|q| q[0]).max().unwrap_or(hq.x));
+            let (z0, z1) = (ring.iter().map(|q| q[1]).min().unwrap_or(hq.z), ring.iter().map(|q| q[1]).max().unwrap_or(hq.z));
+            // the building's block it took the place of (else a new one)
+            let bk = match gone.get(i) { Some(&j) => lots[j].block as usize, None => blocks.len() };
+            let blk = Block { id: bk as u32, i: 0, j: 0, x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, district: hq.district, poly: Some(ring) };
+            if bk == blocks.len() { blocks.push(blk); } else { blocks[bk] = Block { district: blocks[bk].district, ..blk }; }
+            hq.block = bk as u32;
             match gone.get(i) {
                 Some(&j) => {
-                    (hq.id, hq.block, hq.district) = (lots[j].id, lots[j].block, lots[j].district);
+                    (hq.id, hq.district) = (lots[j].id, lots[j].district);
                     lots[j] = hq;
                 }
                 None => {
@@ -535,12 +692,19 @@ fn hq_pool(p: &super::super::profile::Profile, roads: &Roads, hub: P, sites: &[S
             }
         }
     }
-    // (the dropped buildings out, the lots' ids their places again)
+    // (the dropped buildings out with their blocks, the lots' and blocks' ids their places again)
     if !dead.is_empty() {
+        let gone_blocks: BTreeSet<u32> = dead.iter().map(|&j| lots[j].block).collect();
         let mut k = 0;
         lots.retain(|_| { let keep = !dead.contains(&k); k += 1; keep });
+        let map: BTreeMap<u32, u32> = blocks.iter().filter(|b| !gone_blocks.contains(&b.id)).enumerate().map(|(n, b)| (b.id, n as u32)).collect();
+        blocks.retain(|b| !gone_blocks.contains(&b.id));
+        for b in blocks.iter_mut() {
+            b.id = map[&b.id];
+        }
         for (i, l) in lots.iter_mut().enumerate() {
             l.id = i as u32;
+            l.block = map.get(&l.block).copied().unwrap_or(0);
         }
     }
     // (fewer than the profile's count is the validator's soft `hq-count`)
@@ -915,37 +1079,49 @@ mod hq_lot_tests {
     use super::*;
     use super::super::super::organic::geom::{inside, seg_dist2};
     use super::super::super::organic::hq::{arterial, fits, Streets, MIN_GAP_CM};
+    use std::collections::BTreeSet;
 
     fn layers4() -> &'static Layers {
         static L: std::sync::OnceLock<Layers> = std::sync::OnceLock::new();
         L.get_or_init(|| layers("claude-hq@4", &[]).unwrap())
     }
 
+    /// A township's whole ground: its lot and its neighbouring plots.
+    fn ground(l: &Lot) -> Vec<P> {
+        town_ground(l).unwrap()
+    }
+
     fn ring(l: &Lot) -> Vec<P> {
         l.poly.as_ref().unwrap().iter().map(|v| (v[0], v[1])).collect()
     }
 
-    /// Every HQ lot the same size, side by side along its block's long frontage (New York's), turned to the block's
-    /// frame: the profile's count, each fronting a local street with its door on the front edge, with room for the HQ
-    /// and its garage, none on another lot, a site or the next HQ's ground.
+    /// Every HQ lot the same size (a township, `HQ_LOT_W` x `HQ_LOT_D`), turned to its block's frame: the profile's count,
+    /// each fronting a local street with its door mid front, with room for the HQ and its garage, none on another lot, a
+    /// site or the next township's ground (`TOWN_GAP_CM` between their outlines).
     #[test]
-    fn hq_lots_are_equal_and_front_a_street() {
+    fn hq_lots_are_equal_townships_and_front_a_street() {
         let l = layers4();
         let p = profile_for("claude-hq@4", 4);
         let hq: Vec<&Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
         assert_eq!(hq.len() as i64, p.hq_lots);
         let ids: Vec<u32> = l.lots.iter().map(|x| x.id).collect();
         assert_eq!(ids, (0..l.lots.len() as u32).collect::<Vec<_>>(), "lot ids their places");
+        let bids: Vec<u32> = l.blocks.iter().map(|x| x.id).collect();
+        assert_eq!(bids, (0..l.blocks.len() as u32).collect::<Vec<_>>(), "block ids their places");
+        assert!(l.lots.iter().all(|x| (x.block as usize) < l.blocks.len()), "every lot on a block");
         let mut ranks: Vec<u32> = hq.iter().map(|x| x.rank.unwrap()).collect();
         ranks.sort();
         assert_eq!(ranks, (0..hq.len() as u32).collect::<Vec<_>>());
+        // four times the 36 x 34 m lot it replaced, or more
+        const { assert!(HQ_LOT_W * HQ_LOT_D >= 4 * 3_600 * 3_400) };
         let streets = Streets::new(&l.roads);
         let len = |a: P, b: P| ((a.0 - b.0) as f64).hypot((a.1 - b.1) as f64);
         for a in &hq {
             assert_eq!((a.w, a.d), (HQ_LOT_W, HQ_LOT_D), "lot {}", a.id);
             let r = ring(a);
             assert_eq!(r.len(), 4);
-            // a 36 m front edge (its door in the middle of it, facing out), 34 m deep
+            assert!(super::super::super::organic::geom::area2(&r) > 0, "lot {} counter-clockwise", a.id);
+            // an 88 m front edge (its door in the middle of it, facing out), 56 m deep
             let f = a.front.unwrap();
             let fu = (f[0] as f64 / ONE as f64, f[1] as f64 / ONE as f64);
             assert!((len(r[0], r[1]) - HQ_LOT_W as f64).abs() < 3.0 && (len(r[1], r[2]) - HQ_LOT_D as f64).abs() < 3.0, "lot {} its size", a.id);
@@ -955,6 +1131,7 @@ mod hq_lot_tests {
             assert!(out.abs() < 3.0, "lot {} fronts the way its door is", a.id);
             assert!(streets.fronted((a.door[0], a.door[2]), f).is_some_and(|(_, _, c)| !arterial(c)), "lot {} fronts a local street", a.id);
             assert!(fits(a), "lot {} holds the HQ and its garage", a.id);
+            // (its block: its whole ground, townships_have_room_to_grow)
             for o in l.lots.iter().filter(|o| o.id != a.id && o.poly.is_some()) {
                 assert!(!convex_overlap(&r, &ring(o)), "lot {} on lot {}", a.id, o.id);
             }
@@ -964,13 +1141,134 @@ mod hq_lot_tests {
             }
             for o in hq.iter().filter(|o| o.id != a.id) {
                 assert!((a.x - o.x).pow(2) + (a.z - o.z).pow(2) >= MIN_GAP_CM * MIN_GAP_CM);
+                assert!(!super::super::space::near(&r, &ring(o), TOWN_GAP_CM), "townships {} and {} closer than their walls' gap", a.id, o.id);
             }
         }
-        // rows: lots side by side (their fronts the same way, a lot's width apart along it)
-        let rows = hq.iter().filter(|a| hq.iter().any(|o| o.id != a.id && o.front == a.front && (len((o.x, o.z), (a.x, a.z)) - HQ_LOT_W as f64).abs() < 3.0)).count();
-        assert!(rows >= 32, "{rows} lots in rows");
         // turned: the v5 blocks are rotated rectangles, so are their lots
         assert!(hq.iter().any(|a| a.front.unwrap()[0] != 0 && a.front.unwrap()[1] != 0), "some lot turned off the axes");
+    }
+
+    /// Each township's two gateways: the way in (first) and the way out on its front edge, `GATE_IN_CM` in from its
+    /// sides, `GATE_W_CM` wide, facing out as its front, each at a local street within `GATE_REACH_CM`.
+    #[test]
+    fn township_gates_open_on_a_street() {
+        let l = layers4();
+        let streets = Streets::new(&l.roads);
+        for a in l.lots.iter().filter(|x| x.kind == "hq") {
+            let g = a.gates.as_ref().expect("a township has gates");
+            assert_eq!(g.iter().map(|x| x.kind).collect::<Vec<_>>(), vec!["in", "out"], "lot {}", a.id);
+            let f = a.front.unwrap();
+            let fu = (f[0] as f64 / ONE as f64, f[1] as f64 / ONE as f64);
+            // the lot's frame: +x across its front (fz, -fx), +z out of its front
+            let side = (fu.1, -fu.0);
+            for (k, x) in g.iter().enumerate() {
+                assert_eq!((x.dir, x.w), (f, GATE_W_CM), "lot {} gate {k}", a.id);
+                let (dx, dz) = ((x.x - a.x) as f64, (x.z - a.z) as f64);
+                let (u, v) = (dx * side.0 + dz * side.1, dx * fu.0 + dz * fu.1);
+                assert!((v - HQ_LOT_D as f64 / 2.0).abs() < 3.0, "lot {} gate {k} on its front edge ({v})", a.id);
+                let want = (HQ_LOT_W / 2 - GATE_IN_CM) as f64 * if x.kind == "in" { -1.0 } else { 1.0 };
+                assert!((u - want).abs() < 3.0, "lot {} gate {k} {} m along its front", a.id, u / 100.0);
+                let s = streets.fronted((x.x, x.z), f);
+                assert!(s.is_some_and(|(d, _, c)| !arterial(c) && d <= GATE_REACH_CM), "lot {} gate {k} on no local street: {:?}", a.id, s.map(|q| (q.0, q.2)));
+            }
+        }
+    }
+
+    /// The townships spread over the city, in clusters along their streets: not piled at the centre (no more than a
+    /// quarter within 800 m of the hub), in at least 24 of the 500 m squares, and most beside another township on the same
+    /// street (two to a block).
+    #[test]
+    fn townships_spread_in_clusters() {
+        let l = layers4();
+        let hub = l.sites.iter().find(|s| s.kind == "fountain").map(|s| (s.x, s.z)).unwrap();
+        let hq: Vec<&Lot> = l.lots.iter().filter(|x| x.kind == "hq").collect();
+        let near = hq.iter().filter(|a| (a.x - hub.0).pow(2) + (a.z - hub.1).pow(2) < 80_000i64.pow(2)).count();
+        assert!(near * 4 <= hq.len(), "{near} of {} townships within 800 m of the hub", hq.len());
+        let squares: BTreeSet<(i64, i64)> = hq.iter().map(|a| (a.x.div_euclid(50_000), a.z.div_euclid(50_000))).collect();
+        assert!(squares.len() >= 24, "the townships in {} 500 m squares", squares.len());
+        // (one to a block now, the rest of its row its neighbouring plots: HQ 3.37)
+        for a in &hq {
+            for o in hq.iter().filter(|o| o.id != a.id) {
+                assert!(!super::super::space::near(&ground(a), &ground(o), TOWN_GAP_CM), "townships {} and {}: their grounds touch", a.id, o.id);
+            }
+        }
+    }
+
+    /// Every township level, its neighbouring plots too: its ground (the terrain) within 30 cm of its door's over its inside
+    /// (a 4 m grid, 10 m in from its edges), and within 2 m on its edges (where the streets' carving meets it, under its walls).
+    #[test]
+    fn townships_are_graded_level() {
+        let l = layers4();
+        let mut bad = Vec::new();
+        for a in l.lots.iter().filter(|x| x.kind == "hq") {
+            let f = a.front.unwrap();
+            let (fx, fz) = (f[0] as f64 / ONE as f64, f[1] as f64 / ONE as f64);
+            let at = |u: f64, v: f64| ((a.x as f64 + u * fz + v * fx).round() as i64, (a.z as f64 - u * fx + v * fz).round() as i64);
+            let (hw, hd) = (HQ_LOT_W as f64 / 2.0 + HQ_ANNEX_W as f64, HQ_LOT_D as f64 / 2.0);
+            let r = ground(a);
+            let mut u = -hw + 1_000.0;
+            while u <= hw - 1_000.0 {
+                let mut v = -hd + 1_000.0;
+                while v <= hd - 1_000.0 {
+                    let q = at(u, v);
+                    let dy = l.terrain.height_at(q.0, q.1) - a.door[1];
+                    if dy.abs() > 30 {
+                        bad.push((a.id, q, dy));
+                    }
+                    v += 400.0;
+                }
+                u += 400.0;
+            }
+            for k in 0..4 {
+                for q in [r[k], ((r[k].0 + r[(k + 1) % 4].0) / 2, (r[k].1 + r[(k + 1) % 4].1) / 2)] {
+                    let dy = l.terrain.height_at(q.0, q.1) - a.door[1];
+                    if dy.abs() > 200 {
+                        bad.push((a.id, q, dy));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "townships not level (lot, at, cm off its door's): {bad:?}");
+    }
+
+    /// No township on the water, the airport, a station, a metro entrance or under a railway line at the ground or above.
+    #[test]
+    fn townships_keep_off_water_airport_and_stations() {
+        let l = layers4();
+        let city = super::super::City::plan("claude-hq@4").unwrap();
+        let ap = l.sites.iter().find_map(|s| s.runway.as_ref()).map(|r| r.area.iter().map(|v| (v[0], v[1])).collect::<Vec<P>>()).unwrap();
+        let metro = l.metro.as_ref().unwrap();
+        let rail = l.rail.as_ref().unwrap();
+        for a in l.lots.iter().filter(|x| x.kind == "hq") {
+            let r = ground(a);
+            assert!(!convex_overlap(&r, &ap), "lot {} on the airport", a.id);
+            let (x0, x1) = (r.iter().map(|q| q.0).min().unwrap(), r.iter().map(|q| q.0).max().unwrap());
+            let (z0, z1) = (r.iter().map(|q| q.1).min().unwrap(), r.iter().map(|q| q.1).max().unwrap());
+            for x in (x0..=x1).step_by(400) {
+                for z in (z0..=z1).step_by(400) {
+                    assert!(!inside((x, z), &r) || city.land.dry((x, z)), "lot {} on the water at {x}, {z}", a.id);
+                }
+            }
+            for s in &metro.stations {
+                assert!(!inside((s.x, s.z), &r), "lot {} on metro station {}", a.id, s.id);
+            }
+            for e in &metro.entrances {
+                assert!(!super::super::space::near(&[(e.x - e.w / 2, e.z - e.d / 2), (e.x + e.w / 2, e.z - e.d / 2), (e.x + e.w / 2, e.z + e.d / 2), (e.x - e.w / 2, e.z + e.d / 2)], &r, 100),
+                    "lot {} on metro entrance {}", a.id, e.id);
+            }
+            for s in &rail.stations {
+                assert!(!inside((s.x, s.z), &r), "lot {} on rail station {}", a.id, s.id);
+            }
+            for ln in &rail.lines {
+                for (k, w) in ln.path.windows(2).enumerate() {
+                    if ln.kinds.get(k).is_some_and(|kd| *kd == "tunnel") {
+                        continue;
+                    }
+                    let (p, q) = ((w[0][0], w[0][2]), (w[1][0], w[1][2]));
+                    assert!(!inside(p, &r) && (0..4).all(|i| seg_dist2(r[i], r[(i + 1) % 4], p, q) > 0), "lot {} under rail line {}", a.id, ln.id);
+                }
+            }
+        }
     }
 
     /// No HQ lot's ground on a road: every edge of it a road's half width clear of every road's centre line, none
@@ -980,7 +1278,7 @@ mod hq_lot_tests {
         let l = layers4();
         let mut bad = Vec::new();
         for a in l.lots.iter().filter(|x| x.kind == "hq") {
-            let r = ring(a);
+            let r = ground(a);
             let n = r.len();
             for e in &l.roads.edges {
                 let hw = e.width / 2;
@@ -994,5 +1292,52 @@ mod hq_lot_tests {
             }
         }
         assert!(bad.is_empty(), "HQ lots on roads (lot, edge, class): {bad:?}");
+    }
+
+    /// Room to grow (HQ 3.37): every township has its two neighbouring plots, `HQ_ANNEX_W` wide and as deep as it, flush
+    /// with its sides along its street (the first on its +x side, past the way out), their street edges in line with its
+    /// front and on a local street; no building, site or other lot on any of its ground, and its block that whole ground.
+    #[test]
+    fn townships_have_room_to_grow() {
+        let l = layers4();
+        let streets = Streets::new(&l.roads);
+        let len = |a: P, b: P| ((a.0 - b.0) as f64).hypot((a.1 - b.1) as f64);
+        for a in l.lots.iter().filter(|x| x.kind == "hq") {
+            let ax = a.annex.as_ref().unwrap_or_else(|| panic!("township {} has no plots", a.id));
+            assert_eq!(ax.len(), 2, "township {}", a.id);
+            let f = a.front.unwrap();
+            let fu = (f[0] as f64 / ONE as f64, f[1] as f64 / ONE as f64);
+            let side = (fu.1, -fu.0);
+            let out_gate = a.gates.as_ref().unwrap().iter().find(|g| g.kind == "out").unwrap();
+            let gu = (out_gate.x - a.x) as f64 * side.0 + (out_gate.z - a.z) as f64 * side.1;
+            for (k, p) in ax.iter().enumerate() {
+                let r: Vec<P> = p.poly.iter().map(|q| (q[0], q[1])).collect();
+                assert_eq!(r.len(), 4);
+                assert!(super::super::super::organic::geom::area2(&r) > 0, "township {} plot {k} counter-clockwise", a.id);
+                assert!((len(r[0], r[1]) - HQ_ANNEX_W as f64).abs() < 3.0 && (len(r[1], r[2]) - HQ_LOT_D as f64).abs() < 3.0, "township {} plot {k} its size", a.id);
+                let (du, dv) = ((p.x - a.x) as f64 * side.0 + (p.z - a.z) as f64 * side.1, (p.x - a.x) as f64 * fu.0 + (p.z - a.z) as f64 * fu.1);
+                let want = (HQ_LOT_W + HQ_ANNEX_W) as f64 / 2.0;
+                assert!((du.abs() - want).abs() < 3.0 && dv.abs() < 3.0, "township {} plot {k} flush with its side ({du}, {dv})", a.id);
+                // the first on the way out's side
+                assert_eq!(du.signum() == gu.signum(), k == 0, "township {} plot {k} on the wrong side", a.id);
+                // its street edge in line with the township's front, on a local street
+                let fm = ((r[0].0 + r[1].0) / 2, (r[0].1 + r[1].1) / 2);
+                let fv = (fm.0 - a.x) as f64 * fu.0 + (fm.1 - a.z) as f64 * fu.1;
+                assert!((fv - HQ_LOT_D as f64 / 2.0).abs() < 3.0, "township {} plot {k} its front edge in line ({fv})", a.id);
+                assert!(streets.fronted(fm, f).is_some_and(|(d, _, c)| !arterial(c) && d <= GATE_REACH_CM), "township {} plot {k} on no local street", a.id);
+            }
+            let g = ground(a);
+            let b = &l.blocks[a.block as usize];
+            assert_eq!(b.poly.as_ref().map(|q| q.iter().map(|v| (v[0], v[1])).collect::<Vec<P>>()), Some(g.clone()), "township {}'s block is its whole ground", a.id);
+            for o in l.lots.iter().filter(|o| o.id != a.id && o.poly.is_some()) {
+                assert!(!convex_overlap(&g, &ring(o)), "township {}'s ground on lot {}", a.id, o.id);
+            }
+            for (k, s) in l.sites.iter().enumerate() {
+                let sp: Vec<P> = vec![(s.x - s.w / 2, s.z - s.d / 2), (s.x + s.w / 2, s.z - s.d / 2), (s.x + s.w / 2, s.z + s.d / 2), (s.x - s.w / 2, s.z + s.d / 2)];
+                assert!(s.poly.is_some() || s.w == 0 || !convex_overlap(&g, &sp), "township {}'s ground on site {k} ({})", a.id, s.kind);
+            }
+        }
+        // only townships have plots
+        assert!(l.lots.iter().all(|x| x.kind == "hq" || x.annex.is_none()));
     }
 }

@@ -6,7 +6,8 @@ renamed to City Gen v4's classes, as tests/test_citylife.py does): lights stand 
 highway's mainline, an expressway or a ring road; every light cycles, the same for everyone, and its two axes are never
 green together; nobody may walk across a road while it has green; the traffic stops at red (no car, van, bus... with
 its nose over a red line) and its cars never run into each other; there are more cars than before; lightAt finds the
-light ahead; parked cars stand on their own street's kerb, never in a lane the traffic drives, a junction, or at a stop;
+light ahead; parked cars stand on their own street's kerb in a parking lane clear of every lane the traffic drives, or ([3.37]) in a
+bay off the carriageway, never in a junction or at a stop;
 the street view is a few instanced draw calls and its poles and parked cars are solid. Skipped without node.
 Stdlib only."""
 import json
@@ -137,11 +138,20 @@ Object.keys(SRC).forEach(function(name){
   o.parked = P.length;
   o.parkedSame = JSON.stringify(L.parked(WD.pack(SRC[name]()))) === JSON.stringify(P);
   o.parkedBad = {lane: 0, box: 0, surface: 0, stop: 0};
-  const F = L.facts(W);
+  o.bayCars = P.filter(function(c){ return c.bay; }).length;
+  const F = L.facts(W), byId = {};
+  lanes.forEach(function(l){ byId[l.id] = l; });
   P.forEach(function(c){
-    if(busy[c.edge]) o.parkedBad.lane++;
+    // ([3.37] at the kerb only in a parking lane clear of every lane driven there; else in a bay off the carriageway)
+    if(!c.bay){
+      const l = byId[c.edge], n = WD.nearestRoad(W, c.x, c.z, 20), inner = n ? n.dist - T.SPEC.car.wid/2 : 0;
+      if(l && ((l.cars && inner < l.carOff + T.SPEC.car.wid/2) || ((l.bus[0] || l.bus[1]) && inner < l.busOff + T.SPEC.bus.wid/2) || l.tram)) o.parkedBad.lane++;
+    }
     if(ids.some(function(id){ return Math.hypot(S[id].x - c.x, S[id].z - c.z) < S[id].r + 2; })) o.parkedBad.box++;
-    [-2.2, 0, 2.2].forEach(function(f){ if(WD.surfaceAt(W, c.x + Math.sin(c.yaw)*f, c.z + Math.cos(c.yaw)*f) !== "road") o.parkedBad.surface++; });
+    [-2.2, 0, 2.2].forEach(function(f){
+      const k = WD.surfaceAt(W, c.x + Math.sin(c.yaw)*f, c.z + Math.cos(c.yaw)*f);
+      if(c.bay ? (k === "road" || k === "sidewalk" || k === "lot" || k === "site") : k !== "road") o.parkedBad.surface++;
+    });
     if(F.stopDist(c.x, c.z) < 10) o.parkedBad.stop++;
   });
   // the street view: a few instanced draw calls; the poles and the parked cars are solid
@@ -251,7 +261,7 @@ class TrafficLights(unittest.TestCase):
         for w in self.worlds():
             v = self.o[w]["view"]
             self.assertTrue(v["inst"], w)
-            self.assertLessEqual(v["calls"], 4, w)
+            self.assertLessEqual(v["calls"], 5, w)   # ([3.37] the bays' paving the fifth)
             self.assertTrue(v["pole"], w + ": a pole is solid")
             self.assertFalse(v["poleBeside"], w)
             self.assertTrue(v["car"], w + ": a parked car is solid")

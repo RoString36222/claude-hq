@@ -5,11 +5,12 @@
 //! allowlists. The device token lives in arena-link.json, never in config.json.
 
 use crate::app::App;
+use crate::scan::Agg;
 use crate::music;
 use crate::py::{self, Obj};
 use crate::state;
 use base64::Engine;
-use chrono::Duration;
+use chrono::{Duration, NaiveDate};
 use indexmap::IndexMap;
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -455,6 +456,25 @@ pub fn hq_garage_body(body: &Value) -> Result<Value, &'static str> {
     let z = int("z", -HQ_GARAGE_Z_MAX, HQ_GARAGE_Z_MAX).ok_or("z must be a whole number -300..=300")?;
     let r = int("r", 0, HQ_GARAGE_R_MAX).ok_or("r must be a whole number 0..=3")?;
     Ok(json!({"lot": lot, "x": x, "z": z, "r": r}))
+}
+
+/// HQ growth (HQ 3.37): worker-hours a day counts at most (the Arena caps the same).
+pub const HQ_WORK_DAY_CAP: i64 = 24;
+
+/// One UTC day's Claude worker-hours from the transcripts' aggregates: for each
+/// session, how many hours of that day it had activity in (scan.rs `Day::hours`,
+/// its keys only), summed and capped at [`HQ_WORK_DAY_CAP`]. A whole number;
+/// nothing about any session but that count.
+pub fn hq_work_hours<'a>(aggs: impl IntoIterator<Item = &'a Agg>, day: &NaiveDate) -> i64 {
+    let key = py::date_iso(day);
+    let n: i64 = aggs.into_iter().filter(|a| !a.cursor).filter_map(|a| a.per_day.get(&key)).map(|d| d.hours.len() as i64).sum();
+    n.clamp(0, HQ_WORK_DAY_CAP)
+}
+
+/// `{"days": [{"day", "hours"}]}` for PUT /v1/hq/me/work, rebuilt from an
+/// allowlist: a date and a whole number 0..=24 per day, nothing else.
+pub fn hq_work_body(days: &[(NaiveDate, i64)]) -> Value {
+    json!({"days": days.iter().map(|(d, n)| json!({"day": py::date_iso(d), "hours": (*n).clamp(0, HQ_WORK_DAY_CAP)})).collect::<Vec<_>>()})
 }
 
 /// `a,b,c` -> user ids (each [`valid_user_id`], at most [`HQ_STYLE_IDS_MAX`], duplicates dropped).
@@ -1234,6 +1254,20 @@ impl App {
         self.arena_request("PUT", &format!("{}/v1/hq/me", b), Some(&t), Some(&Value::Object(body)))
     }
 
+    /// HQ growth (HQ 3.37): PUT /v1/hq/me/work with yesterday's and today's
+    /// (UTC) worker-hours ([`hq_work_hours`], [`hq_work_body`]). Egress: the
+    /// device token, two dates and two whole numbers. An Arena without the
+    /// route answers 404, passed through.
+    pub fn arena_hq_work(&self) -> (u16, Value) {
+        if self.authed().is_none() {
+            return not_paired();
+        }
+        let today = py::utc_today();
+        let aggs: Vec<_> = self.claude_transcript_paths().iter().filter_map(|p| self.scan_file(p)).collect();
+        let days: Vec<(NaiveDate, i64)> = [today - Duration::days(1), today].iter().map(|d| (*d, hq_work_hours(aggs.iter().map(|a| a.as_ref()), d))).collect();
+        self.authed_send("PUT", "/v1/hq/me/work", hq_work_body(&days))
+    }
+
     pub fn arena_hq_open(&self) -> (u16, Value) {
         self.authed_get("/v1/hq/open")
     }
@@ -2003,6 +2037,61 @@ pub(crate) mod tests {
         }
         let posts = crate::server::post_paths();
         assert!(posts.contains(&"/api/arena/hq/garage") && posts.contains(&"/api/arena/hq/garage/reset"));
+    }
+
+    #[test]
+    fn hq_work_is_whole_hours_per_day_and_nothing_else() {
+        use crate::scan::Day;
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap();
+        let sess = |d: &str, hours: &[u32], cursor: bool| {
+            let mut a = Agg { cursor, ..Default::default() };
+            let mut dd = Day { prompts: 99, tools: 400, ..Default::default() };
+            for h in hours {
+                dd.hours.insert(*h, 7);
+            }
+            a.per_day.insert(d.into(), dd);
+            a.ai_title = Some("secret project title".into());
+            a
+        };
+        // each session counts the hours it worked that day (not its prompts, tools or events), a Cursor one not at all
+        let aggs = [sess("2026-11-02", &[9, 10, 11], false), sess("2026-11-02", &[10], false), sess("2026-11-01", &[1, 2], false), sess("2026-11-02", &[3, 4], true)];
+        assert_eq!(hq_work_hours(aggs.iter(), &day("2026-11-02")), 4);
+        assert_eq!(hq_work_hours(aggs.iter(), &day("2026-11-01")), 2);
+        assert_eq!(hq_work_hours(aggs.iter(), &day("2026-10-31")), 0);
+        // capped a day
+        let busy: Vec<Agg> = (0..5).map(|_| sess("2026-11-02", &(0..24).collect::<Vec<_>>(), false)).collect();
+        assert_eq!(hq_work_hours(busy.iter(), &day("2026-11-02")), HQ_WORK_DAY_CAP);
+        // the body: dates and whole numbers only, clamped
+        let b = hq_work_body(&[(day("2026-11-01"), 2), (day("2026-11-02"), 99)]);
+        assert_eq!(b, json!({"days": [{"day": "2026-11-01", "hours": 2}, {"day": "2026-11-02", "hours": 24}]}));
+        assert!(!b.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn hq_work_reaches_the_arena_only_when_paired() {
+        let (_d, app) = app();
+        let reply = Arc::new(Mutex::new((200, json!({"build": {"pts": 3, "lots": 1, "stages": [-1, -1]}}))));
+        let sent = stub(&app, "https://arena.example", reply.clone());
+        assert_eq!(app.arena_hq_work().0, 200);
+        {
+            let s = sent.lock().unwrap();
+            assert_eq!((s[0].0.as_str(), s[0].1.as_str()), ("PUT", "https://arena.example/v1/hq/me/work"));
+            let body = s[0].3.clone().unwrap();
+            let days = body["days"].as_array().unwrap();
+            assert_eq!(days.len(), 2);
+            for d in days {
+                let o = d.as_object().unwrap();
+                assert_eq!(o.keys().collect::<Vec<_>>(), ["day", "hours"]);
+                assert!(o["hours"].is_i64());
+            }
+            assert_eq!(body.as_object().unwrap().len(), 1);
+        }
+        *reply.lock().unwrap() = (404, json!({"error": "Not Found"}));
+        assert_eq!(app.arena_hq_work().0, 404);
+        let n = sent.lock().unwrap().len();
+        app.clear_link();
+        assert_eq!(app.arena_hq_work(), (400, json!({"error": "not paired"})));
+        assert_eq!(sent.lock().unwrap().len(), n);
     }
 
     #[test]

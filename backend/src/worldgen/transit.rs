@@ -209,16 +209,27 @@ enum Call {
 /// `tram_routes`: City Gen v4, each tram route's stations (organic/trams.rs, civic.rs): its lines are
 /// the roads carrying its bit (`Edge::lines`); none before v4, where a line is a tram street.
 pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>, tram_routes: &[Vec<String>]) -> Transit {
+    build(r, sites, lots, inner_cm, tram_routes, false)
+}
+
+/// City Gen v5 (HQ 3.37): the bus loops on the avenues alone (class "arterial": its stops stand on them, v5/bus.rs),
+/// so a bus never squeezes down a 6.5 m local street; no trams.
+pub fn generate_avenues(r: &Roads, sites: &[Site], lots: &[Lot]) -> Transit {
+    build(r, sites, lots, None, &[], true)
+}
+
+fn build(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>, tram_routes: &[Vec<String>], avenues: bool) -> Transit {
     let net = Net::new(r);
     let mut lines = Vec::new();
 
     // bus loops; an inner loop pays heavily for a street that leaves its town
     let out = |e: &Edge| inner_cm.is_some_and(|r| [e.a, e.b].iter().any(|&n| d2(net.pos(n), (0, 0)) > r * r));
-    let bus = |e: &Edge| Some(if e.class == "arterial" { 1000 } else { 1500 });
+    let bus = |e: &Edge| if avenues { (e.class == "arterial").then_some(1000) } else { Some(if e.class == "arterial" { 1000 } else { 1500 }) };
+    let on = |e: &Edge| !avenues || e.class == "arterial";
     let hub = sites.iter().find(|s| s.kind == "transit");
     let stops: Vec<&Site> = sites.iter().filter(|s| s.kind == "busstop").collect();
     if !stops.is_empty() {
-        let at = |s: &Site| net.nearest(door(s), |_| true).map(|e| Call::Street(e.a, e.b));
+        let at = |s: &Site| net.nearest(door(s), on).map(|e| Call::Street(e.a, e.b));
         let start = hub.map_or(angle(door(stops[0])), |h| angle(door(h)));
         let mut rs: Vec<i64> = stops.iter().map(|s| d2(door(s), (0, 0))).collect();
         rs.sort();
@@ -247,7 +258,7 @@ pub fn generate(r: &Roads, sites: &[Site], lots: &[Lot], inner_cm: Option<i64>, 
                 continue;
             }
             for &c in centres.iter().filter(|&&c| side(c)) {
-                if let Some(n) = net.node_at(c, |_| true) {
+                if let Some(n) = net.node_at(c, on) {
                     calls.push(((angle(c) - start).rem_euclid(4 << 20), None, Call::Node(n)));
                 }
             }

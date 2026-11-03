@@ -4831,10 +4831,13 @@ function mount(el, api){
     var fwd = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0), side = (k.KeyA || k.ArrowLeft ? 1 : 0) - (k.KeyD || k.ArrowRight ? 1 : 0);
     if(m === "photo"){ ev.fly = {x: -side, y: ev.lift, z: fwd}; ev.fast = !!(k.ShiftLeft || k.ShiftRight); ev.swing = 0; ev.lift = 0; }   // fly x: +1 = to the right
     if(m === "map" && (fwd || side)){ var pv = 600*dt; ev.pan = [-side*pv, -fwd*pv]; }
+    // [stations] below the street only a camera that stays in the station's rooms: Classic, the Map and the fly-by look at it
+    // from outside (nothing but its walls and the dark round them), so they hand over to Chase until you are back up
+    if((m === "classic" || m === "map" || m === "cine") && cur.camHard && cur.camHard()){ C.setMode(rig, m === "cine" && rig.prev && rig.prev !== "cine" && rig.prev !== "classic" && rig.prev !== "map" ? rig.prev : "chase", {instant: true}); m = rig.mode; }
     C.input(rig, ev);
     var T = rigTarget();
     // (the camera's floor: the ground, and over water its surface, so it never dips under the waves: cur.camGround)
-    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, ceil: cur.camCeil || null, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
+    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, ceil: cur.camCeil || null, hard: cur.camHard ? !!cur.camHard() : false, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
     if(rig.mode === "cine" && rig.wake) C.setMode(rig, rig.prev && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase");
     if(rig.mode !== lastMode) modeChanged(lastMode, rig.mode);
     if(pose && !pose.ortho){
@@ -4854,6 +4857,7 @@ function mount(el, api){
     if(calmT >= 1){ calmT = 0; var cl = E.calm(); if(cl !== calmWas){ calmWas = cl; C.setSettings(rig, camSettings()); } }
     // idle: 45 s without input starts a cinematic (never from the map or photo mode)
     if(rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") idleT = 0;
+    else if(cur.camHard && cur.camHard()) idleT = 0;                // [stations] no fly-by in a station's closed rooms (it orbits 18 m out)
     else if((idleT += dt) > 45){ idleT = 0; C.setMode(rig, "cine"); }
     if(hud && pose) hud.frame({mode: rig.mode, hudOn: pose.hud !== false, yaw: rig.lookYaw, speed: ride ? T.speed : null,
       vehicle: ride ? ride.base || ride.kind : null, prompt: hudPrompt(), crosshair: rig.mode === "fp", vignette: pose.vignette || 0,
@@ -4879,7 +4883,7 @@ function mount(el, api){
     pcam.position.set(cp.pos.x, cp.pos.y, cp.pos.z);
     if(cp.up) pcam.up.set(cp.up.x, cp.up.y, cp.up.z);
     pcam.lookAt(cp.look.x, cp.look.y, cp.look.z);
-    pcam.fov = cp.fov || 60; pcam.far = Math.max(pcam.far, 3000); pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
+    pcam.fov = cp.fov || 60; pcam.far = Math.max(pcam.far, 3000); if(cp.near > 0) pcam.near = cp.near; pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
     showAvatar(cp.mode === "chase");          // [3.15] a seat or window camera is your own eyes; the chase camera sees you in your seat
   }
   // [3.15] HQ3D_DEBUG.transit.shot: a transport module's fixed camera ({pos, look, fov}: objects or [x, y, z]) holds the shot
@@ -5927,6 +5931,8 @@ function mount(el, api){
       if(w.camModes) rigEnter(w);
       if(prev && prev !== w && prev.onLeave){ try { prev.onLeave(); } catch(e){} }
       if(w.onEnter){ try { w.onEnter(from, {k: E.calm() ? 0 : 1}); } catch(e){} }   // [basement 3.4] where from, and Calm
+      // [island trains] a ride carried into this world (onEnter adopts it): your seat from its first frame, not its spawn
+      if(instant && w.carry){ var cp0 = null; try { cp0 = w.carry(); } catch(e){} if(cp0){ moveAvatar(0); view.target.copy(view.goal); } }
       if(carry) liftLand(w, name, carry);   // [basement 3.4] your ride arrives with you
       if(api.remember !== false){ try { localStorage.setItem("hq_world", name); } catch(e){} }
       if(api.onWorld) api.onWorld(name);

@@ -633,6 +633,7 @@ function walkAt(sig, ms, heading){
 // driveways of the lots behind and the hq lots, each bay full by a hash and the place (downtown most). Every car is
 // wholly on its own street's carriageway. Drawn and made solid by traffic.js street(); hidden while its street is
 // closed (cityLife.closed: the market's stalls stand there).
+var PARK_GATE = 12;          // [townships] no parked car within this (m) of a township gateway's middle
 var PARK_STEP = 6.2, PARK_IN = 1.05, PARK_FILL = {centre: 0.72, home: 0.6, work: 0.5, civic: 0.45, industry: 0.35, green: 0.2};
 var PARK_CACHE = typeof WeakMap === "function" ? new WeakMap() : null;
 function parked(W){
@@ -671,6 +672,7 @@ function parked(W){
         var h = hash01(W.hash + ":park:" + e.id + ":" + Math.round(s*10) + ":" + sg);
         var bx = p.x + p.lx*sg*(cm(e.width)/2 + 3), bz = p.z + p.lz*sg*(cm(e.width)/2 + 3), lot = Q.lotAt(W, bx, bz);
         if(lot && (lot.kind === "hq" || lot.kind === "garage")) return;
+        if(Q.gateNear && Q.gateNear(W, x, z, PARK_GATE)) return;            // [townships] a gateway's way in and out kept clear
         var u = lot ? landUse(W)[lot.id] : null, g = u ? u.group : groupOfName(Q.districtAt(W, x, z).name);
         if(h >= (PARK_FILL[g] != null ? PARK_FILL[g] : 0.4)) return;
         if(F.stopDist(x, z) < 14) return;

@@ -59,6 +59,7 @@ var FADE_TAU = 0.083;       // the fade's time constant (s): ~95% of the way in 
 var HQ_FAR = 250;           // an HQ (and its lot extras) further than this from the camera is not drawn (m)
 var HQ_FAR_HYST = 10;       // ... and comes back inside HQ_FAR - this (no flicker on the edge)
 var HQ_LOD = 120;           // [hq revamp] an HQ further than this shows only its masses (its detail comes back inside HQ_LOD - HQ_FAR_HYST)
+var LOT_REACH = 60;         // [townships] what stands on an HQ lot (88 x 56 m) is looked up within this of its HQ's middle (m, each axis)
 // an HQ lot's paving tint by its district (legend name), over the paving texture; others plain
 var PAVE = {hq: 0xffffff, plaza: 0xf2ece2, civic: 0xe8ecef, commercial: 0xdde4ec, residential: 0xefe2d0, industrial: 0xd2d0cb};
 
@@ -140,17 +141,25 @@ function baySearch(P, p, keep, any){
   return best && {x: best.x, z: best.z, s: best.s, f: best.f, r: best.f < 0 ? 2 : 0};
 }
 function polyOf(lot){ return lot.poly.map(function(q){ return [q[0]/100, q[1]/100]; }); }
+// [townships] A township lot's plan (hqcityparts townPlan: its wall, gateways and drive, from the doc's gates) for a lot placed
+// at p, at its owner's dress tier (-1 free); null on a lot too small to be one (older worlds). townKeep: what a garage stands
+// clear of there (the drive, the gateways, the parking; the booth's spot too, whatever the tier)
+function townOf(lot, p, tier){
+  var T = HQV.hqCityParts; if(!T || !T.townPlan || !lot || !lot.poly || lot.poly.length < 3) return null;
+  return T.townPlan(lotRing(lot, p), T.townGates(lot, p), tier);
+}
+function townKeep(lot, p){ var T = townOf(lot, p, 3); return T ? T.keep : []; }
 // Where an HQ's car-lift bay goes on a v2 lot for an HQ of this size (grand, its wings): where it stood before the
 // HQ revamp while that spot is still clear of the bigger building and its run out; else the best spot for the new
 // footprint (the 3.5.8 rules: inside the lot, 8 m clear out of its gate, facing the road first); null when none fits.
 function garagePlace(lot, p, wings, grand){
   var G = HQV.hqLotExtras.garage;
   if(!lot || !lot.poly || lot.poly.length < 3) return {x: G.x, z: G.z, s: 1, f: 1, r: 0};
-  var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6];
-  var old = [[0, 0, 4.8, 3.8], walk]; if(wings >= 1) old.push([-10.5, 0.5, 3, 2.8]); if(wings >= 2) old.push([10.5, 0.5, 3, 2.8]);
+  var P = polyOf(lot), walk = [0, HQ_DOOR + 6, 1.6, 6], TK = townKeep(lot, p);
+  var old = [[0, 0, 4.8, 3.8], walk].concat(TK); if(wings >= 1) old.push([-10.5, 0.5, 3, 2.8]); if(wings >= 2) old.push([10.5, 0.5, 3, 2.8]);
   var was = baySearch(P, p, old, false);
   if(!(grand > 0) && !HQV.hqTower) return was;
-  var keep = hqFoot(grand || 0, wings).concat([walk]);
+  var keep = hqFoot(grand || 0, wings).concat([walk], TK);
   if(was && bayClear(was, keep)) return was;
   return baySearch(P, p, keep, false);
 }
@@ -238,9 +247,10 @@ function garageFits(lot, p, spot, grand){
   var G = HQV.hqLotExtras.garage, r = garageR(spot), x = snapHalf(spot.x), z = snapHalf(spot.z), u = GDIR[r], odd = r % 2 === 1;
   var hx = (odd ? G.d : G.w)/2, hz = (odd ? G.w : G.d)/2;
   if(grand == null) grand = grandOf(lot, p);
-  var foot = hqFoot(grand || 0, 2), walk = [0, HQ_DOOR + 6, 1.6, 6], keep = foot.concat([walk]);
+  var foot = hqFoot(grand || 0, 2), walk = [0, HQ_DOOR + 6, 1.6, 6], keep = foot.concat([walk]), TK = townKeep(lot, p);
   if(!boxOn(R, x, z, hx + 0.3, hz + 0.3, false)) return no("outside the lot");
   if(boxHits(keep, x, z, hx + 0.3, hz + 0.3)) return no("on the building");
+  if(TK.length && boxHits(TK, x, z, hx + 0.3, hz + 0.3)) return no("on the drive");   // [townships] its drive, gateways and parking
   var ax = x + u[0]*(G.d/2 + GARAGE_CLEAR/2), az = z + u[1]*(G.d/2 + GARAGE_CLEAR/2);
   var ahx = odd ? GARAGE_CLEAR/2 : G.w/2, ahz = odd ? G.w/2 : GARAGE_CLEAR/2;
   if(boxHits(keep, ax, az, ahx, ahz) || !boxOn(R, ax, az, ahx, ahz, true)) return no("apron blocked");
@@ -386,7 +396,7 @@ function lotLine(lot, h){
 function dressKeep(D){
   return ((D && D.plan) || []).filter(function(o){ return o && o.kind !== "lawn" && o.kind !== "forecourt"; }).map(function(o){
     var r = o.kind === "fountain" ? (o.r || 1.8) + 0.3 : o.kind === "lamp" || o.kind === "flag" ? 0.3 : 0.6;   // as dressBlocked's, a little more
-    return o.kind === "car" ? [o.x, o.z, 2.15, 1.0] : [o.x, o.z, r, r]; });
+    return o.kind === "car" ? (Math.abs(Math.sin(o.yaw || 0)) > 0.5 ? [o.x, o.z, 2.15, 1.0] : [o.x, o.z, 1.0, 2.15]) : [o.x, o.z, r, r]; });   // [townships] a car in a bay stands along z
 }
 // A mesh mergeStatic must leave alone: doors and anything tagged animated or fading, materials
 // something changes later (lit by night, blinking, scrolling, a canvas), see-through ones, and
@@ -1068,11 +1078,14 @@ HQV.hqWorlds.city3d = function(c, w){
                      : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
     // the lot's finish by its owner's level (lawns, trees, lamps; forecourt, fountain, flags; marble, gold, valet cars)
-    E.dress = R && R.length >= 3 && parts.lotDress ? parts.lotDress(c, g, R, h.level | 0, h.userId, lotKeep(B.grand, E.garage), night) : null;
+    // [townships] a township lot: its wall, gateways (its name over the way in) and drive, the finish round them
+    E.town = R && R.length >= 3 && parts.townPlan ? townOf(E.lot, p, parts.dressTier(h.level)) : null;
+    var tkeep = E.town ? E.town.keep : [];
+    E.dress = R && R.length >= 3 && parts.lotDress ? parts.lotDress(c, g, R, h.level | 0, h.userId, lotKeep(B.grand, E.garage).concat(tkeep), night, E.town) : null;
     if(E.dress) E.glows = E.glows.concat(E.dress.glows);
     // [lot marks] its kerb all round and its plaque at the street: the lot's number and its owner (yours amber)
     E.marks = R && R.length >= 3 && parts.lotMarks ? parts.lotMarks(c, g, R, {n: lotNo(E.lot), owner: ownerName(h) || name, mine: !!h.isYou,
-      keep: lotKeep(B.grand, E.garage).concat(dressKeep(E.dress)), night: false}) : null;   // unlit until merged (below)
+      keep: lotKeep(B.grand, E.garage).concat(dressKeep(E.dress)), night: false, town: E.town, name: name}) : null;   // unlit until merged (below)
     (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
     if(X.move){ hits.push(X.move); B.hits.push(X.move); }                          // [3.33] your bay's Move garage plate
     (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
@@ -1080,6 +1093,7 @@ HQV.hqWorlds.city3d = function(c, w){
     // the car, motorbike and bicycle (you ride them)
     merge(B.g, null, B);
     var roots = {}; roots[B.g.uuid] = 1; X.items.forEach(function(b){ roots[b.g.uuid] = 1; });
+    if(E.marks) (E.marks.booms || []).forEach(function(b){ roots[b.g.uuid] = 1; });   // [townships] the booms lift
     merge(g, roots);
     tagFade(E);
     if(E.marks) E.marks.setNight(night);
@@ -1176,10 +1190,11 @@ HQV.hqWorlds.city3d = function(c, w){
       var p = placeLot(l), R = lotRing(l, p);
       if(!R || R.length < 3) return;
       var fg = new THREE.Group(); fg.position.set(p.x, p.y + PAD_UP, p.z); fg.rotation.y = p.rot; lotsG.add(fg);
-      var M = parts.lotMarks(c, fg, R, {n: lotNo(l), owner: "", mine: false, keep: [[0, HQ_DOOR + 6, 1.6, 6]], night: false});
+      var M = parts.lotMarks(c, fg, R, {n: lotNo(l), owner: "", mine: false, keep: [[0, HQ_DOOR + 6, 1.6, 6]], night: false, town: townOf(l, p, -1), name: ""});
       freeMarks.push({x: p.x, z: p.z, rot: p.rot, g: fg, marks: M});
     });
-    merge(lotsG);                                          // built unlit, so every kerb merges; then lit as the hour is
+    var froots = {}; freeMarks.forEach(function(F){ (F.marks.booms || []).forEach(function(b){ froots[b.g.uuid] = 1; }); });   // [townships] the booms lift
+    merge(lotsG, froots);                                  // built unlit, so every kerb merges; then lit as the hour is
     freeMarks.forEach(function(F){ F.marks.setNight(night); });
     var nb = hqs.length;
     var cname = !V2 ? "Arena City" : island() ? String((cityState && cityState.name) || "An island").slice(0, 32) : "The Commons";
@@ -1224,7 +1239,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var all = hqs.concat(views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z;
-      if(Math.abs(rx) > 30 || Math.abs(rz) > 30) continue;
+      if(Math.abs(rx) > LOT_REACH || Math.abs(rz) > LOT_REACH) continue;
       var c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot), lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;   // into its own frame
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
       // its garage, and its car (where it stands: you may have parked it in the street) unless you drive it
@@ -1239,7 +1254,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     for(var fi = 0; fi < freeMarks.length; fi++){                                     // [lot marks] a free lot's plaque
       var FM = freeMarks[fi], fx0 = x - FM.x, fz0 = z - FM.z;
-      if(Math.abs(fx0) > 30 || Math.abs(fz0) > 30) continue;
+      if(Math.abs(fx0) > LOT_REACH || Math.abs(fz0) > LOT_REACH) continue;
       var fc = Math.cos(-FM.rot), fsn = Math.sin(-FM.rot);
       if(parts.dressBlocked(FM.marks, fx0*fc + fz0*fsn, -fx0*fsn + fz0*fc)) return true;
     }
@@ -2063,6 +2078,20 @@ HQV.hqWorlds.city3d = function(c, w){
   function apNearMe(x, z){ var me = c.avatar && c.avatar(); return !!me && Math.abs(x - me.x) < 4 && Math.abs(z - me.z) < 4; }
   function apGroundY(x, z){ var me = apL && apNearMe(x, z); return apL ? apFloor(x, z, me ? apYRef : null, me && riding()) : null; }
   function riding(){ var m = c.motion && c.motion(); return !!(m && m.ride && !m.air); }
+  // [townships] a township's booms lift while you ride up to its gate (hqcityparts boomStep; Calm: at once), else drop
+  function townBooms(dt){
+    if(!parts.boomStep) return;
+    var a = c.avatar && c.avatar(), veh = a && riding() ? a : null, calm = !!(c.E && c.E.calm && c.E.calm());
+    function step(L, M){
+      if(!M || !M.booms || !M.booms.length) return;
+      var v = [];
+      if(veh){ var rx = veh.x - L.x, rz = veh.z - L.z;
+        if(Math.abs(rx) < LOT_REACH + 15 && Math.abs(rz) < LOT_REACH + 15){ var c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot); v.push({x: rx*c0 + rz*s0, z: -rx*s0 + rz*c0}); } }
+      parts.boomStep(M.booms, v, dt, calm);
+    }
+    hqs.forEach(function(E){ step(E, E.marks); });
+    freeMarks.forEach(function(F){ step(F, F.marks); });
+  }
   // AIR: what only a vehicle runs into: the terminal hall (its nave is walked, its glass front drawn only) and the
   // platform's land edge (the fence over its retaining wall: a drop of up to 9 m, or a step up onto the slab);
   // ride: the caller's (hq3d bodyHits), else whether you ride now
@@ -3725,12 +3754,15 @@ HQV.hqWorlds.city3d = function(c, w){
   // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)
   function navRefresh(){
     if(!mm) return;
-    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id); }).join(",");
+    var hqName = function(E){ return E.name || (HQV.hqCityName ? HQV.hqCityName(E.h) : ""); };
+    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id) + ":" + hqName(E); }).join(",");
     if(key === navSig) return; navSig = key;
     try { mm.setWorld(W, navTier, {places: navPlaces()}); } catch(e){}
-    // [lot marks] the HQ lots as outlines: yours amber, the free ones dashed
+    // [lot marks] the HQ lots, each a township filled in the map's township colour (yours strongest), named by its HQ
+    var names = {}; hqs.forEach(function(E){ if(E.lot) names[E.lot.id] = hqName(E); });
     if(mm.setLots) try { mm.setLots(lotEntries().map(function(e){ var l = e.lot;
-      return {id: l.id, n: lotNo(l), poly: lotRing(l, {x: 0, z: 0, rot: 0}), mine: !!(e.h && e.h.isYou), owned: !!e.h}; })); } catch(e){}
+      return {id: l.id, n: lotNo(l), poly: lotRing(l, {x: 0, z: 0, rot: 0}), mine: !!(e.h && e.h.isYou), owned: !!e.h, name: e.h ? names[l.id] || "" : "",
+              gates: (l.gates || []).map(function(q){ return {x: q.x/100, z: q.z/100, dir: q.dir, kind: q.kind, w: q.w/100}; })}; })); } catch(e){}
   }
   function typingIn(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || !!(t && t.isContentEditable); }
   // While a stop's or a terminal's menu or the Go to panel is open, no key reaches the page's shortcuts (W is not
@@ -4280,8 +4312,9 @@ HQV.hqWorlds.city3d = function(c, w){
     if(cam && cam.x != null) freeMarks.forEach(function(F){                     // [lot marks] a free lot's plaque, near the camera only
       var P = F.marks.panel; if(!P) return;
       var d = Math.hypot(F.x - cam.x, F.z - cam.z), vis = mode !== "map" && (P.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
-      if(P.visible !== vis) P.visible = vis;
+      if(P.visible !== vis){ P.visible = vis; (F.marks.near || []).forEach(function(o){ o.visible = vis; }); }   // [townships] its arch's sign, booms and lamps
     });
+    townBooms(dt);
     // the sun's shadow box follows you (the whole map in map mode), on its texel grid
     var me = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0}, map = mode === "map", R = map ? 1024 : 60, D = map ? 1500 : 120;
     var ay = me.y != null ? me.y : groundY(me.x, me.z);

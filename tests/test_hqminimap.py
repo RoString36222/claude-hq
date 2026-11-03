@@ -40,6 +40,8 @@ function fakeCtx(cv){
   ctx.stroke = () => { ctx.calls++; ctx.strokes++; };
   ctx.drawImage = (img, ...a) => { ctx.calls++; ctx.images.push([img, a]); };
   ctx.measureText = t => ({width: String(t).length * 6});
+  ctx.texts = [];
+  ctx.fillText = (t, x, y) => { ctx.calls++; ctx.log.fillText = (ctx.log.fillText || 0) + 1; ctx.texts.push([String(t), x, y, ctx.fillStyle]); };
   return ctx;
 }
 class El {
@@ -69,8 +71,9 @@ const window = {
   performance: {now: () => clock},
   addEventListener(t, f){ (winL[t] = winL[t] || []).push(f); },
   removeEventListener(t, f){ winL[t] = (winL[t] || []).filter(x => x !== f); },
-  getComputedStyle: () => ({getPropertyValue: n => n === '--bg' ? ' #0c0d10' : ''})
+  getComputedStyle: () => ({getPropertyValue: n => n === '--bg' ? ' #0c0d10' : n === '--hq-map-town' ? TOWN : ''})
 };
+let TOWN = '';
 new Function('window', fs.readFileSync(WORLD, 'utf8'))(window);
 new Function('window', fs.readFileSync(JS, 'utf8'))(window);
 const M = window.HQV.hqminimap, WD = window.HQV.world, out = {};
@@ -280,6 +283,11 @@ out.loc = {n: nb.length, same: JSON.stringify(nb) === JSON.stringify(nb2), uniqu
   central: nb.filter(s => s.name === 'Central').length, enumerable: Object.keys(at2).includes('nbhoods'),
   road: M.locality(at2, rx, rz, {}), roadName: e0.name, sea: M.locality(at2, rx, rz, {sea: true}), air: M.locality(at2, rx, rz, {area: 'Airport'}),
   none: M.locality(null, 0, 0), uses: Object.keys(M.USE_NAME).length >= at2.districts.legend.length};
+const farL = {ok: true, platform: [[[-2000, 0], [-2500, 0], [-2500, -1300], [-2000, -1300]]]};
+out.box = {plain: M.worldBox(at2, at2.island && at2.island.coast, at2.river, null), air: M.worldBox(at2, null, null, farL),
+           capped: M.worldBox(at2, null, null, {ok: true, platform: [[[-90000, 0], [-90001, 1], [-90000, 2]]]}),
+           unpainted: M.worldBox(at2, null, null, {ok: true, platform: [[[-900, 0], [-950, 0], [-950, 50]]], keepOut: [[-2900, 0], [-2900, 9]],
+                                                   frame: {o: [-2950, 0]}, sea: [[-2990, 10]]})};
 const stage3 = new El('div'), mm3 = M.mount(stage3, {});
 const r3 = stage3.children[0]; r3.clientWidth = 200; r3.clientHeight = 200;
 const a3 = r3.all(), by3 = c => a3.find(e => e.className.split(' ').includes(c));
@@ -296,14 +304,38 @@ pl.empty = (mm3.setPlace({}), placeEl.hidden);
 out.place = pl;
 mm3.setWorld(at2, 5, {});
 const sq = (x, z, h) => [[x - h, z - h], [x + h, z - h], [x + h, z + h], [x - h, z + h]];
-out.lots = {n: mm3.setLots([{id: 1, n: 1, poly: sq(0, 0, 18), mine: true, owned: true}, {id: 2, n: 2, poly: sq(40, 0, 18), owned: true},
+out.lots = {n: mm3.setLots([{id: 1, n: 1, poly: sq(0, 0, 18), mine: true, owned: true, name: 'Lena HQ'}, {id: 2, n: 2, poly: sq(80, 0, 18), owned: true, name: "Ada's HQ"},
                             {id: 3, n: 3, poly: sq(-40, 0, 18)}, {id: 4, poly: [[0, 0], [1, 1]]}, null])};
 const og3 = r3.all().find(e => e.tagName === 'CANVAS').getContext('2d');
-og3.fills = []; og3.log = {};
+const town = M.PAL.dark.town;
+og3.fills = []; og3.log = {}; og3.texts = [];
 mm3.frame({x: 0, z: 0, yaw: 0, speed: 0, lot: 1});
-out.lots.fills = og3.fills.filter(f => f === '#ffb347').length;
-out.lots.texts = og3.log.fillText || 0;
+out.lots.town = town;
+out.lots.fills = og3.fills.filter(f => f === town).length;
+out.lots.amber = og3.fills.filter(f => f === '#ffb347').length;
+out.lots.texts = og3.texts.map(t => t[0]);
 out.lots.layers = mm3.layers().lots;
+// zoomed right out, no names: the lots are still drawn, unlabelled
+for(let i = 0; i < 4; i++) mm3.zoom(-1);
+for(let i = 0; i < 200; i++){ clock += 16; mm3.frame({x: 0, z: 0, yaw: 0, speed: 30, dt: 0.05}); }
+og3.texts = []; mm3.frame({x: 0, z: 0, yaw: 0, speed: 30, dt: 0.05});
+out.lots.farTexts = og3.texts.map(t => t[0]);
+// the highlight colour comes from the page's token (--hq-map-town) when it has one
+TOWN = ' #123456';
+mm3.setWorld(at2, 5, {});
+og3.fills = []; mm3.frame({x: 0, z: 0, yaw: 0, speed: 0, dt: 0.05});
+out.lots.token = og3.fills.filter(f => f === '#123456').length;
+TOWN = '';
+// labels never overlap: two places on one spot keep the higher-priority name; HQ names come from the lots, not the
+// HQ places (no doubled "HQ's HQ" pile), and every drawn label's box is clear of the others
+mm3.setWorld(at2, 5, {places: [{kind: 'dock', x: 0, z: -60, label: 'Dock A'}, {kind: 'port', x: 0.5, z: -60.2, label: 'Port B'},
+                               {kind: 'hq', x: 80, z: 0, label: "Ada's HQ"}, {kind: 'myhq', x: 0, z: 0, label: 'Your HQ'}]});
+mm3.expand(true);
+r3.clientWidth = 900; r3.clientHeight = 600; roCbs.forEach(cb => cb([]));
+for(let i = 0; i < 6; i++) mm3.zoom(1);
+for(let i = 0; i < 300; i++){ clock += 16; mm3.frame({x: 0, z: 0, yaw: 0, speed: 0, dt: 0.05}); }
+og3.texts = []; mm3.frame({x: 0, z: 0, yaw: 0, speed: 0, dt: 0.05});
+out.lots.big = og3.texts.map(t => t[0]);
 mm3.setLots(null); out.lots.cleared = mm3.layers().lots;
 mm3.destroy();
 process.stdout.write(JSON.stringify(out));
@@ -484,9 +516,35 @@ class MinimapTest(unittest.TestCase):
         o = self.o["lots"]
         self.assertEqual(o["n"], 3, "the malformed ones left out")
         self.assertEqual(o["layers"], 3)
-        self.assertEqual(o["fills"], 1, "yours filled amber")
-        self.assertGreaterEqual(o["texts"], 4, "the three numbers (zoomed in on foot) and the N")
+        self.assertGreaterEqual(o["fills"], 3, "every lot filled in the one township colour")
+        self.assertEqual(o["amber"], 0)
+        self.assertIn("Lena HQ", o["texts"], "named by its HQ, zoomed in")
+        self.assertIn("Ada's HQ", o["texts"])
+        for bare in ("1", "2", "3"):
+            self.assertNotIn(bare, o["texts"], "no bare lot numbers")
+        self.assertEqual([t for t in o["farTexts"] if t != "N"], [], "zoomed out: no names")
+        self.assertGreaterEqual(o["token"], 3, "the colour is the page's --hq-map-town token")
         self.assertEqual(o["cleared"], 0)
+
+    def test_labels_never_collide(self):
+        b = self.o["lots"]["big"]
+        self.assertIn("Port B", b)
+        self.assertNotIn("Dock A", b, "the lower-priority label under it is culled")
+        self.assertEqual(b.count("Lena HQ"), 1)
+        self.assertEqual(b.count("Ada's HQ"), 1, "the HQ named once, by its lot")
+        self.assertNotIn("Your HQ", b)
+        self.assertFalse([t for t in b if t.endswith("HQ's HQ")])
+
+    def test_world_box_takes_in_everything_built(self):
+        w = self.o["box"]
+        self.assertLessEqual(w["plain"]["x0"], -1084 + 1)
+        self.assertGreaterEqual(w["plain"]["x1"], 1084 - 1)
+        self.assertLessEqual(w["air"]["x0"], -2500 - 59, "a runway off the coast is in the bitmap, with its margin")
+        self.assertLessEqual(w["air"]["z0"], -1300 - 59)
+        self.assertGreaterEqual(w["air"]["x1"], w["plain"]["x1"])
+        self.assertLessEqual(w["capped"]["x0"], -3*1024)
+        self.assertGreaterEqual(w["capped"]["x0"], -3*1024 - 200, "a stray far point never shrinks the map to nothing")
+        self.assertGreaterEqual(w["unpainted"]["x0"], -1084 - 1, "only what is painted counts, never its keep-outs or frame")
 
     def test_source_rules(self):
         src = read(JS)
@@ -504,6 +562,12 @@ class MinimapTest(unittest.TestCase):
         self.assertIn("width:160px", narrow)
         self.assertIn(".hq3d-drive{right:184px}", narrow)
         self.assertIn(".hq3d-drive{right:224px}", css)
+        # the townships' token: light and dark, and the themes whose map differs (midnight is always dark)
+        self.assertRegex(css, r":root\{--hq-map-town:#[0-9a-f]{6}\}")
+        self.assertRegex(css, r"prefers-color-scheme: dark\)\{ :root\{--hq-map-town:#[0-9a-f]{6}\} \}")
+        for th in ("midnight", "contrast"):
+            self.assertIn(':root[data-theme="%s"]{--hq-map-town:' % th, css)
+        self.assertIn('--hq-map-town', read(JS))
 
 
 # setAirfield: a probe canvas that rasterises only a few chosen points (world m -> bitmap px): each fill() of the
@@ -511,12 +575,13 @@ class MinimapTest(unittest.TestCase):
 AIRFIELD = r"""
 const fs = require('fs'), zlib = require('zlib');
 const [JS, WORLD, AT2, FIXT] = process.argv.slice(1);
-const probes = {runway: [-1005, 0], runwayN: [-1025, 600], runwayS: [-1008, -700], centre: [-1015, 300], taxiA: [-905, 0], taxiB: [-863, 400],
-  apron: [-830, 30], grass: [-955, -100], sea: [-1000, 1000], terminal: [-620, 0], land: [-300, 0]};
+const probes0 = {runway: [-1005, 0], runwayN: [-1025, 600], runwayS: [-1008, -700], centre: [-1015, 300], taxiA: [-905, 0], taxiB: [-863, 400],
+  apron: [-830, 30], grass: [-955, -100], sea: [-1000, 1000], terminal: [-620, 0], land: [-300, 0], approachFar: [-1015, -1215]};
+let probes = probes0, FRAME = null;
 function probeCtx(cv){
   const ctx = {canvas: cv, px: {}, path: [], sub: null, fillStyle: '#000', strokeStyle: '#000', lineWidth: 1};
-  // the bitmap's frame, as buildStatic lays it out: x1 = z1 = W.half + MARGIN, k from the canvas's size
-  const pts = () => { const k = cv.width/(2*HALF); return Object.keys(probes).map(n => [n, (HALF - probes[n][0])*k, (HALF - probes[n][1])*k]); };
+  // the bitmap's frame, as buildStatic lays it out: M.worldBox's corner (x1, z1), k from the canvas's size
+  const pts = () => { const k = cv.width/(FRAME.x1 - FRAME.x0); return Object.keys(probes).map(n => [n, (FRAME.x1 - probes[n][0])*k, (FRAME.z1 - probes[n][1])*k]); };
   ctx.beginPath = () => { ctx.path = []; ctx.sub = null; };
   ctx.moveTo = (x, y) => { ctx.sub = [[x, y]]; ctx.path.push(ctx.sub); };
   ctx.lineTo = (x, y) => { if(!ctx.sub){ ctx.moveTo(x, y); return; } ctx.sub.push([x, y]); };
@@ -530,7 +595,7 @@ function probeCtx(cv){
       const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx*dx + dy*dy; let u = L2 ? ((x - a[0])*dx + (y - a[1])*dy)/L2 : 0; u = Math.max(0, Math.min(1, u));
       d = Math.min(d, Math.hypot(x - a[0] - dx*u, y - a[1] - dy*u)); } });
     if(d <= ctx.lineWidth/2) ctx.px[k] = ctx.strokeStyle; }); };
-  ctx.fillRect = (x0, y0, w, h) => { pts().forEach(([k, x, y]) => { if(x >= x0 && x <= x0 + w && y >= y0 && y <= y0 + h) ctx.px[k] = ctx.fillStyle; }); };
+  ctx.fillRect = (x0, y0, w, h) => { if(!x0 && !y0) ctx.px = {}; pts().forEach(([k, x, y]) => { if(x >= x0 && x <= x0 + w && y >= y0 && y <= y0 + h) ctx.px[k] = ctx.fillStyle; }); };
   ['save','restore','translate','rotate','scale','arc','arcTo','rect','quadraticCurveTo','bezierCurveTo','clearRect','setTransform',
    'fillText','strokeText','clip','drawImage'].forEach(k => { ctx[k] = () => {}; });
   ctx.measureText = t => ({width: String(t).length*6});
@@ -557,23 +622,32 @@ new Function('window', fs.readFileSync(JS, 'utf8'))(window);
 const M = window.HQV.hqminimap, WD = window.HQV.world, out = {};
 const at2 = WD.pack(JSON.parse(zlib.gunzipSync(fs.readFileSync(AT2)).toString('utf8')));
 const L = JSON.parse(fs.readFileSync(FIXT, 'utf8')); HALF = at2.half + 60;
+const coast = at2.island && at2.island.coast, box = l => M.worldBox(at2, coast, at2.river, l);
 const stage = new El('div'), mm = M.mount(stage, {});
 const px = () => Object.assign({}, mm.layers().static._ctx.px);
-mm.setWorld(at2, 5, {}); out.before = px();
+FRAME = box(null); mm.setWorld(at2, 5, {}); out.before = px();
 const cv1 = mm.layers().static, base = made.length;
-mm.setAirfield(L); out.after = px();
+FRAME = box(L); mm.setAirfield(L); out.after = px();
 mm.setAirfield(L); out.again = px();
 out.sameCanvas = mm.layers().static === cv1;
 out.newCanvases = made.length - base;
-out.col = M.AIR_COL; out.bitmapHalf = HALF;
+out.col = M.AIR_COL; out.bitmapHalf = HALF; out.boxAir = FRAME;
 // kept across setWorld of the same world; another world (an island) never gets the Commons' airfield
 mm.setWorld(at2, 5, {}); out.reworld = px();
-mm.setWorld(Object.assign(Object.create(at2), {id: 'user:x@2'}), 5, {}); out.otherWorld = px();
-mm.setWorld(at2, 5, {}); mm.setAirfield(null); out.cleared = px();
+FRAME = box(null); mm.setWorld(Object.assign(Object.create(at2), {id: 'user:x@2'}), 5, {}); out.otherWorld = px();
+FRAME = box(L); mm.setWorld(at2, 5, {}); FRAME = box(null); mm.setAirfield(null); out.cleared = px();
 let threw = null; try { mm.setAirfield({ok: false, why: 'no site'}); mm.setAirfield(undefined); mm.setAirfield({}); } catch(e){ threw = String(e); }
 out.threw = threw; out.stillClear = px();
 // handed before any world: remembered, painted when the world comes
-const mm2 = M.mount(new El('div'), {}); mm2.setAirfield(L); mm2.setWorld(at2, 5, {}); out.early = Object.assign({}, mm2.layers().static._ctx.px);
+FRAME = box(L); const mm2 = M.mount(new El('div'), {}); mm2.setAirfield(L); mm2.setWorld(at2, 5, {}); out.early = Object.assign({}, mm2.layers().static._ctx.px);
+// [3.34] an airfield on a pier far out past the coast (every point 1.4 km further east, -x): painted, not trimmed at the
+// world's square, its approach lights too
+const shift = v => Array.isArray(v) ? (v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number' ? [v[0] - 1400, v[1]] : v.map(shift))
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shift(x)])) : v;
+const Lfar = shift(L);
+probes = {}; Object.keys(probes0).forEach(k => { probes[k] = [probes0[k][0] - 1400, probes0[k][1]]; });
+FRAME = box(Lfar); const mm4 = M.mount(new El('div'), {}); mm4.setWorld(at2, 5, {}); mm4.setAirfield(Lfar);
+out.far = Object.assign({}, mm4.layers().static._ctx.px); out.boxFar = FRAME;
 console.log(JSON.stringify(out));
 """
 
@@ -602,8 +676,16 @@ class AirfieldTest(unittest.TestCase):
         self.assertEqual(o["after"]["terminal"], c["roof"])
         self.assertEqual(o["after"]["sea"], o["before"]["sea"])    # off the platform: untouched
         self.assertEqual(o["after"]["land"], o["before"]["land"])
-        # the runway fits the bitmap (x >= -1037.5 inside W.half + MARGIN = 1084 m)
-        self.assertAlmostEqual(o["bitmapHalf"], 1084, delta=1)
+        self.assertEqual(o["after"]["approachFar"], c["paint"])    # the approach lights, out past the world's square
+        self.assertLessEqual(o["boxAir"]["z0"], -1220 - 59)
+
+    def test_runway_out_at_sea_not_trimmed(self):
+        o, c = self.o, self.o["col"]
+        self.assertLessEqual(o["boxFar"]["x0"], -1015 - 1400 - 60)
+        for k in ("runway", "runwayN", "runwayS"):
+            self.assertEqual(o["far"][k], c["runway"], k)
+        self.assertEqual(o["far"]["approachFar"], c["paint"])
+        self.assertEqual(o["far"]["terminal"], c["roof"])
 
     def test_idempotent_and_no_new_canvases(self):
         o = self.o

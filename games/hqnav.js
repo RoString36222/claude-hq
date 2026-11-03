@@ -461,7 +461,13 @@ function doorOf(s){
   var h = reach(s, f) + DOOR_OUT;
   return {x: s.x/100 + f[0]*h, z: s.z/100 + f[1]*h};
 }
+// an HQ lot's door for Go to: a township's (City Gen v5 lot.gates) is its way in, GATE_OUT m out on the street in front of
+// it; else the lot's door
+var GATE_OUT = 3;
 function lotDoor(l){
+  var g = Array.isArray(l.gates) ? l.gates.filter(function(q){ return q && q.kind === "in" && isFinite(+q.x) && isFinite(+q.z); })[0] : null;
+  if(g){ var d = Array.isArray(g.dir) ? g.dir : [0, 0], dx = (+d[0] || 0)/65536, dz = (+d[1] || 0)/65536, n = Math.hypot(dx, dz) || 1;
+    return {x: g.x/100 + dx/n*GATE_OUT, z: g.z/100 + dz/n*GATE_OUT}; }
   if(l.door && l.door.length >= 3) return {x: l.door[0]/100, z: l.door[2]/100};
   return doorOf(l);
 }
@@ -489,8 +495,8 @@ function places(W, tier, o){
     if(!h || typeof h.userId !== "string") return;
     var l = h.lot != null && typeof h.lot === "object" ? h.lot : lots[h.lot];
     if(!l) return;
-    var mine = o.me != null && h.userId === o.me, name = h.name ? String(h.name) : "";
-    add({id: "hq:" + h.userId, kind: mine ? "myhq" : "hq", label: mine ? "Your HQ" : (name ? name + "'s HQ" : "HQ"),
+    var mine = o.me != null && h.userId === o.me;
+    add({id: "hq:" + h.userId, kind: mine ? "myhq" : "hq", label: mine ? "Your HQ" : hqLabel(h.name),
          icon: mine ? ICON.myhq : ICON.hq, x: l.x/100, z: l.z/100, door: lotDoor(l), userId: h.userId});
   });
   // travel: to the Commons from an island, to your island from the Commons; its door is the nearest
@@ -505,8 +511,16 @@ function places(W, tier, o){
   return out;
 }
 
+// An HQ's place name: a person's name gets "'s HQ"; a name that already ends in HQ (the HQ's sign, "Lena HQ", or
+// "Bob's HQ" from HQV.hqCityName) is used as it is, so the map never says "Lena HQ's HQ"
+function hqLabel(name){
+  var s = typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
+  if(!s) return "HQ";
+  return /\bHQ$/i.test(s) ? s : s + "'s HQ";
+}
+
 HQV.hqnav = {
-  graph: graph, snap: snap, route: route, progress: progress, needsReroute: needsReroute, places: places,
+  hqLabel: hqLabel, graph: graph, snap: snap, route: route, progress: progress, needsReroute: needsReroute, places: places,
   SPEED: SPEED, ARRIVE: ARRIVE, OFF: OFF, OFF_S: OFF_S, turnKind: turnKind, doorOf: doorOf, laneOff: laneOff
 };
 })();

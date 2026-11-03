@@ -260,8 +260,10 @@ function ringIn(R, x, z){
   }
   return inside;
 }
-// -> [{kind: "tree" | "lamp" | "planter" | "fountain" | "flag" | "car" | "lawn" | "forecourt", x, z, ...}] (lot frame, m)
-function dressPlan(R, level, uid, keep, rngOf){
+// -> [{kind: "tree" | "lamp" | "planter" | "fountain" | "flag" | "car" | "lawn" | "forecourt", x, z, ...}] (lot frame, m).
+// town (townPlan, optional): a township's finish too: trees and lit lamps along its drives, fountains in its gardens and
+// cars in its bays, more of each the posher (keep then holds its drive and gateways: townPlan's keep)
+function dressPlan(R, level, uid, keep, rngOf, town){
   var out = [], tier = dressTier(level);
   if(!R || R.length < 3) return out;
   keep = keep || [];
@@ -310,13 +312,42 @@ function dressPlan(R, level, uid, keep, rngOf){
       if(put({kind: "car", x: cx, z: z1 - 2.4, yaw: Math.PI/2, col: PAL[Math.floor(rnd()*PAL.length) % PAL.length]}, 2.2, 1.0)){ placed++; cx -= 4.2; }
     }
   }
+  if(town) townDress(town, tier, rnd, put, out, used);
   // the lamps along the frontage (last: round what stands there)
   if(tier >= 1) for(var lx = x0 + 3; lx <= x1 - 3; lx += 4) if(put({kind: "lamp", x: lx, z: z1 - 1.2, gold: tier >= 3}, 0.2, 0.2)) lx += 4;
   return out;
 }
-function lotDress(c, g, R, level, uid, keep, night){
+// a township's finish by tier (dressPlan's put and its list): from tier 1 trees and lamps (lit paths) along the inner edges
+// of its side drives and the lamps along its front drive; from tier 2 a fountain in a garden beside the HQ (tier 3: one in
+// each, gilded); and cars in its bays, 2 / 4 / 6 / 8 by tier, in the owner's own deterministic order
+var TOWN_CARS = [2, 4, 6, 8], TOWN_PAL = [[0x3a3f45, 0x8a8f96, 0x13294b, 0x6b2b2b], [0x0e0f12, 0xf2f2f0, 0x8a0f1e, 0x13294b, 0xb9a06a, 0x3a3f45]];
+function townDress(T, tier, rnd, put, out, used){
+  var L = TOWN.lane/2, gin = T.gates[0].x, gout = T.gates[1].x, lo = T.zb + L + 1.2, hi = T.zf - L - 1.2;
+  if(tier >= 1){
+    // (q: the drive's middle, the way into the garden)
+    [[gin, 1], [gout, -1]].forEach(function(q){
+      for(var z = lo + 1; z <= hi; z += 7) put({kind: "tree", x: q[0] + q[1]*(L + 1.6) + (rnd() - 0.5)*0.6, z: z + (rnd() - 0.5)*0.8, h: 4.5 + rnd()*2.5, cone: rnd() < 0.3}, 0.5, 0.5);
+      for(var lz = lo + 4.5; lz <= hi; lz += 14) put({kind: "lamp", x: q[0] + q[1]*(L + 1.0), z: lz, gold: tier >= 3}, 0.2, 0.2);
+    });
+    for(var lx = gin + L + 6; lx <= gout - L - 6; lx += 12) put({kind: "lamp", x: lx, z: T.zf - L - 1.0, gold: tier >= 3}, 0.2, 0.2);
+  }
+  if(tier >= 2){
+    var r = tier >= 3 ? 2.4 : 2.0, mid = (lo + hi)/2;
+    [[gin, 1], [gout, -1]].slice(0, tier >= 3 ? 2 : 1).forEach(function(q){
+      for(var k = 0; k < 24; k++){ var x = q[0] + q[1]*(L + 3.5 + r + k*0.8), z = mid + ((k % 3) - 1)*3;
+        if(put({kind: "fountain", x: x, z: z, r: r}, r + 0.1, r + 0.1)) break; }
+    });
+  }
+  var n = TOWN_CARS[Math.max(0, tier)] | 0, pal = TOWN_PAL[tier >= 3 ? 1 : 0], order = T.bays.map(function(b, i){ return {b: b, k: rnd(), i: i}; });
+  order.sort(function(a, b){ return a.k - b.k || a.i - b.i; });
+  order.slice(0, Math.min(n, order.length)).forEach(function(o){
+    var b = o.b; used.push([b.x, b.z, 1.0, 2.2]);
+    out.push({kind: "car", x: b.x, z: b.z, yaw: 0, col: pal[Math.floor(rnd()*pal.length) % pal.length]});
+  });
+}
+function lotDress(c, g, R, level, uid, keep, night, town){
   var THREE = c.THREE, PI = c.PI, mat = c.mat, tier = dressTier(level);
-  var plan = dressPlan(R, level, uid, keep, function(k){ return c.rng(c.hashStr(k)); });
+  var plan = dressPlan(R, level, uid, keep, function(k){ return c.rng(c.hashStr(k)); }, town);
   var glows = [], blocks = [];
   var leaf = mat(0x3f8a4f, {roughness: 0.85}), leaf2 = mat(0x2e6b3d, {roughness: 0.85}), bark = mat(0x5b4331, {roughness: 0.9});
   var lawn = mat(0x5f9a4a, {roughness: 0.95}), stone = mat(tier >= 3 ? 0xece8e0 : 0xb9b3a8, {roughness: tier >= 3 ? 0.35 : 0.8});
@@ -350,7 +381,7 @@ function lotDress(c, g, R, level, uid, keep, night){
       blocks.push([o.x, o.z, 0.2]);
     } else if(o.kind === "car" && typeof c.car === "function"){
       var V = c.car(o.col, 0xd8b34a); V.g.position.set(o.x, 0, o.z); V.g.rotation.y = o.yaw; g.add(V.g);
-      blocks.push([o.x, o.z, 0, 2.1, 0.95]);
+      blocks.push(Math.abs(Math.sin(o.yaw)) > 0.5 ? [o.x, o.z, 0, 2.1, 0.95] : [o.x, o.z, 0, 0.95, 2.1]);
     }
   });
   if(tier >= 3){
@@ -433,7 +464,18 @@ function plaqueText(n, owner, mine){
 function lotMarks(c, g, R, o){
   o = o || {};
   var THREE = c.THREE, PI = c.PI, mat = c.mat, plan = markPlan(R, o.keep), mine = !!o.mine, free = !o.owner && !mine;
-  var out = {plan: plan, blocks: [], mats: [], panel: null, setNight: function(on){ out.mats.forEach(function(m){ m.emissiveIntensity = on ? m.userData.night : m.userData.day; }); }};
+  var out = {plan: plan, blocks: [], mats: [], panel: null, booms: [], glows: [], near: [], town: null,
+    setNight: function(on){ out.mats.forEach(function(m){ m.emissiveIntensity = on ? m.userData.night : m.userData.day; });
+      out.glows.forEach(function(gl){ gl.material.opacity = on ? 0.85 : 0.08; }); }};
+  if(o.town){
+    // a township: its wall, gateways and drive instead of the kerb and plaque
+    var TB = townBuild(c, g, o.town, {tier: o.town.tier, name: o.name != null ? o.name : o.owner, n: o.n, mine: mine, free: free, night: !!o.night});
+    out.plan = {kerb: null, plaque: null}; out.town = o.town;
+    ["blocks", "mats", "booms", "glows", "near"].forEach(function(k){ out[k] = TB[k]; });
+    out.panel = TB.panel;
+    out.setNight(!!o.night);
+    return out;
+  }
   if(!plan.kerb) return out;
   var col = mine ? 0xffb347 : free ? 0x5fbf6e : 0x2fa9c0;   // the minimap's colours: yours amber, taken cyan, free green
   var kerbM = new THREE.MeshStandardMaterial({color: col, roughness: 0.6, emissive: new THREE.Color(col)});
@@ -469,7 +511,196 @@ function lotMarks(c, g, R, o){
   return out;
 }
 
+/* ---------- a township: an HQ lot as its owner's gated estate (City Gen v5: 88 x 56 m, every one the same) ----------
+   Every township is walled all round, with two gateways on its street front (the doc's lot.gates: the way in at its -x
+   side, the way out at +x; else the same spots from its outline): each a pair of pylons under a lit arch, the HQ's name
+   on the way in's ("Lot 12" on a free one), WAY IN / WAY OUT on the pylons, a boom that lifts for a vehicle. Inside, a
+   drive loops from gate to gate: along the front past the door, down both sides and across the back by the parking. The
+   wall's coping wears the lot's colour (yours amber, taken cyan, free green: the minimap's); what it is made of is its
+   owner's tier (dressTier: a fence, a hedge, stone, stone with gold), with a guard booth by the way in from tier 2. The
+   tier's greenery, lamps along the drives, fountains and parked cars come from dressPlan (town). All in the lot's frame
+   (+z the street); pure placement in townPlan, built by lotMarks (o.town). */
+var TOWN = {minW: 60, minD: 45, lane: 5.5, sideIn: 6.5, frontIn: 6, backIn: 6.5, gateW: 7, post: 0.9, wallIn: 0.3, wallT: 0.4,
+  bayW: 2.7, bayD: 5.2, archUp: 4.6, boomUp: 1.05};
+var WALL_H = [1.2, 1.5, 1.9, 2.1];      // by tier: fence, hedge, stone, stone with gold (a free lot: the fence)
+var BOOM_NEAR = 11, BOOM_RATE = 2.2;    // a boom lifts for a vehicle within BOOM_NEAR m of its gate, at BOOM_RATE (1/s)
+// the lot frame's bounds of an outline
+function ringBounds(R){
+  var b = {x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity};
+  (R || []).forEach(function(q){ b.x0 = Math.min(b.x0, q[0]); b.x1 = Math.max(b.x1, q[0]); b.z0 = Math.min(b.z0, q[1]); b.z1 = Math.max(b.z1, q[1]); });
+  return b;
+}
+// -> null (a lot too small to be a township: the 36 x 34 m lots of older worlds) | {x0, x1, z0, z1, zf (the front drive's
+// middle), zb (the back's), gates: [{kind, x}], lanes, walls, posts, booth, bays, keep, blocks}. gates (optional): the doc's,
+// in the lot's frame [{kind: "in" | "out", x}]; tier: dressTier (-1: a free lot). Boxes are [x, z, hx, hz]; posts [x, z, h].
+function townPlan(R, gates, tier){
+  if(!R || R.length < 3) return null;
+  var b = ringBounds(R), x0 = b.x0, x1 = b.x1, z0 = b.z0, z1 = b.z1, T = TOWN;
+  if(!(x1 - x0 >= T.minW && z1 - z0 >= T.minD)) return null;
+  tier = tier == null ? -1 : Math.max(-1, Math.min(3, tier | 0));
+  var gin = x0 + T.sideIn, gout = x1 - T.sideIn;
+  (Array.isArray(gates) ? gates : []).forEach(function(g){
+    if(!g || !isFinite(+g.x)) return;
+    var x = Math.max(x0 + T.gateW/2 + T.post + 0.3, Math.min(x1 - T.gateW/2 - T.post - 0.3, +g.x));
+    if(g.kind === "in") gin = x; else if(g.kind === "out") gout = x;
+  });
+  if(gin > gout){ var t = gin; gin = gout; gout = t; }
+  var L = T.lane/2, zf = z1 - T.frontIn, zb = z0 + T.backIn, mx = (gin + gout)/2, hx = (gout - gin)/2;
+  var out = {x0: x0, x1: x1, z0: z0, z1: z1, zf: zf, zb: zb, tier: tier,
+    gates: [{kind: "in", x: gin, z: z1}, {kind: "out", x: gout, z: z1}], lanes: [], walls: [], posts: [], booth: null, bays: [], park: null, keep: [], blocks: []};
+  // the drive: the front from gate to gate, both sides, the back, and each gate's way out to the street
+  out.lanes.push([mx, zf, hx + L, L], [gin, (zb + zf)/2, L, (zf - zb)/2], [gout, (zb + zf)/2, L, (zf - zb)/2], [mx, zb, hx + L, L]);
+  [gin, gout].forEach(function(x){ out.lanes.push([x, (zf + z1)/2, L, (z1 - zf)/2]); });
+  // the wall: a band T.wallT thick, T.wallIn inside the outline, the front cut by the two gateways and their pylons
+  var wi = T.wallIn, wc = wi + T.wallT/2, ht = T.wallT/2;
+  out.walls.push([(x0 + x1)/2, z0 + wc, (x1 - x0)/2 - wi, ht], [x0 + wc, (z0 + z1)/2, ht, (z1 - z0)/2 - wi - T.wallT], [x1 - wc, (z0 + z1)/2, ht, (z1 - z0)/2 - wi - T.wallT]);
+  var cuts = [[x0 + wi, x0 + wi]], gh = T.gateW/2 + T.post;
+  [gin, gout].forEach(function(x){ cuts.push([x - gh, x + gh]); });
+  cuts.push([x1 - wi, x1 - wi]);
+  for(var i = 1; i < cuts.length; i++){ var a = cuts[i - 1][1], e = cuts[i][0]; if(e - a > 0.2) out.walls.push([(a + e)/2, z1 - wc, (e - a)/2, ht]); }
+  var ph = tier >= 2 ? T.archUp + 0.6 : T.archUp;
+  [gin, gout].forEach(function(x){ [-1, 1].forEach(function(s){ out.posts.push([x + s*(T.gateW/2 + T.post/2), z1 - wc, ph]); }); });
+  // the guard booth inside the way in, on its far side, between the wall and the front drive (tier 2 and up)
+  if(tier >= 2) out.booth = [gin + T.gateW/2 + T.post + 1.3, z1 - wi - T.wallT - 1.2, 0.9, 0.7];
+  // the parking: bays along the back drive's inner edge, the middle of it first
+  var bz = zb + L + T.bayD/2 + 0.2, nb = Math.max(0, Math.floor((2*hx - T.lane - 6)/T.bayW));
+  for(var k = 0; k < nb; k++) out.bays.push({x: mx + (k - (nb - 1)/2)*T.bayW, z: bz});
+  // what stands clear of it all (the finish and the garage): the drive, the gateways, the booth, the parking strip
+  out.lanes.forEach(function(r){ out.keep.push([r[0], r[1], r[2] + 0.2, r[3] + 0.2]); });
+  out.posts.forEach(function(p){ out.keep.push([p[0], p[1], T.post/2 + 0.3, T.post/2 + 0.6]); });
+  if(out.booth) out.keep.push([out.booth[0], out.booth[1], out.booth[2] + 0.3, out.booth[3] + 0.3]);
+  if(nb){ out.park = [mx, bz, nb*T.bayW/2, T.bayD/2]; out.keep.push([mx, bz, nb*T.bayW/2 + 0.3, T.bayD/2 + 0.3]); }
+  // what blocks you (walking or driving): the wall, the pylons, the booth; never the boom (it lifts for you)
+  out.walls.forEach(function(w){ out.blocks.push([w[0], w[1], 0, w[2], w[3]]); });
+  out.posts.forEach(function(p){ out.blocks.push([p[0], p[1], 0, T.post/2, T.post/2]); });
+  if(out.booth) out.blocks.push([out.booth[0], out.booth[1], 0, out.booth[2], out.booth[3]]);
+  return out;
+}
+// the lot frame of the doc's gates (lot.gates, cm, world) for a lot placed at p ({x, z, rot}, m): [{kind, x, z}]
+function townGates(lot, p){
+  if(!lot || !Array.isArray(lot.gates) || !p) return null;
+  var cr = Math.cos(p.rot || 0), sr = Math.sin(p.rot || 0), out = [];
+  lot.gates.forEach(function(g){
+    if(!g || !isFinite(+g.x) || !isFinite(+g.z) || (g.kind !== "in" && g.kind !== "out")) return;
+    var dx = g.x/100 - p.x, dz = g.z/100 - p.z;
+    out.push({kind: g.kind, x: dx*cr - dz*sr, z: dx*sr + dz*cr});
+  });
+  return out.length ? out : null;
+}
+// the arch's words, drawn on a canvas (never HTML): {title (the HQ's name as it reads, one line of at most 32 characters;
+// a free lot: "Lot N"), sub: "LOT N" | "LOT N · YOUR HQ" | "AVAILABLE", kind}. kind "out": "WAY OUT".
+function gateText(name, n, mine, kind){
+  var num = "LOT " + Math.max(1, n | 0);
+  var nm = typeof name === "string" ? name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim() : "";
+  if(nm.length > 32) nm = nm.slice(0, 31).trim() + "…";
+  if(kind === "out") return {title: "WAY OUT", sub: nm ? "Thank you for visiting" : num, kind: "out"};
+  if(!nm && !mine) return {title: "Lot " + Math.max(1, n | 0), sub: "AVAILABLE", kind: "in"};
+  return {title: nm || "Your HQ", sub: mine ? num + " · YOUR HQ" : num, kind: "in"};
+}
+// one sign canvas per text and colours, shared by every lot that shows the same words (every WAY OUT arch)
+var SIGNS = {c: null, by: {}};
+function gateSign(c, T, bg, ink, acc){
+  if(SIGNS.c !== c) SIGNS = {c: c, by: {}};
+  var key = JSON.stringify([T.title, T.sub, bg, ink, acc]);
+  if(SIGNS.by[key]) return SIGNS.by[key];
+  return (SIGNS.by[key] = c.canvasTex(512, 128, function(x){
+    x.fillStyle = bg; x.fillRect(0, 0, 512, 128);
+    x.fillStyle = acc; x.fillRect(0, 0, 512, 7); x.fillRect(0, 121, 512, 7);
+    x.textAlign = "center"; x.textBaseline = "middle"; x.fillStyle = ink;
+    var fs = 58; x.font = "800 " + fs + "px system-ui, sans-serif";
+    while(fs > 22 && x.measureText(T.title).width > 480){ fs -= 2; x.font = "800 " + fs + "px system-ui, sans-serif"; }
+    x.fillText(T.title, 256, 54);
+    x.fillStyle = acc; x.font = "700 22px system-ui, sans-serif"; x.fillText(T.sub, 256, 103);
+  }));
+}
+var WAYSIGN = {};    // c -> {in, out}: the WAY IN / WAY OUT plates' canvases, made once
+function waySigns(c){
+  if(WAYSIGN.c === c) return WAYSIGN;
+  function plate(word, col){ return c.canvasTex(256, 96, function(x){ x.fillStyle = "#0d1a24"; x.fillRect(0, 0, 256, 96); x.fillStyle = col;
+    x.font = "800 40px system-ui, sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(word, 128, 50); }); }
+  WAYSIGN = {c: c, in: plate("WAY IN ↓", "#7fe08b"), out: plate("WAY OUT ↑", "#ff8f7a"),
+    arm: c.canvasTex(256, 16, function(x){ for(var k = 0; k < 8; k++){ x.fillStyle = k % 2 ? "#f4f1ea" : "#d23a2e"; x.fillRect(k*32, 0, 32, 16); } })};
+  return WAYSIGN;
+}
+// the township's shell into g: the drive, the wall with its coloured coping, the gateways (pylons, arch, signs, booms), the
+// booth. o: {tier, name, n, mine, free, night}. -> {blocks, booms: [{g, x, z, a}], mats, glows, panel (the way in's sign)}
+function townBuild(c, g, P, o){
+  var THREE = c.THREE, PI = c.PI, mat = c.mat, T = TOWN, tier = P.tier, out = {blocks: P.blocks.slice(), booms: [], mats: [], glows: [], panel: null, near: []};
+  var ways = waySigns(c), armM = faceMat(ways.arm);
+  function faceMat(tex){ return tex.m || (tex.m = new THREE.MeshBasicMaterial({map: tex.t, toneMapped: false})); }
+  var col = o.mine ? 0xffb347 : o.free ? 0x5fbf6e : 0x2fa9c0;
+  var asphalt = mat(0x2c3138, {roughness: 0.92}), line = mat(0xe9e4d8, {roughness: 0.7});
+  P.lanes.concat(P.park ? [P.park] : []).forEach(function(r){
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(2*r[2], 2*r[3]), asphalt); m.rotation.x = -PI/2; m.position.set(r[0], DRESS_Y + 0.035, r[1]); m.receiveShadow = true; g.add(m); });
+  P.bays.forEach(function(b){ [-1, 1].forEach(function(s){ c.box(0.1, 0.01, T.bayD, line, b.x + s*T.bayW/2, DRESS_Y + 0.045, b.z, g); }); });
+  // the wall: by tier, a coping in the lot's colour on top (lit a little by night)
+  var wh = WALL_H[Math.max(0, tier)], wallM = tier === 1 ? mat(0x3e7a45, {roughness: 0.95}) : tier >= 2 ? mat(tier >= 3 ? 0xe9e3d6 : 0xb7ae9e, {roughness: 0.8}) : mat(0x59626b, {metalness: 0.5, roughness: 0.5});
+  var capM = new THREE.MeshStandardMaterial({color: col, roughness: 0.5, emissive: new THREE.Color(col)});
+  capM.userData.day = 0.12; capM.userData.night = o.mine ? 0.9 : 0.55; capM.emissiveIntensity = 0; out.mats.push(capM);   // unlit until merged
+  var gold = mat(0xd8b34a, {metalness: 0.9, roughness: 0.25});
+  P.walls.forEach(function(w){
+    if(tier <= 0){ c.box(2*w[2], 0.12, 2*w[3], wallM, w[0], DRESS_Y + wh - 0.1, w[1], g);          // a rail fence: top rail and a few posts
+      c.box(2*w[2], 0.08, 2*w[3], wallM, w[0], DRESS_Y + 0.45, w[1], g); }
+    else c.box(2*w[2], wh, 2*w[3], wallM, w[0], DRESS_Y + wh/2, w[1], g);
+    c.box(2*w[2] + 0.04, 0.1, 2*w[3] + 0.04, capM, w[0], DRESS_Y + wh + 0.05, w[1], g);
+    if(tier >= 3) c.box(2*w[2] + 0.08, 0.05, 2*w[3] + 0.08, gold, w[0], DRESS_Y + wh + 0.13, w[1], g);
+  });
+  if(tier <= 0) P.walls.forEach(function(w){                                                        // the fence's posts, 3 m apart
+    var long = w[2] > w[3], len = 2*Math.max(w[2], w[3]);
+    for(var s = -len/2; s <= len/2 + 1e-6; s += 3) c.box(0.12, wh, 0.12, wallM, w[0] + (long ? s : 0), DRESS_Y + wh/2, w[1] + (long ? 0 : s), g);
+  });
+  // the gateways: pylons, the arch between them with its sign (the HQ's name over the way in), WAY IN / WAY OUT plates
+  var stone = mat(tier >= 3 ? 0xf1ece2 : tier >= 2 ? 0xc9c2b4 : 0x6b747d, {roughness: tier >= 3 ? 0.35 : 0.7, metalness: tier >= 2 ? 0.05 : 0.4});
+  var bg = o.mine ? "#ffb347" : "#13202c", ink = o.mine ? "#1b1206" : "#f4f1ea", acc = o.mine ? "#1b1206" : o.free ? "#7fd18b" : "#5fd3e6";
+  P.gates.forEach(function(G){
+    var ph = P.posts[0][2], zc = P.posts[0][1], span = T.gateW + 2*T.post;
+    [-1, 1].forEach(function(s){ var px = G.x + s*(T.gateW/2 + T.post/2);
+      c.box(T.post, ph, T.post, stone, px, DRESS_Y + ph/2, zc, g);
+      if(tier >= 3) c.box(T.post + 0.1, 0.12, T.post + 0.1, gold, px, DRESS_Y + ph + 0.06, zc, g);
+      var lamp = c.glow(0xffe3b0, 2.2, o.night ? 0.85 : 0.08); lamp.position.set(px, DRESS_Y + ph + 0.4, zc + 0.6); g.add(lamp); out.glows.push(lamp); out.near.push(lamp); });
+    c.box(span, 0.7, 0.7, stone, G.x, DRESS_Y + ph - 0.35, zc, g);
+    var TX = gateText(o.name, o.n, o.mine, G.kind), tex = gateSign(c, TX, G.kind === "out" ? "#13202c" : bg, G.kind === "out" ? "#f4f1ea" : ink, acc);
+    // the sign: a slab with the words on both faces (one plane each way: they merge where the words are the same)
+    var face = faceMat(tex), panel = new THREE.Group(); panel.position.set(G.x, DRESS_Y + ph + 0.62, zc); g.add(panel);
+    c.box(T.gateW + 0.6, 1.25, 0.12, mat(0x2b3a48, {metalness: 0.5, roughness: 0.4}), 0, 0, 0, panel);
+    [1, -1].forEach(function(s){ var f = new THREE.Mesh(new THREE.PlaneGeometry(T.gateW + 0.4, 1.12), face); f.position.z = s*0.065; if(s < 0) f.rotation.y = PI; panel.add(f); });
+    if(G.kind === "in") out.panel = panel;
+    out.near.push(panel);
+    // WAY IN / WAY OUT on the street face of each pylon
+    var wm = faceMat(G.kind === "in" ? ways.in : ways.out);
+    [-1, 1].forEach(function(s){ var pl = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.32), wm);
+      pl.position.set(G.x + s*(T.gateW/2 + T.post/2), DRESS_Y + 2.1, zc + T.post/2 + 0.02); g.add(pl); });
+    // the boom: a striped arm from the pylon on the gate's -x side, lifting about that end (its group: z turn)
+    var bg2 = new THREE.Group(); bg2.position.set(G.x - T.gateW/2, DRESS_Y + T.boomUp, zc + 0.15); g.add(bg2);
+    var am = new THREE.Mesh(new THREE.BoxGeometry(T.gateW - 0.3, 0.12, 0.12), armM);
+    am.position.set((T.gateW - 0.3)/2, 0, 0); bg2.add(am); bg2.userData.anim = true; out.near.push(bg2);
+    c.box(0.3, T.boomUp, 0.3, mat(0x2a3139, {metalness: 0.7, roughness: 0.4}), G.x - T.gateW/2, DRESS_Y + T.boomUp/2, zc + 0.15, g);
+    out.booms.push({g: bg2, x: G.x, z: zc, a: 0});
+  });
+  // the guard booth (tier 2 and up): a little lit cabin by the way in
+  if(P.booth){ var B = P.booth;
+    c.box(2*B[2], 2.4, 2*B[3], stone, B[0], DRESS_Y + 1.2, B[1], g);
+    c.box(2*B[2] + 0.4, 0.14, 2*B[3] + 0.4, tier >= 3 ? gold : mat(0x2a3139, {roughness: 0.6}), B[0], DRESS_Y + 2.47, B[1], g);
+    var win = new THREE.MeshStandardMaterial({color: 0x9fd6ee, emissive: new THREE.Color(0xffd9a0), roughness: 0.1});
+    win.userData.day = 0.15; win.userData.night = 0.9; win.emissiveIntensity = 0; out.mats.push(win);
+    c.box(2*B[2] - 0.3, 0.8, 0.04, win, B[0], DRESS_Y + 1.55, B[1] + B[3] + 0.01, g);
+    c.box(0.04, 0.8, 2*B[3] - 0.3, win, B[0] - B[2] - 0.01, DRESS_Y + 1.55, B[1], g);
+  }
+  return out;
+}
+// the booms of a township (built by townBuild) toward open while a vehicle (veh: [{x, z}] in the lot's frame) is within
+// BOOM_NEAR of its gate; Calm (or reduced motion): at once
+function boomStep(booms, veh, dt, calm){
+  (booms || []).forEach(function(b){
+    var near = (veh || []).some(function(v){ return v && Math.hypot(v.x - b.x, v.z - b.z) < BOOM_NEAR; });
+    var goal = near ? 1 : 0, a = calm ? goal : b.a + Math.max(-1, Math.min(1, goal - b.a))*Math.min(1, Math.max(0, dt || 0)*BOOM_RATE);
+    if(a === b.a) return;
+    b.a = a; b.g.rotation.z = a*1.45;
+  });
+}
+
 HQV.hqCityParts = {fountain: fountain, bikePark: bikePark, skatePark: skatePark, lotExtras: lotExtras, lamplit: lamplit, FOUNT_R: FOUNT_R,
   lotDress: lotDress, dressPlan: dressPlan, dressTier: dressTier, dressBlocked: dressBlocked, DRESS_LEVELS: DRESS_LEVELS, DRESS_Y: DRESS_Y,
-  lotMarks: lotMarks, markPlan: markPlan, plaqueText: plaqueText, insetRing: insetRing, PLAQUE: PLAQUE};
+  lotMarks: lotMarks, markPlan: markPlan, plaqueText: plaqueText, insetRing: insetRing, PLAQUE: PLAQUE,
+  townPlan: townPlan, townGates: townGates, gateText: gateText, boomStep: boomStep, TOWN: TOWN, BOOM_NEAR: BOOM_NEAR};
 })();

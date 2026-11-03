@@ -92,6 +92,11 @@ var LOD_STEP = [8, 16, 32];
 var LIFT = 0.04, MARK_LIFT = 0.06, KERB = 0.15, FLAT = 0.005, SEAM = 0.02, MINSEG = 3;
 // v2 ground: pads sit PAD over their block's pavement; the beach runs BEACH_IN inland and BEACH_OUT out to sea from
 // the coast in steps of <= BEACH_STEP; terrain below sea + SEA_SHORE sinks to at least SEA_HIDE under the water
+// [townships] a township gateway's apron: from the lot's edge out over the verge onto its street's pavement (m: the lot is
+// FRONT_CM 10 m from the street's centre line, the pavement's outer edge 5.25 m from it)
+var TOWN_APRON = 5.5;
+// [townships] street props keep this far (m) from a township gateway's middle (its 7 m opening, out to the kerb lane)
+var GATE_KEEP = 15;
 var PAD = 0.04, BEACH_IN = 14, BEACH_OUT = 8, BEACH_STEP = 8, BEACH_WET = 0.4, SEA_SHORE = 0.1, SEA_HIDE = 0.5;
 // the river: its banks run BANK_IN up the land and BANK_OUT into the water (inside the 4 m the generator keeps clear of
 // streets, lots and sites), and stop BANK_MOUTH m short of the coast, where the beach takes over; the water sits
@@ -2512,6 +2517,24 @@ function groundItems(W){
     if(P.length < 3) return;
     var st = STYLE[leg[l.district]] || "com";
     var col = l.kind === "park" ? COL.lawn : (l.kind === "building" ? (st === "res" ? COL.lawn : COL.concrete) : COL.plaza);
+    // [townships] a township (an HQ lot with gates) is level at its door's height, as world.js's pad and the HQ on it are
+    // (a plane fitted to 88 m of hillside would tilt its ground through its lawns and drive), walled down to the land
+    if(l.kind === "hq" && Array.isArray(l.gates) && l.door){ var c0 = polyCentroid(P), ly = (+l.door[1] || 0)/100;
+      fill(P, {a: ly, gx: 0, gz: 0, cx: c0[0], cz: c0[1]}, KERB + LIFT + PAD, col, "lot", true);
+      // each gateway's apron: a ramp from the lot's level out over the verge to its street's pavement (TOWN_APRON m), so
+      // a car drives in and out (no step up or down at the lot's edge)
+      l.gates.forEach(function(g){
+        var f = g && g.dir, fx = f ? (+f[0] || 0)/65536 : 0, fz = f ? (+f[1] || 0)/65536 : 0, n = Math.hypot(fx, fz);
+        if(!(n > 0.5) || !isFinite(+g.x) || !isFinite(+g.z)) return;
+        fx /= n; fz /= n;
+        var gx = g.x/100, gz = g.z/100, hw = Math.max(2, (+g.w || 700)/200), sx = fz, sz = -fx, L = TOWN_APRON;
+        var ox = gx + fx*L, oz = gz + fz*L, r = Q.nearestRoad(W, ox, oz, 12), y0 = ly + KERB + LIFT + PAD, y1 = r ? r.y + KERB + LIFT : y0, k = (y1 - y0)/L;
+        var ix = gx - fx*0.5, iz = gz - fz*0.5;   // (from half a metre inside the lot: no seam at its edge)
+        var A = [[ix - sx*hw, iz - sz*hw], [ix + sx*hw, iz + sz*hw], [ox + sx*hw, oz + sz*hw], [ox - sx*hw, oz - sz*hw]];
+        if(polyArea(A) < 0) A.reverse();
+        fill(A, {a: y0, gx: k*fx, gz: k*fz, cx: gx, cz: gz}, 0, COL.concrete, "lot", true);
+      });
+      return; }
     fill(P, bp || fitPlane(W, P), KERB + LIFT + PAD, col, "lot", !bp);
   });
   (W.sites || []).forEach(function(s){
@@ -3512,6 +3535,7 @@ function allProps(W){
     if(PI && underDeck(W, PI, kind, o)) return;   // phase 6: nor on or under a deck, nor in a pier
     if(TU && kind === "gantries" && overTunnel(W, o)) return;   // phase 7: no gantry over a tunnel or cutting
     if(RP.length && nearRailPier(RP, kind, o)) return;   // phase 8: nor in (or within 1.5 m of) a City Line pier
+    if(kind !== "signs" && kind !== "gantries" && Q.gateNear && Q.gateNear(W, o.x, o.z, GATE_KEEP)) return;   // [townships] a gateway's way in and out stays clear
     // no lamp or name plate on a carriageway (a sidewalk's lamp where another road's runs over it at a junction)
     if((kind === "lamps" || kind === "signs") && v2 && Q.surfaceAt(W, o.x, o.z) === "road") return;
     var t = tileOf(o.x, o.z), k = tileKey(t.tx, t.tz);

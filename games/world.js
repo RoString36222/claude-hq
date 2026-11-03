@@ -268,6 +268,34 @@ function eachBucket(W, nb, x0, x1, z0, z1, fn){
 }
 function lists(n){ var a = new Array(n); for(var i = 0; i < n; i++) a[i] = []; return a; }
 function rectM(o){ return {x0: (o.x - o.w/2)/100, x1: (o.x + o.w/2)/100, z0: (o.z - o.d/2)/100, z1: (o.z + o.d/2)/100}; }
+// [townships] a polygon's ([[x, z]] m) bounding rect; is (x, z) inside it; how far (m) (x, z) is from it (0 inside)
+function polyRect(P){ var r = {x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity};
+  P.forEach(function(q){ r.x0 = Math.min(r.x0, q[0]); r.x1 = Math.max(r.x1, q[0]); r.z0 = Math.min(r.z0, q[1]); r.z1 = Math.max(r.z1, q[1]); }); return r; }
+function inPolyM(P, x, z){ var c = false; for(var i = 0, j = P.length - 1; i < P.length; j = i++){ var a = P[i], b = P[j];
+  if((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0])*(z - a[1])/(b[1] - a[1]) + a[0]) c = !c; } return c; }
+function polyDistM(P, x, z){
+  if(inPolyM(P, x, z)) return 0;
+  var best = Infinity;
+  for(var i = 0, j = P.length - 1; i < P.length; j = i++){ var a = P[j], b = P[i], ex = b[0] - a[0], ez = b[1] - a[1], l2 = ex*ex + ez*ez;
+    var t = l2 > 0 ? Math.max(0, Math.min(1, ((x - a[0])*ex + (z - a[1])*ez)/l2)) : 0, dx = a[0] + t*ex - x, dz = a[1] + t*ez - z;
+    best = Math.min(best, Math.sqrt(dx*dx + dz*dz)); }
+  return best;
+}
+// [townships] is (x, z) (m) within r m of a township's gateway (an HQ lot's lot.gates): what stands in the street keeps out
+// of its way in and out (parked cars, lamps, benches). The gates are listed once per world.
+var GATE_LIST = {lots: null, pts: []};
+function gateNear(W, x, z, r){
+  if(!W) return false;
+  if(GATE_LIST.lots !== W.lots){
+    GATE_LIST = {lots: W.lots, pts: []};
+    (W.lots || []).forEach(function(l){ if(l && l.kind === "hq" && Array.isArray(l.gates)) l.gates.forEach(function(g){
+      if(g && isFinite(+g.x) && isFinite(+g.z)) GATE_LIST.pts.push([g.x/100, g.z/100]); }); });
+  }
+  for(var i = 0; i < GATE_LIST.pts.length; i++){ var g = GATE_LIST.pts[i];
+    if(Math.abs(x - g[0]) < r && Math.abs(z - g[1]) < r && Math.hypot(x - g[0], z - g[1]) < r) return true; }
+  return false;
+}
+function padIn(p, x, z){ return p.poly ? inRect(p.rect, x, z) && inPolyM(p.poly, x, z) : inRect(p.rect, x, z); }
 
 function index(W){
   if(W.index) return W.index;
@@ -289,7 +317,10 @@ function index(W){
       I.bldRect[4*i] = B.x0; I.bldRect[4*i+1] = B.x1; I.bldRect[4*i+2] = B.z0; I.bldRect[4*i+3] = B.z1;
       eachBucket(W, nb, B.x0, B.x1, B.z0, B.z1, function(b){ I.bld[b].push(i); });
     }
-    if(l.kind === "hq") I.padList.push({y: ((l.door && l.door[1]) || 0)/100, rect: R});
+    // an HQ lot's level pad: its polygon where it has one (a v5 township is turned to its block: its w x d box would reach
+    // across the street), else its w x d box
+    if(l.kind === "hq"){ var PP = l.poly && l.poly.length >= 3 ? l.poly.map(function(q){ return [q[0]/100, q[1]/100]; }) : null;
+      I.padList.push({y: ((l.door && l.door[1]) || 0)/100, rect: PP ? polyRect(PP) : R, poly: PP}); }
   });
   W.sites.forEach(function(s, i){
     var R = rectM(s);
@@ -641,7 +672,7 @@ function padOf(W, x, z){
   var I = index(W), nb = I.nb, L = I.pads[bOf(W, z, nb)*nb + bOf(W, x, nb)];
   for(var i = 0; i < L.length; i++){
     var p = I.padList[L[i]];
-    if(inRect(p.rect, x, z)) return {y: p.y, rect: {x0: p.rect.x0, x1: p.rect.x1, z0: p.rect.z0, z1: p.rect.z1}};
+    if(padIn(p, x, z)) return {y: p.y, rect: {x0: p.rect.x0, x1: p.rect.x1, z0: p.rect.z0, z1: p.rect.z1}};
   }
   return null;
 }
@@ -662,6 +693,7 @@ function groundRaw(W, x, z, street, yNow){
     var p = I.padList[L[i]], R = p.rect;
     var dx = Math.max(R.x0 - x, 0, x - R.x1), dz = Math.max(R.z0 - z, 0, z - R.z1);
     var d = Math.sqrt(dx*dx + dz*dz);
+    if(p.poly && d < BLEND) d = polyDistM(p.poly, x, z);          // [townships] a turned lot: from its outline
     if(d === 0) return p.y;
     if(d < bd){ bd = d; py = p.y; }
   }
@@ -1740,7 +1772,7 @@ var api = HQV.world = {
   holeFloor: holeFloor, streetAt: streetAt, deckAt: deckAt, RIVER_LIFT: RIVER_LIFT, BREAKWATER_HALF: BREAKWATER_HALF, BREAKWATER_UP: BREAKWATER_UP,
   pack: pack, docOf: docOf, hash32: hash32, cacheCopy: cacheCopy,
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
-  nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt, groundRaw: groundRaw,
+  nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, gateNear: gateNear, groundAt: groundAt, groundRaw: groundRaw,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
   blockedAt: blockedAt, trees: trees, decksOf: decksOf, piersOf: piersOf, railPiersOf: railPiersOf, railPierHit: railPierHit,
   RAIL_PIER: {R: RAIL_PIER_R, GIRDER: RAIL_GIRDER}, deckOver: deckOver, STEP_UP: STEP_UP,

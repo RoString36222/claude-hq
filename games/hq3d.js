@@ -2138,6 +2138,7 @@ function mount(el, api){
     movedHere = true;                       // you are somewhere now: a street rebuild must not put you back at your door
     avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     E.sfx(kind === "bike" ? "bell" : car ? "door" : kind === "skate" ? "jump" : "go");
+    if(B.doorsPlay) B.doorsPlay("in", {calm: E.calm()});              // [3.39] its door opens as you climb in, shuts behind you
     if(kind !== "skate") driveHud(kind);
     drvMount();                                                        // [3.12] its lights, damage (games/hqdrive.js)
     rideUiSync(true);
@@ -2613,6 +2614,8 @@ function mount(el, api){
       // a vehicle from a garage stays where you leave it; the rack's bikes and the boards go home
       if(b.stay && !force){ parked[b.id] = {x: avatar.x, z: avatar.z, yaw: avatar.yaw}; placeProp(b, avatar.x, avatar.z, avatar.yaw); ownMoved(b); ownLeft(b); }
       b.g.visible = true;
+      var br = b.rig || (b.g.children[0] && b.g.children[0].userData.rig);           // [3.39] the parked one: its door opens, you step out, it shuts
+      if(!force && br && br.doorsPlay) br.doorsPlay("out", {calm: E.calm()});
     }
     if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
     if(ride.kind !== "skate"){
@@ -2659,6 +2662,17 @@ function mount(el, api){
   // [3.20.1] a vehicle in a wall (landed in one, the street rebuilt round it, a peer parked on it) that cannot move or
   // turn its way out for UNSTICK_S, while you try to: lifted to the nearest pose where every corner is clear
   var RIDE_STEP = 0.35, SLIDE_MAX = 0.8, UNSTICK_S = 0.6;
+  // a wheel whose ground rises more than STEP_MAX m over one swept step (at most RIDE_STEP) meets a wall, not a slope:
+  // a kerbless edge (a platform's, a pad's) stops the vehicle instead of popping it up onto the top
+  var STEP_MAX = 0.4;
+  function stepUp(x0, z0, x1, z1, yaw){
+    var P = wheelPts(), s = Math.sin(yaw), c = Math.cos(yaw);
+    for(var i = 0; i < P.length; i++){
+      var ox = P[i][0]*c + P[i][1]*s, oz = -P[i][0]*s + P[i][1]*c;
+      if(groundAt(x1 + ox, z1 + oz) - groundAt(x0 + ox, z0 + oz) > STEP_MAX) return true;
+    }
+    return false;
+  }
   function rideUnstick(dt, now, thr, x0, z0, bx){
     var trying = Math.abs(thr || 0) > 0.05 || Math.abs(ride.steer || 0) > 0.05;
     if(!(now > 0) || !trying || Math.hypot(avatar.x - x0, avatar.z - z0) > 0.02){ ride.stuck = 0; return false; }
@@ -2927,7 +2941,7 @@ function mount(el, api){
       var steps = Math.max(1, Math.ceil(Math.abs(d)/RIDE_STEP)), went = 0, px = avatar.x, pz = avatar.z;
       for(var k = 1; k <= steps; k++){
         var qx = avatar.x + sh*d*k/steps, qz = avatar.z + ch*d*k/steps, then = bodyHits(qx, qz, avatar.yaw, bx);
-        if(then === 0 || then < now){ px = qx; pz = qz; went = k; } else break;
+        if((then === 0 || then < now) && !stepUp(px, pz, qx, qz, avatar.yaw)){ px = qx; pz = qz; went = k; } else break;
       }
       if(went === steps){ avatar.x = nx; avatar.z = nz; }
       else {
@@ -2940,6 +2954,7 @@ function mount(el, api){
         var rest = d*(steps - went)/steps, slid = 0;
         if(Math.abs(rest) > 0.001) for(var a = 0.25; a <= SLIDE_MAX && !slid; a += 0.25) for(var sg = -1; sg <= 1 && !slid; sg += 2){
           var hh = ride.head + sg*a, cr = rest*Math.cos(a), sx = avatar.x + Math.sin(hh)*cr, sz = avatar.z + Math.cos(hh)*cr;
+          if(stepUp(avatar.x, avatar.z, sx, sz, avatar.yaw)) continue;   // nor up a wall's edge
           if(bodyHits(sx, sz, avatar.yaw, bx) === 0){ avatar.x = sx; avatar.z = sz; slid = Math.cos(a); }
         }
         if(slid){ ride.speed *= 0.55 + 0.4*slid; if(Math.abs(ride.speed) > 6) E.sfx("hit"); }
@@ -2969,7 +2984,7 @@ function mount(el, api){
     avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - ry0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
     // where you are headed is where the vehicle travels (ride.head: in a slide that is not where it points)
     avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(ride.head + PI) : ride.head) : null;
-    if(ride.snapY){ avatar.hy = groundAt(avatar.x, avatar.z); avatar.hyV = 0; } else settleY(dt);   // [stunts] a ramp at speed: on it, not a spring behind it
+    if(ride.snapY){ avatar.hy = groundAt(avatar.x, avatar.z); avatar.hyV = 0; avatar.hyG = null; } else rideSettle(ride.wy, dt);   // [stunts] a ramp at speed: on it, not a spring behind it
     // [insane] a wheelie pivots on the rear axle, a stoppie on the front: the wheel that stays down stays on the road
     var wp = ride.wh ? ride.wh.p : 0, wbh = (V.wb || WHEELBASE[ride.base] || 1.4)/2;
     avatar.g.position.set(avatar.x, avatar.hy + Math.sin(Math.abs(wp))*wbh, avatar.z);
@@ -2977,23 +2992,37 @@ function mount(el, api){
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
   }
-  // A vehicle on the 3D city's ground: nose pitched to the slope over its wheelbase, a car rolled to the
-  // cross slope over 1.2 m (a bike or motorbike only leans, ride.lean); both on springs (omega 10).
+  // A vehicle on the 3D city's ground, read where its wheels touch (wheelPts): nose pitched to the slope between its
+  // axles, a car rolled to the cross slope between its sides (a bike or motorbike only leans, ride.lean); both on
+  // springs (omega 10). ride.wy: the height that keeps every wheel, at the tilt it has now, on or above its ground.
   var WHEELBASE = {car: 2.3, moto: MOTO_WB, bike: BIKE_WB};
+  // where the wheels touch, model-local [left, forward] m: a car's four (half its track either side of each axle,
+  // 0.6 m without dims), a bike's or motorbike's two on its centre line
+  function wheelPts(){
+    var V = ride.V || {}, h = (V.wb || WHEELBASE[ride.base] || 1.2)/2;
+    if(ride.base !== "car") return [[0, h], [0, -h]];
+    var t = V.dims && +V.dims.widthM > 0 ? E.clamp(+V.dims.widthM*0.42, 0.4, 1.1) : 0.6;
+    return [[t, h], [-t, h], [t, -h], [-t, -h]];
+  }
   function vehicleTilt(dt){
-    var wantP = 0, wantR = 0;
+    var wantP = 0, wantR = 0, P = wheelPts(), g = null;
     if(cur && cur.camModes && cur.groundY){
-      var wb = ride.V.wb || WHEELBASE[ride.base] || 1.2, h = wb/2, sy = Math.sin(avatar.yaw), cy = Math.cos(avatar.yaw);
-      wantP = Math.atan((groundAt(avatar.x + sy*h, avatar.z + cy*h) - groundAt(avatar.x - sy*h, avatar.z - cy*h))/wb);
-      if(ride.base === "car"){                      // model-local +x (left) is (cos yaw, -sin yaw); roll > 0 = right side down
-        var lx = cy*0.6, lz = -sy*0.6;
-        wantR = Math.atan((groundAt(avatar.x + lx, avatar.z + lz) - groundAt(avatar.x - lx, avatar.z - lz))/1.2);
-      }
+      var sy = Math.sin(avatar.yaw), cy = Math.cos(avatar.yaw);   // model-local +x (left) is (cos yaw, -sin yaw)
+      g = P.map(function(p){ return groundAt(avatar.x + p[0]*cy + p[1]*sy, avatar.z - p[0]*sy + p[1]*cy); });
+      if(P.length === 4){                           // roll > 0 = right side down
+        wantP = Math.atan((g[0] + g[1] - g[2] - g[3])/(4*P[0][1]));
+        wantR = Math.atan((g[0] + g[2] - g[1] - g[3])/(4*P[0][0]));
+      } else wantP = Math.atan((g[0] - g[1])/(2*P[0][1]));
     }
     // body roll in a turn (V.roll, rad at full lock from 15 m/s: an SUV leans out, the starter car does not)
     if(ride.V.roll && !E.calm()) wantR += ride.steer*Math.min(1, Math.abs(ride.speed)/15)*ride.V.roll;
     var a = tiltSpring(ride.pitch, ride.pv, wantP, dt), r = tiltSpring(ride.roll, ride.rv, wantR, dt);
     ride.pitch = a[0]; ride.pv = a[1]; ride.roll = r[0]; ride.rv = r[1];
+    // a wheel at [left, fwd] sits fwd*sin(pitch) + left*sin(roll) over the body's origin: the origin as low as it goes
+    // with none of them under its ground
+    var sp = Math.sin(ride.pitch), sr = Math.sin(ride.roll), wy = -1e9;
+    if(g) for(var i = 0; i < P.length; i++) wy = Math.max(wy, g[i] - P[i][1]*sp - P[i][0]*sr);
+    ride.wy = g ? wy : groundAt(avatar.x, avatar.z);
   }
   function tiltSpring(x, v, goal, dt){ return spring(x || 0, v || 0, goal, 10, dt); }
   // An automatic gearbox and the engine note (games/engine.js engineSound), for the HUD's rev
@@ -3559,7 +3588,7 @@ function mount(el, api){
     var A = ride.auto, AP = HQV.hqAutopilot, r = apGoal(), x = avatar.x, z = avatar.z;
     o = o || {};
     var head = o.head != null ? o.head : (ride.head != null ? ride.head : avatar.yaw), speed = o.speed != null ? o.speed : ride.speed;
-    if(r && r.R){ if(A.src !== r.R){ A.src = r.R; A.P = AP.plan(r.R.pts); A.cruise = false; } }
+    if(r && r.R){ if(A.src !== r.R){ A.src = r.R; A.P = r.R.lane ? AP.plan(r.R.lane, 0) : AP.plan(r.R.pts); A.cruise = false; } }
     else if(!A.P || A.cruise){                                       // no route (or one finished: the plan we have runs to its end)
       if(!A.P || A.P.len - A.P.s < 90){
         var G = cur && cur.navGraph ? cur.navGraph() : null, pts = G ? AP.cruise(G, x, z, head, 260) : null;
@@ -4164,10 +4193,30 @@ function mount(el, api){
     }
     return false;
   }
+  // on foot (and every ride but a vehicle's): the height on a spring after the ground, never under it (a step up is
+  // climbed at once, only a step down eases)
   function settleY(dt){
     var gy = groundAt(avatar.x, avatar.z);
     if(!(dt > 0) || Math.abs(gy - avatar.hy) > 3){ avatar.hy = gy; avatar.hyV = 0; }
     else { var h = spring(avatar.hy, avatar.hyV, gy, 18, dt); avatar.hy = h[0]; avatar.hyV = h[1]; }
+    if(!(avatar.hy >= gy)){ avatar.hy = gy; avatar.hyV = Math.max(0, avatar.hyV || 0); }
+    avatar.hyG = null;
+    return gy;
+  }
+  // a vehicle (rideMove): the spring is on the gap over its ground (e = hy - ground), not on the height, so a slope is
+  // followed with no lag. The ground moving no more than a slope could over the distance driven (0.05 m + 60% of it)
+  // carries the gap; more is a step: up is climbed at once (the gap never goes under 0), down eases (a short fall).
+  // gy: the wheels' height (ride.wy). Snaps on a teleport only (dt 0, or a jump of more than 20 m).
+  function rideSettle(gy, dt){
+    var a = avatar, moved = a.hyG != null ? Math.hypot(a.x - a.hyX, a.z - a.hyZ) : 0;
+    if(!isFinite(gy)) gy = groundAt(a.x, a.z);
+    if(!(dt > 0) || moved > 20 || !isFinite(a.hy)){ a.hy = gy; a.hyV = 0; }
+    else {
+      var e = a.hyG != null && Math.abs(gy - a.hyG) <= 0.05 + 0.6*moved ? a.hy - a.hyG : a.hy - gy, s = spring(e, a.hyV, 0, 18, dt);
+      if(!(s[0] > 0)){ s[0] = 0; s[1] = 0; }
+      a.hy = gy + s[0]; a.hyV = s[1];
+    }
+    a.hyG = gy; a.hyX = a.x; a.hyZ = a.z;
     return gy;
   }
   /* ---------- air (SkyStrike: double jump, dive, web-swing) ----------
@@ -4785,7 +4834,7 @@ function mount(el, api){
     C.input(rig, ev);
     var T = rigTarget();
     // (the camera's floor: the ground, and over water its surface, so it never dips under the waves: cur.camGround)
-    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
+    pose = C.step(rig, T, dt, {ground: cur.camGround || groundAt, hit: cur.camHit || function(){ return 1; }, ceil: cur.camCeil || null, viewH: inst.h || 600, aspect: (inst.w || 1)/(inst.h || 1)});
     if(rig.mode === "cine" && rig.wake) C.setMode(rig, rig.prev && rig.prev !== "cine" ? rig.prev : rig.preferred || "chase");
     if(rig.mode !== lastMode) modeChanged(lastMode, rig.mode);
     if(pose && !pose.ortho){
@@ -5711,7 +5760,14 @@ function mount(el, api){
     get cabs(){ var TR = phoneTransit(); return TR ? TR.cabs : null; },
     get heli(){ var TR = phoneTransit(); return TR ? TR.heli : null; },
     get water(){ var TR = phoneTransit(); return TR ? TR.water : null; },
-    vehicles: {list: function(){ return callOn() ? callItems() : []; }, call: function(k){ return callPick(k); }, state: function(){ return inst.call.state(); }},
+    vehicles: {list: function(){ return callOn() ? callItems() : []; }, state: function(){ return inst.call.state(); },
+      // one just bought is not in the list until the garage is read again: read it, then call
+      call: function(k){
+        if(!callOn()) return false;
+        if(callList().some(function(x){ return x.key === k; })) return callPick(k);
+        ownRefresh().then(function(){ if(!callPick(k)) callSay("It can't come here yet: press C in the City to call it."); });
+        return true;
+      }},
     dealer: {mount: function(elx, onDone){
       if(!HQV.hqDealer || !HQV.hqDealer.mountPanel) return null;
       gamesCss();
@@ -6686,6 +6742,13 @@ function mount(el, api){
   if(SMOKE && SMOKE.on){
     window.HQ3D_DEBUG = {mode: function(m){ smokeCam(m); }, scene: function(){ return cur && cur.scene; }, teleport: function(x, z, yaw){ smokeTeleport(+x || 0, +z || 0, yaw == null ? null : +yaw); },
                          ride: function(kind){ smokeRide(kind); }, unride: function(){ if(ride) dismount(true); return !ride; }, stats: function(){ return smokeStats(); },
+                         // what the camera rig is told at a point, for tools: {ground, ceil, hit (from you, up LOOK_H, to the point)}
+                         camEnv: function(x, y, z){ if(!cur) return null; var a = {x: avatar.x, y: avatar.g.position.y + 1.6, z: avatar.z};
+                           return {ground: (cur.camGround || groundAt)(x, z), ceil: cur.camCeil ? cur.camCeil(x, z) : null, hit: cur.camHit ? cur.camHit(a, {x: x, y: y, z: z}) : 1}; },
+                         // the camera and you, for tools: {x, y, z, near, mode, lookAt [x, y, z], avatar {x, y, z}}
+                         cam: function(){ var c = curCam(), d = new THREE.Vector3(); c.getWorldDirection(d);
+                           return {x: c.position.x, y: c.position.y, z: c.position.z, near: c.near, mode: rig ? rig.mode : "classic", dir: [d.x, d.y, d.z],
+                                   avatar: avatar ? {x: avatar.x, y: avatar.g.position.y, z: avatar.z} : null}; },
                          // [3.16] the grenade launcher, for tools: fire one (true), or a blast a metre in front of you ("boom"); -> its state
                          grenade: function(a){
                            if(a === true){ GN.out = true; GN.cd = 0; gnFire(); }

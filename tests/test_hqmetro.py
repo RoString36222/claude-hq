@@ -203,6 +203,25 @@ out.fixtures = extra.map(d => { const s = H.create(d, {tier: 5}); const ls = s.l
   return {id: d.id, lines: ls.map(l => l.id), stops: st.length, vehicles: vs.length, ents: L.entrances.length,
     plat: st.length ? (() => { const S = L.stations[0], p = S.plats[0]; const w = p && L.walkable(p.r.cx, p.y0 + 0.1, p.r.cz); return w ? Math.abs(w.y - p.y0) : null; })() : null,
     deps: st.length ? s.departures(st[0].id, T0, 4).length : 0}; });
+// [transit pass] the gate lines, the paid side, a standing train's doors, platform numbers, names
+out.pass = (() => {
+  const S = Lay.byId["metro:0"], h = S.hall, at = (u, v, y) => ({x: h.cx + u*h.s + v*h.c, z: h.cz + u*h.c - v*h.s, y: y == null ? S.hallY : y});
+  const g = (u, v, y) => { const p = at(u, v, y); return Lay.gateAt(p.x, p.y, p.z); }, paid = (u, v) => { const p = at(u, v); return Lay.paidAt(p.x, p.y + 0.1, p.z); };
+  const feet = Lay.entrances.filter(E => E.station === "metro:0" && !E.pass).map(E => Math.abs(H.rLocal(h, E.foot.x, E.foot.z).u));
+  const p0 = S.plats[0];
+  // a train standing at metro:2 (M1), doors open
+  let v = null; for(let t = 0; t < 600 && !v; t += 1){ v = sim.vehicles(T0 + t*1000).find(q => q.stop === "metro:2" && q.doors >= 0.99) || null; if(v) v.t = t; }
+  const ds = v ? sim.doorsOf(v) : [], st2 = Lay.byId["metro:2"], side = sim.platformSide("metro:2");
+  const lats = ds.map(d => { const cp = sim.carPose(v, d.car); return (d.x - cp.x)*Math.cos(cp.yaw) - (d.z - cp.z)*Math.sin(cp.yaw); });
+  const ru = v ? sim.runOf(v) : null, trd = v ? sim.trip(v.line, "metro:2", ru.last === "metro:2" ? "metro:0" : ru.last, T0 + v.t*1000) : null;
+  return {gu: S.gu, lanes: S.lanes.length, feet: feet, machines: S.machines.length,
+    lane: g(S.gu, S.lanes[2]), cabinet: g(S.gu, S.lanes[2] + 0.55), glass: g(-S.gu, S.hw - 1), off: g(S.gu - 2, 0), up: g(S.gu, S.lanes[2], S.hallY + 1.5),
+    paidMid: paid(0, 0), paidEnd: paid(S.gu + 1.5, 0), paidPlat: Lay.paidAt(p0.r.cx, p0.y0 + 0.1, p0.r.cz), paidNone: Lay.paidAt(5000, 0, 5000),
+    doors: ds.length, lats: lats, side: side, doorY: ds.length ? ds[0].y - (sim.carPose(v, 0).y + H.FLOOR) : null,
+    runLast: ru && ru.last, sameVeh: trd ? trd.vehicle === v.id : null, dep: trd ? trd.stops.every(q => q.dep - q.at === H.DWELL*1000) : null,
+    plat: [sim.platNo("metro:1", "M1", "o"), sim.platNo("metro:1", "M1", "b"), sim.platNo("metro:1", "M2", "o"), sim.platNo("metro:1", "M2", "b")],
+    names: sim.stops().map(q => q.name)};
+})();
 // an empty world
 out.empty = (() => { const s = H.create({id: "x", layers: {}}, {}); return {lines: s.lines().length, stops: s.stops().length, v: s.vehicles(T0).length, d: s.departures("metro:0", T0, 4).length, t: s.trip("M1", "a", "b", T0)}; })();
 console.log(JSON.stringify(out));
@@ -248,7 +267,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   V.update(T0 + 2000, 0.5, {x: cst.x, y: cst.hallY + 1.7, z: cst.z});
   out.central = {draws: V.drawCalls(), tris: V.triangles(), chunks: V.stats().chunks, stations: V.stats().stations};
   // the walker at a gate line: it opens (Calm: at once) with a beep
-  const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw); return {x: h.cx + s*10 + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*10 - s*(-4.4 + 0.55)}; })();
+  const gate = (() => { const h = cst.hall, s = Math.sin(h.yaw), co = Math.cos(h.yaw); return {x: h.cx + s*cst.gu + co*0.55*1 - co*4.4 + co*0.55, z: h.cz + co*cst.gu - s*(-4.4 + 0.55)}; })();   // [transit pass] the gate line sits at the station's gu
   avatar = {x: gate.x, z: gate.z, hy: cst.hallY};
   sounds.length = 0; calm = true;
   V.update(T0 + 2500, 0.016, {x: cst.x, y: cst.hallY + 1.7, z: cst.z});
@@ -452,6 +471,58 @@ class MetroPure(unittest.TestCase):
 
 
 @unittest.skipUnless(NODE, "node not installed")
+class MetroTransitPass(unittest.TestCase):
+    """[transit pass] the gates, the paid side, boarding a standing train, platform numbers and station names."""
+    @classmethod
+    def setUpClass(cls):
+        cls.o = run_node(PURE % {"root": json.dumps(ROOT), "doc": json.dumps(metro_fixture()), "extra": "[]"})["pass"]
+
+    def test_gate_lines_past_every_entrance_foot(self):
+        p = self.o
+        self.assertEqual(p["lanes"], 8)
+        self.assertEqual(p["machines"], 4)
+        self.assertGreaterEqual(p["gu"], 10)
+        self.assertLessEqual(p["gu"], 14.5)
+        for f in p["feet"]:
+            self.assertLess(f, p["gu"])                             # every foot in the hall lands on the street side
+
+    def test_gate_at(self):
+        p = self.o
+        self.assertEqual(p["lane"]["lane"], 2)
+        self.assertEqual(p["lane"]["e"], 1)
+        self.assertEqual(p["cabinet"]["lane"], -1)                  # between lanes: a cabinet
+        self.assertEqual(p["glass"]["lane"], -1)                    # out by the wall: the glass
+        self.assertIsNone(p["off"])                                 # 2 m short of the line: no gate
+        self.assertIsNone(p["up"])                                  # 1.5 m over the hall floor (an entrance's stairs)
+
+    def test_paid_side(self):
+        p = self.o
+        self.assertFalse(p["paidMid"])
+        self.assertTrue(p["paidEnd"])
+        self.assertTrue(p["paidPlat"])
+        self.assertIsNone(p["paidNone"])
+
+    def test_standing_train_doors(self):
+        p = self.o
+        self.assertEqual(p["doors"], 12)                            # 4 cars x 3 doors, on the platform's side
+        for lat in p["lats"]:
+            self.assertAlmostEqual(abs(lat), 1.45, places=2)
+            self.assertEqual(1 if lat > 0 else -1, 1 if p["side"] > 0 else -1)
+        self.assertAlmostEqual(p["doorY"], 0, places=3)             # at the car's floor
+        self.assertTrue(p["sameVeh"])                               # the trip from here is that very train
+        self.assertTrue(p["dep"])                                   # every stop carries when it leaves (the dwell)
+
+    def test_platform_numbers(self):
+        self.assertEqual(self.o["plat"], ["1", "2", "3", "4"])
+
+    def test_station_names(self):
+        n = self.o["names"]
+        self.assertEqual(len(n), len(set(n)))                       # unique
+        self.assertEqual(n.count("Central"), 1)                     # one Central: the station with the most lines
+        for x in n:
+            self.assertNotRegex(x, r"(Street|Square|Gate|Park) \d+$")   # no seeded "Park 6" pieces
+
+
 class MetroView(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

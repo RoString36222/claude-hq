@@ -25,6 +25,12 @@
  *     walkable(x, y, z) -> {y, kind, station} | null (the highest floor at most STEP_UP over y; null on the track,
  *     in a wall, or out of every station), isUnder(x, y, z), entranceAt(x, z, r), rampAt(x, z), stationAt(x, y, z),
  *     exitTo(stationId, x?, z?) -> {x, y, z, yaw} (the street side of the nearest entrance).
+ *     [transit pass] each station's gate lines at +-gu across the hall (past every entrance's foot), its 8 lanes and 4
+ *     ticket machines; gateAt(x, y, z) -> {station, e, lane (-1: cabinet or glass), u, v} | null; paidAt(x, y, z)
+ *     -> true beyond the gates (and on the stairs and platforms), false on the street side, null outside.
+ *   sim.doorsOf(v) (a standing train's open doors), sim.runOf(v) ({key, last, lastName}), sim.platNo(stop, line, run)
+ *   and sim.streetNear(x, z); station names: "Central" for the most-lined, else the nearest road ("Birch Street"), a
+ *   landmark's word ("Airport") when one is beside it (stationNames(W) shares them with the City Line).
  *
  * The bottom half draws it (needs THREE through hq3d's ctx): view(c, sim, opts) -> V (plan 5.4 + 5.7).
  * Never Math.random: everything seeded from the world id. Calm and reduced motion: doors, gates and screen doors
@@ -46,11 +52,13 @@ var STEP_UP = 0.75;       // m: walkable() finds floors up to this much above yo
 var HALL_HL = 20;         // m: a ticket hall's half length along the station
 var GATE_U = 10;          // m: the gate lines across the hall, either side of the middle
 var STAIR_U = 17;         // m: where the platform stairs leave the hall floor (along the station axis)
+var GATE_N = 8, GATE_BAND = 0.45, LANE_HW = 0.3;   // [transit pass] lanes a gate line, the barrier's half depth, a lane's half width
 var STAIR_SLOPE = 0.6;    // rise per metre of the stairs (about 31 degrees)
 var CHUNK = 50;           // m: tunnel LOD chunks
 var LOD_R = 400;          // m: tunnel within this of the camera is built
 var UNDER_KINDS = {bored: 1, cutcover: 1};
-var LINE_STYLE = {M1: {color: "#d23a32", name: "Red line"}, M2: {color: "#2f6fd6", name: "Blue line"}};
+var LINE_STYLE = {M1: {color: "#d23a32", name: "Red line"}, M2: {color: "#2f6fd6", name: "Blue line"}, M3: {color: "#2fa36b", name: "Green line"},
+                  M4: {color: "#e0a020", name: "Yellow line"}};
 var SUFFIX = ["Street", "Square", "Gate", "Park"];
 
 // car-local seats: 8 a side, in two benches of four between the doors (doors at z = -6.3, 0, 6.3)
@@ -315,34 +323,60 @@ function runAt(run, tau){
 }
 
 /* ------------------------------------------------------------------------------------- the service */
-function nameStations(W, D, seed){
-  var used = {}, names = {};
-  function roadName(x, z){
-    var best = null, bd = 260;
-    var edges = (W && W.edges) || (W && W.layers && W.layers.roads && W.layers.roads.edges) || [];
-    for(var i = 0; i < edges.length; i++){
-      var e = edges[i], nm = e && e.name; if(!nm) continue;
-      var p = e.pts || null, q = e.points || null, j;
-      if(p) for(j = 0; j + 2 < p.length; j += 3){ var d = hyp(p[j]/100 - x, p[j + 2]/100 - z); if(d < bd){ bd = d; best = nm; } }
-      else if(q) for(j = 0; j < q.length; j++){ var d2 = hyp(q[j][0]/100 - x, q[j][q[j].length >= 3 ? 2 : 1]/100 - z); if(d2 < bd){ bd = d2; best = nm; } }
-    }
-    return best;
+// [transit pass] Station names a rider can use: the station with the most lines (the nearest the middle on a tie) is
+// "Central"; every other one is the bare name of the nearest named road ("Birch Street"), and where two stations would
+// share it, the road and its nearest cross street ("Oak Street & Elm Road"), then a number. No seeded suffixes ("Birch
+// Street Park 6" told you nothing). Pure and independent of the order asked; the City Line takes these for its stops
+// beside a metro station (stationNames below).
+function roadsNear(W, x, z, r){
+  var by = {}, edges = (W && W.edges) || (W && W.layers && W.layers.roads && W.layers.roads.edges) || [];
+  for(var i = 0; i < edges.length; i++){
+    var e = edges[i], nm = e && e.name; if(!nm) continue;
+    var p = e.pts || null, q = e.points || null, j, d;
+    if(p) for(j = 0; j + 2 < p.length; j += 3){ d = hyp(p[j]/100 - x, p[j + 2]/100 - z); if(d < r && (by[nm] == null || d < by[nm])) by[nm] = d; }
+    else if(q) for(j = 0; j < q.length; j++){ d = hyp(q[j][0]/100 - x, q[j][q[j].length >= 3 ? 2 : 1]/100 - z); if(d < r && (by[nm] == null || d < by[nm])) by[nm] = d; }
   }
-  D.stations.forEach(function(s, i){
-    var nm = null;
-    if(s.lines.length >= 2) nm = "Central";
+  return Object.keys(by).map(function(n){ return {name: String(n), d: by[n]}; }).sort(function(a, b){ return a.d - b.d || (a.name < b.name ? -1 : 1); });
+}
+var SITE_WORD = {airport: "Airport", port: "Harbour", harbour: "Harbour", stadium: "Stadium", university: "University", hospital: "Hospital"}, SITE_R = 220;
+function nameStations(W, D, seed){
+  var used = {}, names = {}, list = D.stations.slice(), hub = null;
+  list.forEach(function(s){ if(s.lines.length >= 2 && (!hub || s.lines.length > hub.lines.length || s.lines.length === hub.lines.length && hyp(s.x, s.z) < hyp(hub.x, hub.z))) hub = s; });
+  if(hub){ names[hub.id] = "Central"; used.Central = 1; }
+  // the most-lined first, then by id: an interchange gets the plain road name before a quiet stop does
+  list.sort(function(a, b){ return b.lines.length - a.lines.length || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0); });
+  // a station at a landmark is named for it ("Airport", "Harbour"): the nearest such station within SITE_R m of it
+  var sites = ((W && W.sites) || []).filter(function(q){ return q && SITE_WORD[q.kind]; });
+  sites.slice().sort(function(a, b){ return String(a.id) < String(b.id) ? -1 : 1; }).forEach(function(q){
+    var w = SITE_WORD[q.kind], qx = fin(q.x, 0)/100, qz = fin(q.z, 0)/100, b = null, bd = SITE_R;
+    if(used[w]) return;
+    list.forEach(function(s){ var d = hyp(s.x - qx, s.z - qz); if(!names[s.id] && s.lines.length && d < bd){ bd = d; b = s; } });
+    if(b){ names[b.id] = w; used[w] = 1; }
+  });
+  list.forEach(function(s, i){
+    if(names[s.id]) return;
+    var near = roadsNear(W, s.x, s.z, 260), nm = null, k;
+    for(k = 0; k < near.length && !nm; k++) if(!used[near[k].name] && near[k].name !== "Central") nm = near[k].name;
+    if(!nm && near.length >= 2) for(k = 1; k < near.length && !nm; k++){ var two = near[0].name + " & " + near[k].name; if(!used[two]) nm = two; }
     if(!nm && HQV.hqRide && typeof HQV.hqRide.stationName === "function") try { nm = HQV.hqRide.stationName(W, s.x, s.z, "metro"); } catch(e){ nm = null; }
-    if(!nm) nm = roadName(s.x, s.z);
-    if(!nm) nm = "Station " + (i + 1);
+    if(!nm) nm = "Station " + (D.stations.indexOf(s) + 1);
     nm = String(nm);
-    if(used[nm]){
-      var r = mulberry32(hash32(seed + ":name:" + s.id)), base = nm, n = 0;
-      while(used[nm] && n < 12){ nm = base + " " + SUFFIX[(Math.floor(r()*4) + n) % 4]; n++; }
-      if(used[nm]) nm = base + " " + (i + 1);
-    }
+    if(used[nm]){ var base = nm, n = 2; while(used[base + " " + n]) n++; nm = base + " " + n; }
     used[nm] = 1; names[s.id] = nm;
   });
   return names;
+}
+// the metro's station names for a world (memoised per world object): {stationId: name} and near(x, z, r) -> name | null
+var NAMES_MEMO = typeof WeakMap === "function" ? new WeakMap() : null;
+function stationNames(W){
+  if(!W) return null;
+  var m = NAMES_MEMO && NAMES_MEMO.get(W);
+  if(m) return m;
+  var D = normalize(W, 5); if(!D) return null;
+  var names = nameStations(W, D, ""), pts = D.stations.filter(function(s){ return s.lines.length; }).map(function(s){ return {id: s.id, x: s.x, z: s.z, name: names[s.id]}; });
+  m = {names: names, near: function(x, z, r){ var b = null, bd = r == null ? 150 : +r; pts.forEach(function(p){ var d = hyp(p.x - x, p.z - z); if(d < bd){ bd = d; b = p; } }); return b ? b.name : null; }};
+  if(NAMES_MEMO) NAMES_MEMO.set(W, m);
+  return m;
 }
 
 function create(W, o){
@@ -431,7 +465,7 @@ function create(W, o){
     var base = k*HEADWAY + run.off, vid = L.id + ":" + run.key + ":" + k;
     var stops = [];
     var ia = run.order.indexOf(from), ib = run.order.indexOf(to);
-    for(var i = ia; i <= ib; i++){ var sid = run.order[i]; stops.push({id: sid, name: names[sid], at: Math.round((base + run.ev[sid].arr)*1000)}); }
+    for(var i = ia; i <= ib; i++){ var sid = run.order[i]; stops.push({id: sid, name: names[sid], at: Math.round((base + run.ev[sid].arr)*1000), dep: Math.round((base + run.ev[sid].dep)*1000)}); }
     var side = platformSide(to) > 0 ? 1 : -1, sideFrom = platformSide(from) > 0 ? 1 : -1;
     var load = loadOf(L.id, vid, ms);
     var T = {mode: "metro", line: L.id, short: L.short, vehicle: vid, from: from, to: to, fromName: names[from], toName: names[to],
@@ -451,7 +485,8 @@ function create(W, o){
     };
     T.door = function(ms2){
       var p = runAt(run, (ms2 == null ? T.depart : ms2)/1000 - base), atTo = ms2 != null && ms2 >= T.reach - 1000;
-      var cp = carPose(L.id, run, p.s, 1), w = toWorld(cp, (atTo ? side : sideFrom)*(CAR_HW + 0.05), 0, 0);
+      var sd = p.stop ? (platformSide(p.stop) > 0 ? 1 : -1) : (atTo ? side : sideFrom);      // standing at a stop: its platform's side
+      var cp = carPose(L.id, run, p.s, 1), w = toWorld(cp, sd*(CAR_HW + 0.05), 0, 0);
       return {x: w.x, z: w.z, y: w.y};
     };
     return T;
@@ -510,6 +545,20 @@ function create(W, o){
     trackAt: trackAt, carPose: function(v, k){ var R = RUNS[v.line]; return R ? carPose(v.line, v.dir === (R.out.dir) ? R.out : R.back, v.s, k) : null; },
     runs: function(id){ return RUNS[id] || null; }, lineData: function(id){ return LBY[id] || null; },
     depotTrains: depotTrains, segmentsNear: segmentsNear, platformSide: platformSide,
+    // [transit pass] the platform number a run calls at ("1".."6"), and where a train standing at a station opens its
+    // doors: [{x, y (the car floor), z, car, dz}] on the platform's side (one per door, CARS x 3)
+    platNo: function(stopId, lineId, runKey){ return platNo[stopId + "|" + lineId + "|" + (runKey === "b" ? "b" : "o")] || null; },
+    doorsOf: function(v){
+      var R = v && RUNS[v.line]; if(!R || !v.stop) return [];
+      var run = v.dir === R.out.dir ? R.out : R.back, sd = platformSide(v.stop) > 0 ? 1 : -1, out = [];
+      for(var k = 0; k < CARS; k++){ var cp = carPose(v.line, run, v.s, k); if(!cp) continue;
+        DOORS_Z.forEach(function(dz){ var w = toWorld(cp, sd*(CAR_HW + 0.05), 0, dz); out.push({x: w.x, y: w.y, z: w.z, car: k, dz: dz, yaw: cp.yaw}); }); }
+      return out;
+    },
+    // the named road nearest (x, z) within 90 m (an exit's street), else null
+    streetNear: function(x, z){ var r = roadsNear(W, x, z, 90); return r.length ? r[0].name : null; },
+    // the run a vehicle is on: {key "o" | "b", last (its terminus' stop id), lastName}
+    runOf: function(v){ var R = v && RUNS[v.line]; if(!R) return null; var run = v.dir === R.out.dir ? R.out : R.back; return {key: run.key, last: run.last, lastName: names[run.last] || ""}; },
     layout: function(){ return LAY || (LAY = layout(sim, W)); }
   };
   return sim;
@@ -584,6 +633,12 @@ function layout(sim, W){
     // the Island Link's underground platforms near the hall (part rail's trains): a passage, a stair and its platform
     (railD || []).forEach(function(r){
       if(hyp(r.x - s.x, r.z - s.z) > 300) return;
+      // each railway platform joins the one metro station nearest it (not every hall within 300 m)
+      var nearer = D.stations.some(function(o2){ return o2 !== s && o2.lines.length && hyp(r.x - o2.x, r.z - o2.z) < hyp(r.x - s.x, r.z - s.z); });
+      if(nearer) return;
+      // a railway platform at the hall's own level or above it would put its box through the hall (and be out of
+      // reach up a wall): only one below the hall is joined to it
+      if(r.y > s.hallY - 3 && hyp(r.x - s.x, r.z - s.z) < HALL_HL + r.len/2) return;
       var plat = r.y, n = r.platforms, phw = 2.6, half = r.len/2, rr = rect(r.x, r.z, r.yaw, n*4.4, half);
       var pr = rect(r.x, r.z, r.yaw, phw, half);
       floors.push({r: pr, y0: plat, y1: plat, kind: "platform", station: s.id, rail: r.id});
@@ -595,11 +650,20 @@ function layout(sim, W){
       } else floors.push({r: rectAB(s.x, s.z, r.x, r.z, 2.2), y0: s.hallY, y1: s.hallY, kind: "passage", station: s.id, rail: r.id});
       extra.push({id: r.id, x: r.x, y: plat, z: r.z, yaw: r.yaw, len: r.len, platforms: n, box: rr, lines: r.lines});
     });
+    // [transit pass] the gate lines across the hall at +-gu: every entrance's foot inside the hall lands on the street
+    // (unpaid) side of them, between them; the stairs to the platforms leave beyond them (the paid side). Eight lanes a
+    // line between nine cabinets; the ticket machines on the hall's -v wall, in the unpaid middle.
+    var gu = GATE_U;
+    ENTS.forEach(function(E){ if(E.station !== s.id || E.pass) return; var fl = rLocal(hall, E.foot.x, E.foot.z); if(Math.abs(fl.v) <= hw + 0.5) gu = Math.max(gu, Math.abs(fl.u) + 2); });
+    gu = Math.min(gu, STAIR_U - 2.5);
+    var lanes = []; for(var g = 0; g < GATE_N; g++) lanes.push(-GATE_N*0.55 + 0.55 + g*1.1);
+    var machines = []; for(var mi = 0; mi < 4; mi++){ var mu = -4.2 + mi*2.8, MP = rPoint(hall, mu, -hw + 1.2); machines.push({x: MP.x, z: MP.z, u: mu, yaw: wrapA(yaw0 - PI/2)}); }
     var ext = 0;
     floors.forEach(function(f){ ext = Math.max(ext, hyp(f.r.cx - s.x, f.r.cz - s.z) + f.r.hl + f.r.hw); });
     var low = Infinity; floors.forEach(function(f){ low = Math.min(low, f.y0, f.y1); });
     ST.push({id: s.id, name: sim.names[s.id], x: s.x, z: s.z, yaw: yaw0, street: s.street, hallY: s.hallY, hall: hall, hw: hw, len: s.len,
-             platform: s.platform, lines: s.lines.slice(), at: s.at, floors: floors, plats: plats, stairs: stairs, il: extra, ext: ext, low: low});
+             platform: s.platform, lines: s.lines.slice(), at: s.at, floors: floors, plats: plats, stairs: stairs, il: extra, ext: ext, low: low,
+             gu: gu, lanes: lanes, machines: machines});
   });
   var BY = {}; ST.forEach(function(s){ BY[s.id] = s; });
   function fy(f, l){ return f.y0 + (f.y1 - f.y0)*clamp((l.u + f.r.hl)/(2*f.r.hl || 1), 0, 1); }
@@ -632,6 +696,38 @@ function layout(sim, W){
       for(var j = 0; j < s.floors.length; j++){ var f = s.floors[j], l = inRect(f.r, x, z, 0.3); if(l && y >= Math.min(f.y0, f.y1) - 2 && y <= Math.max(f.y0, f.y1) + 6) return true; }
     }
     return !!tunnelAt(x, y, z);
+  }
+  // [transit pass] the gate line under (x, z) at the hall's level: {station, e (+-1, which end), lane (index, -1 on a
+  // cabinet or the glass), u, v} | null. GATE_BAND m either side of the line is the barrier's depth.
+  function gateAt(x, y, z){
+    for(var i = 0; i < ST.length; i++){
+      var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
+      if(y != null && isFinite(y) && Math.abs(y - s.hallY) > 0.6) continue;     // on the hall's floor (not up an entrance's stairs over it)
+      var l = inRect(s.hall, x, z, 0); if(!l) continue;
+      for(var e = -1; e <= 1; e += 2){
+        if(Math.abs(l.u - e*s.gu) > GATE_BAND) continue;
+        var lane = -1;
+        for(var k = 0; k < s.lanes.length; k++) if(Math.abs(l.v - s.lanes[k]) <= LANE_HW){ lane = k; break; }
+        return {station: s.id, e: e, lane: lane, u: l.u, v: l.v};
+      }
+    }
+    return null;
+  }
+  // is (x, y, z) on the paid side of a station's gates (the hall beyond them, the stairs down and the metro's
+  // platforms)? null: not in a metro station at all. The street side, the passages and the City Line's platforms
+  // (their own passage from the hall's middle) are not.
+  function paidAt(x, y, z){
+    var best = null, by = -Infinity;
+    for(var i = 0; i < ST.length; i++){
+      var s = ST[i]; if(hyp(x - s.x, z - s.z) > s.ext + 1) continue;
+      for(var j = 0; j < s.floors.length; j++){
+        var f = s.floors[j], l = inRect(f.r, x, z); if(!l) continue;
+        var h = fy(f, l);
+        if(y != null && isFinite(y) && h > y + STEP_UP) continue;
+        if(h > by){ by = h; best = f.kind === "hall" ? Math.abs(l.u) > s.gu : (f.kind === "platform" || f.kind === "stairs") && !f.rail; }
+      }
+    }
+    return best;
   }
   function entOut(E, d){ return {id: E.id, station: E.station, kind: E.kind, dist: d, x: E.x, y: E.y, z: E.z, yaw: E.yaw, foot: Object.assign({}, E.foot)}; }
   function entranceAt(x, z, r){
@@ -670,13 +766,13 @@ function layout(sim, W){
     return {x: E.x + Math.sin(E.yaw)*back, y: E.y, z: E.z + Math.cos(E.yaw)*back, yaw: wrapA(E.yaw + PI), id: E.id};
   }
   return {stations: ST, byId: BY, entrances: ENTS, walkable: walkable, isUnder: isUnder, tunnelAt: tunnelAt, entranceAt: entranceAt,
-          rampAt: rampAt, stationAt: stationAt, exitTo: exitTo, floorY: fy};
+          rampAt: rampAt, stationAt: stationAt, exitTo: exitTo, floorY: fy, gateAt: gateAt, paidAt: paidAt};
 }
 
 HQV.hqMetro = {
   create: create, layout: function(sim){ return sim && sim.layout ? sim.layout() : null; },
   normalize: normalize, legTime: legTime, legAt: legAt, pathAt: pathAt, nearestOn: nearestOn, nearLine: nearLine, runAt: runAt, linesText: linesText,
-  rect: rect, inRect: inRect, rLocal: rLocal, hash32: hash32,
+  rect: rect, inRect: inRect, rLocal: rLocal, hash32: hash32, stationNames: stationNames, roadsNear: roadsNear,
   SEATS: SEATS, STAND: STAND, DOORS_Z: DOORS_Z,
   HEADWAY: HEADWAY, DWELL: DWELL, VMAX: VMAX, ACC: ACC, REV: REV, CARS: CARS, CAR_L: CAR_L, CAR_GAP: CAR_GAP, PITCH: PITCH, TRAIN_L: TRAIN_L,
   TRACK: TRACK, FLOOR: FLOOR, CHUNK: CHUNK, LOD_R: LOD_R, LINE_STYLE: LINE_STYLE
@@ -879,7 +975,9 @@ function view(c, sim, opts){
       var n = AP.lineName[L.id]; if(n){ panel(n, "#20262c"); g.fillStyle = badgeCol(L); g.fillRect(n[0], n[1] + n[3] - 8, n[2], 8); text(L.short + " · " + L.name, n[0] + n[2]/2, n[1] + 28, 34, "#ffffff"); }
     });
     panel(AP.wayout, "#f2c230"); text("Way out →", AP.wayout[0] + AP.wayout[2]/2, AP.wayout[1] + 33, 36, "#111316");
-    panel(AP.il, "#1f3b2e"); text("IL · Island Link", AP.il[0] + AP.il[2]/2, AP.il[1] + 33, 32, "#ffffff");
+    // the railway platforms under a metro hall: the City Line's in City Gen v5 (an Island Link one only where it is)
+    var ilCL = Lay.stations.some(function(s){ return s.il.some(function(r){ return (r.lines || []).indexOf("IL") < 0; }); });
+    panel(AP.il, ilCL ? "#1f4a33" : "#1f3b2e"); text(ilCL ? "CL · City Line" : "IL · Island Link", AP.il[0] + AP.il[2]/2, AP.il[1] + 33, 32, "#ffffff");
     D.stations.forEach(function(s){
       var q = AP.station[s.id]; if(!q) return;
       panel(q, "#16324f"); g.fillStyle = "#ffffff"; g.fillRect(q[0], q[1] + q[3] - 6, q[2], 3);
@@ -916,7 +1014,7 @@ function view(c, sim, opts){
     leaf: keep(new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.35, metalness: 0.25, side: DS})),
     cap: keep(new THREE.MeshBasicMaterial({vertexColors: true, toneMapped: false, side: DS})),
     aspect: keep(new THREE.MeshBasicMaterial({color: 0xffffff, toneMapped: false})),
-    flap: keep(new THREE.MeshStandardMaterial({color: 0xd23a32, roughness: 0.3, transparent: true, opacity: 0.85, side: DS})),
+    flap: keep(new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.3, transparent: true, opacity: 0.85, side: DS})),
     people: keep(new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.8}))
   };
 
@@ -1238,6 +1336,75 @@ function view(c, sim, opts){
 
   /* ---- station interiors (the nearest three, built on demand and cached) */
   var stCache = {}, boardTex = {};
+  function disposeBoards(id){ var bs = boardTex[id]; if(!bs) return; Object.keys(bs).forEach(function(k){ try { bs[k].dispose(); } catch(e){} }); delete boardTex[id]; }
+  // [transit pass] a station's own signs (one 1024 px canvas, one draw a built station): the ticket machines, the gates,
+  // each line's way down ("[M1] Red line · 1 Airport · 2 Laurel Street"), each platform edge ("1 · M1 to Airport"),
+  // each exit by its street, "Mind the gap" and the line map with "You are here". Slots in px [x, y, w, h].
+  function dirsOf(st, lid){
+    var R0 = sim.runs(lid), out = [];
+    if(!R0) return out;
+    [R0.out, R0.back].forEach(function(run){
+      if(!run.ev[st.id] || run.last === st.id) return;
+      out.push({key: run.key, dir: run.dir, plat: sim.platNo(st.id, lid, run.key) || "", to: stopName[run.last] || ""});
+    });
+    out.sort(function(a, b){ return a.plat < b.plat ? -1 : 1; });
+    return out;
+  }
+  function signTex(st){
+    var P = {tickets: [0, 0, 512, 64], gates: [512, 0, 512, 64], gap: [0, 672, 512, 64], here: [512, 672, 512, 64], map: [0, 736, 1024, 288], line: {}, edge: {}, exit: {}};
+    st.lines.forEach(function(lid, i){ if(i < 3) P.line[lid] = [0, 64 + 96*i, 1024, 96]; });
+    var ek = 0; st.lines.forEach(function(lid){ dirsOf(st, lid).forEach(function(d){ if(ek < 6){ P.edge[lid + "|" + d.key] = [(ek % 2)*512, 352 + 64*Math.floor(ek/2), 512, 64]; ek++; } }); });
+    var ents = Lay.entrances.filter(function(E){ return E.station === st.id; }), exitName = {};
+    ents.forEach(function(E, i){ if(i < 4){ P.exit[E.id] = [(i % 2)*512, 544 + 64*Math.floor(i/2), 512, 64]; exitName[E.id] = (sim.streetNear && sim.streetNear(E.x, E.z)) || ""; } });
+    var T0 = canvasTex(1024, 1024, function(g){
+      if(!g || !g.fillRect) return;
+      function panel(r, bg){ g.fillStyle = bg; g.fillRect(r[0], r[1], r[2], r[3]); }
+      function text(t, x, y, size, color, align, weight, maxW){ g.fillStyle = color; g.font = (weight || "700") + " " + size + "px system-ui, -apple-system, sans-serif"; g.textAlign = align || "center"; g.textBaseline = "middle";
+        if(maxW && g.measureText){ var sz = size; while(sz > 12 && g.measureText(t).width > maxW){ sz -= 2; g.font = (weight || "700") + " " + sz + "px system-ui, -apple-system, sans-serif"; } } g.fillText(t, x, y); }
+      function badge(x, y, r, L){ g.fillStyle = badgeCol(L); g.beginPath(); if(g.arc){ g.arc(x, y, r, 0, 7); g.fill(); } else g.fillRect(x - r, y - r, 2*r, 2*r); text(L ? L.short : "?", x, y + 1, Math.round(r*0.9), "#ffffff"); }
+      function arrow(x, y, sz, col){ g.fillStyle = col; g.beginPath(); if(g.moveTo){ g.moveTo(x - sz*0.5, y - sz*0.18); g.lineTo(x + sz*0.1, y - sz*0.18); g.lineTo(x + sz*0.1, y - sz*0.45); g.lineTo(x + sz*0.55, y); g.lineTo(x + sz*0.1, y + sz*0.45); g.lineTo(x + sz*0.1, y + sz*0.18); g.lineTo(x - sz*0.5, y + sz*0.18); g.closePath(); g.fill(); } }
+      var r = P.tickets; panel(r, "#1d2b3a"); text("🎫  Tickets · single · day pass · card", r[0] + r[2]/2, r[1] + 33, 30, "#ffffff", "center", "700", r[2] - 24);
+      r = P.gates; panel(r, "#f2c230"); text("Way in · tap your ticket at the gate", r[0] + r[2]/2, r[1] + 33, 28, "#111316", "center", "700", r[2] - 24);
+      st.lines.forEach(function(lid){
+        var q = P.line[lid]; if(!q) return; var L = sim.lineData(lid), ds = dirsOf(st, lid);
+        panel(q, "#16324f"); g.fillStyle = badgeCol(L); g.fillRect(q[0], q[1] + q[3] - 8, q[2], 8);
+        arrow(q[0] + 40, q[1] + 44, 54, "#ffffff"); badge(q[0] + 112, q[1] + 44, 34, L);
+        text(L ? L.name : lid, q[0] + 160, q[1] + 44, 34, "#ffffff", "left", "700", 220);
+        var x = q[0] + 400, wEach = (q[2] - 410)/Math.max(1, ds.length);
+        ds.forEach(function(d, i){ var x0 = x + i*wEach; g.fillStyle = "#ffffff"; g.fillRect(x0, q[1] + 22, 44, 44); text(d.plat, x0 + 22, q[1] + 45, 30, "#16324f");
+          text("to " + d.to, x0 + 56, q[1] + 45, 30, "#ffffff", "left", "600", wEach - 64); });
+        if(!ds.length) text("trains end here", x, q[1] + 45, 30, "#ffffff", "left", "600");
+      });
+      st.lines.forEach(function(lid){ dirsOf(st, lid).forEach(function(d){
+        var q = P.edge[lid + "|" + d.key]; if(!q) return; var L = sim.lineData(lid);
+        panel(q, "#16324f"); g.fillStyle = "#ffffff"; g.fillRect(q[0] + 8, q[1] + 8, 48, 48); text(d.plat, q[0] + 32, q[1] + 33, 32, "#16324f");
+        badge(q[0] + 92, q[1] + 32, 24, L); text("to " + d.to, q[0] + 128, q[1] + 33, 30, "#ffffff", "left", "700", q[2] - 140);
+      }); });
+      ents.forEach(function(E){
+        var q = P.exit[E.id]; if(!q) return;
+        panel(q, "#f2c230"); arrow(q[0] + 34, q[1] + 32, 40, "#111316");
+        text("Way out" + (exitName[E.id] ? " · " + exitName[E.id] : ""), q[0] + 66, q[1] + 33, 30, "#111316", "left", "700", q[2] - 76);
+      });
+      r = P.gap; panel(r, "#111316"); g.fillStyle = "#f2c230"; g.fillRect(r[0], r[1], r[2], 6); g.fillRect(r[0], r[1] + r[3] - 6, r[2], 6); text("MIND THE GAP", r[0] + r[2]/2, r[1] + 33, 36, "#f2c230");
+      r = P.here; panel(r, "#16324f"); text(stopName[st.id] || st.id, r[0] + r[2]/2, r[1] + 33, 32, "#ffffff", "center", "700", r[2] - 24);
+      // the line map: every line as a strip of its stations; this one ringed red, "You are here"
+      var m = P.map; panel(m, "#f6f4ee"); text("Metro lines · You are at " + (stopName[st.id] || ""), m[0] + 24, m[1] + 24, 24, "#111316", "left", "700", m[2] - 48);
+      var rows = lineList.length, rowH = Math.min(64, (m[3] - 50)/Math.max(1, rows));
+      lineList.forEach(function(L, i){
+        var y = m[1] + 60 + i*rowH + rowH*0.3, x0 = m[0] + 90, x1 = m[0] + m[2] - 70, n = Math.max(2, L.stops.length);
+        g.fillStyle = badgeCol(L); g.fillRect(x0, y - 5, x1 - x0, 10); badge(m[0] + 40, y, 18, L);
+        L.stops.forEach(function(q2, k){ var x = x0 + (x1 - x0)*k/(n - 1), me2 = q2.id === st.id;
+          g.fillStyle = me2 ? "#d23a32" : "#ffffff"; g.fillRect(x - (me2 ? 10 : 7), y - (me2 ? 10 : 7), me2 ? 20 : 14, me2 ? 20 : 14);
+          if(g.strokeRect){ g.strokeStyle = "#111316"; g.lineWidth = 2; g.strokeRect(x - 7, y - 7, 14, 14); }
+          text(String(stopName[q2.id] || "").slice(0, 18), x, y + 20, 14, me2 ? "#d23a32" : "#111316", "center", me2 ? "800" : "600"); });
+      });
+    });
+    var uv = {tickets: atUv(P.tickets), gates: atUv(P.gates), gap: atUv(P.gap), here: atUv(P.here), map: atUv(P.map), line: {}, edge: {}, exit: {}};
+    Object.keys(P.line).forEach(function(k){ uv.line[k] = atUv(P.line[k]); });
+    Object.keys(P.edge).forEach(function(k){ uv.edge[k] = atUv(P.edge[k]); });
+    Object.keys(P.exit).forEach(function(k){ uv.exit[k] = atUv(P.exit[k]); });
+    return {t: T0.t, uv: uv, dirs: function(lid){ return dirsOf(st, lid); }};
+  }
   function makeBoard(sid){
     var B = null;
     var st = Lay.byId[sid];
@@ -1255,10 +1422,14 @@ function view(c, sim, opts){
     }};
   }
   function clockText(ms){ var d = new Date(ms); var h = d.getUTCHours(), m = d.getUTCMinutes(); try { if(opts.clock){ var k = opts.clock(ms); if(k){ h = k.h; m = k.m; } } } catch(e){} return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m; }
-  function boardRows(sid, ms){
-    return sim.departures(sid, ms, 4).map(function(r){
+  // a board's rows: the hall's (every train, with its platform) or one platform edge's (key "M1|o": that line and way)
+  function boardRows(sid, ms, key){
+    var rows = sim.departures(sid, ms, key ? 20 : 4);
+    if(key){ var kk = key.split("|"); rows = rows.filter(function(r){ return r.line === kk[0] && String(r.vehicle).split(":")[1] === kk[1]; }).slice(0, 4); }
+    return rows.map(function(r){
       var due = r.boarding ? "boarding" : r.due || clockText(r.at);
-      return {badge: r.short, short: r.short, line: r.line, color: r.color, dest: r.to, to: r.to, due: due, plat: r.plat, at: r.at, boarding: r.boarding};
+      var dest = key || !r.plat ? r.to : String(r.to).slice(0, 15) + " P" + r.plat;
+      return {badge: r.short, short: r.short, line: r.line, color: r.color, dest: dest, to: r.to, due: due, plat: r.plat, at: r.at, boarding: r.boarding};
     });
   }
   // a platform box along frame F (rail level `rail`): trackbed, tracks, platforms, tiled walls, ceiling, light strips,
@@ -1312,20 +1483,33 @@ function view(c, sim, opts){
         // which direction stops at this edge: the track on this side
         var dir = ex < 0 ? 1 : -1;
         opens.forEach(function(oz){ o.psd.push({F: F, lat: ex, z: oz, y: py, dir: dir}); });
+        if(o.edge) o.edge(F, ex, py, half, dir, opens);
       });
     }
   }
   function buildStation(st){
-    var G = {op: GB(), tile: GB(), at: GB(), gl: GB()}, boards = [], psd = [], gates = [], tris = 0;
+    var G = {op: GB(), tile: GB(), at: GB(), gl: GB(), wf: GB()}, boards = [], psd = [], gates = [], tris = 0;
     var s = D.st[st.id], q = AP.station[st.id], frz = q ? atUv(q) : null;
-    // platforms per line
+    var SG = signTex(st), SU = SG.uv;
+    // platforms per line; at each edge (a direction): "1 · M1 to Airport" over it, its own departures board, "Mind the
+    // gap" on the floor at every door of the train
     st.lines.forEach(function(lid){
       var a = s.at[lid], L = sim.lineData(lid), cp = pathAt(L.P, a.s), F = frame(cp.x, 0, cp.z, a.yaw);
       var myStairs = st.stairs.filter(function(f){ return f.line === lid; }), runU = 0;
       myStairs.forEach(function(f){ runU = Math.max(runU, 2*f.r.hl); });
       var wz = [STAIR_U + runU + 1.2, -(STAIR_U + runU + 1.2)];
-      platformBox(G, F, a.rail, s.len/2, s.platform, TRACK, {frieze: frz, psd: psd, board: boards, wayout: wz, band: rgb(hexNum(L.color, 0x888888)),
-        clear: function(z){ return Math.abs(z) < STAIR_U - 1 || Math.abs(z) > STAIR_U + runU + 1; }});
+      var stairClear = function(z){ return Math.abs(z) < STAIR_U - 1 || Math.abs(z) > STAIR_U + runU + 1; };
+      platformBox(G, F, a.rail, s.len/2, s.platform, TRACK, {frieze: frz, psd: psd, board: null, wayout: wz, band: rgb(hexNum(L.color, 0x888888)), clear: stairClear,
+        edge: function(Fe, ex, py, half, dir, opens){
+          var R0 = sim.runs(lid), run = R0 ? (R0.out.dir === dir ? R0.out : R0.back) : null; if(!run) return;
+          var key = lid + "|" + run.key, inward = ex < 0 ? 1 : -1, o2 = -inward, uvE = SU.edge[key];
+          if(uvE) [-(half - 9), 0, half - 9].forEach(function(z){ var P = tf(Fe, ex + inward*1.0, py + 3.05, z); gbSign2(G.wf, P[0], P[1], P[2], Fe.yaw + PI/2, 2.7, 0.34, uvE); });
+          if(run.last !== st.id) [-12, 12].forEach(function(z){ var P = tf(Fe, ex + inward*1.0, py + 2.55, z); boards.push({x: P[0], y: P[1], z: P[2], yaw: Fe.yaw + PI/2, w: 2.4, h: 0.6, two: true, key: key}); });
+          (opens || []).forEach(function(oz){
+            var ln = ex + inward*1.25, lf = ex + inward*0.62, zl = oz + o2*1.1, zr = oz - o2*1.1;
+            gbQuad(G.wf, tf(Fe, ln, py + 0.012, zl), tf(Fe, ln, py + 0.012, zr), tf(Fe, lf, py + 0.012, zr), tf(Fe, lf, py + 0.012, zl), [1, 1, 1], SU.gap);
+          });
+        }});
     });
     // stairs + escalators from the hall to the platforms, with their shaft walls and balustrades round the opening
     st.stairs.forEach(function(f){
@@ -1342,6 +1526,11 @@ function view(c, sim, opts){
         gbWall(G.gl, Fs, x, -r.hl, x, -r.hl + 3, f.y0, f.y0 + 1.1, C.white);
       });
       gbFlat(G.at, Fs, -0.15, 0.15, -r.hl + 1, r.hl - 1, Math.max(f.y0, f.y1) + 3.3, C.strip);
+    });
+    // over every stair head in the hall: the line it goes down to and both ways from its platform
+    st.stairs.forEach(function(f){
+      var uvL = SU.line[f.line]; if(!uvL) return;
+      var A = rPoint(f.r, -f.r.hl - 0.4, 0); gbSign(G.wf, A.x, f.y0 + 2.95, A.z, f.r.yaw + PI, 4.4, 0.41, uvL);
     });
     // the ticket hall: stone floor (open over the stairs), tiled walls (open where passages come in), lit ceiling
     var h = st.hall, Fh = frame(h.cx, 0, h.cz, h.yaw), hy = st.hallY, cy = hy + 3.6;
@@ -1363,23 +1552,35 @@ function view(c, sim, opts){
         if(fixedV) gbWall(G.tile, Fh, at, t, at, t1, hy, cy, C.tileW, 1.2); else gbWall(G.tile, Fh, t, at, t1, at, hy, cy, C.tileW, 1.2);
       }
     });
-    // gate lines across the hall at +-GATE_U: cabinets, glass barriers out to the walls; the flaps are dynamic
+    // [transit pass] the gate lines at +-gu (past every entrance's foot): nine cabinets, eight lanes, glass out to the walls
     [-1, 1].forEach(function(e){
-      var u = e*GATE_U, ng = 8;
-      for(var g = 0; g <= ng; g++){ var v = -ng*0.55 + g*1.1; gbBox(G.op, Fh, v, hy + 0.5, u, 0.13, 0.5, 0.7, C.gate); gbBox(G.at, Fh, v, hy + 1.01, u + e*0.45, 0.1, 0.01, 0.12, C.screen); }
-      for(var g2 = 0; g2 < ng; g2++){ var gvv = -ng*0.55 + 0.55 + g2*1.1, P = tf(Fh, gvv, hy, u); gates.push({x: P[0], y: hy, z: P[2], yaw: h.yaw, e: e, open: 0, beep: false}); }
+      var u = e*st.gu, ng = st.lanes.length;
+      for(var g = 0; g <= ng; g++){ var v = -ng*0.55 + g*1.1; gbBox(G.op, Fh, v, hy + 0.5, u, 0.13, 0.5, 0.7, C.gate); gbBox(G.at, Fh, v, hy + 1.01, u - e*0.45, 0.1, 0.01, 0.12, C.screen); }
+      st.lanes.forEach(function(gvv){ var P = tf(Fh, gvv, hy, u); gates.push({x: P[0], y: hy, z: P[2], yaw: h.yaw, e: e, open: 0, beep: false}); });
       gbWall(G.gl, Fh, -h.hw, u, -ng*0.55 - 0.15, u, hy, hy + 1.1, C.white); gbWall(G.gl, Fh, ng*0.55 + 0.15, u, h.hw, u, hy, hy + 1.1, C.white);
-      var B = tf(Fh, 0, hy + 2.85, u); boards.push({x: B[0], y: B[1], z: B[2], yaw: h.yaw + (e > 0 ? PI : 0), w: 3.2, h: 0.8, two: true});
-      // over the gates: "Way out" towards the paid side, the station's name towards the street side
-      var W1 = tf(Fh, 2.4, hy + 2.85, u + e*0.115), W2 = tf(Fh, 2.4, hy + 2.85, u + e*0.085);
+      var B = tf(Fh, 0, hy + 2.32, u); boards.push({x: B[0], y: B[1], z: B[2], yaw: h.yaw + (e > 0 ? PI : 0), w: 3.2, h: 0.75, two: true});
+      // over the gates: "Way out" towards the paid side; towards the street side "Way in · tap your ticket" and the
+      // lines beyond (their stair heads are past the gates)
+      var W1 = tf(Fh, 2.4, hy + 2.85, u + e*0.115);
       gbSign(G.at, W1[0], W1[1], W1[2], h.yaw + (e > 0 ? 0 : PI), 1.6, 0.4, atUv(AP.wayout));
-      gbSign(G.at, W2[0], W2[1], W2[2], h.yaw + (e > 0 ? PI : 0), frz ? 3.2 : 0.4, 0.4, frz || atUv(AP.logo));
+      var Wg = tf(Fh, 0, hy + 2.98, u - e*0.12); gbSign(G.wf, Wg[0], Wg[1], Wg[2], h.yaw + (e > 0 ? PI : 0), 3.6, 0.45, SU.gates);
+      st.lines.forEach(function(lid, li){ var uvL = SU.line[lid]; if(!uvL) return; var n = Math.min(3, st.lines.length), vv = (li - (n - 1)/2)*4.6*(e > 0 ? -1 : 1);
+        var Wl = tf(Fh, vv, hy + 3.36, u - e*0.14); gbSign(G.wf, Wl[0], Wl[1], Wl[2], h.yaw + (e > 0 ? PI : 0), 4.4, 0.41, uvL); });
     });
-    // ticket machines (screens lit), the line map, the name over the machines
+    // ticket machines (screens lit) under a "Tickets" sign, the line map with "You are here", the name over the machines
     for(var m = 0; m < 4; m++){ var mu = -4.2 + m*2.8; gbBox(G.op, Fh, -h.hw + 0.35, hy + 0.9, mu, 0.3, 0.9, 0.45, C.machine);
       var S2 = tf(Fh, -h.hw + 0.66, hy + 1.3, mu); gbSign(G.at, S2[0], S2[1], S2[2], h.yaw + PI/2, 0.5, 0.4, null, C.screen); }
-    var Mp = tf(Fh, h.hw - 0.04, hy + 1.9, 0); gbSign(G.at, Mp[0], Mp[1], Mp[2], h.yaw - PI/2, 5, 1.25, atUv(AP.map));
-    if(frz){ var Nm = tf(Fh, -h.hw + 0.04, hy + 2.85, 0); gbSign(G.at, Nm[0], Nm[1], Nm[2], h.yaw + PI/2, 4, 0.5, frz); }
+    var Tk = tf(Fh, -h.hw + 0.05, hy + 2.2, 0); gbSign(G.wf, Tk[0], Tk[1], Tk[2], h.yaw + PI/2, 3.6, 0.45, SU.tickets);
+    var Mp = tf(Fh, h.hw - 0.04, hy + 1.75, 0); gbSign(G.wf, Mp[0], Mp[1], Mp[2], h.yaw - PI/2, 5.6, 1.57, SU.map);
+    if(frz){ var Nm = tf(Fh, -h.hw + 0.04, hy + 2.95, 0); gbSign(G.at, Nm[0], Nm[1], Nm[2], h.yaw + PI/2, 4, 0.5, frz); }
+    // every exit, by its street, over the foot of its stairs (read on the way out); the station's name on the back
+    // (read on the way in)
+    Lay.entrances.forEach(function(E){
+      if(E.station !== st.id || !SU.exit[E.id]) return;
+      var sy = Math.sin(E.yaw), cy2 = Math.cos(E.yaw), X = E.foot.x - sy*0.9, Z = E.foot.z - cy2*0.9;
+      gbSign(G.wf, X + sy*0.02, hy + 2.6, Z + cy2*0.02, E.yaw, 3.4, 0.43, SU.exit[E.id]);
+      gbSign(G.wf, X - sy*0.02, hy + 2.6, Z - cy2*0.02, E.yaw + PI, 3.4, 0.43, SU.here);
+    });
     // passages from the entrance stairs (and the Island Link) to the hall: floor, tiled walls, ceiling, a lit strip
     st.floors.forEach(function(f){
       if(f.kind !== "passage" && f.kind !== "lift") return;
@@ -1410,12 +1611,18 @@ function view(c, sim, opts){
     var grp = new THREE.Group(); grp.name = "metro:station:" + st.id;
     var mOp = mesh(G.op, M.op, "op"), mTi = mesh(G.tile, M.tile, "tiles"), mAt = mesh(G.at, M.atlas, "signs"), mGl = mesh(G.gl, M.glass, "glass");
     mGl.renderOrder = 2; grp.add(mOp); grp.add(mTi); grp.add(mAt); grp.add(mGl);
-    var bd = boardTex[st.id] || (boardTex[st.id] = makeBoard(st.id)), BB = GB();
-    boards.forEach(function(b){ (b.two ? gbSign2 : gbSign)(BB, b.x, b.y, b.z, b.yaw, b.w, b.h, bd.uv); });
-    if(boards.length){ var bm = keep(new THREE.MeshBasicMaterial({map: bd.t, toneMapped: false, side: DS})); grp.add(mesh(BB, bm, "boards")); }
-    tris = gbTris(G.op) + gbTris(G.tile) + gbTris(G.at) + gbTris(G.gl) + gbTris(BB);
+    var wfm = keep(new THREE.MeshBasicMaterial({map: SG.t, vertexColors: true, toneMapped: false, side: DS})); grp.add(mesh(G.wf, wfm, "wayfinding"));
+    // the boards: the hall's (every train) and one a platform edge, all strips of the shared board atlas; one mesh a texture
+    var bset = boardTex[st.id] || (boardTex[st.id] = {}), byTex = [], tb = 0;
+    boards.forEach(function(b){
+      var k = b.key || "hall", bd = bset[k] || (bset[k] = makeBoard(st.id)), grpT = byTex.filter(function(x){ return x.t === bd.t; })[0];
+      if(!grpT){ grpT = {t: bd.t, B: GB()}; byTex.push(grpT); }
+      (b.two ? gbSign2 : gbSign)(grpT.B, b.x, b.y, b.z, b.yaw, b.w, b.h, bd.uv);
+    });
+    byTex.forEach(function(x){ var bm = keep(new THREE.MeshBasicMaterial({map: x.t, toneMapped: false, side: DS})); grp.add(mesh(x.B, bm, "boards")); tb += gbTris(x.B); });
+    tris = gbTris(G.op) + gbTris(G.tile) + gbTris(G.at) + gbTris(G.gl) + gbTris(G.wf) + tb;
     under.add(grp);
-    return {g: grp, psd: psd, gates: gates, board: bd, boardAt: -1e18, tris: tris, id: st.id};
+    return {g: grp, psd: psd, gates: gates, boards: bset, boardAt: -1e18, tris: tris, id: st.id, sign: SG};
   }
   var MAXF = 2400, PSDM = new THREE.InstancedMesh(keep(new THREE.BoxGeometry(0.04, 2.1, 0.8)), M.glass, MAXF);
   PSDM.count = 0; PSDM.visible = false; PSDM.frustumCulled = false; PSDM.name = "metro:screendoors"; PSDM.renderOrder = 3; under.add(PSDM);
@@ -1506,9 +1713,11 @@ function view(c, sim, opts){
     var want = Lay.stations.map(function(s){ return {s: s, d: hyp(s.x - cam.x, s.z - cam.z)}; }).filter(function(o){ return o.d < 450; })
       .sort(function(a, b){ return a.d - b.d || (a.s.id < b.s.id ? -1 : 1); }).slice(0, 3);
     var ids = {}; want.forEach(function(o){ ids[o.s.id] = 1; });
-    Object.keys(stCache).forEach(function(id){ var B = stCache[id]; B.g.visible = !!ids[id]; if(!ids[id] && hyp(Lay.byId[id].x - cam.x, Lay.byId[id].z - cam.z) > 800){ under.remove(B.g); if(boardTex[id]){ boardTex[id].dispose(); delete boardTex[id]; } B.g.traverse(function(x){ if(x.geometry){ x.geometry.dispose(); var i = disp.indexOf(x.geometry); if(i >= 0) disp.splice(i, 1); } }); delete stCache[id]; } });
+    Object.keys(stCache).forEach(function(id){ var B = stCache[id]; B.g.visible = !!ids[id]; if(!ids[id] && hyp(Lay.byId[id].x - cam.x, Lay.byId[id].z - cam.z) > 800){ under.remove(B.g); disposeBoards(id);
+      if(B.sign && B.sign.t){ try { B.sign.t.dispose(); } catch(e){} }
+      B.g.traverse(function(x){ if(x.geometry){ x.geometry.dispose(); var i = disp.indexOf(x.geometry); if(i >= 0) disp.splice(i, 1); } }); delete stCache[id]; } });
     built = want.map(function(o){ return stCache[o.s.id] || (stCache[o.s.id] = buildStation(o.s)); });
-    built.forEach(function(B){ B.g.visible = true; if(ms - B.boardAt > 5000){ B.boardAt = ms; B.board.draw(boardRows(B.id, ms), ms); } });
+    built.forEach(function(B){ B.g.visible = true; if(ms - B.boardAt > 5000){ B.boardAt = ms; Object.keys(B.boards).forEach(function(k){ B.boards[k].draw(boardRows(B.id, ms, k === "hall" ? null : k), ms); }); } });
   }
   function updateDoorsAndGates(ms, dt, vs){
     var snap = calm(), at = {}, nf = 0, ng = 0;
@@ -1536,21 +1745,24 @@ function view(c, sim, opts){
           m4.compose(v4.set(P[0], P[1], P[2]), q4.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.F.yaw), one); PSDM.setMatrixAt(nf++, m4);
         });
       });
+      var ok = true; try { if(opts.gateOk) ok = !!opts.gateOk(); } catch(e){ ok = true; }
       B.gates.forEach(function(g){
         var near = g === nearest;
-        var target = near ? 1 : 0;
+        var target = near && ok ? 1 : 0;
         g.open = snap ? target : g.open + clamp(target - g.open, -dt*3, dt*3);
-        if(near && !g.beep){ g.beep = true; sfx("validator", {pos: {x: g.x, y: g.y + 1, z: g.z}, kind: "door"}); }   // at the gate
+        if(near && ok && !g.beep){ g.beep = true; sfx("validator", {pos: {x: g.x, y: g.y + 1, z: g.z}, kind: "door"}); }   // at the gate
         if(!near) g.beep = false;
+        // the flaps: green open, bright red when shut on you (no ticket), else the line's red
+        var gc = g.open > 0.3 ? 0x2fb36b : near && !ok ? 0xff2a1a : 0xb8342d;
         [-1, 1].forEach(function(lr){
           if(ng >= 400) return;
           var a = g.yaw + lr*g.open*PI/2*0.95, ox = Math.cos(g.yaw)*lr*0.28, oz = -Math.sin(g.yaw)*lr*0.28;
-          m4.compose(v4.set(g.x + ox, g.y + 0.85, g.z + oz), q4.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a + PI/2), one); GATEM.setMatrixAt(ng++, m4);
+          m4.compose(v4.set(g.x + ox, g.y + 0.85, g.z + oz), q4.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a + PI/2), one); GATEM.setColorAt(ng, col4.setHex(gc)); GATEM.setMatrixAt(ng++, m4);
         });
       });
     });
     PSDM.count = nf; PSDM.visible = isUnderOn && nf > 0; PSDM.instanceMatrix.needsUpdate = true;
-    GATEM.count = ng; GATEM.visible = isUnderOn && ng > 0; GATEM.instanceMatrix.needsUpdate = true;
+    GATEM.count = ng; GATEM.visible = isUnderOn && ng > 0; GATEM.instanceMatrix.needsUpdate = true; if(GATEM.instanceColor) GATEM.instanceColor.needsUpdate = true;
   }
   function updateSignals(ms, vs){
     var n = 0;
@@ -1569,15 +1781,15 @@ function view(c, sim, opts){
   function updateStrip(ms){
     if(!focusId){ if(strip) strip.mesh.visible = false; return; }
     var v = sim.vehicle(focusId, ms); if(!v){ if(strip) strip.mesh.visible = false; return; }
-    var R = sim.runs(v.line), run = v.run === "o" ? R.out : R.back, next = null, tau = ms/1000 - (v.k*HEADWAY + run.off);
-    run.segs.forEach(function(g){ if(!next && g.type === "dwell" && g.t1 > tau) next = g.stop; });
+    var R = sim.runs(v.line), run = v.run === "o" ? R.out : R.back, next = null, here = false, tau = ms/1000 - (v.k*HEADWAY + run.off);
+    run.segs.forEach(function(g){ if(!next && g.type === "dwell" && g.t1 > tau){ next = g.stop; here = g.t0 <= tau; } });
     if(!strip){
       var T = canvasTex(1024, 64), Bq = GB(), F0 = frame(0, 0, 0, 0);
       [-1, 1].forEach(function(e){ [-4.6, 4.6].forEach(function(z){ var P = tf(F0, e*(CAR_HW - 0.12), FLOOR + 2.22, z); gbSign(Bq, P[0], P[1], P[2], e > 0 ? -PI/2 : PI/2, 3.2, 0.2, [0, 0, 1, 1]); }); });
       var geo = toGeo(Bq), mt = keep(new THREE.MeshBasicMaterial({map: T.t, toneMapped: false, side: DS}));
       strip = {T: T, mesh: new THREE.InstancedMesh(geo, mt, CARS), key: ""}; strip.mesh.frustumCulled = false; strip.mesh.name = "metro:train:route"; trainsG.add(strip.mesh);
     }
-    var key = focusId + "|" + next;
+    var key = focusId + "|" + next + "|" + here;
     if(key !== strip.key){
       strip.key = key; var g = strip.T.g;
       if(g && g.fillRect){
@@ -1585,7 +1797,7 @@ function view(c, sim, opts){
         g.fillStyle = "#0e1114"; g.fillRect(0, 0, 1024, 64); g.fillStyle = L.color; g.fillRect(20, 30, 700, 6);
         order.forEach(function(id, i){ var x = 20 + 700*i/(n - 1); g.fillStyle = id === next ? "#ffd84a" : "#ffffff"; g.fillRect(x - 6, 27, 12, 12); });
         g.fillStyle = "#ffd84a"; g.font = "700 26px system-ui, sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
-        g.fillText(next ? "Next: " + (stopName[next] || "") : "Terminates here", 740, 32);
+        g.fillText(next ? (here ? "This is " : "Next: ") + (stopName[next] || "") : "Terminates here", 740, 32);
         if(strip.T.t) strip.T.t.needsUpdate = true;
       }
     }
@@ -1750,7 +1962,7 @@ function view(c, sim, opts){
       if(run1){ run1.stop(); run1 = null; }
       if(root3.parent) root3.parent.remove(root3);
       disp.forEach(function(x){ try { x.dispose(); } catch(e){} }); disp = []; chunkCache = {}; stCache = {};
-      Object.keys(boardTex).forEach(function(k){ boardTex[k].dispose(); }); boardTex = {};
+      Object.keys(boardTex).forEach(function(k){ disposeBoards(k); }); boardTex = {};
     }
   };
   return V;

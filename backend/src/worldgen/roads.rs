@@ -814,7 +814,7 @@ fn graded_edge(a: u32, b: u32, path: &[(i64, i64)], name: &str, class: &'static 
 /// its bank whose straight line crosses the water becomes a bridge, straight from the
 /// last point before it to the first after it (a node at each). A run reaching an end of
 /// its road (a tail out to sea, which `island::trim` drops) is left.
-fn bridged(nodes: &mut Vec<Node>, t: &Terrain, paths: Vec<Edge>, river: &River) -> Vec<Edge> {
+pub(crate) fn bridged(nodes: &mut Vec<Node>, t: &Terrain, paths: Vec<Edge>, river: &River) -> Vec<Edge> {
     let mut out = Vec::new();
     for e in paths {
         let mut rest = e;

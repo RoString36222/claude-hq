@@ -85,6 +85,7 @@ pub mod terrain;
 pub mod transit;
 pub mod tunnels;
 pub mod validate;
+pub mod v5;
 pub mod water;
 pub mod zones;
 
@@ -96,6 +97,8 @@ mod tests;
 mod v3_tests;
 #[cfg(test)]
 mod v4_tests;
+#[cfg(test)]
+mod v5_tests;
 
 use serde::Serialize;
 
@@ -105,8 +108,9 @@ pub use terrain::Edit;
 /// world, and keep the old behaviour reachable: things are stored against a
 /// world id (lots, maps, scores), so `claude-hq@1` must keep generating the
 /// same world forever. 1 is the grid city, 2 the organic one, 3 the organic one with
-/// its water and lines (HQ 3.15).
-pub const VERSION: [u32; 3] = [1, 2, 3];
+/// its water and lines (HQ 3.15); 4 City Gen v5, the planned city (docs/plans/city-gen-v5.md), built
+/// alongside the live @3 until it replaces it.
+pub const VERSION: [u32; 4] = [1, 2, 3, 4];
 
 /// The profile a world id's seed and version select: the grid city at @1; at @2
 /// a personal island for a `user:` seed, else the Commons; at @3 the same with water.
@@ -116,8 +120,34 @@ pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
         _ if seed.starts_with("user:") => profile::island(),
         _ => profile::commons(),
     };
-    if version >= 3 { profile::with_water(p) } else { p }
+    let p = if version >= 3 { profile::with_water(p) } else { p };
+    // ARENA_WORLDGEN=v5 builds the @3 ids with v5 too: a local Arena, so today's client draws the planned city
+    // (never set on the live host)
+    let v5 = version >= 4 || (version == 3 && std::env::var("ARENA_WORLDGEN").is_ok_and(|v| v == "v5"));
+    if !v5 {
+        return p;
+    }
+    // v5: the Commons is a 3.5 km island, the city to V5_SHORE_CM inside its coast's reach, in a square with the sea round
+    // it (a personal island keeps its size)
+    let (coast_r_cm, size_cm) = if p.name == "commons" { (Some(V5_COMMONS_COAST_CM), V5_COMMONS_SIZE_CM) } else { (p.coast_r_cm, p.size_cm) };
+    // the city fills its island, to V5_SHORE_CM inside the coast (@3's 480 m town left most of the Commons' 1 km
+    // island to farmland and wild grass)
+    let city_r_cm = coast_r_cm.map_or(p.city_r_cm, |c| (c - V5_SHORE_CM).max(p.city_r_cm));
+    // and stands on its plateau (the land fell to the sea's level past @3's 400 m one), the expressway ring a coastal
+    // beltway just outside it (inside, every grid street would cross it at grade)
+    let ring_r_cm = if p.ring_r_cm > 0 { city_r_cm + V5_BELT_CM } else { 0 };
+    profile::Profile { v5, city_r_cm, core_r_cm: city_r_cm, ring_r_cm, coast_r_cm, size_cm, ..p }
 }
+
+/// City Gen v5: how far inside the coast (cm) the city stops: the shore road, the beach, the piers; and how far past
+/// the city's edge (cm) the expressway ring runs.
+pub const V5_SHORE_CM: i64 = 15_000;
+pub const V5_BELT_CM: i64 = 5_000;
+/// City Gen v5: the Commons' island, its coast's reach (cm: a 3.5 km island, its coast a circle 1,750 m out, as
+/// island.rs keeps the coast 25 m inside this; the city to 1,625 m) and the world's square (cm), the sea 170 m wide
+/// round the coast.
+pub const V5_COMMONS_COAST_CM: i64 = 177_500;
+pub const V5_COMMONS_SIZE_CM: i64 = 384_000;
 
 /// Where world `id`'s river meets the sea, in the world's own frame: [x, z] cm of the
 /// mouth (the centre line's first point, on the coast) and [dx, dz], the way out to
@@ -237,6 +267,11 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let (seed_str, version) = parse_id(id)?;
     let seed = rng::fnv1a64(seed_str.as_bytes());
     let p = profile_for(seed_str, version);
+    // City Gen v5: the city planned in a volume (v5/doc.rs writes it as these layers)
+    if p.v5 {
+        let layers = v5::doc::layers(seed_str, edits)?;
+        return Ok(doc(seed_str, version, &p, layers, edits));
+    }
 
     let mut river = river::River::new(seed, &p)?;
     // @3: the water, laid with the river before any street grows
@@ -364,6 +399,11 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
     let layers = Layers {
         terrain, districts, roads, blocks: city.blocks, lots: city.lots, sites: city.sites, zones, transit, island, river, water, metro, rail, gondola,
     };
+    Ok(doc(seed_str, version, &p, layers, edits))
+}
+
+/// The doc of `layers`: each layer's hash and the world's.
+fn doc(seed_str: &str, version: u32, p: &profile::Profile, layers: Layers, edits: &[Edit]) -> WorldDoc {
     let mut hashes = Hashes {
         terrain: hash(&layers.terrain),
         districts: hash(&layers.districts),
@@ -382,7 +422,7 @@ pub fn generate(id: &str, edits: &[Edit]) -> Result<WorldDoc, String> {
         world: String::new(),
     };
     hashes.world = hash(&hashes);
-    Ok(WorldDoc { id: format!("{seed_str}@{version}"), seed: seed_str.to_string(), version, profile: p.name, size_cm: p.size_cm, layers, hashes })
+    WorldDoc { id: format!("{seed_str}@{version}"), seed: seed_str.to_string(), version, profile: p.name, size_cm: p.size_cm, layers, hashes }
 }
 
 /// @3: the metro, the railway and the gondola, planned in that order on the finished
@@ -457,7 +497,7 @@ fn claim(city: &mut city::City, claims: &[lines::Claim]) -> Result<(), String> {
         city.sites.push(city::Site {
             id: c.id.clone(), kind: c.kind, block, x: c.x, y: 0, z: c.z, w, d,
             facing: if c.front[1] >= 0 { city::Facing::North } else { city::Facing::South },
-            tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None,
+            tier: Some(c.tier), poly: (!c.poly.is_empty()).then(|| c.poly.clone()), front: Some(c.front), view: None, runway: None,
         });
     }
     retire_lots(city, &gone);

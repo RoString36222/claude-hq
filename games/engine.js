@@ -306,7 +306,13 @@ var EXHAUST = {
 // engineFor: {idle, red, limit, cyl, motorMax, tone}): set() then takes that engine's REAL rpm, the voice plays at its
 // own idle and redline, and its exhaust character shades the voice (tone 0..1: depth a deeper, fuller note; rasp a
 // harder edge; crackle pops on the overrun and at the limiter; induction the intake's roar; whistle a turbo's or a
-// supercharger's whine)
+// supercharger's whine). [3.38] And, each optional: flat (a flat-plane crank's share: the half-order burble gone, the
+// lope smoothed, the upper harmonics brighter: a scream, not a rumble); spool (how fast the boost builds: an anti-lag
+// air tank 1, a big lazy turbo 0); flutter (the lift-off's shape: 0 one falling blow-off "pssh", 1 a wastegate's
+// chattering flutter at ~20 Hz); bang (an upshift's single cannon bang out of the exhaust); muffle (how much the
+// turbines dull the note on boost); loud (the exhaust's level, 0.5 as the voice); hybrid (an electric drive under it:
+// the motors' whine rising with the road speed, the engine hushed while it creeps). The upshift's cut follows the box
+// (real.shift: a seamless 25 ms multi-clutch barely dips)
 function engineProfile(kind, ex, real){
   var P = ENGINES[kind] || ENGINES.v8, M = EXHAUST[ex];
   if((!M || !P.cyl) && !real) return P;
@@ -326,7 +332,18 @@ function engineProfile(kind, ex, real){
       if(T.induction != null) Q.air = 0.25 + 0.75*clamp(+T.induction, 0, 1);
       Q.whistle = T.whistle != null ? clamp(+T.whistle, 0, 1) : null;
       if(Q.whistle > 0.35 && !Q.turbo) Q.turbo = 2600;
+      var fl = clamp(+T.flat || 0, 0, 1);
+      if(fl > 0){
+        Q.sub = Q.sub*(1 - 0.85*fl);
+        if(P.lope) Q.lope = [P.lope[0]*(1 + fl), P.lope[1]*(1 - 0.7*fl)];
+        Q.rough = (P.rough || 0)*(1 - 0.6*fl);
+        Q.cut = [Q.cut[0], Math.round(Q.cut[1]*(1 + 0.6*fl))];     // the scream reaches far up (turbos trim it ~6-8 kHz)
+        if(P.h){ Q.h = P.h.map(function(x, i){ return i === 1 ? Math.min(1, x + 0.2*fl) : i >= 3 ? Math.min(1, x*(1 + 0.9*fl)) : x; }); Q.hKey = kind + ":flat" + Math.round(fl*10); }
+      }
+      ["spool", "flutter", "bang", "muffle", "hybrid"].forEach(function(n){ if(T[n] != null) Q[n] = clamp(+T[n] || 0, 0, 1); });
+      if(T.loud != null) Q.gain = P.gain*(0.6 + 0.8*clamp(+T.loud || 0, 0, 1));
     }
+    if(real.shift > 0) Q.shiftS = +real.shift;
   }
   if(M && Q.cyl){
     Q.gain = Q.gain*M.gain; Q.grit = (Q.grit || 1)*M.grit; Q.cut = [Q.cut[0], Math.round(Q.cut[1]*M.cut)];
@@ -364,10 +381,11 @@ function engineBus(a){
 }
 function engineWave(a, B, kind, P){
   if(!P.h || !a.createPeriodicWave) return null;
-  if(B.waves[kind]) return B.waves[kind];
+  var key = P.hKey || kind;
+  if(B.waves[key]) return B.waves[key];
   var re = new Float32Array(P.h.length + 1), im = new Float32Array(P.h.length + 1);
   for(var i = 0; i < P.h.length; i++) im[i + 1] = P.h[i]*(i % 2 ? 0.9 : 1);    // sine terms: a buzzy, pulse-ish wave
-  return (B.waves[kind] = a.createPeriodicWave(re, im));
+  return (B.waves[key] = a.createPeriodicWave(re, im));
 }
 // the firing pulses over one engine cycle (two crank turns): one bang per cylinder, at its place in the firing
 // order (an even four or a single; a 270-degree twin or a V-twin's uneven pair; a crossplane four's 270-180-90-180),
@@ -434,6 +452,19 @@ function engineSound(kind, ex, real){
   if(v.ac){ last = v.ac.currentTime; arm(W); }
   return {set: W.set, stop: W.stop};
 }
+// [3.36] the clean sub's level: after the shaper the voice peaks at 1, so a deep exhaust's extra sub sits under it
+var SUB_CLEAN = 0.5;
+// [3.36] a voice's gain staging into the shaper (pure; tests/test_enginesound.py): the second oscillator's level o2, the
+// sub that goes through the shaper (subIn: no more than the engine's own) and the rest of it (subClean, round it), and
+// the drive: P's grit, scaled down so the peak into the shaper (drive x (1 + o2 + subIn)) is never above the plain
+// engine's (ENGINES[kind] as it is: the 3.5.7 voice). -> {o2, subIn, subClean, drive, peak, peak0}
+function shaperDrive(kind, P){
+  var P0 = ENGINES[kind] || ENGINES.v8; P = P || P0;
+  var o2 = P.r2 ? 0.25 : 0.7, subIn = Math.min(P.sub || 0, P0.sub || 0), subClean = Math.max(0, (P.sub || 0) - subIn);
+  var peak0 = (P0.grit || 1)*(1 + (P0.r2 ? 0.25 : 0.7) + (P0.sub || 0)), lvl = (P.grit || 1)*(1 + o2 + subIn);
+  var drive = (P.grit || 1)*Math.min(1, peak0/lvl);
+  return {o2: o2, subIn: subIn, subClean: subClean, drive: drive, peak: drive*(1 + o2 + subIn), peak0: peak0};
+}
 function engineVoice(kind, ex, real){
   var P = engineProfile(kind, ex, real);
   var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}, ac: null};
@@ -442,15 +473,20 @@ function engineVoice(kind, ex, real){
   // [main + twin + sub] -> drive -> grit -> low-pass -> amp (lope, shift cut) -> out -> pan -> bus
   var g = a.createGain(), amp = a.createGain(), cut = a.createGain(), drv = a.createGain(), f = a.createBiquadFilter();
   var pn = a.createStereoPanner ? a.createStereoPanner() : null;     // left/right from where it is (set(.., {pos}))
-  g.gain.value = 0; amp.gain.value = 1; cut.gain.value = 1; drv.gain.value = P.grit || 1;
+  // [3.36] the level into the shaper is never more than the engine's own (ENGINES[kind], the 3.5.7 voice): a real tone's
+  // rasp or an exhaust shapes the grit (the curve) and the cut-off, it no longer drives the shaper harder; and sub beyond
+  // the engine's own bypasses the shaper (clean under it): deep, not torn
+  var SD = shaperDrive(kind, P), o2l = SD.o2, subIn = SD.subIn, subClean = SD.subClean;
+  g.gain.value = 0; amp.gain.value = 1; cut.gain.value = 1; drv.gain.value = SD.drive;
   f.type = "lowpass"; f.frequency.value = P.cut[0]; f.Q.value = Math.min(P.q, P.cyl && P.cyl <= 4 ? 0.9 : 1.4);   // no resonant peak to ring as a buzz
   var o = a.createOscillator(), o2 = a.createOscillator(), os = a.createOscillator(), sg = a.createGain();
   var wave = engineWave(a, B, kind, P);
   if(wave){ o.setPeriodicWave(wave); o2.setPeriodicWave(wave); } else { o.type = P.h ? "sawtooth" : "sine"; o2.type = P.h ? "sawtooth" : "triangle"; }
-  os.type = "triangle"; sg.gain.value = P.sub || 0;
+  os.type = "triangle"; sg.gain.value = subIn;
   if(o2.detune) o2.detune.value = P.det || 0;
-  var o2g = a.createGain(); o2g.gain.value = P.r2 ? 0.25 : 0.7;
+  var o2g = a.createGain(); o2g.gain.value = o2l;
   o.connect(drv); o2.connect(o2g); o2g.connect(drv); os.connect(sg); sg.connect(drv);
+  if(subClean > 0){ var sc = a.createGain(); sc.gain.value = SUB_CLEAN*subClean; os.connect(sc); sc.connect(f); }
   var sh = a.createWaveShaper ? a.createWaveShaper() : null;
   if(sh){ sh.curve = engineCurve(B, P.grit || 1); drv.connect(sh); sh.connect(f); } else drv.connect(f);
   f.connect(amp); amp.connect(cut); cut.connect(g); if(pn){ g.connect(pn); pn.connect(B.out); } else g.connect(B.out);
@@ -500,6 +536,14 @@ function engineVoice(kind, ex, real){
     wh = a.createOscillator(); whg = a.createGain(); wh.type = "sine"; whg.gain.value = 0; wh.frequency.value = P.turbo*0.4;
     wh.connect(whg); whg.connect(g); wh.start(); nodes.push(wh);
   }
+  // [3.38] a hybrid's electric drive: the motors' whine (a sine and its third harmonic, 43 Hz per m/s: 120 Hz per 10 km/h)
+  var ev = null, evg = null;
+  if(P.hybrid){
+    ev = a.createOscillator(); evg = a.createGain(); var ev3 = a.createOscillator(), ev3g = a.createGain();
+    ev.type = "sine"; ev3.type = "sine"; evg.gain.value = 0; ev3g.gain.value = 0.3;
+    ev.connect(evg); ev3.connect(ev3g); ev3g.connect(evg); evg.connect(g); ev.start(); ev3.start(); nodes.push(ev, ev3);
+    ev.ev3 = ev3;
+  }
   // state: deterministic randomness (a seed from the kind), the load, the boost, the overrun and the gear
   var seed = 7; for(var i = 0; i < kind.length; i++) seed = (seed*31 + kind.charCodeAt(i)) & 0x7fffffff;
   function rnd(){ seed = (seed*1103515245 + 12345) & 0x7fffffff; return seed/0x7fffffff; }
@@ -527,12 +571,19 @@ function engineVoice(kind, ex, real){
       var thr = opt.thr != null ? clamp(+opt.thr || 0, 0, 1) : clamp(0.3 + 0.5*u + rise/3000, 0, 1);
       // gears: an upshift cuts the ignition for a moment, a downshift blips the throttle (and pops)
       if(opt.gear != null && S.gear != null && opt.gear > 0 && S.gear > 0 && opt.gear !== S.gear){
-        if(opt.gear > S.gear && opt.qs){                  // a quickshift: a hard 50 ms cut, its bark and a pop
+        if(opt.gear > S.gear && P.shiftS && P.shiftS < 0.04){   // [3.38] a seamless multi-clutch box: the note barely dips
+          cut.gain.setTargetAtTime(0.7, t, 0.004); cut.gain.setTargetAtTime(1, t + P.shiftS, 0.01);
+          if(P.pops && on && !calm() && rnd() < 0.4) crackle(t + 0.01);
+          if(P.bang && on && !calm()) bang(t + 0.01);
+        } else if(opt.gear > S.gear && opt.qs){                  // a quickshift: a hard 50 ms cut, its bark and a pop
           cut.gain.setTargetAtTime(0.04, t, 0.004); cut.gain.setTargetAtTime(1, t + 0.05, 0.012);
+          if(P.bang && on && !calm()) bang(t + 0.015);
           if(P.pops && on && !calm()) crackle(t + 0.02);
           if(bov && S.boost > 0.3) blowOff(t);
         } else if(opt.gear > S.gear){
-          cut.gain.setTargetAtTime(0.3, t, 0.012); cut.gain.setTargetAtTime(1, t + 0.09, 0.04);
+          var cs = P.shiftS > 0 ? P.shiftS : 0.09;                 // the box's own gap (an Agera's ~100 ms)
+          cut.gain.setTargetAtTime(0.3, t, 0.012); cut.gain.setTargetAtTime(1, t + cs, 0.04);
+          if(P.bang && on && !calm()) bang(t + cs*0.4);
           if(bov && S.boost > 0.3) blowOff(t);
         } else { S.blip = 0.16; if(P.pops && on) crackle(t + 0.12); }
       }
@@ -553,7 +604,7 @@ function engineVoice(kind, ex, real){
       // the turbo: boost builds on throttle with the revs, falls fast off it; its whistle rides on the boost
       if(wh){
         var want = P.rotor ? u : L > 0.5 ? u : 0;
-        S.boost += (want - S.boost)*(dt > 0 ? 1 - Math.exp(-dt*(want > S.boost ? 2.2 : 7)) : 1);
+        S.boost += (want - S.boost)*(dt > 0 ? 1 - Math.exp(-dt*(want > S.boost ? (P.spool != null ? 1 + 6*P.spool : 2.2) : 7)) : 1);
       }
       // the overrun crackle's odds: the drive mode's exhaust (opt.mode: games/hqvehiclephys.js MODES): Comfort quiet and
       // smooth, Track loud and crackling; opt.crackle: the game's own overrun window (a lift, a downshift's blip), so the
@@ -567,7 +618,7 @@ function engineVoice(kind, ex, real){
           var idle = (1 - u)*(1 - u);
           if(FIRE) S.jw = (rnd() - 0.5)*2*(0.006 + 0.012*idle);
           if(o.detune && P.rough) tgt(o.detune, (rnd() - 0.5)*2*P.rough*45*idle, 0.03);
-          if(P.rough) tgt(sg.gain, (P.sub || 0)*(0.7 + 0.6*rnd()*idle), 0.04);
+          if(P.rough) tgt(sg.gain, subIn*(0.7 + 0.6*rnd()*idle), 0.04);
           if(fpd) tgt(fpd.gain, FIRE*(1 - 0.45*u)*(0.7 + 0.6*rnd()), 0.02);
         }
         var hzw = hz*(1 + (S.jw || 0));
@@ -581,7 +632,7 @@ function engineVoice(kind, ex, real){
         tgt(drv.gain, (P.grit || 1)*(0.45 + 0.9*L), 0.05);
         if(jg) tgt(jg.gain, JIT*(1.4 - 0.6*u), 0.1);
         if(exg){ tgt(exf.frequency, clamp(hz*5 + 250 + 1800*L*u, 150, 5000), 0.06); tgt(exg.gain, 2.4*(0.35 + 0.65*L)*(0.5 + 0.5*u)*(0.6 + 0.6*(P.air || 0.5)), 0.06); }
-        var fc = (P.cut[0] + (P.cut[1] - P.cut[0])*u)*(0.45 + 0.75*L)*(0.4 + 0.6*far);
+        var fc = (P.cut[0] + (P.cut[1] - P.cut[0])*u)*(0.45 + 0.75*L)*(0.4 + 0.6*far)*(1 - 0.45*(P.muffle || 0)*S.boost);
         tgt(f.frequency, clamp(Math.max(fc, hz*2.5), 60, 16000), 0.06);
         // intake / exhaust roar, road rumble, a squeal in a slide (its pitch only while it squeals)
         // nitrous (opt.boost): a hard hiss over the intake and the whistle up
@@ -593,6 +644,9 @@ function engineVoice(kind, ex, real){
         tgt(sq.g.gain, 0.06*slip, 0.05); S.slip = slip;
         if(wh){ tgt(wh.frequency, P.turbo*(0.4 + 0.8*S.boost), 0.08, 0.003); tgt(whg.gain, 0.014*S.boost*S.boost*(P.whistle != null ? 0.4 + 1.6*P.whistle : 1), 0.08); }
         if(rat) tgt(rat.g.gain, P.rattle*(1 - u*0.5), 0.1);
+        if(ev){ var evf = clamp(43.2*spd, 40, 5200);
+          tgt(ev.frequency, evf, 0.05, 0.003); tgt(ev.ev3.frequency, evf*3, 0.05, 0.003);
+          tgt(evg.gain, P.hybrid*0.02*Math.min(1, spd/2)*(0.3 + 0.7*Math.max(0, 1 - spd/28))*(0.4 + 0.6*L), 0.08); }
         // the turbofan: the whine follows N1 (u), the roar the thrust (the load)
         if(fan){
           var fq = P.fan[0] + (P.fan[1] - P.fan[0])*u, th = Math.pow(L, 1.5);
@@ -611,7 +665,9 @@ function engineVoice(kind, ex, real){
       // a dead man's switch: each set() fades the note out 0.25 s from now and the next frame's
       // set() cancels that, so the engine falls silent whenever the game stops calling (a hidden
       // tab, another view, a stalled loop) instead of droning on at its last revs
-      var lvl = on ? TRIM*P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far*amb : 0;
+      // [3.38] a hybrid creeping on its motors: the engine hushed below ~50 km/h at a light throttle
+      var hyb = P.hybrid ? 1 - P.hybrid*0.8*Math.max(0, 1 - Math.abs(+opt.speed || 0)/13.4)*(1 - 0.7*L) : 1;
+      var lvl = on ? TRIM*P.gain*MD.gain*(0.6 + 0.45*u)*(0.55 + 0.45*L)*far*amb*hyb : 0;
       g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(lvl, t, 0.1); g.gain.setTargetAtTime(0, t + 0.25, 0.05);
     },
     stop: function(){
@@ -625,8 +681,21 @@ function engineVoice(kind, ex, real){
     pop.g.gain.setValueAtTime(0.05 + 0.07*rnd(), at); pop.g.gain.setTargetAtTime(0, at + 0.004, 0.016);
   }
   function blowOff(t){        // the blow-off valve: a falling "pssh"
+    var fl = P.flutter || 0;
+    if(fl > 0.15){            // [3.38] a wastegate's chuff, or with more flutter its chatter: bursts at ~20 Hz, dying away
+      var n = Math.round(1 + 7*fl), gap = 1/(17 + 6*fl);
+      bov.f.frequency.setValueAtTime(2200 - 900*fl, t); bov.f.frequency.setTargetAtTime(1000, t, 0.25);
+      for(var i = 0; i < n; i++){ var at = t + i*gap, pk = 0.05*Math.pow(0.78, i);
+        bov.g.gain.setValueAtTime(pk, at); bov.g.gain.setTargetAtTime(0, at + 0.006, gap*0.3); }
+      return;
+    }
     bov.f.frequency.setValueAtTime(3400, t); bov.f.frequency.setTargetAtTime(1500, t, 0.18);
     bov.g.gain.setValueAtTime(0, t); bov.g.gain.setTargetAtTime(0.05, t, 0.012); bov.g.gain.setTargetAtTime(0, t + 0.07, 0.11);
+  }
+  function bang(t){           // [3.38] an upshift's cannon: one loud, low, broadband shot out of the exhaust (~50 ms)
+    var at = t + 0.004;
+    pop.f.frequency.setValueAtTime(260 + rnd()*160, at);
+    pop.g.gain.setValueAtTime(0.16*P.bang, at); pop.g.gain.setTargetAtTime(0, at + 0.012, 0.03);
   }
 }
 // A looping band of noise (tyre scrub, gravel under the car): noiseLoop(freq, q, sk) ->
@@ -1186,7 +1255,7 @@ function watchBar(stage, opts){
 HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, say: say, tokens: tokens, myClock: myClock,
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
-              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
+              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), engineProfile: engineProfile, shaperDrive: shaperDrive, exhausts: Object.keys(EXHAUST), engineHz: engineHz, watchBar: watchBar,
               noiseLoop: noiseLoop, ambientLoop: ambientLoop, ambientOn: ambientOn, ambientSet: ambientSet,
               ambientVolume: ambientVolume, ambientSetVolume: ambientSetVolume, ambientPreview: ambientPreview,
               // spatial sound (above): the listener, positional one-shots, loops and pools, and the test seam

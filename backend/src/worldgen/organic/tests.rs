@@ -58,7 +58,7 @@ fn versions_and_profiles() {
     for id in ["claude-hq@1", "claude-hq@2", ISLAND, "user:abc@1"] {
         assert!(parse_id(id).is_ok(), "{id}");
     }
-    for bad in ["claude-hq@0", "claude-hq@4", "claude-hq@"] {
+    for bad in ["claude-hq@0", "claude-hq@5", "claude-hq@"] {
         assert!(parse_id(bad).is_err(), "{bad}");
     }
     assert_eq!(profile_for("claude-hq", 1).name, "city");

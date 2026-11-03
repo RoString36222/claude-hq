@@ -454,3 +454,28 @@ mod corridors {
         assert_eq!(pier_at(&l.roads, &l.lots, &l.sites, (lot.x, lot.z)), None, "a lot");
     }
 }
+
+/// HQ 3.36: the Island Link leaves the coast square to it and clear of the airport (its way out
+/// to sea 1.5 km straight on, 200 m off the claim), and the rail layer carries what no line may
+/// cross above: the claim and the inner approach surface past each runway end.
+#[test]
+fn the_island_link_leaves_the_coast_clear_of_the_airport() {
+    for id in ["claude-hq@3", "v4seed9@3", "v4seed21@3", "v4seed41@3"] {
+        let owned;
+        let w = if id == "claude-hq@3" {
+            commons3()
+        } else {
+            owned = generate(id, &[]).unwrap();
+            &owned
+        };
+        let a = Airport::of(&w.layers.sites).expect("an airport");
+        let r = w.layers.rail.as_ref().expect("rail");
+        let Some(sea) = r.sea.as_ref() else { continue };
+        let v = (sea.x, sea.z);
+        let out = (v.0 + sea.front[0] * 150_000 / 65_536, v.1 + sea.front[1] * 150_000 / 65_536);
+        assert!(!a.meets_keep_out(v, out, 20_000), "{id}: the IL's way out to sea runs by the airport");
+        assert_eq!(r.keep_out.len(), a.polys.len() + 2, "{id}: the claim and both approach surfaces");
+    }
+    // a personal island has no airport, and no keep-out
+    assert!(island3().layers.rail.as_ref().is_none_or(|r| r.keep_out.is_empty()));
+}

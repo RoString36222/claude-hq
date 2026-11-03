@@ -10,6 +10,12 @@
  *   floorAt(L, x, z)             -> L.y on a platform polygon or an approach/localizer pier, else null
  *   onPavement(L, x, z)          -> "runway"|"taxiway"|"road"|"apron"|null   (taxiway = centreline ± width/2)
  *   shoulderAt(L, x, z)          -> "runway"|"taxiway"|null    on a shoulder and not on pavement
+ *   landsideAt(L, x, z)          -> the landside's drawn surface over the ground (m: curb walk 0.3, its roads 0.15) | null
+ *   landsideRoads(site)          -> {access, forecourt, roadW} from the site alone (hqnav routes on them) | null
+ *   curbDoor(site)               -> {x, z, yaw}: the drop-off curb's middle, the terminal's door for arriving | null
+ *   airsideY(L, x, z, ground)    -> a planned airport's airside entrance road's top off the platform (L.airside: from the
+ *                                forecourt round to the apron's service road through the security gate), ramped up to
+ *                                the platform where the land falls away | null;  airsideWall(L, x, z, ground) its parapet
  *   end(L, standId, endIdx, cx, cz, {stopDist})   -> the v2 end (7.3) in archipelago metres, or null
  *   uturns(L) -> {"A1/AB", "A6/AB": [[x, z]...]}  the arrivals' U-turn from A onto B at each end link (not in L.curves:
  *                                the fixture's A?/A and A?/B fillets overlap there); painted with the curves
@@ -40,6 +46,8 @@ function inPoly(P, x, z){
 function wrap(a){ while(a > Math.PI) a -= 2*Math.PI; while(a <= -Math.PI) a += 2*Math.PI; return a; }
 
 /* ---------- the layout (a port of tools/airfield_fixture.js; offsets relative to RU exactly as there) ---------- */
+// RU_PLAN: a planned runway's distance (m) from the terminal (backend v5/airport.rs TERMINAL_CM)
+var RU_PLAN = 317;
 var CLEAR = 6, SEA = -4, LEN = 1600, RW_W = 45, SH = 7.5, PAD = 60, GATE_FLOOR = 5.0, R_TURN = 40, R_LEAD = 30, R_EXIT = 300, R_JOIN = 150;
 
 function arc(c, r, a0, a1, out){
@@ -56,6 +64,51 @@ function fillet(P, d1, d2, R){
   return {pts: pts, t: t};
 }
 function unitv(a, b){ var l = Math.hypot(b[0] - a[0], b[1] - a[1]); return [(b[0] - a[0])/l, (b[1] - a[1])/l]; }
+
+// the landside roads (site frame m): the forecourt loop, its curb lane at u LS_CURB_U, and the access road out to the
+// street; on a planned (City Gen v5) airport the access starts where the generator's Terminal Road ends (backend
+// v5/doc.rs ACCESS_UV: u -152, a road's half width short of the airport's box)
+var LS_FORECOURT = [[-88, -62], [-88, 62], [-120, 62], [-120, -62], [-88, -62]], LS_CURB_U = -88, LS_ROAD_W = 8, LS_WALK = 4;
+// a planned airport's airside entrance (L.airside): its corners' radius, the apron side it enters by (v), the boom that far
+// out of the platform's edge, its top at the platform's service road (hqairport3d Y.road over L.y) and the ramp's grade
+// up to it where the land falls away (the road on a walled causeway there)
+var AS_R = 12, AS_EDGE_V = -150, AS_GATE_OUT = 2, AS_DECK = 0.08, AS_GRADE = 0.06;
+// its parapet's width outside the road, and the height over the land (m) from which it has one (hqairport3d draws it)
+var AS_WALL = 0.45, AS_RAISED = 0.3;
+function accessOf(site){ return [[site && site.runway && +site.runway.len > 0 ? -152 : -146, -8], [-120, -8]]; }
+// the site frame of an airport site (as build): o, B = -front, T = [B.z, -B.x]; null without a front
+function siteFrame(site){
+  var fr = site && site.front, fl = fr ? Math.hypot(+fr[0] || 0, +fr[1] || 0) : 0;
+  if(!(fl > 0) || !isFinite(+site.x) || !isFinite(+site.z)) return null;
+  var B = [-fr[0]/fl, -fr[1]/fl];
+  return {o: [site.x/100, site.z/100], B: B, T: [B[1], -B[0]]};
+}
+function siteW(f, u, v){ return [r3(f.o[0] + u*f.B[0] + v*f.T[0]), r3(f.o[1] + u*f.B[1] + v*f.T[1])]; }
+// the landside roads of an airport site without its layout (HQV.hqnav routes on them): {access, forecourt, roadW} | null
+function landsideRoads(site){
+  var f = siteFrame(site); if(!f) return null;
+  function W2(pts){ return pts.map(function(p){ return siteW(f, p[0], p[1]); }); }
+  return {access: W2(accessOf(site)), forecourt: W2(LS_FORECOURT), roadW: LS_ROAD_W};
+}
+// where you arrive at the terminal (HQV.hqnav and HQV.hqCity3d doorOf): the drop-off curb's middle, at the curb face
+// (the lane's edge, where its sidewalk starts), facing out to the forecourt -> {x, z, yaw} | null without a front
+function curbDoor(site){
+  var f = siteFrame(site); if(!f) return null;
+  var p = siteW(f, LS_CURB_U + LS_ROAD_W/2, 0);
+  return {x: p[0], z: p[1], yaw: Math.atan2(-f.B[0], -f.B[1])};
+}
+// how far over the ground (m) the landside's drawn surfaces stand at (x, z), as hqairport3d draws them on the terrain:
+// the curb's sidewalk 0.3 (its 4 m on the terminal side of the curb lane, along the forecourt), the access road and
+// the forecourt loop 0.15; null off them
+function landsideAt(L, x, z){
+  var g = geom(L); if(!g || !g.land) return null;
+  x = +x; z = +z;
+  if(!isFinite(x) || !isFinite(z) || !inBox(g.land.bb, x, z)) return null;
+  var q = toFrame(L, x, z), u = q[0], v = q[1], uW = LS_CURB_U + LS_ROAD_W/2;
+  if(u < g.land.u0) return null;                          // short of the access road's street end (drawn from there)
+  if(u >= uW && u <= uW + LS_WALK && v >= g.land.v0 && v <= g.land.v1) return 0.3;
+  return nearStrip(g.land.roads, x, z, 0) ? 0.15 : null;
+}
 
 function findSite(W){
   var S = W && W.sites ? W.sites : [];
@@ -103,17 +156,22 @@ function build(W, WD, site, fl){
     var y = Math.max(Math.ceil((hi + 0.3)*10)/10, SEA + 1.5);
     return y <= ySite + 0.5 ? y : null;
   }
+  // City Gen v5 (@4): the runway is planned (site.runway, its length in cm); the terminal stands RU_PLAN from it (the
+  // site's x, z), the airfield laid to it: no search, no exits off a short runway (the far-end link), the service
+  // buildings drawn in along it, the touchdown and its aids scaled to its length
+  var rw = site.runway && +site.runway.len > 0 ? site.runway : null, RL = rw ? (+rw.len)/100 : LEN, KV = RL/LEN;
   var RU = null;
-  for(var ru = 355; ru <= 455 && RU == null; ru += 10) if(fits(ru) != null) RU = ru;
+  if(rw) RU = RU_PLAN;
+  else for(var ru = 355; ru <= 455 && RU == null; ru += 10) if(fits(ru) != null) RU = ru;
   if(RU == null) return {ok: false, why: "no runway fits"};
 
-  var HALF = LEN/2, UA = RU - 110, UB = RU - 152, U_HOLD = RU - 50, U_HOLDPT = U_HOLD - 19, U_STAND = RU - 193;
+  var HALF = RL/2, UA = RU - 110, UB = RU - 152, U_HOLD = RU - 50, U_HOLDPT = U_HOLD - 19, U_STAND = RU - 193;
   var U_CONC0 = RU - 241, U_CONC1 = RU - 223, U_SVC = RU - 218, U_LANE_N = RU - 175, U_LANE_S = RU - 168.5, V_LINK = HALF + 15;
   // design lines (straight centrelines), frame
   var lines = {RWY: [[RU, -HALF], [RU, HALF]], A: [[UA, -V_LINK], [UA, V_LINK]], B: [[UB, -V_LINK], [UB, V_LINK]],
                A1: [[UB, -V_LINK], [RU, -V_LINK]], A6: [[UB, V_LINK], [RU, V_LINK]]};
   var tanE = Math.tan(30*Math.PI/180), dvE = (RU - UA)/tanE;
-  var exitDefs = [{id: "A4", end: "36", along: 1000}, {id: "A5", end: "36", along: 1250}, {id: "A3", end: "18", along: 1000}, {id: "A2", end: "18", along: 1250}];
+  var exitDefs = rw ? [] : [{id: "A4", end: "36", along: 1000}, {id: "A5", end: "36", along: 1250}, {id: "A3", end: "18", along: 1000}, {id: "A2", end: "18", along: 1250}];
   exitDefs.forEach(function(e){ var sg = e.end === "36" ? 1 : -1, v0 = sg*(-HALF + e.along); lines[e.id] = [[RU, v0], [UA, v0 + sg*dvE]]; e.v0 = v0; e.sg = sg; });
   // turn curves
   var curves = {};
@@ -145,20 +203,22 @@ function build(W, WD, site, fl){
     var sg = id === "36" ? 1 : -1, thr = [RU, -sg*HALF], left = id === "36" ? [-1, 0] : [1, 0];
     function at(a, b){ return [thr[0] + left[0]*b, thr[1] + sg*a]; }
     function wpa(a, b){ var p = at(a, b); return wp(p[0], p[1]); }
-    var papi = [0, 1, 2, 3].map(function(i){ return wpa(300, RW_W/2 + 15 + 9*i); });
+    var papi = [0, 1, 2, 3].map(function(i){ return wpa(300*KV, RW_W/2 + 15 + 9*i); });
     var appr = []; for(var a = 30; a <= 420; a += 30) appr.push(wpa(-a, 0));
-    return {id: id, thr: wp(thr[0], thr[1]), dir: wd(0, sg), left: wd(left[0], left[1]), yaw: yawOf(wd(0, sg)), len: LEN,
+    return {id: id, thr: wp(thr[0], thr[1]), dir: wd(0, sg), left: wd(left[0], left[1]), yaw: yawOf(wd(0, sg)), len: RL,
       lineup: wp(RU, -sg*(V_LINK - R_TURN)), hold: wp(U_HOLDPT, -sg*V_LINK), holdLine: [wp(U_HOLD, -sg*V_LINK - 12.5), wp(U_HOLD, -sg*V_LINK + 12.5)],
-      touchdown: 330, aim: 310,
+      touchdown: r3(330*KV), aim: r3(310*KV),
       exits: exitDefs.filter(function(e){ return e.end === id; }).map(function(e){ return {id: e.id, along: e.along}; })
-        .concat([{id: id === "36" ? "A6" : "A1", along: LEN + 15}]),
-      papi: papi, glideslope: wpa(320, -(RW_W/2 + 37.5)), localizer: wp(RU, sg*(HALF + 100)), windsock: wpa(150, RW_W/2 + 40),
-      approach: appr, crossbar: 300, pad: [wp(RU, -sg*HALF), wp(RU, -sg*(HALF + PAD))]};
+        .concat([{id: id === "36" ? "A6" : "A1", along: RL + 15}]),
+      papi: papi, glideslope: wpa(320*KV, -(RW_W/2 + 37.5)), localizer: wp(RU, sg*(HALF + 100)), windsock: wpa(150*KV, RW_W/2 + 40),
+      approach: appr, crossbar: r3(300*KV), pad: [wp(RU, -sg*HALF), wp(RU, -sg*(HALF + PAD))]};
   }
+  // (along a planned runway the service row is drawn in to the strip's ends, past the apron's 245 m)
+  var KS = rw ? Math.min(1, (HALF + PAD - 10)/480) : 1;
   var air = {
     apron: [rect(U_CONC0, RU - 129, -150, 150), rect(RU - 195, RU - 129, -245, -150), rect(RU - 180, RU - 129, 150, 245)],
     main: [rect(RU - 170, RU + 70, -HALF - PAD, HALF + PAD)],
-    service: {fuel: rect(RU - 215, RU - 170, -480, -360), fire: rect(RU - 215, RU - 170, -340, -270), hangars: rect(RU - 215, RU - 170, 320, 470), depot: rect(RU - 180, RU - 170, 150, 245)}
+    service: {fuel: rect(RU - 215, RU - 170, -480*KS, -360*KS), fire: rect(RU - 215, RU - 170, -340*KS, -270*KS), hangars: rect(RU - 215, RU - 170, 320*KS, 470*KS), depot: rect(RU - 180, RU - 170, 150, 245)}
   };
   function sampleMax(poly){
     var xs = poly.map(function(p){ return p[0]; }), zs = poly.map(function(p){ return p[1]; }), hi = -1e9;
@@ -171,10 +231,11 @@ function build(W, WD, site, fl){
   polys.forEach(function(p){ hi = Math.max(hi, sampleMax(p)); });
   var Y = r3(Math.max(Math.ceil((hi + 0.3)*10)/10, SEA + 1.5));
   function mapObj(o, f){ var r = {}; Object.keys(o).forEach(function(key){ r[key] = f(o[key]); }); return r; }
-  var tw = wp(95, -100), asr = wp(110, 110);
-  return {
+  // (a planned airfield's apron starts at u 76: the tower and the radar stand landside of it, beside the hall)
+  var tw = rw ? wp(20, -110) : wp(95, -100), asr = rw ? wp(20, 110) : wp(110, 110);
+  var out = {
     v: 1, ok: true, world: W.id, site: site.id, frame: {o: O, B: wd(1, 0), T: wd(0, 1), RU: RU}, y: Y, ySite: ySite, sea: SEA,
-    runway: {c: wp(RU, 0), dir: wd(0, 1), len: LEN, w: RW_W, shoulder: SH, pad: PAD, ends: [endOf("36"), endOf("18")]},
+    runway: {c: wp(RU, 0), dir: wd(0, 1), len: RL, w: RW_W, shoulder: SH, pad: PAD, ends: [endOf("36"), endOf("18")]},
     lines: mapObj(lines, W2),
     widths: {RWY: RW_W, A: 18, B: 18, A1: 18, A6: 18, A2: 18, A3: 18, A4: 18, A5: 18, shoulder: 3.5},
     curves: mapObj(curves, W2),
@@ -190,14 +251,34 @@ function build(W, WD, site, fl){
     serviceRoad: W2([[U_LANE_S, -240], [U_LANE_S, -141], [U_SVC, -141], [U_SVC, 141], [U_LANE_N, 141], [U_LANE_N, 240]]), serviceRoadW: 6,
     landside: {
       terminal: rect(-66, 66, -18, 18), canopy: rect(-80, -66, -19.5, 19.5), skybridge: {a: wp(66, 0), b: wp(U_CONC0, 0), w: 8, floor: GATE_FLOOR},
-      forecourt: W2([[-88, -62], [-88, 62], [-120, 62], [-120, -62], [-88, -62]]), access: W2([[-146, -8], [-120, -8]]), roadW: 8,
-      curb: {dropoff: W2([[-88, -20], [-88, 20]]), taxi: W2([[-88, 24], [-88, 56]]), bus: W2([[-88, -56], [-88, -24]])},
+      forecourt: W2(LS_FORECOURT), access: W2(accessOf(site)), roadW: LS_ROAD_W,
+      curb: {dropoff: W2([[LS_CURB_U, -20], [LS_CURB_U, 20]]), taxi: W2([[-88, 24], [-88, 56]]), bus: W2([[-88, -56], [-88, -24]])},
       carpark: rect(-60, -4, 30, 86), carparkBridge: W2([[-40, 18], [-40, 30]]),
       tower: {x: tw[0], z: tw[1], h: 66}, asr: {x: asr[0], z: asr[1], h: 25}
     },
     keepOut: {capsule: {a: wp(RU, -HALF - 420), b: wp(RU, HALF + 420), r: 180},
               corridors: [{a: wp(RU, -HALF), b: wp(RU, -HALF - 4000), r: 250}, {a: wp(RU, HALF), b: wp(RU, HALF + 4000), r: 250}]}
   };
+  if(rw){
+    // the runway runs out over the sea: where there is no land under it the platform is a pier deck (hqairport3d)
+    out.pier = true;
+    // the airside entrance: off the forecourt's -v leg, round to the apron's service road (its corner at U_SVC, -141),
+    // through the security gate where it meets the platform's land edge (the apron's side at v -150)
+    var A0 = [-104, -62], A1 = [-104, -200], A2 = [U_SVC, -200], A3 = [U_SVC, -141];
+    var f1 = fillet(A1, [0, -1], [1, 0], AS_R), f2 = fillet(A2, [1, 0], [0, 1], AS_R);
+    var ap = [A0].concat(f1.pts, f2.pts, [[U_SVC, AS_EDGE_V], A3]), cum = 0;
+    for(k = 1; k < ap.length - 1; k++) cum += Math.hypot(ap[k][0] - ap[k - 1][0], ap[k][1] - ap[k - 1][1]);
+    // the boom AS_GATE_OUT m out of the edge (its pivot on the guard post's side, its rest across the road, each
+    // post's foot on the land: y the road's top there), the guard post beside the pivot outside the fence (the apron
+    // inside it is the buses' stop), on a plinth up from the land (g its lowest) to the road's level
+    var ga = wp(U_SVC + LS_ROAD_W/2 + 0.6, AS_EDGE_V - AS_GATE_OUT), gb = wp(U_SVC - LS_ROAD_W/2 - 0.6, AS_EDGE_V - AS_GATE_OUT), gc = wp(U_SVC, AS_EDGE_V - AS_GATE_OUT);
+    var gy = r3(Math.max(WD.heightAt(W, gc[0], gc[1]) + 0.15, Y + AS_DECK - AS_GATE_OUT*AS_GRADE));
+    out.airside = {road: W2(ap), roadW: LS_ROAD_W, sEdge: r3(cum), yEdge: r3(Y + AS_DECK), grade: AS_GRADE,
+      gate: {a: ga, b: gb, s: r3(cum - AS_GATE_OUT), y: gy, ga: r3(WD.heightAt(W, ga[0], ga[1])), gb: r3(WD.heightAt(W, gb[0], gb[1]))},
+      post: rect(U_SVC + LS_ROAD_W/2 + 1.5, U_SVC + LS_ROAD_W/2 + 5.5, AS_EDGE_V - AS_GATE_OUT - 4.4, AS_EDGE_V - AS_GATE_OUT - 0.4)};
+    out.airside.gate.pg = r3(Math.min.apply(null, out.airside.post.map(function(q){ return WD.heightAt(W, q[0], q[1]); })));
+  }
+  return out;
 }
 
 /* ---------- frame ---------- */
@@ -251,12 +332,28 @@ function geom(L){
     g.taxi.push(strip(L.curves[id], (wid[base] != null ? +wid[base] : 18)/2, sh));
   });
   if(L.serviceRoad && L.serviceRoad.length >= 2) g.roads.push(strip(L.serviceRoad, (+L.serviceRoadW || 6)/2, 0));
-  var ls = L.landside || {}, rw2 = (+ls.roadW || 8)/2;
-  if(ls.access && ls.access.length >= 2) g.roads.push(strip(ls.access, rw2, 0));
-  if(ls.forecourt && ls.forecourt.length >= 2) g.roads.push(strip(ls.forecourt, rw2, 0));
+  var ls = L.landside || {}, rw2 = (+ls.roadW || 8)/2, lr = [];
+  if(ls.access && ls.access.length >= 2) lr.push(strip(ls.access, rw2, 0));
+  if(ls.forecourt && ls.forecourt.length >= 2) lr.push(strip(ls.forecourt, rw2, 0));
+  lr.forEach(function(s){ g.roads.push(s); });
+  // the landside's drawn surfaces (landsideAt): its road strips, the forecourt's v span and the box round them and the walk
+  if(lr.length && L.frame){
+    var lv = [Infinity, -Infinity], lp = [];
+    lr.forEach(function(s){ s.P.forEach(function(p){ lp.push(p); }); });
+    (ls.forecourt || []).forEach(function(p){ var q = toFrame(L, p[0], p[1]); lv[0] = Math.min(lv[0], q[1]); lv[1] = Math.max(lv[1], q[1]); });
+    g.land = {roads: lr, v0: lv[0], v1: lv[1], bb: bbox(lp, rw2 + LS_WALK + 1), u0: ls.access && ls.access.length ? toFrame(L, ls.access[0][0], ls.access[0][1])[0] : -Infinity};
+  }
+  // the airside entrance (a planned airport): its centreline with arc lengths; on the platform it is service road
+  var AS = L.airside;
+  if(AS && AS.road && AS.road.length >= 2){
+    var ahw = (+AS.roadW || 8)/2, aS = [0];
+    for(var ai = 1; ai < AS.road.length; ai++) aS.push(aS[ai - 1] + hyp(AS.road[ai][0] - AS.road[ai - 1][0], AS.road[ai][1] - AS.road[ai - 1][1]));
+    g.air = {P: AS.road, S: aS, hw: ahw, sEdge: +AS.sEdge || 0, yEdge: +AS.yEdge || 0, grade: +AS.grade || 0.06, bb: bbox(AS.road, ahw + 1)};
+    g.roads.push(strip(AS.road.slice(-2), ahw, 0));
+  }
   var R = L.runway;
   if(R && R.c && R.dir){
-    g.rw = {c: R.c, d: R.dir, hl: (+R.len || 0)/2 + (+R.pad || 0), hw: (+R.w || 0)/2, sh: +R.shoulder || 0};
+    g.rw ={c: R.c, d: R.dir, hl: (+R.len || 0)/2 + (+R.pad || 0), hw: (+R.w || 0)/2, sh: +R.shoulder || 0};
     (R.ends || []).forEach(function(E){
       if(!E) return;
       var ap = E.approach || [], pe = E.pad && E.pad[1];
@@ -278,6 +375,42 @@ function floorAt(L, x, z){
   for(i = 0; i < g.piers.length; i++){ var s = g.piers[i]; if(inBox(s.bb, x, z) && lineDist(s.P, x, z) <= s.hw) return L.y; }
   for(i = 0; i < g.heads.length; i++){ var h = g.heads[i]; if(inRectAxes(h.c, h.d, h.hl, h.hw, x, z)) return L.y; }
   return null;
+}
+// the airside entrance (L.airside): the nearest point of its centreline to (x, z) -> {d, s (arc length)}
+function airsideNear(a, x, z){
+  var best = null;
+  for(var i = 1; i < a.P.length; i++){
+    var p = a.P[i - 1], q = a.P[i], dx = q[0] - p[0], dz = q[1] - p[1], l2 = dx*dx + dz*dz, t = l2 > 0 ? ((x - p[0])*dx + (z - p[1])*dz)/l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    var d = hyp(x - p[0] - dx*t, z - p[1] - dz*t);
+    if(!best || d < best.d) best = {d: d, s: a.S[i - 1] + Math.sqrt(l2)*t};
+  }
+  return best;
+}
+// its top at arc length s over ground gy: the landside's 0.15 on the land, and up its ramp (grade) to the platform's
+// service road at the platform's edge (sEdge) where the land falls away
+function airsideTop(a, s, gy){ return Math.max(gy + 0.15, a.yEdge - Math.max(0, a.sEdge - s)*a.grade); }
+function groundOf(ground, x, z){ var h = typeof ground === "function" ? +ground(x, z) : +ground; return isFinite(h) ? h : 0; }
+// the entrance road's drawn top (m) at (x, z) off the platform (ground: the terrain's height, a function or a number),
+// or null off it and on the platform (floorAt's there)
+function airsideY(L, x, z, ground){
+  var g = geom(L), a = g && g.air; if(!a) return null;
+  x = +x; z = +z;
+  if(!isFinite(x) || !isFinite(z) || !inBox(a.bb, x, z)) return null;
+  var q = airsideNear(a, x, z);
+  if(!q || q.d > a.hw || q.s > a.sEdge) return null;
+  return airsideTop(a, q.s, groundOf(ground, x, z));
+}
+// on the parapet of its causeway (just outside the road, where it stands over 0.3 m above the land): what a vehicle
+// runs into instead of driving off the side
+function airsideWall(L, x, z, ground){
+  var g = geom(L), a = g && g.air; if(!a) return false;
+  x = +x; z = +z;
+  if(!isFinite(x) || !isFinite(z) || !inBox(a.bb, x, z)) return false;
+  var q = airsideNear(a, x, z);
+  if(!q || q.d <= a.hw || q.d > a.hw + AS_WALL || q.s >= a.sEdge) return false;
+  var gy = groundOf(ground, x, z);
+  return airsideTop(a, q.s, gy) - gy > AS_RAISED;
 }
 function onRunway(g, x, z, extra){
   var r = g.rw; if(!r) return false;
@@ -509,6 +642,8 @@ function timetable(world, dests, fromMs, toMs){
 }
 
 HQV.hqAirfield = {layout: layout, uturns: uturns, toFrame: toFrame, toWorld: toWorld, floorAt: floorAt, onPavement: onPavement, shoulderAt: shoulderAt,
+                  landsideAt: landsideAt, landsideRoads: landsideRoads, curbDoor: curbDoor, airsideY: airsideY, airsideWall: airsideWall,
+                  airsideTop: function(L, s, gy){ var g = geom(L); return g && g.air ? airsideTop(g.air, +s || 0, +gy || 0) : null; }, AS_WALL: AS_WALL, AS_RAISED: AS_RAISED,
                   end: end, runwayEnd: runwayEnd, windAt: windAt, timetable: timetable, slotBase: slotBase, slotAt: slotAt, periodAt: periodAt,
                   hash: hash, SLOT: SLOT, SLOTS: SLOTS, PERIOD: PERIOD, GAP: GAP, OFF: OFF, AIRWAYS: AIRWAYS, AIRLINES: AIRLINES, COMMUTER: COMMUTER};
 })();

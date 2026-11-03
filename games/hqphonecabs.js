@@ -321,7 +321,7 @@ function renderDealer(el, host, nav){
     var acts = mk("div", "pc-acts", body);
     btn(acts, "Call it", "pc-btn pc-primary", function(){
       var ok = false; try { ok = host.vehicles && host.vehicles.call(r.key || ("own:" + r.id)) !== false; } catch(e){ ok = false; }
-      st.textContent = ok ? "Your " + name + " is on its way." : "It can't come here: open the City and call it with C.";
+      st.textContent = ok ? "Your " + name + " is on its way." : "It can't come here right now: in the City, press C to call it.";
       try { announce(st.textContent); } catch(e){}
     });
     btn(acts, "Not now", "pc-btn", function(){ if(nav && nav.back) nav.back(); });

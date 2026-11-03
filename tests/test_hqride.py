@@ -235,6 +235,22 @@ pc.currentTime += 5; var un2 = R.sfx(pc, "motor", {speed: 4}), pn0 = pc.made.n; 
 out.placed = {two: two, fwd: pc.made.n === pn0 && un2 !== un && un2.alive() && !un.alive(), revived: (pa.set({pos: {x: 0, z: 12}}), pa.alive())};
 out.sfx = {sounds: sounds, mute: R.sfx(fakeCtx(), "door-chime", {mute: true}), noCtx: R.sfx(null, "door-chime"), unknown: R.sfx(fakeCtx(), "explosion"), zero: R.sfx(fakeCtx(), "ring", {gain: 0})};
 
+// ---- [transit pass] the wallet: buy, tap, run out; every fare 0 coins ----
+(function(){
+  var Wl = R.wallet, M = 60000, t0 = Date.UTC(2026, 9, 30, 10, 0, 0);   // 15:30 in the City (IST)
+  Wl.clear();
+  var none = Wl.tap(t0), single = Wl.buy("single", t0), best0 = Wl.best(t0);
+  var tap1 = Wl.tap(t0 + M), until1 = (Wl.list(t0 + M)[0].until - t0)/M, st1 = Wl.status(Wl.list(t0 + 30*M)[0], t0 + 30*M), tap2 = Wl.tap(t0 + 60*M);
+  var gone = Wl.list(t0 + 92*M).length, bestGone = Wl.best(t0 + 92*M);
+  var day = Wl.buy("day", t0 + 100*M), card = Wl.buy("card", t0 + 100*M), card2 = Wl.buy("card", t0 + 101*M);
+  var bestDay = Wl.best(t0 + 102*M).item.kind, dayUntil = (day.until - Date.UTC(2026, 9, 30, 18, 30, 0))/M;
+  var afterDay = Wl.best(day.until + 1).item.kind;
+  out.wallet = {none: none.ok, noneText: none.text, single: single.kind, ready0: best0.ready, tap1: tap1.ok, tap1Text: tap1.text, until1: until1,
+    st1: st1, tap2: tap2.ok, taps: (tap2.item || {}).taps, gone: gone, bestGone: bestGone, cardSame: card.id === card2.id, bestDay: bestDay, dayUntil: dayUntil,
+    dayStatus: Wl.status(day, t0 + 102*M), afterDay: afterDay, fares: Wl.ORDER.map(function(k){ return Wl.FARES[k].coins; }), fareText: Wl.fareText(0),
+    nobad: Wl.buy("gold", t0)};
+  Wl.clear();
+})();
 // ---- tickets and achievements: persisted, and surviving a throwing localStorage ----
 out.sessionAch = R.achievements.list().filter(function(a){ return a.done; }).map(function(a){ return a.id; }).sort();
 R.achievements.reset();
@@ -281,6 +297,28 @@ class HqRideTest(unittest.TestCase):
 
     def close(self, a, b, tol=1e-6, msg=None):
         self.assertLessEqual(abs(a - b), tol, msg or "%r != %r" % (a, b))
+
+    # ---- [transit pass] the wallet ----
+    def test_wallet_buy_tap_expire(self):
+        w = self.r["wallet"]
+        self.assertFalse(w["none"])                                 # no ticket: the gate says where to buy one
+        self.assertIn("machines", w["noneText"])
+        self.assertEqual(w["single"], "single")
+        self.assertFalse(w["ready0"])                               # an unused single starts at its first tap
+        self.assertTrue(w["tap1"])
+        self.assertEqual(w["until1"], 91)                           # 90 minutes from the tap (a minute after buying)
+        self.assertEqual(w["st1"], "valid 61 min more")
+        self.assertTrue(w["tap2"])                                  # a change within the 90 minutes: the same single
+        self.assertEqual(w["taps"], 2)
+        self.assertEqual(w["gone"], 0)                              # run out: dropped
+        self.assertIsNone(w["bestGone"])
+        self.assertTrue(w["cardSame"])                              # one Claude Card
+        self.assertEqual(w["bestDay"], "day")                       # a day pass before the card
+        self.assertEqual(w["dayUntil"], 0)                          # the City's midnight (18:30 UTC)
+        self.assertEqual(w["dayStatus"], "valid until 00:00")
+        self.assertEqual(w["afterDay"], "card")
+        self.assertEqual(w["fareText"], "0 coins")
+        self.assertIsNone(w["nobad"])
 
     # ---- registry ----
     def test_registry(self):
@@ -466,7 +504,10 @@ class HqRideTest(unittest.TestCase):
             self.assertNotIn("Math.random", src, f)
             self.assertNotIn("innerHTML", src, f)
             self.assertNotRegex(src, r"https?://", f)
-            self.assertNotIn("coins", src, f)                      # D4: everything is free
+            if f == "hqcommute.js":
+                self.assertNotIn("coins", src, f)                  # D4: everything is free
+        # [transit pass] D4 holds: the tickets are real but every fare is 0 coins
+        self.assertEqual(self.r["wallet"]["fares"], [0, 0, 0])
 
     # ---- voice ----
     def test_announcer_only_local_voices(self):

@@ -272,6 +272,21 @@ function garageOf(lot, p, h, wings, grand){
   if(st){ var F = garageFits(lot, p, st, grandOf(lot, p)); if(F.ok) return toGarage(st, F.way); }
   return garagePlace(lot, p, wings, grand);
 }
+// What an HQ lot's finish (hqcityparts lotDress) stands clear of, in the lot's frame [[x, z, hx, hz]]: the building at
+// its grand with both wings (the podium first), the walk to its door, and the garage g (the bay, the apron out of its door,
+// its driveway's legs)
+function lotKeep(grand, g){
+  var keep = hqFoot(grand || 0, 2).concat([[0, HQ_DOOR + 6, 1.6, 6]]);
+  if(!g || !isFinite(+g.x) || !isFinite(+g.z)) return keep;
+  var G = HQV.hqLotExtras.garage, r = garageR(g), u = GDIR[r], odd = r % 2 === 1;
+  keep.push([g.x, g.z, (odd ? G.d : G.w)/2 + 0.3, (odd ? G.w : G.d)/2 + 0.3]);
+  keep.push([g.x + u[0]*(G.d/2 + GARAGE_CLEAR/2), g.z + u[1]*(G.d/2 + GARAGE_CLEAR/2), odd ? GARAGE_CLEAR/2 : G.w/2, odd ? G.w/2 : GARAGE_CLEAR/2]);
+  var way = Array.isArray(g.way) ? g.way : [];
+  for(var i = 1; i < way.length; i++){ var a = way[i - 1], b = way[i];
+    keep.push([(a.x + b.x)/2, (a.z + b.z)/2, Math.abs(b.x - a.x)/2 + GARAGE_WAY/2, Math.abs(b.z - a.z)/2 + GARAGE_WAY/2]); }
+  if(r === 0 && way.length === 1) keep.push([g.x, (g.z + way[0].z)/2 + G.d/2, GARAGE_WAY/2, Math.abs(way[0].z - g.z)/2 + 1]);
+  return keep;
+}
 // How much of its lot an HQ may fill (the HQ revamp; 3.19: in eighths, the tower's plan from 11 x 8 m to 25 x 14 m): the
 // largest step at which every part of the footprint that fitted inside the lot's polygon at the smallest size still
 // does, for every wing count, and a car-lift bay still fits beside it (0 when not even the smallest podium fits). The
@@ -314,12 +329,14 @@ function placeView(site){
 }
 // a point in a placed thing's own frame (lx, lz; +z is its front) -> the world
 function toWorld(p, lx, lz){ var cr = Math.cos(p.rot), sr = Math.sin(p.rot); return {x: p.x + lx*cr + lz*sr, z: p.z - lx*sr + lz*cr}; }
-// the HQ entry whose lot holds (x, z) (m), else null. entries: [{lot, ...}]
+// the HQ entry whose lot holds (x, z) (m), else null. entries: [{lot, ...}] (a lot with a polygon: inside it, as a
+// v5 lot turned to its block's frame; else its w x d box)
 function pickAt(entries, x, z){
   var xc = x*100, zc = z*100;
   for(var i = 0; i < (entries || []).length; i++){
     var l = entries[i].lot;
-    if(l && Math.abs(xc - l.x) <= l.w/2 && Math.abs(zc - l.z) <= l.d/2) return entries[i];
+    if(!l) continue;
+    if(l.poly && l.poly.length >= 3 ? inRing(polyOf(l), x, z) : Math.abs(xc - l.x) <= l.w/2 && Math.abs(zc - l.z) <= l.d/2) return entries[i];
   }
   return null;
 }
@@ -351,6 +368,26 @@ function snapShadow(p, dir, texel){
 // what is part of an HQ's look (its building is rebuilt when it changes); crew counts are not
 function hqKey(E){ var h = E.h || {}; return JSON.stringify([h.userId, (E.lot || {}).id, h.level, h.look, h.style || null, h.cos, !!h.isYou, h.garage || null]); }   // [3.33] a moved garage too
 function crewText(h){ var crew = (h && h.crew) || {}; return (h && h.isYou ? "You · " : "") + (crew.working | 0) + " working · " + (crew.needs | 0) + " need them"; }
+// [lot marks] An HQ lot's number (its rank + 1, the same for everyone), its owner's display name (as typed: canvas text and
+// textContent only), what the HUD says as you step onto it, and the line the minimap shows while you stand on it
+function lotNo(lot){ return ((lot && lot.rank) | 0) + 1; }
+function ownerName(h){ var s = h && (h.trainerName || h.displayName || h.handle); return typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, 28) : ""; }
+function lotNotice(lot, h){
+  var n = lotNo(lot);
+  if(h && h.isYou) return "Your lot (Lot " + n + ")";
+  if(h) return "You are on " + (ownerName(h) || "someone") + "'s lot (Lot " + n + ")";
+  return "Lot " + n + " is available";
+}
+function lotLine(lot, h){
+  var n = lotNo(lot);
+  return h && h.isYou ? "Your lot · Lot " + n : h ? "Lot " + n + " · " + (ownerName(h) || "Taken") : "Lot " + n + " · Available";
+}
+// what stands on a lot's finish (hqcityparts dressPlan) as keep boxes [x, z, hx, hz] (the lot's frame), for the plaque
+function dressKeep(D){
+  return ((D && D.plan) || []).filter(function(o){ return o && o.kind !== "lawn" && o.kind !== "forecourt"; }).map(function(o){
+    var r = o.kind === "fountain" ? (o.r || 1.8) + 0.3 : o.kind === "lamp" || o.kind === "flag" ? 0.3 : 0.6;   // as dressBlocked's, a little more
+    return o.kind === "car" ? [o.x, o.z, 2.15, 1.0] : [o.x, o.z, r, r]; });
+}
 // A mesh mergeStatic must leave alone: doors and anything tagged animated or fading, materials
 // something changes later (lit by night, blinking, scrolling, a canvas), see-through ones, and
 // several materials on one mesh. Plain opaque stone, steel and paint merge.
@@ -444,8 +481,12 @@ function cityStats(W, tier, st){
           population: num(st.population), treasury: num(st.treasury), specialty: typeof st.specialty === "string" ? st.specialty : null,
           happiness: parts.length ? Math.round(sum/parts.length*100) : null, parts: parts, homes: lots.length};
 }
-// where a site's door is (m): its centre, out along its front past its depth
-function doorOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 + f[0]*r, z: s.z/100 + f[1]*r, yaw: Math.atan2(f[0], f[1])}; }
+// where a site's door is (m): its centre, out along its front past its depth; the airport's, its drop-off curb
+// (HQV.hqAirfield.curbDoor, as HQV.hqnav's)
+function doorOf(s){
+  var cd = s && s.kind === "airport" && HQV.hqAirfield && HQV.hqAirfield.curbDoor ? HQV.hqAirfield.curbDoor(s) : null; if(cd) return cd;
+  var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 + f[0]*r, z: s.z/100 + f[1]*r, yaw: Math.atan2(f[0], f[1])};
+}
 // a site's back, a metre out (m): a dock's or a port's land side, where its front reaches out over the water
 function backOf(s){ var f = frontOf(s), r = (s.d || 0)/200 + 1; return {x: s.x/100 - f[0]*r, z: s.z/100 - f[1]*r}; }
 // the travel terminal (dock, port, transit hub, airport) whose door is within reach of (x, z), else null; a dock
@@ -677,7 +718,8 @@ HQV.hqCity3d = {assign: assign, placeLot: placeLot, placeView: placeView, toWorl
   snapShadow: snapShadow, hqKey: hqKey, keepMesh: keepMesh, HQ_DOOR: HQ_DOOR, VIEW_DOOR: VIEW_DOOR, HQ_FAR: HQ_FAR,
   COMMONS: COMMONS, COMMONS_V2: COMMONS_V2, isCommons: isCommons, olderOf: olderOf, samePlace: samePlace, ownerOf: ownerOf, islandOf: islandOf, worldOk: worldOk, frontOf: frontOf, assignRanks: assignRanks,
   assignIsland: assignIsland, garagePlace: garagePlace, garageFits: garageFits, garageOf: garageOf, garageStored: garageStored, garageLocal: garageLocal,
-  toGarage: toGarage, garageR: garageR, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  toGarage: toGarage, garageR: garageR, lotKeep: lotKeep, snapHalf: snapHalf, lotRing: lotRing, GARAGE_CLEAR: GARAGE_CLEAR, GARAGE_WAY: GARAGE_WAY, grandOf: grandOf, roomOf: roomOf, hqFoot: hqFoot, civicSites: civicSites, doorOf: doorOf, backOf: backOf, terminalAt: terminalAt, stopMenu: stopMenu,
+  lotNo: lotNo, ownerName: ownerName, lotNotice: lotNotice, lotLine: lotLine, dressKeep: dressKeep,
   waitText: waitText, travelPlaces: travelPlaces, netRoom: netRoom, simZones: simZones, cityStats: cityStats, citySound: citySound};
 // Which world the next City is built on, and where you arrive in it (games/hq3d.js goCity). A trip
 // that is still landing (a plane) rides across the rebuild in NAV.trip.
@@ -756,7 +798,7 @@ HQV.hqWorlds.city3d = function(c, w){
   paveT.t.wrapS = paveT.t.wrapT = THREE.RepeatWrapping; paveT.t.repeat.set(7, 5);
 
   var staticG = new THREE.Group(), hqG = new THREE.Group();
-  var hqs = [], views = [], civic = [], freeLots = [];   // placed things (entries below)
+  var hqs = [], views = [], civic = [], freeLots = [], freeMarks = [];   // placed things (entries below); freeMarks: the free lots' marks
   var lampGlows = [], parkBikes = [], bikes = [], cars = [];
   var fount = null, skate = null, plaza = {x: 0, y: 0, z: 0}, sig = null;
   var bIdx = null;                                      // building lots by 64 m bucket: [{id, min, max}]
@@ -927,8 +969,6 @@ HQV.hqWorlds.city3d = function(c, w){
 
   /* ---------- the HQs: one rebuilt only when its look, level, cos or isYou changes ---------- */
   var slabM = new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9});
-  var freeT = c.canvasTex(256, 64, function(g){ g.fillStyle = "#0b1622"; g.fillRect(0, 0, 256, 64); g.fillStyle = "#e9eff3"; g.font = "700 34px system-ui, sans-serif";
-    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("FREE LOT", 128, 34); });
   var lotsG = null, lotsSig = null, forceYou = false;
   // HQV.hqMerge.mergeStatic (games/hqmerge.js) on g, sub-groups and all, when it is loaded.
   // roots: what stays as it is (with everything under it); B: a building whose animate() moves
@@ -981,7 +1021,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(o.geometry) keep[o.geometry.uuid] = 1;
       mats(o).forEach(function(m){ keep[m.uuid] = 1; texOf(m).forEach(function(t){ keep[t.uuid] = 1; }); });
     });
-    [paveT.t, freeT.t, slabM].forEach(function(t){ keep[t.uuid] = 1; });
+    [paveT.t, slabM].forEach(function(t){ keep[t.uuid] = 1; });
     function drop(x){ if(x && !keep[x.uuid]) gone[x.uuid] = x; }
     g.traverse(function(o){
       if(o.geometry && !o.isSprite) drop(o.geometry);          // a sprite's geometry is three's shared quad
@@ -993,8 +1033,16 @@ HQV.hqWorlds.city3d = function(c, w){
   function building(E){
     var h = E.h, cos = h.cos || {}, crew = h.crew || {}, name = HQV.hqCityName(h), p = E;
     var g = new THREE.Group(); g.position.set(p.x, p.y + PAD_UP, p.z); g.rotation.y = p.rot; hqG.add(g); E.g = g;
-    var pad = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}));
-    pad.rotation.x = -PI/2; pad.position.set(0, 0.02, 1.5); pad.receiveShadow = true; g.add(pad);
+    // the paving: the whole lot (every HQ lot the same size), marble from the top finish tier; else the old 30 x 15 m pad
+    var R = lotRing(E.lot, p), padM = new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}), pad;
+    if(R && R.length >= 3 && parts.dressTier && parts.dressTier(h.level) >= 3) padM = new THREE.MeshStandardMaterial({color: 0xf1ede6, roughness: 0.3, metalness: 0.05});
+    if(R && R.length >= 3){
+      var sh = new THREE.Shape(); R.forEach(function(q, n){ if(n) sh.lineTo(q[0], -q[1]); else sh.moveTo(q[0], -q[1]); });
+      var pg = new THREE.ShapeGeometry(sh), uv = pg.attributes.uv, pp = pg.attributes.position;
+      for(var ui = 0; ui < uv.count; ui++) uv.setXY(ui, pp.getX(ui)/30, pp.getY(ui)/15);   // the old pad's tile size
+      pad = new THREE.Mesh(pg, padM); pad.rotation.x = -PI/2; pad.position.set(0, padM.map ? 0.02 : parts.DRESS_Y, 0);   // marble: on the lot's own ground
+    } else { pad = new THREE.Mesh(new THREE.PlaneGeometry(30, 15), padM); pad.rotation.x = -PI/2; pad.position.set(0, 0.02, 1.5); }
+    pad.receiveShadow = true; g.add(pad);
     if(h.isYou){ var ring = new THREE.Mesh(new THREE.RingGeometry(14.6, 15.1, 64), new THREE.MeshBasicMaterial({color: COL.amber, transparent: true, opacity: 0.5, toneMapped: false}));
       ring.rotation.x = -PI/2; ring.position.set(0, 0.04, 0.5); ring.scale.y = 0.45; g.add(ring); }
     var B = HQV.hqBuilding(c, {
@@ -1019,6 +1067,12 @@ HQV.hqWorlds.city3d = function(c, w){
     var X = E.garage ? parts.lotExtras(c, g, HQV.hqPlated ? HQV.hqPlated(HQV.hqLotColors(h.look), h) : HQV.hqLotColors(h.look), p.rot, function(x, z){ return toWorld(p, x, z); }, ae, h.userId, E.garage, h.isYou)
                      : {glows: [], car: null, items: []};
     E.glows = X.glows; E.car = X.car; E.items = X.items; E.lift = X.lift || null;
+    // the lot's finish by its owner's level (lawns, trees, lamps; forecourt, fountain, flags; marble, gold, valet cars)
+    E.dress = R && R.length >= 3 && parts.lotDress ? parts.lotDress(c, g, R, h.level | 0, h.userId, lotKeep(B.grand, E.garage), night) : null;
+    if(E.dress) E.glows = E.glows.concat(E.dress.glows);
+    // [lot marks] its kerb all round and its plaque at the street: the lot's number and its owner (yours amber)
+    E.marks = R && R.length >= 3 && parts.lotMarks ? parts.lotMarks(c, g, R, {n: lotNo(E.lot), owner: ownerName(h) || name, mine: !!h.isYou,
+      keep: lotKeep(B.grand, E.garage).concat(dressKeep(E.dress)), night: false}) : null;   // unlit until merged (below)
     (X.hits || []).forEach(function(o){ hits.push(o); B.hits.push(o); });          // [basement 3.4] the car-lift bay (unbuild drops them with B's)
     if(X.move){ hits.push(X.move); B.hits.push(X.move); }                          // [3.33] your bay's Move garage plate
     (X.doors || []).forEach(function(d){ if(d.front) d.front.y = p.y || 0; doors.push(d); B.doors.push(d); });
@@ -1028,6 +1082,7 @@ HQV.hqWorlds.city3d = function(c, w){
     var roots = {}; roots[B.g.uuid] = 1; X.items.forEach(function(b){ roots[b.g.uuid] = 1; });
     merge(g, roots);
     tagFade(E);
+    if(E.marks) E.marks.setNight(night);
   }
   // an HQ's crew changed: its windows and the line under its name, not its building
   function crewUpdate(E, h){
@@ -1095,7 +1150,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(island()) return assignIsland(list, owner, me, W);
     return assignRows ? assignRanks(list, assignRows, W) : assign(list, W);
   }
-  // every HQ lot's paved slab (one draw call), the empty ones' "Free lot" signs and the City's
+  // every HQ lot's paved slab (one draw call), the empty ones' marks ("Available" plaques) and the City's
   // name: rebuilt when which lots are taken changes
   function buildLots(){
     var taken = {}; hqs.forEach(function(E){ taken[E.lot.id] = 1; });
@@ -1114,19 +1169,18 @@ HQV.hqWorlds.city3d = function(c, w){
       if(!taken[l.id]) freeLots.push(l);
     });
     slabs.count = V2 ? 0 : lots.length; slabs.receiveShadow = true; if(!V2) lotsG.add(slabs);   // v2: the lots' own ground
-    if(freeLots.length){
-      var plate = new THREE.InstancedMesh(new THREE.BoxGeometry(2.4, 0.6, 0.08), new THREE.MeshBasicMaterial({map: freeT.t, toneMapped: false}), freeLots.length);
-      var post = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), mat(0x2b3a48, {metalness: 0.6}), freeLots.length);
-      var up = new THREE.Vector3(0, 1, 0);
-      freeLots.forEach(function(l, n){
-        var f = turn(l), y = ((l.door || [])[1] || 0)/100 + PAD_UP, xf = l.x/100, zf = l.z/100 + f.s*(l.d/200 - 1.5), rot = f.rot;
-        if(V2 && l.front){ var fv = frontOf(l), dd = Math.max(1, Math.min(l.w, l.d)/200 - 1.5); xf = l.x/100 + fv[0]*dd; zf = l.z/100 + fv[1]*dd; rot = Math.atan2(fv[0], fv[1]); }
-        q.setFromAxisAngle(up, rot);
-        m4.compose(new THREE.Vector3(xf, y + 1.05, zf), q, one); plate.setMatrixAt(n, m4);
-        m4.compose(new THREE.Vector3(xf, y + 0.45, zf), q, one); post.setMatrixAt(n, m4);
-      });
-      lotsG.add(plate); lotsG.add(post);
-    }
+    // [lot marks] each free lot: its kerb and an "Available" plaque with its number (the kerbs and bases merged into a few
+    // draws; the plaques, each its own texture, drawn only near the camera: lotsStep)
+    freeMarks = [];
+    if(parts.lotMarks) freeLots.forEach(function(l){
+      var p = placeLot(l), R = lotRing(l, p);
+      if(!R || R.length < 3) return;
+      var fg = new THREE.Group(); fg.position.set(p.x, p.y + PAD_UP, p.z); fg.rotation.y = p.rot; lotsG.add(fg);
+      var M = parts.lotMarks(c, fg, R, {n: lotNo(l), owner: "", mine: false, keep: [[0, HQ_DOOR + 6, 1.6, 6]], night: false});
+      freeMarks.push({x: p.x, z: p.z, rot: p.rot, g: fg, marks: M});
+    });
+    merge(lotsG);                                          // built unlit, so every kerb merges; then lit as the hour is
+    freeMarks.forEach(function(F){ F.marks.setNight(night); });
     var nb = hqs.length;
     var cname = !V2 ? "Arena City" : island() ? String((cityState && cityState.name) || "An island").slice(0, 32) : "The Commons";
     var cityL = c.label(cname + (V2 && island() ? "" : " · " + nb + " HQ" + (nb === 1 ? "" : "s")), HEX.amber, 1.3); cityL.position.set(plaza.x, plaza.y + 6.4, plaza.z); lotsG.add(cityL);
@@ -1140,15 +1194,19 @@ HQV.hqWorlds.city3d = function(c, w){
   }
 
   function applyTime(){
-    hqs.concat(views).forEach(function(E){ if(E.B) E.B.setNight(night); });
+    hqs.concat(views).forEach(function(E){ if(E.B) E.B.setNight(night); if(E.marks) E.marks.setNight(night); });
+    freeMarks.forEach(function(F){ F.marks.setNight(night); });                       // [lot marks] the kerbs glow a little by night
     lampGlows.forEach(function(g){ g.material.opacity = night ? 0.85 : 0.08; });
   }
-  function blocked(x, z){
+  // ride (optional): whether the body asking is a vehicle (hq3d bodyHits); without it, whether you ride now
+  function blocked(x, z, ride){
     if(!W) return true;
     var tu = inTunnel(x, z); if(tu) return WD.blockedAt(W, x, z, tu.y0) || trafficAt(x, z);   // [3.30] in the tunnel under the airport: its walls, the traffic
+    if(apL && apRideBlocked(x, z, ride)) return true;                         // AIR: a vehicle: the terminal hall, the platform's land edge
     if(apL && AF.floorAt(apL, x, z) != null) return apBlocked(x, z) || !!apPlaneAt(x, z, 0.4);   // AIR: the platform (past the world's edge too), its aircraft
     if(apP && apBlocked(x, z)) return true;                                    // AIR: the airport's buildings on land
     if(WD.blockedAt(W, x, z, deckLevel(x, z))) return true;                 // [3.29] a flyover's piers below it, its parapets on it
+    if(HQV.hqPortals && HQV.hqPortals.blocked(W, x, z)) return true;         // [v5] a tunnel mouth's fence, walls and headwall
     if(wb && wb.furnitureAt && wb.furnitureAt(x, z) && !(play && !playSkip && play.through && play.through(x, z))) return true;   // [city life] benches, stalls, cafe tables ([play-street] a table, bin or stall you drive into fast goes over)
     if(bridges && bridges.blockedAt(x, z)) return true;                      // an opening bridge's gap or barrier
     if(sea && !sea.land(x, z)) return true;                                    // the sea: take a boat
@@ -1176,6 +1234,14 @@ HQV.hqWorlds.city3d = function(c, w){
         var q = garageLocal(GP, lx, lz), k = L.car && garageLocal(GP, L.car.g.position.x, L.car.g.position.z);   // [3.33] turned into the bay's own frame (r)
         if(HQV.hqLotExtraBlocked(q.x, q.z, !L.car || L.car.g.visible, k && {x: k.x, z: k.z, yaw: L.car.g.rotation.y*(GP.s === -1 ? -1 : 1)})) return true;
       }
+      if(L.dress && parts.dressBlocked(L.dress, lx, lz)) return true;                // its lot's trees, lamps, fountain, planters, flags, valet cars
+      if(L.marks && parts.dressBlocked(L.marks, lx, lz)) return true;                // [lot marks] its plaque
+    }
+    for(var fi = 0; fi < freeMarks.length; fi++){                                     // [lot marks] a free lot's plaque
+      var FM = freeMarks[fi], fx0 = x - FM.x, fz0 = z - FM.z;
+      if(Math.abs(fx0) > 30 || Math.abs(fz0) > 30) continue;
+      var fc = Math.cos(-FM.rot), fsn = Math.sin(-FM.rot);
+      if(parts.dressBlocked(FM.marks, fx0*fc + fz0*fsn, -fx0*fsn + fz0*fc)) return true;
     }
     for(var j = 0; j < civic.length; j++){
       var C = civic[j];
@@ -1192,6 +1258,8 @@ HQV.hqWorlds.city3d = function(c, w){
     var dy = decks.length ? HQV.hqCivic.deckAt(decks, x, z) : null;        // a pier's deck, over the water
     var ay = air ? air.groundAt(x, z) : null; if(ay != null) return ay;    // air: the helipads, the base's apron
     var fy = apGroundY(x, z); if(fy != null) return fy;                    // AIR: the airfield's platform, the terminal, the gallery
+    var ly = apL ? AF.landsideAt(apL, x, z) : null; if(ly != null) return WD.heightAt(W, x, z) + ly;   // AIR: the landside's roads and curb walk, as drawn
+    var ay2 = apL && AF.airsideY ? AF.airsideY(apL, x, z, apHeight) : null; if(ay2 != null) return ay2;   // AIR: the airside entrance, up its causeway
     var gy = dy != null ? dy : WD.groundAt(W, x, z, false, deckLevel(x, z)), sy = stApi ? stApi.groundAt(x, z) : null;   // [stunts] their decks and ramps
     return sy != null && sy > gy ? sy : gy;
   }
@@ -1213,15 +1281,24 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // the avatar's height when it is in a tunnel or cutting (the camera's floor and its ray then stay down there), else undefined
   // [3.36] below the street: how far along from -> to the camera may go (0..1) before the ceiling over your floor
-  // (UNDER_HEAD m up: the halls are 3.6 m, the platforms 4.5) or a wall (no walkable floor a step from yours)
-  var UNDER_HEAD = 3.3;
+  // [3.36] below the street, on the level you are on (the deck under your feet, not the first floor found at a point:
+  // a hall can stand over a platform): its floor, its ceiling (UNDER_CEIL by the deck's kind) and what stops the camera
+  var UNDER_CEIL = {platform: 4.5}, UNDER_CEIL_DEF = 3.6, UNDER_STEP = 2.5;
+  function underFeet(){ var a = c.avatar && c.avatar(); return a && a.hy != null && isFinite(a.hy) ? a : null; }
+  function underDeck(x, z){
+    var a = underFeet(); if(!a || !transit.floorAt) return null;
+    return transit.floorAt(x, z, a.hy) || transit.floorAt(a.x, a.z, a.hy) || {y: a.hy, kind: "hall"};
+  }
+  function underCeil(d){ return d.y + (UNDER_CEIL[d.kind] || UNDER_CEIL_DEF); }
+  // how far along from -> to the camera may go (0..1): to the ceiling of your deck, and to where your level ends (a wall,
+  // or a floor more than UNDER_STEP from yours); over the track, inside the station, is open
   function underHit(from, to){
-    var f0 = transit.ground(from.x, from.z); if(f0 == null || !isFinite(f0)) return 1;
-    var t = 1, cy = f0 + UNDER_HEAD;
+    var a = underFeet(), d0 = a && underDeck(a.x, a.z); if(!d0) return 1;
+    var t = 1, cy = underCeil(d0) - 0.2;
     if(to.y > cy && from.y < cy) t = (cy - from.y)/(to.y - from.y);
-    for(var i = 1; i <= 12; i++){
-      var u = i/12*t, x = from.x + (to.x - from.x)*u, z = from.z + (to.z - from.z)*u, f = transit.ground(x, z);
-      if(f == null || !isFinite(f) || Math.abs(f - f0) > 2.5) return Math.max(0, (i - 1)/12*t);
+    for(var i = 1; i <= 16; i++){
+      var u = i/16*t, x = from.x + (to.x - from.x)*u, y = from.y + (to.y - from.y)*u, z = from.z + (to.z - from.z)*u, f = transit.floorAt(x, z, d0.y);
+      if(f ? Math.abs(f.y - d0.y) > UNDER_STEP : !transit.inside(x, Math.min(y, d0.y + 1), z)) return Math.max(0, (i - 1)/16*t);
     }
     return t;
   }
@@ -1973,15 +2050,44 @@ HQV.hqWorlds.city3d = function(c, w){
     return CRAFT.brandHex ? CRAFT.brandHex() : 0xe2805e;
   }
   // the platform, the approach piers, a building's floor: a walking floor (yRef: the walker's height; only the avatar
-  // has one, so a car on Ring Road 5 under the skybridge stays on the road)
-  function apFloor(x, z, yRef){
+  // has one, so a car on Ring Road 5 under the skybridge stays on the road); drive: you in a vehicle, which has no
+  // floor in the buildings (the nave, the skybridge, the gallery are walked). On the platform, its drawn layer's top
+  // (hqairport3d Y: the apron, a taxiway, the runway, the service road over its slab at L.y)
+  function apFloor(x, z, yRef, drive){
     if(!apL) return null;
-    var b = apP ? ABL.floorAt(apP, x, z, yRef == null ? -Infinity : yRef) : null;
+    var b = apP && !drive ? ABL.floorAt(apP, x, z, yRef == null ? -Infinity : yRef) : null;
     if(b != null) return b;
-    return AF.floorAt(apL, x, z);
+    var f = AF.floorAt(apL, x, z), pv = f != null && AP3 && AP3.Y ? AF.onPavement(apL, x, z) : null;
+    return f != null && pv ? f + (+AP3.Y[pv === "runway" ? "rwy" : pv === "taxiway" ? "taxi" : pv] || 0) : f;
   }
   function apNearMe(x, z){ var me = c.avatar && c.avatar(); return !!me && Math.abs(x - me.x) < 4 && Math.abs(z - me.z) < 4; }
-  function apGroundY(x, z){ return apL ? apFloor(x, z, apNearMe(x, z) ? apYRef : null) : null; }
+  function apGroundY(x, z){ var me = apL && apNearMe(x, z); return apL ? apFloor(x, z, me ? apYRef : null, me && riding()) : null; }
+  function riding(){ var m = c.motion && c.motion(); return !!(m && m.ride && !m.air); }
+  // AIR: what only a vehicle runs into: the terminal hall (its nave is walked, its glass front drawn only) and the
+  // platform's land edge (the fence over its retaining wall: a drop of up to 9 m, or a step up onto the slab);
+  // ride: the caller's (hq3d bodyHits), else whether you ride now
+  var AP_FENCE_R = 0.6;
+  function apRideBlocked(x, z, ride){
+    var hit = !!(apP && ABL.hallAt && ABL.hallAt(apP, x, z, 0.3)) || apFenceAt(x, z)
+      || !!(apB && apB.boomAt && apB.boomAt(x, z))                                          // the security gate's boom, down
+      || !!(AF.airsideWall && AF.airsideWall(apL, x, z, apHeight));              // the entrance causeway's parapets
+    return hit && (ride != null ? !!ride : riding());
+  }
+  var apFence = null, apFenceOf = null;
+  function apFenceAt(x, z){
+    var F = ap3 && ap3.plan && ap3.plan.fence; if(!F || !F.length) return false;
+    if(apFenceOf !== F){
+      apFenceOf = F;
+      apFence = F.map(function(f){ var a = f[0], b = f[1]; return {a: a, b: b, x0: Math.min(a[0], b[0]) - AP_FENCE_R, x1: Math.max(a[0], b[0]) + AP_FENCE_R,
+                                                                      z0: Math.min(a[1], b[1]) - AP_FENCE_R, z1: Math.max(a[1], b[1]) + AP_FENCE_R}; });
+    }
+    for(var i = 0; i < apFence.length; i++){
+      var e = apFence[i]; if(x < e.x0 || x > e.x1 || z < e.z0 || z > e.z1) continue;
+      var dx = e.b[0] - e.a[0], dz = e.b[1] - e.a[1], l2 = dx*dx + dz*dz, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - e.a[0])*dx + (z - e.a[1])*dz)/l2)) : 0;
+      if(Math.hypot(x - e.a[0] - dx*t, z - e.a[1] - dz*t) <= AP_FENCE_R) return true;
+    }
+    return false;
+  }
   function apBlocked(x, z){
     if(!apP) return false;
     var y = apNearMe(x, z) && apYRef != null ? apYRef : (apL.ySite != null ? apL.ySite : 0);
@@ -2003,6 +2109,11 @@ HQV.hqWorlds.city3d = function(c, w){
     if(c.prewarm) [ap3, apB, apV, apFleet && apFleet.jet, apFleet && apFleet.commuter].forEach(function(m){ if(m && m.g) c.prewarm(m.g); });
   }
   function apErr(e){ if(window.console) console.warn("airport:", e); w.airportErr = String((e && e.stack) || e); }
+  function apHeight(x, z){ return WD.heightAt(W, x, z); }
+  function apCalm(){
+    if(c.E && c.E.calm && c.E.calm()) return true;
+    try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch(e){ return false; }
+  }
   function apNight(n){
     if(ap3) ap3.setNight(n); if(apB) apB.setNight(n); if(apV) apV.setNight(n);
     if(apFleet){ apFleet.jet.setNight(n); apFleet.commuter.setNight(n); }
@@ -2074,6 +2185,11 @@ HQV.hqWorlds.city3d = function(c, w){
       apB.setBridge(id, out ? 1 : 0);
     });
     if(apB) apB.update(dt, t, 1);
+    // the security gate's boom: up for your vehicle heading for it (Calm or reduced motion: it snaps open and shut)
+    if(apB && apB.updateBoom){
+      var mo = c.motion && c.motion(), me = c.avatar && c.avatar();
+      apB.updateBoom(dt, mo && mo.ride && !mo.air && me ? [{x: me.x, z: me.z, yaw: mo.yaw, speed: mo.speed}] : [], apCalm());
+    }
     // [Sound PR B] with the parked jets as drawn (yours is heard on its own) and this frame's offset: their APUs on the stands
     ap3.update(dt, t, cam && cam.x != null ? {position: {x: cam.x, y: cam.y, z: cam.z}} : null, {parked: apParkedList(tr, hp)}, hp);
     apParked(tr, hp);
@@ -2261,7 +2377,9 @@ HQV.hqWorlds.city3d = function(c, w){
     });
     if(c.active && c.active(w)){
       HQV.hqCity3d.air = w.air;
-      if(HQV.camrig && HQV.camrig.setReach) HQV.camrig.setReach(apL ? AP_REACH : 0);      // the map pans out to the approach piers
+      // the map pans over the whole world (the v5 Commons' is 4 km) and out to the runway's ends on their piers
+      var rwR = apL && apL.runway && apL.runway.c ? Math.max(Math.abs(apL.runway.c[0]), Math.abs(apL.runway.c[1])) + (+apL.runway.len || 0)/2 : 0;
+      if(HQV.camrig && HQV.camrig.setReach) HQV.camrig.setReach(Math.max(W ? W.half : 0, apL ? AP_REACH : 0, rwR));
     }
     flightStep(t, dt);
   }
@@ -2888,9 +3006,25 @@ HQV.hqWorlds.city3d = function(c, w){
   }
   // the camera's floor (hq3d rigFrame): the ground, and over open water the water's surface plus 0.5 m, so a chase
   // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
+  // [3.36] the ceiling over the camera (m), or null in the open: below the street, that of the deck you are on (underCeil)
+  w.camCeil = function(x, z){
+    if(!(transit && transit.under() && transit.floorAt)) return null;
+    var d = underDeck(x, z);
+    return d ? underCeil(d) : null;
+  };
   w.camGround = function(x, z){
+    // [3.36] below the street the camera's floor is the station's (where you are when it is past the station's edge): the
+    // street's floor held it up at street level, looking down on the station's roof
+    if(transit && transit.under() && transit.floorAt){ var d = underDeck(x, z); if(d) return d.y; }
     var ty = tunnelLevel();
     if(ty != null && WD.tunnelAt(W, x, z, ty)) return WD.groundAt(W, x, z, false, ty);   // [3.30] in the tunnel: its road, never the land over it
+    // below the street: the station floor under the camera, never above your feet (the street's height put the chase
+    // camera over the hall's ceiling, looking at nothing)
+    if(transit && transit.under && transit.under()){
+      var ua = c.avatar && c.avatar(), uf = ua && ua.hy != null && isFinite(ua.hy) ? +ua.hy : null, ug = transit.ground(x, z);
+      if(uf != null && (ug == null || !isFinite(ug) || ug > uf + 0.8)) ug = uf;
+      if(ug != null && isFinite(ug)) return ug;
+    }
     var g = groundY(x, z);
     if(sea && sea.surface && (!W || Math.abs(x) > W.half || Math.abs(z) > W.half || !sea.boat.land(x, z))) g = Math.max(g, sea.surface(x, z) + 0.5);
     return g;
@@ -3420,7 +3554,7 @@ HQV.hqWorlds.city3d = function(c, w){
     snap: function(x, z){
       if(!W || !HQV.hqnav) return null;
       var p = HQV.hqnav.snap(navGraph(), x, z); if(!p) return null;
-      var D = edgeDir(p.ei, p.x, p.z);
+      var D = p.ei >= 0 ? edgeDir(p.ei, p.x, p.z) : {ux: 0, uz: 1, half: 3.5};   // (an airport extra road: no W edge)
       return {x: p.x, z: p.z, ux: D.ux, uz: D.uz, half: D.half, d: p.d};
     },
     route: function(from, to){ return W && HQV.hqnav ? HQV.hqnav.route(navGraph(), from, to, "drive") : null; },
@@ -3429,7 +3563,7 @@ HQV.hqWorlds.city3d = function(c, w){
       if(!W || !HQV.hqnav) return [];
       var G = navGraph(), out = [];
       for(var k = 0; k < G.M; k++){
-        var e = W.edges[G.keep[k]]; if(e.cls === "highway" || e.bridge) continue;
+        var e = G.E[k]; if(!e || G.keep[k] < 0 || e.cls === "highway" || e.bridge) continue;   // (not the airport's extra roads)
         var P = G.XZ[k], C = G.CUM[k], last = -1e9;
         for(var i = 0; i < P.length; i += 2){
           if(C[i/2] - last < 25) continue;
@@ -3481,7 +3615,7 @@ HQV.hqWorlds.city3d = function(c, w){
     }
     approachShow(null);
     route.R = route.mode === "boat" ? null : HQV.hqnav.route(navGraph(), {x: me0.x, z: me0.z}, {x: route.x, z: route.z}, route.mode);
-    if(fx){ fx.setRoute(route.R ? route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
+    if(fx){ fx.setRoute(route.R ? route.R.lane || route.R.pts : null, groundY); fx.setWaypoint({x: route.x, y: groundY(route.x, route.z), z: route.z}); }
   }
   function navToSite(site, label){
     if(!site || !HQV.hqnav) return;
@@ -3547,8 +3681,40 @@ HQV.hqWorlds.city3d = function(c, w){
     if(info) info.dest = route.label;
     if(nui) nui.banner(info);
     if(fx) fx.update(dt, me0, cam);
+    whereStep(me0, m);
     if(mm) mm.frame({x: me0.x, z: me0.z, yaw: m ? m.yaw : 0, view: m && m.view != null ? m.view : null, speed: m ? m.speed : 0, route: pts,
-                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt});
+                     waypoint: route ? {x: route.x, z: route.z} : null, others: c.others ? c.others() : [], dt: dt, lot: whereAt.lot ? whereAt.lot.id : null});
+  }
+  // [lot marks] Where you are, four times a second: the HQ lot you stand on (the HUD says so once as you step onto one,
+  // once it has held for WHERE_HOLD ms, never again for the same lot within WHERE_AGAIN ms: a kerb walked along), and the
+  // neighbourhood and street for the minimap's strip (HQV.hqminimap.locality)
+  var WHERE_EVERY = 250, WHERE_HOLD = 400, WHERE_AGAIN = 8000;
+  var whereAt = {at: 0, lot: null, h: null, cand: null, since: 0, said: {}}, lotEnt = null, lotEntKey = null;
+  function lotEntries(){
+    var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id) + ":" + (E.h.isYou ? 1 : 0); }).join(",") + "|" + tier + "|" + (W && W.id);
+    if(key === lotEntKey && lotEnt) return lotEnt;
+    var by = {}; hqs.forEach(function(E){ if(E.lot) by[E.lot.id] = E.h; });
+    lotEntKey = key;
+    lotEnt = hqLots(W).filter(function(l){ return l.min_tier == null || (l.min_tier | 0) <= tier; }).map(function(l){ return {lot: l, h: by[l.id] || null}; });
+    return lotEnt;
+  }
+  function whereStep(me0, m){
+    var now = Date.now();
+    if(!W || now - whereAt.at < WHERE_EVERY) return;
+    whereAt.at = now;
+    var under = !!(transit && transit.under()), air = !!(m && m.air);
+    var hit = under || air ? null : pickAt(lotEntries(), me0.x, me0.z), id = hit ? hit.lot.id : null;
+    if(id !== (whereAt.cand && whereAt.cand.lot.id)){ whereAt.cand = hit; whereAt.since = now; }
+    if(id !== (whereAt.lot && whereAt.lot.id) && now - whereAt.since >= WHERE_HOLD){
+      whereAt.lot = hit ? hit.lot : null; whereAt.h = hit ? hit.h : null;
+      if(hit && !(now - (whereAt.said[id] || 0) < WHERE_AGAIN)){ whereAt.said[id] = now; say(lotNotice(hit.lot, hit.h)); }
+    }
+    if(whereAt.lot) whereAt.said[whereAt.lot.id] = now;                 // standing on it keeps it said
+    if(!mm || !mm.setPlace || !HQV.hqminimap.locality) return;
+    var onAir = apL && AF && AF.floorAt && AF.floorAt(apL, me0.x, me0.z) != null;
+    var L = HQV.hqminimap.locality(W, me0.x, me0.z, {sea: !onAir && !!(sea && sea.land && !sea.land(me0.x, me0.z)), y: me0.y, area: onAir ? "Airport" : ""});
+    if(under){ L.use = "Underground"; L.street = ""; }
+    mm.setPlace({area: L.area, use: L.use, street: L.street, lot: whereAt.lot ? {text: lotLine(whereAt.lot, whereAt.h), mine: !!(whereAt.h && whereAt.h.isYou)} : null});
   }
   // the minimap's places: civic sites and the HQs as they are placed now (redrawn only when the HQs change)
   function navRefresh(){
@@ -3556,6 +3722,9 @@ HQV.hqWorlds.city3d = function(c, w){
     var key = hqs.map(function(E){ return E.h.userId + ":" + (E.lot && E.lot.id); }).join(",");
     if(key === navSig) return; navSig = key;
     try { mm.setWorld(W, navTier, {places: navPlaces()}); } catch(e){}
+    // [lot marks] the HQ lots as outlines: yours amber, the free ones dashed
+    if(mm.setLots) try { mm.setLots(lotEntries().map(function(e){ var l = e.lot;
+      return {id: l.id, n: lotNo(l), poly: lotRing(l, {x: 0, z: 0, rot: 0}), mine: !!(e.h && e.h.isYou), owned: !!e.h}; })); } catch(e){}
   }
   function typingIn(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || !!(t && t.isContentEditable); }
   // While a stop's or a terminal's menu or the Go to panel is open, no key reaches the page's shortcuts (W is not
@@ -3970,6 +4139,9 @@ HQV.hqWorlds.city3d = function(c, w){
   };
   w.camHit = function(from, to){
     if(!W) return 1;
+    // [3.36] below the street only the station's own ceiling and walls stop the camera: the terrain and the buildings over
+    // it are above you there, so a ray from you up to the camera met the ground at once and held the camera on your head
+    if(transit && transit.under() && transit.floorAt) return underHit(from, to);
     var t = WD.rayGround(W, from, to, undefined, tunnelLevel());   // [3.30] in a tunnel: its walls and ceiling
     var x0 = Math.min(from.x, to.x), x1 = Math.max(from.x, to.x), z0 = Math.min(from.z, to.z), z1 = Math.max(from.z, to.z);
     if(Math.hypot(to.x - from.x, to.z - from.z) > 60){ var u = 60/Math.hypot(to.x - from.x, to.z - from.z);   // only what is within 60 m
@@ -3977,7 +4149,6 @@ HQV.hqWorlds.city3d = function(c, w){
       z0 = Math.min(from.z, from.z + (to.z - from.z)*u); z1 = Math.max(from.z, from.z + (to.z - from.z)*u); }
     buildingsIn(x0, x1, z0, z1).concat(placedIn(x0, x1, z0, z1)).forEach(function(b){ var h = segBox(from, to, b); if(h < t) t = h; });
     if(cp){ var ch = HQV.hqCarpark.camHit(cp.site, from, to); if(ch < t) t = ch; }   // carpark: the floor above you
-    if(transit && transit.under() && transit.ground){ var uh = underHit(from, to); if(uh < t) t = uh; }   // [3.36] a station's ceiling and walls
     return t;
   };
   w.occluderItems = function(x, y, z){
@@ -4099,6 +4270,11 @@ HQV.hqWorlds.city3d = function(c, w){
       var d = Math.hypot(E.x - cam.x, E.z - cam.z), vis = mode === "map" || (E.g.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
       if(E.g.visible !== vis) E.g.visible = vis;
       if(vis && E.B && E.B.setLod) E.B.setLod(mode === "map" || (E.B.lod() ? d > HQ_LOD - HQ_FAR_HYST : d > HQ_LOD));   // [hq revamp] far: its masses only
+    });
+    if(cam && cam.x != null) freeMarks.forEach(function(F){                     // [lot marks] a free lot's plaque, near the camera only
+      var P = F.marks.panel; if(!P) return;
+      var d = Math.hypot(F.x - cam.x, F.z - cam.z), vis = mode !== "map" && (P.visible ? d < HQ_FAR : d < HQ_FAR - HQ_FAR_HYST);
+      if(P.visible !== vis) P.visible = vis;
     });
     // the sun's shadow box follows you (the whole map in map mode), on its texel grid
     var me = (cam && cam.avatar) || c.avatar() || {x: 0, z: 0}, map = mode === "map", R = map ? 1024 : 60, D = map ? 1500 : 120;

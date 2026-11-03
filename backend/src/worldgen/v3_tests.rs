@@ -50,8 +50,10 @@ fn v1_and_v2_worlds_are_pinned_forever() {
 
 #[test]
 fn version_3_is_generated() {
-    assert_eq!(VERSION, [1, 2, 3]);
-    assert!(parse_id(COMMONS3).is_ok() && parse_id(ISLAND3).is_ok() && parse_id("claude-hq@4").is_err());
+    // (4 is City Gen v5, built alongside: v5_tests.rs)
+    assert_eq!(VERSION, [1, 2, 3, 4]);
+    assert!(parse_id(COMMONS3).is_ok() && parse_id(ISLAND3).is_ok() && parse_id("claude-hq@5").is_err());
+    assert!(!profile_for("claude-hq", 3).v5 && profile_for("claude-hq", 4).v5);
     assert_eq!(profile_for("claude-hq", 3).name, "commons");
     assert_eq!(profile_for("user:x", 3).name, "island");
     assert!(profile_for("claude-hq", 3).water && profile_for("user:x", 3).water);

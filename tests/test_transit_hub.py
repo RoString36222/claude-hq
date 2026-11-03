@@ -179,7 +179,7 @@ class TransitHub(unittest.TestCase):
         b = self.out["bus"]
         self.assertTrue(b["used"] and b["menu"])
         self.assertGreater(b["items"], 1)
-        self.assertRegex(b["first"], r"^1\. \S+ Bus to .+ · .+ · free$")
+        self.assertRegex(b["first"], r"^1\. \S+ Bus to .+ · .+ · 0 coins$")
         self.assertFalse(b["menuAfter"])
         self.assertTrue(b["session"])
         self.assertIn(b["phase0"], ("walk", "wait"))

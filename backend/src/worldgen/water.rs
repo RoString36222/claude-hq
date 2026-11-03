@@ -178,6 +178,10 @@ impl Plan {
     pub fn outlines(&self) -> Vec<Vec<P>> {
         self.bodies.iter().map(|b| b.poly.iter().map(|q| (q[0], q[1])).collect()).collect()
     }
+    /// The bodies as laid: outline (cm), surface and depth below it (cm). City Gen v5 carves them in its volume.
+    pub fn levels(&self) -> Vec<(Vec<P>, i64, i64)> {
+        self.bodies.iter().map(|b| (b.poly.iter().map(|q| (q[0], q[1])).collect(), b.level, b.bed)).collect()
+    }
 }
 
 fn pts(v: &[P]) -> Vec<[i64; 2]> {
@@ -894,7 +898,7 @@ impl Finish<'_> {
             city.sites.push(Site {
                 id: "harbour:0".to_string(), kind: "harbour", block, x: c.0, y: 0, z: c.1, w: 1_200, d: 900,
                 facing: if front.1 >= 0 { Facing::North } else { Facing::South },
-                tier: Some(1), poly: Some(pts(&poly)), front: Some([front.0, front.1]), view: None,
+                tier: Some(1), poly: Some(pts(&poly)), front: Some([front.0, front.1]), view: None, runway: None,
             });
             return Some("harbour:0".to_string());
         }

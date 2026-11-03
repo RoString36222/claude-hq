@@ -1,7 +1,8 @@
 /* Claude HQ: the riding core (HQ 3.15 transport revamp, plan 3.5 / 3.6 / 5.5, part `ride`).
  *
  * HQV.hqRide: one place every scheduled mode (bus, tram, metro, City Line, Island Link, water bus, gondola)
- * plugs into, and the one ride session that carries you on any of them. Everything is free (D4): no fares.
+ * plugs into, and the one ride session that carries you on any of them. Everything is free (D4): no money moves; the
+ * transit pass's tickets (wallet, below) cost 0 coins and open the metro's gates.
  *   register(service) / unregister(mode) / services()   the Service contract (plan 5.3), one per mode
  *   stopsNear(x, z, r)                  every registered service's stops near a point, by distance then id
  *   plan(from, to, ms, opts)            journey planner: walk (1.4 m/s) + up to 2 legs, a change takes at least
@@ -16,7 +17,8 @@
  *   sfx(audioCtx, name, opts)           synthesised transit sounds (WebAudio only, no files); opts.pos (+ opts.kind) puts one
  *                                       in the world through HQV.engine.spatialOut; loops stop by themselves when not set()
  *   announcer(opts)                     chime (G5-E5-C5, not under Calm) + a LOCAL voice only + announce()
- *   tickets, achievements               local only (localStorage, guarded; an in-memory copy when it throws)
+ *   tickets, wallet, achievements       local only (localStorage, guarded; an in-memory copy when it throws); wallet: the
+ *                                       singles, day passes and Claude Card a gate takes (0 coins)
  * Determinism: no random numbers anywhere; names, sways and noise are pure functions of their inputs.
  * Calm (opts.calm()) keeps every text and drops every motion: the seat camera is level and still.
  * Frames: city metres, +y up, yaw 0 faces +z, the right of travel is (-cos yaw, sin yaw) (as traffic.js).
@@ -275,8 +277,19 @@ function seatSide(trip, i, ms){   // the seat's lateral offset (m, + = the pavem
   return sd*((num(s.x, 0) - num(p.x, 0))*(-Math.cos(num(p.yaw, 0))) + (num(s.z, 0) - num(p.z, 0))*Math.sin(num(p.yaw, 0)));
 }
 // first free window seat on the pavement side, else any free seat, else a standing spot (hands on the rail)
-function chooseSeat(trip, occ, ms){
+function chooseSeat(trip, occ, ms, near){
   var N = Math.max(0, num(trip.seats, 0) | 0), M = Math.max(0, num(trip.standing, 0) | 0);
+  // [transit pass] boarding at a door you walked to (near {x, z}): the free seat nearest it, else the nearest spot to stand
+  if(near && typeof trip.seat === "function"){
+    var tk = {}, ts = {}, bi = -1, bd = Infinity, j, sp;
+    ((occ && occ.seats) || []).forEach(function(k){ tk[k] = 1; });
+    ((occ && occ.standing) || []).forEach(function(k){ ts[k] = 1; });
+    for(j = 0; j < N; j++){ if(tk[j]) continue; sp = trip.seat(j, ms); if(sp && d2(sp, near) < bd){ bd = d2(sp, near); bi = j; } }
+    if(bi >= 0 && bd < 9) return {seat: bi, standing: false, window: false};
+    var si = -1, sd = Infinity;
+    for(j = 0; j < M; j++){ if(ts[j]) continue; sp = trip.seat(N + j, ms); if(sp && d2(sp, near) < sd){ sd = d2(sp, near); si = j; } }
+    if(si >= 0) return {seat: N + si, spot: si, standing: true};
+  }
   occ = occ || {seats: [], standing: []};
   var taken = {}, st = {}, i;
   (occ.seats || []).forEach(function(k){ taken[k] = 1; });
@@ -300,8 +313,8 @@ function session(o){
   var trip = o.trip; if(!trip) return null;
   var calm = fn(o.calm, false), announce = fn(o.announce, null), toast = fn(o.toast, null), sfxf = fn(o.sfx, null), meF = fn(o.me, null);
   var say = o.announcer && typeof o.announcer.say === "function" ? function(t){ o.announcer.say(t, {chime: true}); } : announce;
-  var S = {phase: "walk"}, t0 = 0, pick = null, lastUnder = null, handed = false, annK = -1, closing = false, arrivedSaid = false;
-  var boardFrom = null, alightPath = null, endIdx, endAt, stopReq = false, ended = false, focused = false, lastMs = null;
+  var S = {phase: "walk"}, t0 = 0, pick = null, lastUnder = null, handed = false, annK = -1, closing = false, arrivedSaid = !!o.hop;   // o.hop: you step onto a train already standing there
+  var boardFrom = null, alightPath = null, endIdx, endAt, stopReq = false, ended = false, focused = false, lastMs = null, hereK = -1;
   var stops = Array.isArray(trip.stops) ? trip.stops : [];
   var fromIdx = 0;
   for(var i = 0; i < stops.length; i++) if(stops[i] && stops[i].id === trip.from){ fromIdx = i; break; }
@@ -378,7 +391,7 @@ function session(o){
         if(!me || d2(me, at) <= (trip.mode === "bus" || trip.mode === "tram" ? AT_STOP_ROAD : AT_STOP) || (waitAt && d2(me, waitAt) <= AT_STOP)){
           S.phase = "wait";
           var mins = Math.max(0, Math.round((num(trip.arrive, ms) - ms)/MIN));
-          say(modeWord + " " + label + " to " + (trip.toName || trip.to) + (mins > 0 ? " comes in " + mins + " min." : " is due."));
+          if(!o.hop) say(modeWord + " " + label + " to " + (trip.toName || trip.to) + (mins > 0 ? " comes in " + mins + " min." : " is due."));
         }
       } else if(me && d2(me, at) > LEFT_STOP && !(waitAt && d2(me, waitAt) <= LEFT_STOP)){ say("You left the stop."); end("left"); return S.phase; }
       if(S.phase === "wait" && ms >= num(trip.arrive, 0)){
@@ -388,7 +401,7 @@ function session(o){
           var occ = null;
           var C = HQV.hqCommute;
           if(C && typeof C.occupied === "function") occ = C.occupied(trip.mode, trip.vehicle, String(trip.vehicle) + ":" + num(trip.depart, 0), trip.seats, trip.standing, num(trip.depart, 0), o.seed != null ? o.seed : "");
-          pick = chooseSeat(trip, occ, ms);
+          pick = chooseSeat(trip, occ, ms, o.boardDoor || null);
           boardFrom = me ? {x: me.x, y: num(me.y, num(p.y, 0)), z: me.z} : {x: at.x, y: num(p.y, 0), z: at.z};
           t0 = ms; S.phase = "board"; sfx("validator");
           if(o.view && typeof o.view.focus === "function"){ try { o.view.focus(trip.vehicle); focused = true; } catch(e){} }
@@ -400,7 +413,8 @@ function session(o){
       if(ms - t0 >= BOARD_S*1000){
         S.phase = pick.standing ? "standing" : "seated";
         lastUnder = !!poseAt(ms).under;
-        say(pick.standing ? "No seats free: you stand and hold the rail." : "You take a seat.");
+        say((o.hop ? "On the " + label + " to " + (trip.toName || trip.to) + ". " : "") + (pick.standing ? "No seats free: you stand and hold the rail." : "You take a seat.")
+            + (o.hop ? " Press E when the doors open to get off." : ""));
       }
       return S.phase;
     }
@@ -410,8 +424,12 @@ function session(o){
       if(trip.world && !handed && ms >= num(trip.depart, 0)){ handed = true; if(typeof o.travel === "function"){ try { o.travel(trip); } catch(e){} } }
       var u = !!p.under;
       if(u !== lastUnder){ lastUnder = u; if(typeof o.under === "function"){ try { o.under(u); } catch(e){} } announce(u ? "Going underground." : "Back above ground."); }
-      var k = nextStop(ms), prevAt = k - 1 >= fromIdx && stops[k - 1] ? num(stops[k - 1].at, num(trip.depart, 0)) : num(trip.depart, 0);
-      if(k > fromIdx && k !== annK && ms >= Math.max(prevAt, num(trip.depart, 0)) + ANN_AFTER){
+      // [transit pass] standing at a stop on the way with the doors open: "This is Central" (once), then the next stop
+      // only after leaving it (its dep, when the trip has one), never one you are already at
+      var dw = dwellIdx(ms);
+      if(dw >= 0 && dw !== hereK){ hereK = dw; say("This is " + (stops[dw].name || stops[dw].id) + "." + changeText(dw) + " Doors open: press E to get off here."); }
+      var k = nextStop(ms), prevAt = k - 1 >= fromIdx && stops[k - 1] ? num(stops[k - 1].dep != null ? stops[k - 1].dep : stops[k - 1].at, num(trip.depart, 0)) : num(trip.depart, 0);
+      if(k > fromIdx && k !== annK && ms < num((stops[k] || {}).at, Infinity) && ms >= Math.max(prevAt, num(trip.depart, 0)) + ANN_AFTER){
         annK = k;
         var st = stops[k] || {};
         say((k === endIdx ? "Next stop: " + (st.name || st.id) + ". This is your stop." : "Next stop: " + (st.name || st.id) + ".") + changeText(k));
@@ -419,8 +437,9 @@ function session(o){
       var stopAt = stopTime();
       if(ms >= stopAt){
         var sp = seatPose(ms) || p, door = call(trip, "door", ms) || {x: p.x, z: p.z};
-        var right = 1.6, yaw = num(p.yaw, 0);
-        var kerb = {x: door.x - Math.cos(yaw)*right, y: num(p.y, 0), z: door.z + Math.sin(yaw)*right};
+        var yaw = num(p.yaw, 0), rx = -Math.cos(yaw), rz = Math.sin(yaw), lat = (num(door.x, 0) - num(p.x, 0))*rx + (num(door.z, 0) - num(p.z, 0))*rz;
+        var right = lat < -0.2 ? -1.6 : 1.6;     // out of the door you use: a platform on the left (an island) is left of travel
+        var kerb = {x: door.x + rx*right, y: num(p.y, 0), z: door.z + rz*right};
         alightPath = {a: {x: sp.x, y: num(p.y, 0), z: sp.z}, b: {x: door.x, y: num(p.y, 0), z: door.z}, c: kerb};
         t0 = ms; S.phase = "alight"; sfx("door-chime", mine(ms));
         var es = stops[endIdx] || {};
@@ -442,7 +461,7 @@ function session(o){
   S.carry = function(ms){
     ms = num(ms, 0);
     if(S.phase === "board" && pick){
-      var door = call(trip, "door", ms) || at, sp = seatPose(ms) || door, vp = poseAt(ms);
+      var door = o.boardDoor || call(trip, "door", ms) || at, sp = seatPose(ms) || door, vp = poseAt(ms);
       var w = walkAlong(boardFrom, {x: door.x, y: num(vp.y, 0), z: door.z}, {x: sp.x, y: num(vp.y, 0), z: sp.z}, (ms - t0)/(BOARD_S*1000));
       return {x: w.x, y: w.y, z: w.z, yaw: w.yaw, anim: "walk"};
     }
@@ -473,10 +492,19 @@ function session(o){
     if(ok){ stopReq = true; sfx("stop-bell"); }
     return ok;
   };
+  // [transit pass] the stop the vehicle stands at now with its doors open (a stop after yours, not your last): its index, else -1
+  function dwellIdx(ms){
+    for(var k = fromIdx + 1; k < endIdx; k++){
+      var st = stops[k]; if(!st || st.dep == null) continue;
+      if(ms >= num(st.at, 0) + 1500 && ms < num(st.dep, 0) - 2500) return num(poseAt(ms).doors, 1) >= 0.5 ? k : -1;
+    }
+    return -1;
+  }
   S.alightNext = function(quiet){
     if(S.phase === "walk" || S.phase === "wait"){ end("cancelled"); return true; }
     if(S.phase !== "seated" && S.phase !== "standing") return false;
-    var ms = lastMs != null ? lastMs : (o.now ? num(o.now(), 0) : Date.now()), k = nextStop(ms);
+    var ms = lastMs != null ? lastMs : (o.now ? num(o.now(), 0) : Date.now()), k = nextStop(ms), here = dwellIdx(ms);
+    if(here >= 0){ endIdx = here; announce("Getting off here, at " + (stops[here].name || stops[here].id) + "."); return true; }
     if(k < endIdx) endIdx = k;
     var st = stops[endIdx] || {};
     announce((quiet === true ? "Stop requested: " : "Getting off at ") + (st.name || st.id || trip.toName) + ".");
@@ -495,6 +523,7 @@ function session(o){
             to: es.name || trip.toName || trip.to, reach: stopTime(),
             seat: pick && !pick.standing ? pick.seat : null, standing: !!(pick && pick.standing), spot: pick && pick.standing ? pick.spot : null,
             under: !!lastUnder, stopRequested: stopReq, world: trip.world || null,
+            atStop: (S.phase === "seated" || S.phase === "standing") && dwellIdx(ms) >= 0 ? (stops[dwellIdx(ms)].name || "") : null,   // doors open at a stop on the way
             arrive: num(trip.arrive, 0), depart: num(trip.depart, 0),         // when it reaches your stop and leaves it, and where you board
             door: {x: num(at.x, 0), z: num(at.z, 0)}};                         // (the tour waits there and skips ahead)
   };
@@ -960,6 +989,82 @@ var tickets = {
   clear: function(){ lsSet(T_KEY, "[]"); }
 };
 
+/* ---------- fares: the tickets you buy, hold and tap (HQ transit pass) ---------- */
+// D4 still holds: no money moves and nothing leaves this computer. A ticket costs 0 coins, but it is a real ticket: you
+// buy it at a station's machines (or in the phone's Tickets app), the gates open for it and it runs out.
+//   single  one journey: 90 minutes from its first tap, any metro line and the City Line
+//   day     every train until the City's midnight (IST, as the clock on the boards)
+//   card    the Claude Card: tap in and ride, 0 coins a journey, capped at a day pass; you hold one
+// wallet.list(ms) -> [{id, kind, name, made, first, until, taps}] (expired ones dropped)
+// wallet.buy(kind, ms) -> item | null;  wallet.best(ms) -> {item, ready: bool} | null (what a gate would take)
+// wallet.tap(ms) -> {ok, item, text} (a gate: starts an unused single, a card journey)
+// wallet.status(item, ms) -> "valid 47 min more" | "valid until 00:00" | "not yet used" | "tap in to ride"
+var FARES = {
+  single: {kind: "single", name: "Single", coins: 0, mins: 90, desc: "One journey, any line, 90 minutes from your first tap"},
+  day: {kind: "day", name: "Day pass", coins: 0, desc: "Every metro and City Line train until midnight"},
+  card: {kind: "card", name: "Claude Card", coins: 0, desc: "Tap in and ride: 0 coins a journey, capped at a day pass"}
+};
+var FARE_ORDER = ["single", "day", "card"], W_KEY = "hq_ride_wallet", W_MAX = 12;
+function cityMidnight(ms){ var off = 330*MIN, l = num(ms, 0) + off; return (Math.floor(l/DAY) + 1)*DAY - off; }
+function fareText(coins){ coins = Math.max(0, num(coins, 0) | 0); return coins === 1 ? "1 coin" : coins + " coins"; }
+function cleanItem(t){
+  if(!t || !FARES[t.kind]) return null;
+  return {id: String(t.id || "").slice(0, 24), kind: t.kind, name: FARES[t.kind].name, made: num(t.made, 0), first: t.first != null && isFinite(+t.first) ? +t.first : null,
+          until: t.until != null && isFinite(+t.until) ? +t.until : null, taps: Math.max(0, num(t.taps, 0) | 0)};
+}
+function itemLive(t, ms){ return !(t.until != null && ms >= t.until); }
+var wallet = {
+  FARES: FARES, ORDER: FARE_ORDER,
+  list: function(ms){
+    ms = ms == null ? Date.now() : num(ms, 0);
+    var a = jget(W_KEY, []); if(!Array.isArray(a)) a = [];
+    return a.map(cleanItem).filter(function(t){ return t && t.id && itemLive(t, ms); });
+  },
+  save: function(list){ lsSet(W_KEY, JSON.stringify((list || []).slice(0, W_MAX))); },
+  buy: function(kind, ms){
+    var F = FARES[kind]; if(!F) return null;
+    ms = ms == null ? Date.now() : num(ms, 0);
+    var a = wallet.list(ms);
+    if(kind === "card"){ var have = a.filter(function(t){ return t.kind === "card"; })[0]; if(have) return have; }
+    var t = {kind: kind, made: ms, first: null, until: kind === "day" ? cityMidnight(ms) : null, taps: 0};
+    t.id = (kind === "single" ? "S" : kind === "day" ? "D" : "C") + (Math.floor(ms/1000) % 46656).toString(36).toUpperCase() + (hash32(kind + ":" + ms + ":" + a.length) % 1296).toString(36).toUpperCase();
+    t = cleanItem(t);
+    a.unshift(t); wallet.save(a);
+    return t;
+  },
+  remove: function(id){ var a = wallet.list(), b = a.filter(function(t){ return t.id !== id; }); wallet.save(b); return b.length !== a.length; },
+  clear: function(){ lsSet(W_KEY, "[]"); },
+  // what a gate takes: a day pass, a single in use, an unused single (started by the tap), the card
+  best: function(ms){
+    ms = ms == null ? Date.now() : num(ms, 0);
+    var a = wallet.list(ms), pick = function(f){ return a.filter(f)[0] || null; };
+    var t = pick(function(x){ return x.kind === "day"; }) || pick(function(x){ return x.kind === "single" && x.first != null; })
+         || pick(function(x){ return x.kind === "single" && x.first == null; }) || pick(function(x){ return x.kind === "card"; });
+    return t ? {item: t, ready: t.kind !== "single" || t.first != null} : null;
+  },
+  tap: function(ms){
+    ms = ms == null ? Date.now() : num(ms, 0);
+    var b = wallet.best(ms); if(!b) return {ok: false, item: null, text: "No ticket: buy one at the machines or in the phone's Tickets app."};
+    var a = wallet.list(ms), t = a.filter(function(x){ return x.id === b.item.id; })[0];
+    if(t.kind === "single" && t.first == null){ t.first = ms; t.until = ms + FARES.single.mins*MIN; }
+    t.taps++;
+    wallet.save(a);
+    return {ok: true, item: t, text: t.name + " tapped: " + wallet.status(t, ms) + "."};
+  },
+  status: function(t, ms){
+    ms = ms == null ? Date.now() : num(ms, 0);
+    if(!t) return "";
+    if(t.kind === "card") return "tap in to ride, " + fareText(FARES.card.coins) + " a journey";
+    if(t.kind === "single" && t.first == null) return "not used yet, 90 minutes from your first tap";
+    if(t.until == null) return "valid";
+    var left = t.until - ms;
+    if(left <= 0) return "expired";
+    if(t.kind === "day") return "valid until " + clockText(t.until);
+    return "valid " + Math.max(1, Math.ceil(left/MIN)) + " min more";
+  },
+  fareText: fareText
+};
+
 /* ---------- achievements (local only) ---------- */
 var A_KEY = "hq_ride_achv";
 var ALL_MODES = ["bus", "tram", "metro", "rail", "link", "ferry", "gondola", "cab"];
@@ -1049,7 +1154,7 @@ var achievements = {
 
 HQV.hqRide = {register: register, unregister: unregister, services: services, stopsNear: stopsNear, plan: plan, session: session,
   seatCam: seatCam, chooseSeat: chooseSeat, stationName: stationName, dueText: dueText, clockText: clockText, boardRows: boardRows,
-  boardTexture: boardTexture, sfx: sfx, SFX: SFX_NAMES, announcer: announcer, localVoice: localVoice, tickets: tickets,
+  boardTexture: boardTexture, sfx: sfx, SFX: SFX_NAMES, announcer: announcer, localVoice: localVoice, tickets: tickets, wallet: wallet,
   achievements: achievements, ACHIEVEMENTS: ACH, ALL_MODES: ALL_MODES, hash32: hash32,
   consts: {WALK_V: WALK_V, CHANGE_MIN: CHANGE_MIN, UNDER_ADD: UNDER_ADD, WALK_R: WALK_R, CHANGE_R: CHANGE_R, MAX_OPTS: MAX_OPTS,
            BOARD_S: BOARD_S, ALIGHT_S: ALIGHT_S, EYE_SIT: EYE_SIT, EYE_STAND: EYE_STAND, YAW_MAX: YAW_MAX, PITCH_MAX: PITCH_MAX, FOV: FOV,

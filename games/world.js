@@ -6,7 +6,8 @@
  * (in metres): terrain height, road surface, pads, what is blocked, trees, slopes, labels.
  *   pack(doc)            -> W (typed arrays; old "country" docs still pack)
  *   heightCm/heightAt    bit-exact port of backend/src/worldgen/terrain.rs Terrain::height_at
- *   roadY/groundAt       the ONE road surface ribbons, terrain clamping and the avatar share
+ *   roadY/groundRaw      the ONE road surface ribbons, terrain clamping and props share
+ *   groundAt             what the avatar and vehicles stand on: with games/worldgeom.js loaded, the surface as drawn
  *   blockedAt, trees     through a 64 m bucket index (never a linear scan)
  *   load({id})           IndexedDB copy by ETag first, then GET /api/arena/world/<id> (default claude-hq@1);
  *                        one memo, cache and onChange per world id
@@ -39,7 +40,8 @@
  *                show through. A pier is a deck centred on (x, z), `len` m along its front (from 3 m inland to its head
  *                over the water: water.rs), `w` wide; the breakwater a
  *                polyline you walk along within BREAKWATER_HALF m, its crown walk BREAKWATER_UP m over the sea.
- *   deckAt(W, x, z)   the y of the pier deck or breakwater crown at (x, z) | null; groundAt is that deck there
+ *   deckAt(W, x, z)   the y of the pier deck (where the land is not over it) or breakwater crown at (x, z) | null;
+ *                groundAt is that deck there
  *   metroOf(W), railOf(W), gondolaOf(W): the layers in metres, every Q16 front/along also as a unit [fx, fz] and a
  *                yaw (yaw 0 faces +z, increasing yaw turns left: yaw = atan2(fx, fz)). Phase 8 (HQ 3.31): a rail line
  *                whose doc has `piers` keeps them ([{x, y, z, h}], m); railPiersOf(W) lists them as solid columns
@@ -114,6 +116,12 @@ var WALK_OLD = {street: 150, avenue: 200};   // sidewalk (cm, each side) for doc
 // @3 water: the calm surface over sea level (games/ocean.js RIVER_Y, games/worldgeom.js RIVER_LIFT), the breakwater's
 // walkable half width, how far down a hole with nothing under it goes
 var RIVER_LIFT = 0.3, BREAKWATER_HALF = 4, BREAKWATER_UP = 2.5, HOLE_DEPTH = 6;
+// the breakwater as games/worldgeom.js draws it (BW_WALK, BW_CROWN, BW_BASE, BW_DEEP, the walk slab 0.08 m up): a concrete
+// walk BW_WALK m each side of its line, the rock crown out to BW_CROWN, then the armour sloping to BW_BASE m, BW_DEEP m
+// under the sea; groundAt follows it out to BREAKWATER_HALF (the land the sea stops at, games/ocean.js)
+var BW_WALK = 1.8, BW_SLAB = 0.08, BW_CROWN = 2.6, BW_BASE = 7, BW_DEEP = 3;
+// a pier's deck counts where the land is no more than PIER_LAND m over it (further inland the land is the ground)
+var PIER_LAND = 0.1;
 // City Gen v4 phase 6 (@3, HQ 3.29) interchanges: a flyover's or ramp's point is ELEVATED where it is more than ELEV m
 // over the terrain; surfaces more than LEVEL_GAP m apart are separate levels; with yNow a surface up to STEP_UP m over
 // it is still reachable; a deck is DECK_D m deep (its underside DECK_D under the road), its parapet stands from its
@@ -368,8 +376,8 @@ function roadUnder(W, x, z, yNow){
     }
     for(k = 0; k < n && CE[k] !== L[i]; k++);
     if(k === n){ n++; CE[k] = L[i]; CD[k] = Infinity; CG[k] = Infinity; }
-    CG[k] = Math.min(CG[k], g);
-    if(S.d < CD[k]){ CD[k] = S.d; CS[k] = L[i+1]; CT[k] = S.t; CY[k] = S.y; }
+    // (the nearest segment's gap: another segment's clamped end, a few metres along, would put a median on carriageway)
+    if(S.d < CD[k]){ CD[k] = S.d; CS[k] = L[i+1]; CT[k] = S.t; CY[k] = S.y; CG[k] = g; }
     if(e.under === "tunnel" || past) tun = true;
   }
   if(!n) return 0;
@@ -641,7 +649,9 @@ function padOf(W, x, z){
 // street: true gives the street level over a terrain hole too (@3); without it a hole's ground is its floor (holeFloor).
 // yNow (optional, m): the height of whatever stands there. Without it the ground level, never an elevated deck (under a
 // flyover: the road or the land beneath it); with it the highest surface whose y <= yNow + STEP_UP (roadUnder's levels)
-function groundAt(W, x, z, street, yNow){
+// groundRaw is that ground from the doc alone (bilinear terrain, flat pads blended over BLEND m, the road's own surface):
+// what games/worldgeom.js builds the drawn terrain, ribbons and props from, and groundAt wherever worldgeom is not loaded
+function groundRaw(W, x, z, street, yNow){
   if(!street && holey(W)){ var f = holeFloor(W, x, z); if(f != null) return f; }
   // phase 7: the street level over a cutting is the land it is cut through
   if(street && index(W).under){ var hc = holeRec(W, x, z); if(hc && hc.kind === "cutting") return heightAt(W, x, z); }
@@ -658,6 +668,43 @@ function groundAt(W, x, z, street, yNow){
   var h = heightAt(W, x, z);
   if(bd < BLEND) return py + (h - py)*smoothstep(bd/BLEND);
   return h;
+}
+
+// With games/worldgeom.js loaded (the page and the build worker) groundAt is the surface as DRAWN, so nothing sinks into
+// what you see or floats over it. On a road: the highest drawn asphalt, sidewalk or ground item from DRAWN_TOL under the
+// road's surface to DRAWN_HI over it (a kerb, LIFT and a graded corner, not another ribbon overlapping it higher up),
+// so a junction plate's corner, a raised median, a ribbon's chord and LIFT are what the wheels meet; where nothing is
+// drawn (past an edge's end) the drawn land, when it is within CAP_DROP under it. A bridge's, an interchange flyover's or ramp's and a tunnel's
+// road keep roadY (their structures are built on it). Off the roads: the drawn land, the finest terrain mesh (worldgeom
+// meshY lod 0: its triangles and its road clamp, not the bilinear heightmap) or the ground item drawn over it (a block's
+// pavement, a lot's or site's pad, a beach, a bank), with any road piece drawn up to DRAWN_UP over it, or a verge apron
+// (worldgeom's grassed slope up to a ribbon's edge) up to APRON_UP over it.
+var DRAWN_TOL = 0.35, DRAWN_HI = 0.35, CAP_DROP = 1, DRAWN_UP = 1, APRON_UP = 3.5, BANK_GRADE = 1;
+function groundAt(W, x, z, street, yNow){
+  var G = HQV.worldgeom;
+  if(!G || !G.drawnTop) return groundRaw(W, x, z, street, yNow);
+  if(!street && holey(W)){ var f = holeFloor(W, x, z); if(f != null) return f; }
+  if(street && index(W).under){ var hc = holeRec(W, x, z); if(hc && hc.kind === "cutting") return heightAt(W, x, z); }
+  if(W.water){ var dk = deckAt(W, x, z); if(dk != null) return dk; }
+  var ly;
+  if(roadUnder(W, x, z, yNow)){
+    var ry = ROAD.y, e = W.edges[ROAD.edge];
+    if(!e || e.bridge || e.under || deckRoad(e)) return ry;
+    var dy = G.drawnTop(W, x, z, ry - DRAWN_TOL, ry + DRAWN_HI, true), di = G.drawnTop(W, x, z, ry - DRAWN_TOL, ry + DRAWN_HI, false);
+    if(di != null && (dy == null || di > dy)) dy = di;   // (a pad's edge drawn over a sidewalk)
+    if(dy != null) return dy;
+    ly = landY(G, W, x, z);
+    return ly >= ry - CAP_DROP && ly <= ry + DRAWN_TOL ? ly : ry;
+  }
+  ly = landY(G, W, x, z);
+  var dr = G.drawnTop(W, x, z, ly, ly + DRAWN_UP, true), ap = G.drawnTop(W, x, z, ly, ly + APRON_UP, 3);
+  if(ap != null && (dr == null || ap > dr)) dr = ap;   // a verge apron: the slope up to a road's edge
+  return dr != null ? dr : ly;
+}
+// the drawn land at (x, z): the lod 0 terrain mesh or a ground item over it, whichever is higher
+function landY(G, W, x, z){
+  var y = G.meshY(W, x, z, 0), it = G.drawnTop(W, x, z, -Infinity, Infinity, false);
+  return it != null && it > y ? it : y;
 }
 
 function streetAt(W, x, z){ return groundAt(W, x, z, true); }
@@ -795,13 +842,19 @@ function deckAt(W, x, z){
   var P = V.piers, i;
   for(i = 0; i < P.length; i++){
     var p = P[i], dx = x - p.x, dz = z - p.z, a = dx*p.fx + dz*p.fz, c = dx*p.fz - dz*p.fx;
-    if(Math.abs(a) <= p.len/2 && Math.abs(c) <= p.w/2) return p.y;
+    // (not where the land is over the deck: its root runs back inland from the water, under the bank drawn there)
+    if(Math.abs(a) <= p.len/2 && Math.abs(c) <= p.w/2 && heightAt(W, x, z) <= p.y + PIER_LAND) return p.y;
   }
-  var B = V.breakwater;
+  var B = V.breakwater, bd = Infinity;
   if(B) for(i = 0; i + 1 < B.length; i++){
     var ax = B[i][0], az = B[i][1], ux = B[i+1][0] - ax, uz = B[i+1][1] - az, L2 = ux*ux + uz*uz;
     var t = L2 > 0 ? clamp(((x - ax)*ux + (z - az)*uz)/L2, 0, 1) : 0, qx = x - ax - ux*t, qz = z - az - uz*t;
-    if(qx*qx + qz*qz <= BREAKWATER_HALF*BREAKWATER_HALF){ var sl = seaLevel(W); return (sl != null ? sl : 0) + BREAKWATER_UP; }
+    bd = Math.min(bd, qx*qx + qz*qz);
+  }
+  if(bd <= BREAKWATER_HALF*BREAKWATER_HALF){
+    // the drawn profile: the walk slab, the crown, the armour's slope (not a flat 4 m crown over the rocks' 2.6)
+    var sl = seaLevel(W), d = Math.sqrt(bd), y = (sl != null ? sl : 0) + BREAKWATER_UP;
+    return d <= BW_WALK ? y + BW_SLAB : y - Math.max(0, d - BW_CROWN)*(BREAKWATER_UP + BW_DEEP)/(BW_BASE - BW_CROWN);
   }
   return null;
 }
@@ -868,7 +921,9 @@ function railOf(W){
               platforms: Math.max(1, s.platforms|0), lines: strs(s.lines), stairs: ringM(s.stairs)};
     }),
     sea: sea ? {x: cm(sea.x), y: cm(sea.y), z: cm(sea.z), front: su, yaw: yawOf(su)} : null,
-    holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; })
+    holes: (L.holes || []).map(ringM).filter(function(P){ return P.length >= 3; }),
+    // HQ 3.36: what no line may cross above (the airport's claim), [[x, z], ...] m; the Island Link's sea crossing goes round
+    keepOut: (L.keep_out || []).map(ringM).filter(function(P){ return P.length >= 3; })
   };
   return M.rail;
 }
@@ -983,7 +1038,7 @@ function holeFloor(W, x, z){
   var h = holeRec(W, x, z);
   if(!h) return null;
   if(h.kind === "cutting"){ tunProj(h.ref, x, z); return TP.y; }   // phase 7: the cutting's road
-  var street = groundAt(W, x, z, true), y = null, mo = metroOf(W), ro = railOf(W);
+  var street = groundRaw(W, x, z, true), y = null, mo = metroOf(W), ro = railOf(W);
   if(h.kind === "entrance" && mo){
     var st = mo.stations.filter(function(s){ return s.id === h.ref.station; })[0];
     if(st && st.hall_y < street - 1) y = st.hall_y;
@@ -1394,6 +1449,11 @@ function blockedAt(W, x, z, yNow){
   }
   // @3: a lake, canal or the marina is water (a bridge's deck, a pier and the breakwater are not)
   if(W.water && waterAt(W, x, z) && !roadUnder(W, x, z)) return true;
+  // a river bridge's side where its deck stands over BRIDGE_UP up: its parapet, and from the ground the side under it
+  if(bridgeSide(W, x, z)) return true;
+  // a river's or lake's bank drawn steeper than BANK_GRADE (games/worldgeom.js): a drop to the water, not a way down
+  var G = HQV.worldgeom;
+  if((W.river || W.water) && G && G.steepAt && G.steepAt(W, x, z, BANK_GRADE) && !roadUnder(W, x, z)) return true;
   // City Gen v4 phase 6: the decks' piers and parapets
   if(I.deck && (pierHit(W, x, z, yNow) || parapetHit(W, x, z, yNow))) return true;
   // phase 8: the City Line's piers, where the doc places them
@@ -1401,6 +1461,26 @@ function blockedAt(W, x, z, yNow){
   return false;
 }
 
+// (x, z) within BRIDGE_SIDE m outside a bridge edge's half width (its parapet, games/worldgeom.js PARA_W, and a little),
+// where its deck is more than BRIDGE_UP over the ground there (a step a ride meets as a wall: games/hq3d.js STEP_MAX):
+// from the ground the bridge's side, on the deck its parapet
+var BRIDGE_SIDE = 0.4, BRIDGE_UP = 0.4;
+function bridgeSide(W, x, z){
+  var M = memoOf(W);
+  if(!M.bridgeEdges) M.bridgeEdges = W.edges.filter(function(e){ return e.bridge && e.pts && e.pts.length >= 6; });
+  for(var i = 0; i < M.bridgeEdges.length; i++){
+    var e = M.bridgeEdges[i], p = e.pts, half = e.width/200, reach = half + BRIDGE_SIDE;
+    for(var s = 0; 3*s + 5 < p.length; s++){
+      var ax = p[3*s]/100, az = p[3*s+2]/100, bx = p[3*s+3]/100, bz = p[3*s+5]/100, ux = bx - ax, uz = bz - az, L2 = ux*ux + uz*uz;
+      if(Math.min(ax, bx) - reach > x || Math.max(ax, bx) + reach < x || Math.min(az, bz) - reach > z || Math.max(az, bz) + reach < z) continue;
+      var t = L2 > 0 ? clamp(((x - ax)*ux + (z - az)*uz)/L2, 0, 1) : 0, d = Math.sqrt(Math.pow(x - ax - ux*t, 2) + Math.pow(z - az - uz*t, 2));
+      if(d <= half || d > reach) continue;
+      var y = (p[3*s+1] + (p[3*s+4] - p[3*s+1])*t)/100;
+      if(y - groundAt(W, x, z) > BRIDGE_UP) return true;
+    }
+  }
+  return false;
+}
 // yNow (optional, m): the level the ray is cast from (phase 7: in a tunnel its road, walls and ceiling stop it)
 function rayGround(W, from, to, step, yNow){
   step = step > 0 ? +step : 2;
@@ -1660,7 +1740,7 @@ var api = HQV.world = {
   holeFloor: holeFloor, streetAt: streetAt, deckAt: deckAt, RIVER_LIFT: RIVER_LIFT, BREAKWATER_HALF: BREAKWATER_HALF, BREAKWATER_UP: BREAKWATER_UP,
   pack: pack, docOf: docOf, hash32: hash32, cacheCopy: cacheCopy,
   heightCm: heightCm, heightAt: heightAt, districtAt: districtAt, lotAt: lotAt, siteAt: siteAt,
-  nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt,
+  nearestRoad: nearestRoad, roadY: roadY, surfaceAt: surfaceAt, padOf: padOf, groundAt: groundAt, groundRaw: groundRaw,
   normalAt: normalAt, slopeAlong: slopeAlong, slopeFactor: slopeFactor, buildingRect: buildingRect,
   blockedAt: blockedAt, trees: trees, decksOf: decksOf, piersOf: piersOf, railPiersOf: railPiersOf, railPierHit: railPierHit,
   RAIL_PIER: {R: RAIL_PIER_R, GIRDER: RAIL_GIRDER}, deckOver: deckOver, STEP_UP: STEP_UP,

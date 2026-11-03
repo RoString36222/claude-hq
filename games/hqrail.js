@@ -38,6 +38,11 @@
  *   linkPlatform (Commons Central's platform). Drawn by linkView(c, sim, opts) (plan 5.4).
  *   parts: the few-draw-call kit (merged vertex-coloured statics, instanced trains, a focused train's inside) shared
  *   with games/hqcityrail.js and games/hqgondola.js.
+ * [island trains] The Island Link is ridden, not watched: an island whose doc has no IL gets its own elevated terminal on
+ *   its coast facing the Commons (islandLeg, a pure function of its doc), linkStation(W, world, toward) is a world's
+ *   elevated IL station for games/hqilstation.js (Commons Central: six tracks, LINK_LAT, three island platforms), a
+ *   Trip's door is on its platform's side at either end, and Trip.frame ("to" once the ride has carried you into the far
+ *   world) is the frame its poses default to. linkView(...).ride(trip) draws the train you ride from its own route.
  */
 (function(){
 "use strict";
@@ -718,6 +723,11 @@ function menuRows(rail, here, places, mine, myTier, nowMs){
    Seats: SEATS / STAND (car-local: +x left, z forward, y over the floor), 2+2 transverse in facing bays, the cab
    ends and car 1's luggage stack without seats; shared by the City Line (games/hqcityrail.js). */
 var LINK_EVERY = 300000, LINK_PLATS = 6, LINK_PLAT_GAP = 5.5, LINK_COLOR = "#6d4bb3";
+// [island trains] Commons Central's six tracks (m, + left of the way in): three island platforms LINK_PW wide, one between
+// each pair (1|2, 3|4, 5|6), the platform's edge LINK_EDGE m from a track's centre
+var LINK_EDGE = 1.6, LINK_PW = 5, LINK_LAT = [-16.7, -8.5, -4.1, 4.1, 8.5, 16.7];
+function linkLat(p){ return LINK_LAT[Math.max(1, Math.min(LINK_PLATS, p | 0)) - 1]; }
+function linkSide(p){ return (Math.max(1, p | 0) % 2) ? 1 : -1; }      // the side (+ left of the way in) its platform is on
 var K_GRADE = 0, K_TUNNEL = 1, K_PORTAL = 2, K_VIADUCT = 3, K_BRIDGE = 4, K_SEA = 5;
 var KCODE = {grade: K_GRADE, tunnel: K_TUNNEL, portal: K_PORTAL, viaduct: K_VIADUCT, bridge: K_BRIDGE, sea: K_SEA};
 var SEAT_UP = 0.45;          // m: a seat's top over the car floor
@@ -774,16 +784,17 @@ function railView(W){
   if(RAIL_MEMO) RAIL_MEMO.set(L, out);
   return out;
 }
+function isCommonsDoc(W){ var id = W && (W.id || W.seed); return !!id && /^claude-hq@?/.test(String(id)); }
 function seaLevelOf(W){
   var I = W && (W.island || (W.layers && W.layers.island));
   return I && I.sea_cm != null ? (+I.sea_cm || 0)/100 : 0;
 }
 // a world's IL in its own frame: {station, sea, P: [[x, y, z]] from behind the platform out to the sea point, K: segment kinds}
-function ilOf(W){
+// [island trains] an island doc without one: its generated terminal (islandLeg; toward: [dx, dz] the way to the Commons)
+function ilOf(W, toward){
   var R = railView(W);
-  if(!R) return null;
-  var line = R.lines.filter(function(l){ return l.kind === "island" && l.path.length >= 2; })[0];
-  if(!line) return null;
+  var line = R ? R.lines.filter(function(l){ return l.kind === "island" && l.path.length >= 2; })[0] : null;
+  if(!line) return isCommonsDoc(W) ? null : islandLeg(W, toward);
   var st = null;
   R.stations.forEach(function(s){ if(!st && line.stations.indexOf(s.id) >= 0) st = s; });
   var P = line.path.map(function(p){ return p.slice(); }), K = line.kinds.map(function(k){ return KCODE[k] != null ? KCODE[k] : K_GRADE; });
@@ -808,6 +819,120 @@ function fallbackLeg(W, dx, dz, seaY){
   var P = [[sx - dx*h, y0, sz - dz*h], [sx, y0, sz], [C[0], seaY + SEA_UP, C[1]]];
   return {station: null, sea: {x: C[0], y: seaY + SEA_UP, z: C[1], front: [dx, dz]}, P: P, K: [K_VIADUCT, K_VIADUCT], platforms: 1};
 }
+/* [island trains] an island whose doc has no IL (the live islands): its own Island Link terminal, chosen here from the
+   doc alone (the same on every client and in both worlds): an elevated station on the coast facing the Commons, its
+   platform over open land (no lot under it, the ground under it level enough), its hall below on free ground (no road,
+   no lot, above the sea) within ILG_ROAD m of a road, the line straight out over the coast to sea. toward: [dx, dz] the
+   way to the Commons. -> ilOf's shape ({station, sea, P, K, platforms}), station.gen true, or null (no spot: the
+   nominal leg). Memoised per doc and direction; ilOf(W) without a direction reuses the last one chosen for W. */
+var ILG_MEMO = typeof WeakMap === "function" ? new WeakMap() : null;
+var ILG_PLAT = 55;           // m: a generated terminal's platform half length (the train is TRAIN_L)
+var ILG_HALL = {u0: -24, u1: 2, v0: -1.4, v1: 9.6};   // the hall below, in the station's frame (u along the way out, v left)
+var ILG_ROAD = 50;           // m: the hall's door at most this far from a road
+function terrainH(W){
+  var T = W && (W.terrain || (W.layers && W.layers.terrain));
+  if(!T) return function(){ return 0; };
+  var cell = +(T.cell != null ? T.cell : T.cell_cm) || 800, org = +(T.origin != null ? T.origin : T.origin_cm) || 0, n = T.n | 0, H = T.h || T.heights || [];
+  return function(x, z){
+    if(n < 2) return 0;
+    var fx = (x*100 - org)/cell, fz = (z*100 - org)/cell, ix = Math.max(0, Math.min(n - 2, Math.floor(fx))), iz = Math.max(0, Math.min(n - 2, Math.floor(fz)));
+    var ux = Math.max(0, Math.min(1, fx - ix)), uz = Math.max(0, Math.min(1, fz - iz));
+    var a = +H[iz*n + ix] || 0, b = +H[iz*n + ix + 1] || 0, c = +H[(iz + 1)*n + ix] || 0, d = +H[(iz + 1)*n + ix + 1] || 0;
+    return (a*(1 - ux)*(1 - uz) + b*ux*(1 - uz) + c*(1 - ux)*uz + d*ux*uz)/100;
+  };
+}
+function roadSegs(W){
+  var out = [], E = W.edges || (W.layers && W.layers.roads && W.layers.roads.edges) || [];
+  var N = W.nodes || (W.layers && W.layers.roads && W.layers.roads.nodes) || [], byId = {};
+  N.forEach(function(n){ if(n) byId[n.id] = n; });
+  E.forEach(function(e){
+    if(!e || e.under === "tunnel") return;
+    var h = Math.max(0, +e.width || 0)/200 + Math.max(0, +e.walk || 0)/100, P = [];
+    if(e.pts) for(var i = 0; i + 2 < e.pts.length; i += 3) P.push([e.pts[i]/100, e.pts[i + 2]/100]);
+    else if(e.points && e.points.length) e.points.forEach(function(q){ if(q && q.length >= 3) P.push([q[0]/100, q[2]/100]); });
+    else { var a = byId[e.a], b = byId[e.b]; if(a && b) P = [[a.x/100, a.z/100], [b.x/100, b.z/100]]; }
+    for(var k = 0; k + 1 < P.length; k++) out.push([P[k][0], P[k][1], P[k + 1][0], P[k + 1][1], h]);
+  });
+  return out;
+}
+function segDist(x, z, s){ var dx = s[2] - s[0], dz = s[3] - s[1], l2 = dx*dx + dz*dz, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - s[0])*dx + (z - s[1])*dz)/l2)) : 0; return hyp(x - s[0] - dx*t, z - s[1] - dz*t); }
+function islandLeg(W, toward){
+  if(!W || typeof W !== "object") return null;
+  var I = W.island || (W.layers && W.layers.island), C = I && I.coast;
+  if(!C || C.length < 8) return null;
+  var memo = ILG_MEMO ? ILG_MEMO.get(W) : null;
+  if(!toward) return memo ? memo.last : null;
+  var tl = hyp(toward[0], toward[1]); if(!(tl > 1e-9)) return null;
+  var tx = toward[0]/tl, tz = toward[1]/tl, key = Math.round(Math.atan2(tx, tz)*1000);
+  if(memo && memo[key] !== undefined){ memo.last = memo[key]; return memo[key]; }
+  var seaY = I.sea_cm != null ? (+I.sea_cm || 0)/100 : 0, G = terrainH(W), coast = C.map(function(p){ return [p[0]/100, p[1]/100]; }), n = coast.length;
+  var cx0 = 0, cz0 = 0; coast.forEach(function(p){ cx0 += p[0]; cz0 += p[1]; }); cx0 /= n; cz0 /= n;
+  var lots = (W.lots || (W.layers && W.layers.lots) || []).filter(Boolean).map(function(l){
+    var P = Array.isArray(l.poly) && l.poly.length >= 3 ? l.poly.map(function(q){ return [q[0]/100, q[1]/100]; })
+          : [[(l.x - l.w/2)/100, (l.z - l.d/2)/100], [(l.x + l.w/2)/100, (l.z - l.d/2)/100], [(l.x + l.w/2)/100, (l.z + l.d/2)/100], [(l.x - l.w/2)/100, (l.z + l.d/2)/100]];
+    var b = [Infinity, Infinity, -Infinity, -Infinity];
+    P.forEach(function(q){ b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[0]); b[3] = Math.max(b[3], q[1]); });
+    return {P: P, b: b};
+  });
+  var roads = roadSegs(W);
+  function inLot(x, z, m){
+    for(var i = 0; i < lots.length; i++){
+      var L = lots[i]; if(x < L.b[0] - m || x > L.b[2] + m || z < L.b[1] - m || z > L.b[3] + m) continue;
+      if(inside(L.P, x, z)) return true;
+      for(var k = 0; k < L.P.length; k++){ var a = L.P[k], c = L.P[(k + 1) % L.P.length]; if(segDist(x, z, [a[0], a[1], c[0], c[1]]) < m) return true; }
+    }
+    return false;
+  }
+  function onRoad(x, z, m){ for(var i = 0; i < roads.length; i++) if(segDist(x, z, roads[i]) < roads[i][4] + m) return true; return false; }
+  function roadNear(x, z){ var d = Infinity; for(var i = 0; i < roads.length; i++) d = Math.min(d, Math.max(0, segDist(x, z, roads[i]) - roads[i][4])); return d; }
+  var best = null;
+  for(var i = 0; i < n; i++){
+    var q = coast[i], a0 = coast[(i + n - 1) % n], a1 = coast[(i + 1) % n], ex = a1[0] - a0[0], ez = a1[1] - a0[1], el = hyp(ex, ez) || 1;
+    var nx = ez/el, nz = -ex/el;
+    if(nx*(q[0] - cx0) + nz*(q[1] - cz0) < 0){ nx = -nx; nz = -nz; }        // the coast's outward normal
+    var face = nx*tx + nz*tz;
+    if(face < 0.25) continue;
+    var ax = nx + tx, az = nz + tz, al = hyp(ax, az) || 1; ax /= al; az /= al;   // the way out: between the normal and the Commons
+    var lx = az, lz = -ax;                                                       // left of the way out
+    var sx = q[0] - ax*(ILG_PLAT + 8), sz = q[1] - az*(ILG_PLAT + 8);            // the platform's middle, its sea end 8 m inland
+    function W2(u, v){ return [sx + ax*u + lx*v, sz + az*u + lz*v]; }
+    // the line out to sea: off the land for good past the coast
+    var wet = true;
+    for(var s = 30; s <= 600 && wet; s += 30){ var o = [q[0] + ax*s, q[1] + az*s]; if(inside(coast, o[0], o[1])) wet = false; }
+    if(!wet) continue;
+    // the platform and the train's whole stretch: no lot under it, the ground at most 3 m over the hall's
+    var hc = W2((ILG_HALL.u0 + ILG_HALL.u1)/2, (ILG_HALL.v0 + ILG_HALL.v1)/2), ys = G(hc[0], hc[1]);
+    if(!(ys > seaY + 0.6)) continue;
+    var ok = true, gmax = -Infinity;
+    for(var u = -ILG_PLAT - 6; u <= ILG_PLAT + 8 && ok; u += 4){
+      for(var v = -7; v <= 11 && ok; v += 3){
+        var p = W2(u, v); if(inLot(p[0], p[1], 1.5)) ok = false;
+        var g = G(p[0], p[1]); if(g > gmax) gmax = g;
+      }
+    }
+    if(!ok || gmax > ys + 3) continue;
+    // the hall: on land, off every road and lot, its door near a road
+    for(var hu = ILG_HALL.u0; hu <= ILG_HALL.u1 && ok; hu += 2) for(var hv = ILG_HALL.v0; hv <= ILG_HALL.v1 && ok; hv += 2){
+      var hp = W2(hu, hv); if(onRoad(hp[0], hp[1], 1) || inLot(hp[0], hp[1], 1) || !inside(coast, hp[0], hp[1]) || Math.abs(G(hp[0], hp[1]) - ys) > 1.6) ok = false;
+    }
+    if(!ok) continue;
+    var dp = W2(ILG_HALL.u0 - 1, (ILG_HALL.v0 + ILG_HALL.v1)/2), rd = roadNear(dp[0], dp[1]);
+    if(!(rd <= ILG_ROAD)) continue;
+    var sc = rd + (1 - face)*120 + Math.abs(gmax - ys)*4;
+    if(!best || sc < best.sc - 1e-9) best = {sc: sc, sx: sx, sz: sz, ax: ax, az: az, ys: ys, gmax: gmax, q: q};
+  }
+  var out = null;
+  if(best){
+    var yr = Math.max(best.ys + DECK_UP, best.gmax + 6.5), h = TRAIN_L/2 + STOP_END, b = best;
+    var sea = {x: b.q[0] + b.ax*40, y: yr, z: b.q[1] + b.az*40, front: [b.ax, b.az], yaw: Math.atan2(b.ax, b.az)};
+    out = {station: {id: "il:gen", kind: "elevated", gen: true, x: b.sx, y: yr, z: b.sz, along: [b.ax, b.az], yaw: Math.atan2(b.ax, b.az),
+                     len: 2*ILG_PLAT, platforms: 1, ground: b.ys, stairs: []},
+           sea: sea, P: [[b.sx - b.ax*h, yr, b.sz - b.az*h], [b.sx, yr, b.sz], [sea.x, yr, sea.z]], K: [K_VIADUCT, K_VIADUCT], platforms: 1};
+  }
+  if(ILG_MEMO){ if(!memo){ memo = {}; ILG_MEMO.set(W, memo); } memo[key] = out; memo.last = out; }
+  return out;
+}
+
 // points every `step` m (in plan) along V [[x, y, z]] with the kind of the segment each lies on
 function resample3(V, K, step){
   var P = [V[0].slice()], KO = [K[0]], carry = 0;
@@ -833,7 +958,7 @@ function linkRoute(I, C, o){
   // (an island beside the Commons' runway: straight on is the airfield, and no way round would leave it), the leg turns
   // LEG_TURN at a time either way until the crossing keeps off every keep-out and coast; else the least bad
   var obs = seaObstacles(I.W, Ix, Iz).concat(seaObstacles(C.W, Cx, Cz));
-  var a0 = ilOf(I.W), b0 = ilOf(C.W), best = null, turns = [0], t;
+  var a0 = ilOf(I.W, [dx, dz]), b0 = ilOf(C.W), best = null, turns = [0], t;
   for(t = 1; t*LEG_TURN <= Math.PI + 1e-9; t++){ turns.push(t*LEG_TURN); if(t*LEG_TURN < Math.PI - 1e-9) turns.push(-t*LEG_TURN); }
   for(t = 0; t < turns.length; t++){
     if(t && a0 && b0) break;
@@ -889,7 +1014,7 @@ function linkRoute(I, C, o){
   for(i = 1; i < m; i++) s[i] = s[i - 1] + hyp(P[i][0] - P[i - 1][0], P[i][2] - P[i - 1][2]);
   var len = s[m - 1];
   // the Commons' platform: the last stretch moved sideways onto its track (+ to the left of the way in), eased in over TAPER
-  var plat = Math.max(1, Math.min(LINK_PLATS, (o.plat | 0) || 1)), off = o.plat ? (plat - (LINK_PLATS + 1)/2)*LINK_PLAT_GAP : 0;
+  var plat = Math.max(1, Math.min(LINK_PLATS, (o.plat | 0) || 1)), off = o.plat ? linkLat(plat) : 0;
   if(off){
     var hold = TRAIN_L + STOP_END + 20, Q = P.map(function(p){ return p.slice(); });
     for(i = 0; i < m; i++){
@@ -932,8 +1057,8 @@ function linkPlatform(island, list){
   return (i < 0 ? hash("ilp:" + c) : i) % LINK_PLATS + 1;
 }
 // where you step off at a world's IL platform (its own frame): on the platform beside the train, facing it
-function linkSpawn(W, world, island, list){
-  var a = ilOf(W);
+function linkSpawn(W, world, island, list, toward){
+  var a = ilOf(W, toward);
   if(!a || !a.station){
     var st0 = W ? stationOf(W) : null;
     if(!st0) return null;
@@ -942,11 +1067,37 @@ function linkSpawn(W, world, island, list){
   }
   var st = a.station, P = a.P, fx = P[1][0] - P[0][0], fz = P[1][2] - P[0][2], fl = hyp(fx, fz) || 1;
   fx /= fl; fz /= fl;                                                       // the way out of the station
-  var off = 0;
-  if(isCommonsId(world) && island) off = -(linkPlatform(island, list) - (LINK_PLATS + 1)/2)*LINK_PLAT_GAP;   // linkRoute's (+ left of the way in)
-  var lx = fz, lz = -fx, side = 2.7;                                        // left of the way out; the platform on its right
+  var off = 0, side = 2.7;                                                  // (an underground platform: on the track's right)
+  if(isCommonsId(world) && island){ var pn = linkPlatform(island, list); off = -linkLat(pn); side = st.kind === "elevated" ? linkSide(pn)*(LINK_EDGE + 1) : side; }   // linkRoute's (+ left of the way in)
+  else if(st.kind === "elevated") side = -(LINK_EDGE + 1);                  // [island trains] an island's: its platform on the left
+  var lx = fz, lz = -fx;                                                    // left of the way out
   var x = st.x + lx*off - lx*side, z = st.z + lz*off - lz*side;
   return {world: world, site: st.id, x: x, y: st.y + PLAT_TOP, z: z, yaw: Math.atan2(lx, lz), under: st.kind === "underground"};
+}
+
+// [island trains] a world's elevated IL station (its own frame), what games/hqilstation.js builds and walks: {id, x, z (the
+// trains' middle at the platforms, the station's origin), ax, az (the way out), yr (the rail head), ys (the ground under
+// the hall, from ground(x, z) or the doc's terrain), len (each platform's length), commons, tracks [{plat, v}] (v: m left
+// of the way out), plats [{c (v), hw, tracks: [plat]}]}; null for an underground one (the metro's hall) or none
+function linkStation(W, world, toward, ground){
+  var a = ilOf(W, toward); if(!a || !a.station || a.station.kind !== "elevated") return null;
+  var st = a.station, P = a.P, fx = P[1][0] - P[0][0], fz = P[1][2] - P[0][2], fl = hyp(fx, fz) || 1;
+  fx /= fl; fz /= fl;
+  var C = isCommonsId(world), G = typeof ground === "function" ? ground : terrainH(W), out = {id: "il:" + world, x: st.x, z: st.z, ax: fx, az: fz,
+    yr: st.y, len: Math.min(110, Math.max(TRAIN_L + 10, st.len || 110)), commons: C, gen: !!st.gen, tracks: [], plats: []};
+  if(C){
+    for(var p = 1; p <= LINK_PLATS; p++) out.tracks.push({plat: p, v: -linkLat(p)});
+    for(var k = 0; k < LINK_PLATS; k += 2){ var c = -(LINK_LAT[k] + LINK_LAT[k + 1])/2; out.plats.push({c: c, hw: LINK_PW/2, tracks: [k + 1, k + 2]}); }
+  } else {
+    out.tracks.push({plat: 1, v: 0});
+    out.plats.push({c: LINK_EDGE + LINK_PW/2, hw: LINK_PW/2, tracks: [1]});
+  }
+  // the street under the hall's middle (its floor)
+  var lx = fz, lz = -fx, hu = -11, hv = 0;
+  out.plats.forEach(function(q){ hv += q.c; }); hv /= out.plats.length;
+  var gy = st.ground != null ? st.ground : +G(st.x + fx*hu + lx*hv, st.z + fz*hu + lz*hv);
+  out.ys = isFinite(gy) ? gy : st.y - DECK_UP;
+  return out;
 }
 
 // the Service for the world you are in. o = {here (world id), W (its packed world), arch (GET /v1/archipelago: {commons:
@@ -989,16 +1140,20 @@ function linkService(o){
     routes[key] = {out: R, "in": reverse(R), plat: plat};
     return routes[key];
   }
-  var localId = "il:" + here, mine = ilOf(W), RN = HQV.hqRide;
-  var localName = isC ? "Commons Central" : (RN && RN.stationName && W && mine && mine.station ? RN.stationName(W, mine.station.x, mine.station.z, "rail") : "Central");
+  var cp0 = pos(commons), toC = !isC && cp0 ? [cp0.x - hp.x, cp0.z - hp.z] : null;
+  var localId = "il:" + here, mine = ilOf(W, toC), RN = HQV.hqRide;
+  // [island trains] an island's end is named for its owner ("Ravi's island"), as the boards say it
+  function islandName(w){ var n = nameOf(w); return n === "the island" ? "the island" : n + "'s island"; }
+  var localName = isC ? "Commons Central" : mine && mine.station && mine.station.gen ? islandName(here)
+                : (RN && RN.stationName && W && mine && mine.station ? RN.stationName(W, mine.station.x, mine.station.z, "rail") : "Central");
   var LINES = [], FAR = {};
   islands.forEach(function(iw){
     var rt = route(iw);
     if(!rt) return;
     var far = isC ? iw : commons, id = "IL:" + canon(iw), R = isC ? rt["in"] : rt.out, e = at(R, R.len - TRAIN_L/2 - STOP_END);
-    FAR[id] = {id: "il:" + far, name: isC ? nameOf(iw) : "Commons Central", world: far, x: e.x - hp.x, y: e.y + PLAT_TOP, z: e.z - hp.z,
+    FAR[id] = {id: "il:" + far, name: isC ? islandName(iw) : "Commons Central", world: far, x: e.x - hp.x, y: e.y + PLAT_TOP, z: e.z - hp.z,
                under: !isC ? false : true, mode: "link", lines: [id], kind: "station"};
-    LINES.push({id: id, mode: "link", name: "Island Link to " + (isC ? nameOf(iw) : "the Commons"), short: "IL", color: LINK_COLOR,
+    LINES.push({id: id, mode: "link", name: "Island Link to " + (isC ? islandName(iw) : "the Commons"), short: "IL", color: LINK_COLOR,
                 stops: [localId, FAR[id].id], headway: LINK_EVERY/1000, loop: false, world: far, island: iw, plat: isC ? rt.plat : 1});
   });
   var L0 = LINES[0], st0 = mine && mine.station;
@@ -1015,31 +1170,46 @@ function linkService(o){
     return {x: p.x - f.x, y: p.y + PLAT_TOP, z: p.z - f.z, yaw: p.yaw, pitch: p.pitch, speed: hd.speed, along: hd.along, head: hd, under: underAt(R, hd.along - TRAIN_L/2)};
   }
   function doorsAt(R, t){ return t <= -2 && t >= -DWELL ? 1 : t < 0 && t > -2 ? -t/2 : t >= R.T && t <= R.T + DWELL ? 1 : 0; }
+  // [island trains] the side the platform is on at an end (+1: the left of the way the train faces there): Commons Central's
+  // track p (elevated: its island platform; underground: the right), an island's (elevated: the left leaving, the right arriving)
+  function elevated(w){ var d = docOf(w); if(!d) return true; var a = ilOf(d, isCommonsId(w) ? null : toCommons(w)); return !!(a && a.station && a.station.kind === "elevated"); }
+  function toCommons(w){ var a = pos(w), b = pos(commons); return a && b ? [b.x - a.x, b.z - a.z] : null; }
+  function sideAt(w, p, arriving){
+    if(!elevated(w)) return -1;
+    if(isCommonsId(w)) return arriving ? linkSide(p) : -linkSide(p);
+    return arriving ? -1 : 1;
+  }
   function makeTrip(l, dep){
     var R = routeOf(l, dir); if(!R) return null;
     var far = FAR[l.id], fp = pos(far.world) || hp, T = R.T, shift = {x: fp.x - hp.x, z: fp.z - hp.z};
-    var trip = {mode: "link", line: l.id, short: "IL", vehicle: l.id + ":" + dir + ":" + dep, from: localId, to: far.id,
+    var sDep = sideAt(here, l.plat, false), sArr = sideAt(far.world, l.plat, true);
+    var trip = {mode: "link", line: l.id, short: "IL", vehicle: l.id + ":" + dir + ":" + dep, from: localId, to: far.id, frame: null,
       fromName: local.name, toName: far.name, arrive: dep - DWELL*1000, depart: dep, reach: Math.round(dep + T*1000), hand: Math.round(dep + R.hand*1000),
       stops: [{id: localId, name: local.name, at: dep}, {id: far.id, name: far.name, at: Math.round(dep + T*1000)}],
       seats: SEATS.length, standing: STAND.length, seatMeta: SEATS, world: far.world, from_world: here, shift: shift, plat: l.plat, R: R,
       // the floor's centre (the middle car's floor); frame "to": in the destination's frame
       pose: function(ms, frame){
+        frame = frame || trip.frame;                         // [island trains] "to" once the ride has carried you into the far world
         var t = ((+ms || 0) - dep)/1000, p = mid(R, t, frame === "to" ? fp : hp);
         return {x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, speed: p.speed, doors: doorsAt(R, t), under: p.under, done: t >= T,
                 leg: p.head.leg, u: p.head.u};
       },
       seat: function(i, ms, frame){
+        frame = frame || trip.frame;
         i = Math.max(0, i | 0);
         var S0 = i < SEATS.length ? SEATS[i] : STAND[Math.min(STAND.length - 1, i - SEATS.length)], t = ((+ms || 0) - dep)/1000, hd = poseAt(R, t);
         var p = at(R, hd.along - S0.car*(CAR_L + CAR_GAP) - CAR_L/2), f = frame === "to" ? fp : hp, c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
         return {x: p.x - f.x + c*S0.x + sn*S0.z, y: p.y + PLAT_TOP + S0.y, z: p.z - f.z - sn*S0.x + c*S0.z, yaw: p.yaw + (S0.back ? Math.PI : 0),
                 car: S0.car, stand: i >= SEATS.length};
       },
-      // the right-hand front door of the second car (the platform side)
+      // the front door of the second car on the platform side ([island trains] the side at the end the train stands at)
       door: function(ms, frame){
+        frame = frame || trip.frame;
         var t = ((+ms || 0) - dep)/1000, hd = poseAt(R, t), p = at(R, hd.along - (CAR_L + CAR_GAP) - CAR_L/2 + DOOR_Z), f = frame === "to" ? fp : hp;
-        return {x: p.x - f.x - Math.cos(p.yaw)*1.5, z: p.z - f.z + Math.sin(p.yaw)*1.5};
-      }};
+        var sg = t > R.T/2 ? sArr : sDep;
+        return {x: p.x - f.x + sg*Math.cos(p.yaw)*1.5, y: p.y + PLAT_TOP, z: p.z - f.z - sg*Math.sin(p.yaw)*1.5};
+      },
+      side: function(ms){ return ((+ms || 0) - dep)/1000 > R.T/2 ? sArr : sDep; }};
     return trip;
   }
   var sim = {
@@ -1084,9 +1254,15 @@ function linkService(o){
       return out;
     },
     route: function(lineId, d){ var l = lineById(lineId); return l ? routeOf(l, d || dir) : null; },
+    // [island trains] this world's elevated IL station (linkStation), the side a line's platform is on here (arriving or
+    // leaving), the far end's doc being known (a route laid without it ends on the nominal leg)
+    station: function(ground){ return linkStation(W, here, toC, ground); },
+    sideHere: function(lineId, arriving){ var l = lineById(lineId); return l ? sideAt(here, l.plat, !!arriving) : -1; },
+    hasDoc: function(w){ return !!docOf(w); },
+    dir: dir,
     origin: function(){ return {x: hp.x, z: hp.z}; },
     world: function(){ return W; },
-    spawn: function(){ return linkSpawn(W, here, isC ? null : here, platList); }
+    spawn: function(){ return linkSpawn(W, here, isC ? null : here, platList, toC); }
   };
   return sim;
 }
@@ -1101,7 +1277,8 @@ HQV.hqRail = {alignment: alignment, reverse: reverse, poseAt: poseAt, at: at, de
   commonsId: commonsId, isCommonsId: isCommonsId, canon: canon, sameWorld: sameWorld, islandIdOf: islandIdOf, WORLD_RE: WORLD_RE,
   // the Island Link
   link: link, linkService: linkService, linkRoute: linkRoute, seaPlan: seaPlan, seaCurve: seaCurve, seaWay: seaWay, roadFree: roadFree, pierAt: pierAt, PIER_CLEAR: PIER_CLEAR, seaObstacles: seaObstacles, seaLeave: seaLeave, linkSpawn: linkSpawn, linkDepartures: linkDepartures, linkNext: linkNext,
-  linkPlatform: linkPlatform, linkOff: linkOff, railView: railView, ilOf: ilOf, underAt: underAt, kAt: kAt, timing: timing, radii: radii,
+  linkPlatform: linkPlatform, linkOff: linkOff, linkStation: linkStation, islandLeg: islandLeg, linkLat: linkLat, linkSide: linkSide,
+  LINK_LAT: LINK_LAT, LINK_EDGE: LINK_EDGE, LINK_PW: LINK_PW, terrainH: terrainH, LINK_DWELL: DWELL, railView: railView, ilOf: ilOf, underAt: underAt, kAt: kAt, timing: timing, radii: radii,
   SEATS: SEATS, STAND: STAND, SEAT_UP: SEAT_UP, DOOR_Z: DOOR_Z, LINK_EVERY: LINK_EVERY, LINK_PLATS: LINK_PLATS, LINK_COLOR: LINK_COLOR,
   K: {GRADE: K_GRADE, TUNNEL: K_TUNNEL, PORTAL: K_PORTAL, VIADUCT: K_VIADUCT, BRIDGE: K_BRIDGE, SEA: K_SEA}};
 /* ---------- drawing (THREE): the viaduct, the track, the stations' platforms, the trains, their passengers ----------
@@ -1735,7 +1912,8 @@ function linkView(c, sim, opts){
   var underF = typeof opts.under === "function" ? opts.under : function(){ return false; };
   var parts = [], tube = [], seaY = typeof opts.seaY === "number" ? opts.seaY : 0;
   var ground = typeof opts.ground === "function" ? opts.ground : function(){ return seaY - 6; };
-  var free = roadFree(opts.W || (sim && sim.world ? sim.world() : null)), pierLog = [];
+  var free0 = roadFree(opts.W || (sim && sim.world ? sim.world() : null)), pierLog = [];
+  var free = typeof opts.noPier === "function" ? function(x, z){ return free0(x, z) && !opts.noPier(x, z); } : free0;   // [island trains] not through the station's hall
   function near(p){ return hyp(p.x - o.x, p.z - o.z) < DRAW_R; }
   lines.forEach(function(l){
     var R = sim.route(l.id, "out"); if(!R) return;
@@ -1802,7 +1980,7 @@ function linkView(c, sim, opts){
   var riders = commuterKit(c, 260);
   root2.add(trains.g); root2.add(inside.g); root2.add(riders.g);
   if(c.scene && opts.attach !== false) c.scene.add(root2);
-  var focusId = null, mySeat = opts.mySeat != null ? opts.mySeat : -1, seed = opts.seed != null ? opts.seed : (sim && sim.here) || "";
+  var focusId = null, mySeat = opts.mySeat != null ? opts.mySeat : -1, seed = opts.seed != null ? opts.seed : (sim && sim.here) || "", rideTrip = null;
   var runP = trainPool();      // the trains' running sound: heard as they are drawn (in the tunnel only below ground), yours too
   var V = {g: root2,
     update: function(ms, dt, cam){
@@ -1814,7 +1992,15 @@ function linkView(c, sim, opts){
         if(!runP || !(+v.speed > 0.5) || hyp(cs[0].x - ear.x, cs[0].z - ear.z) > SND_R) return;
         var q = nearOn(cs, ear, 1.5); snd.push({id: v.id, x: q.x, y: q.y, z: q.z, speed: +v.speed});
       }
+      // [island trains] the train you ride: from its own trip (the same route in whichever world draws it)
+      if(rideTrip){
+        var rt = ((+ms || 0) - rideTrip.depart)/1000, rh = poseAt(rideTrip.R, rt), rcs = carsOf(rideTrip.R, rh.along, o);
+        cars = cars.concat(rcs); if(focusId === rideTrip.vehicle) fc = rcs;
+        ride = ride.concat(ridersOf("link", rideTrip.vehicle, rcs, SEATS, ms, seed, mySeat));
+        heard({id: rideTrip.vehicle, speed: rh.speed}, rcs);
+      }
       (sim ? sim.vehicles(ms) : []).forEach(function(v){
+        if(rideTrip && v.id === rideTrip.vehicle) return;
         var R = sim.route(v.line, v.dir); if(!R) return;
         var cs = carsOf(R, v.along, o), inTunnel = underAt(R, v.along - TRAIN_L/2);
         if(v.id === focusId){ fc = cs; ride = ride.concat(ridersOf("link", v.id, cs, SEATS, ms, seed, mySeat)); heard(v, cs); return; }
@@ -1829,6 +2015,17 @@ function linkView(c, sim, opts){
     },
     focus: function(id){ focusId = id || null; if(!focusId) inside.set(null); },
     focused: function(){ return focusId; },
+    // [island trains] ride(trip | null): draw that trip's train from its own route; rideDoors(ms, station layout): its doors
+    // on the platform side while it stands at that station with them open
+    ride: function(trip, seat){ rideTrip = trip && trip.R && typeof trip.depart === "number" ? trip : null; mySeat = rideTrip && seat != null ? seat | 0 : -1; },
+    rideDoors: function(ms, L){
+      if(!rideTrip || !L || !L.doorsOf) return [];
+      var t = ((+ms || 0) - rideTrip.depart)/1000, R = rideTrip.R, hd = poseAt(R, t), op = t <= -2 && t >= -DWELL ? 1 : t < 0 && t > -2 ? -t/2 : t >= R.T && t <= R.T + DWELL ? 1 : 0;
+      if(!(op > 0)) return [];
+      var d = L.doorsOf(R, hd.along, o, rideTrip.side ? rideTrip.side(ms) : -1);
+      if(!d.length || hyp(d[3].x - L.x, d[3].z - L.z) > L.half + 40) return [];
+      return [{id: rideTrip.vehicle, v: {id: rideTrip.vehicle, line: rideTrip.line, doors: op}, doors: d, open: op, leaving: t < 0}];
+    },
     drawCalls: function(){ return (surf && surf.visible ? 1 : 0) + (tun && tun.visible ? 1 : 0) + trains.drawCalls() + inside.drawCalls() + riders.drawCalls(); },
     tools: {piers: function(){ return pierLog.map(function(q){ return {line: q.line, x: q.x, z: q.z, legs: q.legs.map(function(L){ return L.slice(); })}; }); },   // [rail fix] each pier drawn: the deck point and its legs (o's frame, m)
       shotCam: function(name){

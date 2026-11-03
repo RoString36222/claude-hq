@@ -1640,7 +1640,7 @@ HQV.hqWorlds.city3d = function(c, w){
         me: function(){ var a = c.avatar() || {x: 0, z: 0}; return {x: a.x, y: a.hy != null ? a.hy : groundY(a.x, a.z), z: a.z, yaw: a.yaw || 0}; },
         teleport: function(x, y, z, yaw){ if(c.teleport) c.teleport(x, z, yaw, y); },
         surface: surfaceShow, fade: function(ms){ fadePulse(ms); }, openMenu: openMenu, traffic: function(){ return callTraffic; },
-        startLink: startLink, arch: getArch, roofs: function(){ return roofs.filter(function(r){ return r && r.pad; }).map(function(r){ return {id: "roof:" + r.uid, x: r.pad.x, y: r.pad.y, z: r.pad.z, name: "HQ roof"}; }); },
+        startLink: startLink, arch: getArch, ndraw: function(){ return ndraw; }, roofs: function(){ return roofs.filter(function(r){ return r && r.pad; }).map(function(r){ return {id: "roof:" + r.uid, x: r.pad.x, y: r.pad.y, z: r.pad.z, name: "HQ roof"}; }); },
         showRoute: function(pts, label){
           if(!HQV.hqnav) return;
           if(!pts){ if(route && route.kind === "transit") navClear(); return; }
@@ -3092,6 +3092,8 @@ HQV.hqWorlds.city3d = function(c, w){
   // camera behind a boat or low over the sea never dips under the waves (it used to follow the sea bed) (3.2)
   // [3.36] the ceiling over the camera (m), or null in the open: below the street, that of the deck you are on (underCeil)
   w.camCeil = function(x, z){
+    // [island trains] the Island Link station's hall roof and canopies over the camera
+    if(transit && transit.ilCeil && !transit.under()){ var ia = c.avatar && c.avatar(), ic = ia && ia.hy != null ? transit.ilCeil(x, +ia.hy + 1.3, z) : null; if(ic != null) return ic; }
     if(!(transit && transit.under() && transit.floorAt)) return null;
     // [stations] the ceiling of the room your head is in (a stair's tube, the hall, a platform), else your deck's
     var a = underFeet(), cl = a && transit.ceilAt ? transit.ceilAt(x, a.hy + 1.3, z) : null;
@@ -3108,6 +3110,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(transit && transit.under() && transit.floorAt){ var d = underDeck(x, z); if(d) return d.y; }
     var ty = tunnelLevel();
     if(ty != null && WD.tunnelAt(W, x, z, ty)) return WD.groundAt(W, x, z, false, ty);   // [3.30] in the tunnel: its road, never the land over it
+    if(transit && transit.ilGround){ var ig = transit.ilGround(x, z); if(ig != null) return ig; }                // [island trains] up on an IL platform
     // below the street: the station floor under the camera, never above your feet (the street's height put the chase
     // camera over the hall's ceiling, looking at nothing)
     if(transit && transit.under && transit.under()){
@@ -4244,6 +4247,7 @@ HQV.hqWorlds.city3d = function(c, w){
       x0 = Math.min(from.x, from.x + (to.x - from.x)*u); x1 = Math.max(from.x, from.x + (to.x - from.x)*u);
       z0 = Math.min(from.z, from.z + (to.z - from.z)*u); z1 = Math.max(from.z, from.z + (to.z - from.z)*u); }
     buildingsIn(x0, x1, z0, z1).concat(placedIn(x0, x1, z0, z1)).forEach(function(b){ var h = segBox(from, to, b); if(h < t) t = h; });
+    if(transit && transit.ilCamHit){ var ih = transit.ilCamHit(from, to); if(ih < t) t = ih; }          // [island trains] the IL station's hall, platforms, canopies
     if(cp){ var ch = HQV.hqCarpark.camHit(cp.site, from, to); if(ch < t) t = ch; }   // carpark: the floor above you
     return t;
   };

@@ -534,3 +534,108 @@ class Live(unittest.TestCase):
         self.assertIn("function tick()", page)
         block = page[page.index("function history()"):page.index("function tick()")]
         self.assertNotIn("innerHTML", block)              # data reaches the page as text only
+
+
+class NoRelease(unittest.TestCase):
+    """HQ 3.36: Deploy latest with no Arena release published yet is refused, with why, not run."""
+
+    def setUp(self):
+        self.calls = []
+        self._run = deploy_panel.run
+        self.addCleanup(setattr, deploy_panel, "run", self._run)
+        self.addCleanup(os.environ.pop, "ARENA_FROM", None)
+        os.environ.pop("ARENA_FROM", None)
+
+    def answer(self, rc):
+        def fake(args, cwd=None, timeout=600):
+            self.calls.append(args)
+            return rc, ""
+        deploy_panel.run = fake
+
+    def test_no_release_yet(self):
+        self.answer(1)
+        self.assertTrue(deploy_panel.no_release())
+        self.assertEqual(self.calls[0][-1], "latest")
+        self.assertIn("No Arena release", deploy_panel.FAILURES["no_release"])
+
+    def test_a_release_to_deploy(self):
+        self.answer(0)
+        self.assertFalse(deploy_panel.no_release())
+
+    def test_git_mode_does_not_ask(self):
+        os.environ["ARENA_FROM"] = "git"
+        self.answer(1)
+        self.assertFalse(deploy_panel.no_release())
+        self.assertEqual(self.calls, [])
+
+
+
+class Brief(unittest.TestCase):
+    """HQ 3.36: the brief at the top says what is live, where the next release is, and what the button does."""
+
+    L = {"version": "2026.10.28-63a7be1", "sha": "63a7be1" + "0" * 33, "subject": "Merge #195"}
+    H = {"sha": "52ed621" + "0" * 33, "subject": "Merge #199", "when": "6 minutes ago"}
+    ROWS = [(1.0, "2026.10.27-1111111", "1111111", "deploy"), (2.0, "2026.10.28-63a7be1", "63a7be1", "deploy")]
+    CH = [{"sha": "52ed621", "subject": "Merge #199"}, {"sha": "3c6790f", "subject": "Merge #200"}]
+    OK = [{"name": n, "status": "success"} for n in ("tests", "backend", "dashboard")]
+
+    def b(self, release=None, checks=None, healthy=True, live=None, rows=None, changes=None):
+        return deploy_panel.brief(live or self.L, self.H, release, checks, healthy,
+                                  self.ROWS if rows is None else rows, self.CH if changes is None else changes)
+
+    def states(self, r):
+        return [s["state"] for s in r["steps"]]
+
+    def test_a_ready_release_is_the_button(self):
+        r = self.b(release={"version": "2026.10.29-52ed621", "sha": self.H["sha"]}, checks=self.OK)
+        self.assertEqual(r["action"], {"enabled": True, "label": "Deploy 2026.10.29-52ed621", "why": "2 changes since what is live."})
+        self.assertEqual(self.states(r), ["done", "done", "done", "ready"])
+        self.assertEqual(r["tone"], "warn")
+        self.assertEqual(r["deployed_at"], 2.0)
+
+    def test_up_to_date(self):
+        live = dict(self.L, sha=self.H["sha"], version="2026.10.29-52ed621")
+        r = self.b(live=live, release={"version": "2026.10.29-52ed621", "sha": self.H["sha"]}, checks=self.OK, changes=[])
+        self.assertEqual((r["action"]["enabled"], r["action"]["label"], r["tone"]), (False, "Up to date", "ok"))
+        self.assertEqual(self.states(r), ["done"] * 4)
+
+    def test_waiting_for_ci_names_what_is_running(self):
+        r = self.b(release={"version": "2026.10.28-63a7be1", "sha": self.L["sha"]},
+                   checks=[{"name": "tests", "status": "success"}, {"name": "backend", "status": "pending"}])
+        self.assertEqual(r["action"]["label"], "Waiting for CI")
+        self.assertIn("backend still running on 52ed621", r["action"]["why"])
+        self.assertEqual(self.states(r), ["done", "active", "idle", "idle"])
+        self.assertEqual(r["steps"][1]["detail"], "running: backend")
+
+    def test_ci_failed_says_what_failed_and_that_live_is_untouched(self):
+        r = self.b(release=None, checks=[{"name": "backend", "status": "failure"}, {"name": "tests", "status": "success"}])
+        self.assertEqual(r["action"]["label"], "CI failed")
+        self.assertIn("backend failed", r["action"]["why"])
+        self.assertEqual(self.states(r)[1], "fail")
+
+    def test_ci_passed_then_the_release_publishes(self):
+        r = self.b(release=None, checks=self.OK + [{"name": "release", "status": "pending"}])
+        self.assertEqual(r["action"]["label"], "Publishing release")
+        self.assertEqual(self.states(r), ["done", "done", "active", "idle"])
+
+    def test_github_unreadable_is_not_a_failure(self):
+        r = self.b(release=None, checks=None)
+        self.assertEqual((r["action"]["label"], self.states(r)[1]), ("Waiting for CI", "idle"))
+
+    def test_an_unhealthy_arena_reads_red_first(self):
+        r = self.b(healthy=False, release=None, checks=self.OK)
+        self.assertEqual((r["tone"], r["headline"]), ("bad", "Live, but not answering its health check"))
+
+    def test_rollback_names_the_release_it_goes_back_to(self):
+        self.assertEqual(self.b()["rollback"], {"enabled": True, "label": "Roll back to 2026.10.27-1111111", "version": "2026.10.27-1111111"})
+        self.assertFalse(self.b(rows=self.ROWS[1:])["rollback"]["enabled"])
+
+    def test_git_mode_deploys_main(self):
+        r = deploy_panel.brief(self.L, self.H, None, self.OK, True, self.ROWS, self.CH, mode="git")
+        self.assertEqual((r["action"]["enabled"], r["action"]["label"]), (True, "Deploy 52ed621"))
+
+    def test_the_page_sets_the_brief_as_text(self):
+        page = deploy_panel.PAGE
+        self.assertIn('fetch("/api/status"', page)
+        block = page[page.index("function drawBrief("):page.index("function brief()")]
+        self.assertNotIn("innerHTML", block)

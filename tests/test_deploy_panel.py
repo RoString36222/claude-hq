@@ -265,6 +265,51 @@ class CiHold(unittest.TestCase):
             self.assertIn(sel, block)
 
 
+class Scope(unittest.TestCase):
+    """The holographic table over the brief: real data only, and still for those who ask for stillness."""
+
+    PAGE = deploy_panel.PAGE
+
+    def _js(self):
+        at = self.PAGE.index("var SCOPE=(function(){")
+        return self.PAGE[at:self.PAGE.index("history(); setInterval(history,30000);")]
+
+    def test_it_stands_over_the_brief_and_keys_can_reach_it(self):
+        self.assertIn('<canvas id="scope" tabindex="0"', self.PAGE)
+        self.assertLess(self.PAGE.index('id="scope"'), self.PAGE.index('id="brief"'))
+        for key in ("ArrowRight", "ArrowLeft", "Escape"):
+            self.assertIn('"%s"' % key, self._js())
+
+    def test_every_state_has_its_own_look(self):
+        js = self._js()
+        for mode in ("clear", "ready", "ci", "publish", "cifail", "down", "deploy", "hold", "shipped", "fail"):
+            self.assertRegex(js, r"\b%s:\s*\{col:" % mode)
+
+    def test_it_only_reads_and_prints_as_text(self):
+        js = self._js()
+        self.assertNotIn("innerHTML", js)
+        self.assertNotIn("/api/deploy", js)
+        self.assertNotIn("/api/rollback", js)
+        self.assertNotIn("fetch(", js)
+
+    def test_reduced_motion_draws_one_still_frame(self):
+        js = self._js()
+        self.assertIn('matchMedia("(prefers-reduced-motion:reduce)")', js)
+        self.assertIn("if(calm){ draw(0,0); return; }", js)
+
+    def test_it_never_draws_a_random_number(self):
+        self.assertNotIn("Math.random", self._js())
+
+    def test_the_page_feeds_it_and_the_ending_reaches_it(self):
+        for call in ("SCOPE.brief(b);", "SCOPE.job(j);", "SCOPE.end(ok,"):
+            self.assertIn(call, self.PAGE)
+
+    def test_the_brief_reports_its_checks_without_the_release_job(self):
+        checks = [{"name": "tests", "status": "pending"}, {"name": "release", "status": "pending"}]
+        b = deploy_panel.brief({"version": "v1", "sha": "aaa"}, {"sha": "bbb"}, None, checks, True, [], [])
+        self.assertEqual(b["checks"], [{"name": "tests", "status": "pending"}])
+
+
 def _media_blocks(css, header):
     """Every @media rule with this header, joined.
 

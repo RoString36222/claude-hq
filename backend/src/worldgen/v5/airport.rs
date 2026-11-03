@@ -65,6 +65,10 @@ const CUT_GRID_CM: i64 = 5_000;
 const ROAD_UNDER_CM: i64 = 40_000;
 /// The dry land's grid (cm) the search reads: `Land::dry` once a cell, not once a sample.
 const DRY_CELL_CM: i64 = 1_000;
+/// Where the ground under the footprint is lower than the apron the box reaches down to it a square of `GROUND_GRID_CM`
+/// at a time (`space::CELL_CM`'s), the ground read every `GROUND_STEP_CM` in it.
+const GROUND_GRID_CM: i64 = 5_000;
+const GROUND_STEP_CM: i64 = 1_000;
 
 /// Where an approach starts: half the runway and the threshold's margin.
 fn ap_half(len: i64) -> i64 {
@@ -100,6 +104,42 @@ pub fn footprint(c: P, d: (i64, i64), len: i64, side: i64) -> Vec<P> {
     let at = |u: i64, w: i64| { let w = w * side; (c.0 + (d.0 * u - d.1 * w) / 1000, c.1 + (d.1 * u + d.0 * w) / 1000) };
     let p = vec![at(-half, o), at(half, o), at(half, i), at(APRON_HALF_CM, a), at(-APRON_HALF_CM, a), at(-half, i)];
     if side > 0 { p } else { p.into_iter().rev().collect() }
+}
+
+/// The lowest dry ground (cm) under the convex `poly`: at its corners and on a `GROUND_STEP_CM` grid inside it;
+/// i64::MAX where none is dry.
+fn ground_under(land: &Land, poly: &[P]) -> i64 {
+    let (x0, x1, z0, z1) = poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
+    let grid = (x0.div_euclid(GROUND_STEP_CM)..=x1.div_euclid(GROUND_STEP_CM) + 1)
+        .flat_map(|i| (z0.div_euclid(GROUND_STEP_CM)..=z1.div_euclid(GROUND_STEP_CM) + 1).map(move |j| (i * GROUND_STEP_CM, j * GROUND_STEP_CM)))
+        .filter(|&q| inside(q, poly));
+    poly.iter().copied().chain(grid).filter(|&q| land.dry(q)).map(|q| land.height(q)).min().unwrap_or(i64::MAX)
+}
+
+/// The convex `poly` clipped to the square from `o` `side` cm along +x and +z (Sutherland-Hodgman, rounded to the cm).
+fn clip_square(poly: &[P], o: P, side: i64) -> Vec<P> {
+    // each edge of the square: the kept side is where f(q) >= 0
+    let edges: [&dyn Fn(P) -> i64; 4] = [&|q| q.0 - o.0, &|q| o.0 + side - q.0, &|q| q.1 - o.1, &|q| o.1 + side - q.1];
+    let mut out: Vec<P> = poly.to_vec();
+    for f in edges {
+        let src = std::mem::take(&mut out);
+        for k in 0..src.len() {
+            let (p, q) = (src[k], src[(k + 1) % src.len()]);
+            let (fp, fq) = (f(p), f(q));
+            if fp >= 0 {
+                out.push(p);
+            }
+            if (fp >= 0) != (fq >= 0) {
+                let t = fp as f64 / (fp - fq) as f64;
+                out.push((p.0 + ((q.0 - p.0) as f64 * t).round() as i64, p.1 + ((q.1 - p.1) as f64 * t).round() as i64));
+            }
+        }
+    }
+    out.dedup();
+    if out.len() > 1 && out.first() == out.last() {
+        out.pop();
+    }
+    out
 }
 
 /// The apron side: the apron, terminal, landside and car park, which stand on the island (dry), round the middle.
@@ -284,6 +324,23 @@ pub fn place(land: &Land, space: &mut Space) -> Option<Airport> {
     let (_, mut ap) = all.into_iter().find(|(key, a)| (key.0 || cut_off(&dry, a, lim) <= CUT_PM) && reaches(land, landside(a.c, a.dir, a.side), &a.poly, r))?;
     // locked: the footprint from the ground into the sky; each approach a run of boxes stepping up its surface
     ap.solids.push(space.put("airport", "airport", ap.poly.clone(), ap.y + GROUND.0, ap.y + SKY.1));
+    // where the dry ground under it is lower than the apron (a pier's strip running in over a beach, a platform's fill
+    // over a dip), the footprint down to that ground too, a `GROUND_GRID_CM` square at a time, so nothing stands under
+    // the deck; the ground under each square stays free for tunnels
+    let (x0, x1, z0, z1) = ap.poly.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
+    for i in x0.div_euclid(GROUND_GRID_CM)..=x1.div_euclid(GROUND_GRID_CM) {
+        for j in z0.div_euclid(GROUND_GRID_CM)..=z1.div_euclid(GROUND_GRID_CM) {
+            let (a, b) = (i * GROUND_GRID_CM, j * GROUND_GRID_CM);
+            let piece = clip_square(&ap.poly, (a, b), GROUND_GRID_CM);
+            if piece.len() < 3 {
+                continue;
+            }
+            let low = ground_under(land, &piece);
+            if low < ap.y {
+                ap.solids.push(space.put("airport", "airport", piece, low + GROUND.0, ap.y + GROUND.0));
+            }
+        }
+    }
     for s in [-1, 1] {
         let mut a = ap.len / 2 + STRIP_END_CM;
         while a < ap.len / 2 + APP_START_CM + APP_LEN_CM {
@@ -349,10 +406,12 @@ mod tests {
 
     #[test]
     fn its_volume_is_locked_above_and_free_below() {
-        let (_, v, ap) = commons();
+        let (land, v, ap) = commons();
         let probe = quad(ap.c, ap.dir, -1_000, 1_000, -1_000, 1_000);
         assert!(v.blocker(&probe, ap.y, ap.y + 2_000, 0).is_some(), "nothing stands on the runway");
-        assert!(v.blocker(&probe, ap.y - 1_200, ap.y - 400, 0).is_none(), "a tunnel passes under it");
+        // (under the ground there: the land's, or the sea bed under a pier's strip)
+        let g = land.height(ap.c).min(ap.y);
+        assert!(v.blocker(&probe, g - 1_200, g - 400, 0).is_none(), "a tunnel passes under it");
         // under an approach, low enough, the volume is free; at its height it is not
         let far = ap.len / 2 + APP_START_CM + 80_000;
         let under = quad(ap.c, ap.dir, far, far + 2_000, -500, 500);

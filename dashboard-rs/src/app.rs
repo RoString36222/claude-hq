@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "3.39.0";
+pub const APP_VERSION: &str = "3.40.0";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> =
@@ -610,6 +610,7 @@ pub fn default_config() -> Obj {
         "phoneCalls": false,
         "transitVoice": true,
         "phoneClock24": false,
+        "achievementToasts": false,
         "cabClass": "go",
     }) {
         Value::Object(o) => o,
@@ -726,6 +727,7 @@ pub fn validate_config(raw: &Value, base: Option<&Obj>) -> Obj {
         "phoneCalls",
         "transitVoice",
         "phoneClock24",
+        "achievementToasts",
     ] {
         if let Some(Value::Bool(b)) = raw.get(key) {
             cfg.insert(key.into(), Value::Bool(*b));
@@ -965,6 +967,19 @@ mod tests {
         for c in CAB_CLASSES {
             assert_eq!(v(json!({"cabClass": c}))["cabClass"], c);
         }
+    }
+
+    #[test]
+    fn achievement_toasts_setting() {
+        // off by default; only a real boolean changes it, anything else keeps what was there
+        assert_eq!(default_config()["achievementToasts"], json!(false));
+        let on = v(json!({"achievementToasts": true}));
+        assert_eq!(on["achievementToasts"], json!(true));
+        for bad in [json!("yes"), json!(1), json!(null), json!("true")] {
+            assert_eq!(validate_config(&json!({"achievementToasts": bad}), Some(&on))["achievementToasts"], json!(true), "{bad}");
+            assert_eq!(v(json!({"achievementToasts": bad}))["achievementToasts"], json!(false), "{bad}");
+        }
+        assert_eq!(validate_config(&json!({"achievementToasts": false}), Some(&on))["achievementToasts"], json!(false));
     }
 
     #[test]

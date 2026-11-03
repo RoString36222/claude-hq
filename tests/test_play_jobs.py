@@ -106,6 +106,7 @@ function run(rams, opts){
   return res;
 }
 out.clean = run(0);
+window.CONFIG = {achievementToasts: true}; out.cleanAch = run(0); delete window.CONFIG;   // the Settings switch on
 out.rammed = run(3);
 out.late = run(0, {late: true});
 out.wrong = run(0, {wrong: true});
@@ -223,6 +224,12 @@ class PlayJobs(unittest.TestCase):
         self.assertIn("done", c["hudEnd"])
         for t in c["said"]:
             self.assertFalse(re.search(r"\d{3,}", t.replace("City rep", "")) and "rep" not in t, t)
+
+    def test_achievement_line_only_with_the_setting(self):
+        # the first fare unlocks "First fare"; its spoken/toast line needs CONFIG.achievementToasts (off by default)
+        self.assertFalse([t for t in self.o["clean"]["said"] if t.startswith("Achievement")])
+        self.assertIn("Achievement: First fare", self.o["cleanAch"]["said"])
+        self.assertEqual(self.o["clean"]["stats"]["done"], self.o["cleanAch"]["stats"]["done"])
 
     def test_rams_pay_less(self):
         clean, rammed = self.o["clean"]["emits"][1][3], self.o["rammed"]["emits"][1][3]

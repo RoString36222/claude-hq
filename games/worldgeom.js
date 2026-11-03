@@ -453,7 +453,10 @@ function clampPieces(W){
   // the finest lod they push down only the land vertices inside them (terrainY). A bank is a 3 m strip on a slope
   // steeper than it, and its plane carried out over a land vertex's whole 8 m star dug the land beside the river under
   // the water and left the strip afloat. The coarse lods keep the star test: a 16 or 32 m triangle from the land into
-  // the river must stay under the water, and from afar a trench does not show.
+  // the river must stay under the water, and from afar a trench does not show. A township's ground (its block, lot,
+  // plots and gateway aprons: `town`) is `own` too: graded level a few metres from its streets, which keep the land's
+  // grade, its plane carried over a street's vertex dug the land under the road down to the township where the street
+  // runs higher (a road raised on a wedge over a sunken verge)
   groundItems(W).forEach(function(it){
     for(var t = 0; t < it.tri.length; t += 3){
       var a = it.V[it.tri[t]], b = it.V[it.tri[t+1]], c = it.V[it.tri[t+2]];
@@ -461,7 +464,7 @@ function clampPieces(W){
       var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
       if(!(Math.abs(ny) > 0.5*Math.sqrt(nx*nx + ny*ny + nz*nz))) continue;
       var gx = -nx/ny, gz = -nz/ny;
-      add([[a[0], a[2]], [b[0], b[2]], [c[0], c[2]]], a[1] - gx*a[0] - gz*a[2] - LIFT - 0.05, gx, gz, it.kind === "bank");
+      add([[a[0], a[2]], [b[0], b[2]], [c[0], c[2]]], a[1] - gx*a[0] - gz*a[2] - LIFT - 0.05, gx, gz, it.kind === "bank" || !!it.town);
     }
   });
   C.pieces = {grid: grid, n: 0};
@@ -2498,19 +2501,25 @@ function groundItems(W){
     return planes[id];
   }
   function fill(P, pl, up, col, kind, walls){
-    if(P.length < 3) return;
+    if(P.length < 3) return null;
     var tri = triangulate(flatOf(P));
-    if(!tri.length) return;
+    if(!tri.length) return null;
     var c = polyCentroid(P), t = tileOf(c[0], c[1]);
-    out.push({kind: kind, P: P, V: P.map(function(p){ return [p[0], planeY(pl, p[0], p[1]) + up, p[1]]; }), tri: tri, col: col,
-              nrm: unit([-pl.gx, 1, -pl.gz]), walls: walls, tx: t.tx, tz: t.tz});
+    var it = {kind: kind, P: P, V: P.map(function(p){ return [p[0], planeY(pl, p[0], p[1]) + up, p[1]]; }), tri: tri, col: col,
+              nrm: unit([-pl.gx, 1, -pl.gz]), walls: walls, tx: t.tx, tz: t.tz};
+    out.push(it);
+    return it;
   }
+  // [townships] a township's items are `town` (clampPieces: they push down only the land inside them)
+  var townBlk = {};
+  (W.lots || []).forEach(function(l){ if(l && l.kind === "hq" && Array.isArray(l.gates) && l.door) townBlk[l.block] = 1; });
   (W.blocks || []).forEach(function(b){
     if(!b || !b.poly) return;
     var P = polyM(b.poly), pl = blockPlane(b.id);
     if(!pl) return;
     var c = polyCentroid(P), dn = Q.districtAt(W, c[0], c[1]).name;
-    fill(P, pl, KERB + LIFT, GREEN[dn] ? tint(dn) : COL.pave, "block", true);
+    var bi = fill(P, pl, KERB + LIFT, GREEN[dn] ? tint(dn) : COL.pave, "block", true);
+    if(bi && Object.prototype.hasOwnProperty.call(townBlk, b.id)) bi.town = true;
   });
   (W.lots || []).forEach(function(l){
     if(!l || !l.poly) return;
@@ -2520,7 +2529,7 @@ function groundItems(W){
     var col = l.kind === "park" ? COL.lawn : (l.kind === "building" ? (st === "res" ? COL.lawn : COL.concrete) : COL.plaza);
     // [townships] a township (an HQ lot with gates) is level at its door's height, as world.js's pad and the HQ on it are
     // (a plane fitted to 88 m of hillside would tilt its ground through its lawns and drive), walled down to the land
-    if(l.kind === "hq" && Array.isArray(l.gates) && l.door){ var c0 = polyCentroid(P), ly = (+l.door[1] || 0)/100;
+    if(l.kind === "hq" && Array.isArray(l.gates) && l.door){ var c0 = polyCentroid(P), ly = (+l.door[1] || 0)/100, n0 = out.length;
       fill(P, {a: ly, gx: 0, gz: 0, cx: c0[0], cz: c0[1]}, KERB + LIFT + PAD, col, "lot", true);
       // [growth 3.37] its two neighbouring plots (lot.annex) on the same level: the ground it grows over, fenced off until then
       (Array.isArray(l.annex) ? l.annex : []).forEach(function(an){
@@ -2542,6 +2551,7 @@ function groundItems(W){
         if(polyArea(A) < 0) A.reverse();
         fill(A, {a: y0, gx: k*fx, gz: k*fz, cx: gx, cz: gz}, 0, COL.concrete, "lot", true);
       });
+      for(var ti = n0; ti < out.length; ti++) out[ti].town = true;
       return; }
     fill(P, bp || fitPlane(W, P), KERB + LIFT + PAD, col, "lot", !bp);
   });

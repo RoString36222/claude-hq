@@ -2663,13 +2663,14 @@ function mount(el, api){
   // turn its way out for UNSTICK_S, while you try to: lifted to the nearest pose where every corner is clear
   var RIDE_STEP = 0.35, SLIDE_MAX = 0.8, UNSTICK_S = 0.6;
   // a wheel whose ground rises more than STEP_MAX m over one swept step (at most RIDE_STEP) meets a wall, not a slope:
-  // a kerbless edge (a platform's, a pad's) stops the vehicle instead of popping it up onto the top
+  // a kerbless edge (a platform's, a pad's) stops the vehicle instead of popping it up onto the top. [airtime] In the air
+  // the rise is from where the body is (it flies over a step lower than it, onto a top less than STEP_MAX over it)
   var STEP_MAX = 0.4;
   function stepUp(x0, z0, x1, z1, yaw){
-    var P = wheelPts(), s = Math.sin(yaw), c = Math.cos(yaw);
+    var P = wheelPts(), s = Math.sin(yaw), c = Math.cos(yaw), h0 = ride && ride.jump && ride.jump.air && isFinite(avatar.hy) ? avatar.hy : -Infinity;
     for(var i = 0; i < P.length; i++){
       var ox = P[i][0]*c + P[i][1]*s, oz = -P[i][0]*s + P[i][1]*c;
-      if(groundAt(x1 + ox, z1 + oz) - groundAt(x0 + ox, z0 + oz) > STEP_MAX) return true;
+      if(groundAt(x1 + ox, z1 + oz) - Math.max(h0, groundAt(x0 + ox, z0 + oz)) > STEP_MAX) return true;
     }
     return false;
   }
@@ -2733,7 +2734,7 @@ function mount(el, api){
   function stuntRespawn(S, id, x, z){
     var s = (id && S.stuntOf(id)) || stuntNearest(S, x, z); if(!s) return;
     var r = s.respawn;
-    avatar.x = r.x; avatar.z = r.z; avatar.yaw = ride.head = r.yaw; ride.speed = 0; ride.boost = null; ride.air = null; ride.loop = null;
+    avatar.x = r.x; avatar.z = r.z; avatar.yaw = ride.head = r.yaw; ride.speed = 0; ride.boost = null; ride.air = null; ride.loop = null; ride.jump = null;
     ride.pitch = 0; ride.roll = 0; ride.pv = 0; ride.rv = 0; avatar.hy = groundAt(r.x, r.z); avatar.hyV = 0;
   }
   // after the move: the pads, the loop's mouth, and a lip (or an edge) running out under you
@@ -2767,7 +2768,7 @@ function mount(el, api){
           A.x0 = A.x; A.z0 = A.z; A.y0 = A.top = A.y; A.pitch = J.theta; cont = A.y;
         }
       }
-      ride.air = A; ride.boost = null; ride.drift = false; E.sfx("jump");
+      ride.air = A; ride.boost = null; ride.drift = false; ride.jump = null; E.sfx("jump");
       avatar.hy = cont; avatar.hyV = 0;
     }
   }
@@ -2872,6 +2873,8 @@ function mount(el, api){
     }
     var V = ride.V, top = (V.sprint && shift ? V.sprint : V.top)*G.top;
     walkTo = null; walkDoor = null;
+    // [airtime] off the ground (rideAir): the throttle, the brakes and the steering do next to nothing
+    var AIRB = !!(ride.jump && ride.jump.up), AIRK = HQV.hqVehiclePhys && HQV.hqVehiclePhys.AIR, sp0 = ride.speed;
     // [gearbox] the gearbox and clutch (games/hqvehiclephys.js gearStep): which gear, how much of the engine reaches
     // the wheels, the gear's top speed at its limiter, engine braking, a launch. W and S together: both keys' raw state
     var GB = gearboxStep(dt, thr, hand), PH = HQV.hqVehiclePhys, wHeld = !!(keys.KeyW || keys.ArrowUp);
@@ -2905,6 +2908,7 @@ function mount(el, api){
       if(GB.launch) ride.speed = 0;                                     // launch control: held on the brake, revs up
       else if(ride.speed > GB.cap) ride.speed = Math.max(GB.cap, ride.speed - 9*dt);   // on the limiter: this gear's top speed
     }
+    if(AIRB && AIRK) ride.speed = sp0 + (ride.speed - sp0)*AIRK.CTRL;
     if(ride.boost){                                                    // [stunts] a pad holds you at the jump's speed, straight
       if(thr < 0 || hand || !STN){ ride.boost = null; if(thr < 0) stuntSay("Backed out", "", 1.2); }
       else { ride.speed = ride.boost.v; st = 0; ride.steer = 0; avatar.yaw = ride.head = ride.boost.yaw; }
@@ -2917,7 +2921,7 @@ function mount(el, api){
     if(S && shift && ride.speed > S.min && (ride.drift || Math.abs(st) > 0.3)) ride.drift = true;
     else if(!S || !shift || ride.speed < S.min*0.55) ride.drift = false;
     if(ride.drift && !was) E.sfx("door");          // the tyres let go (a burst of noise: engine.js has no screech)
-    var grip = Math.min(1, spd/2.5), yaw0 = avatar.yaw;
+    var grip = Math.min(1, spd/2.5)*(AIRB && AIRK ? AIRK.STEER : 1), yaw0 = avatar.yaw;
     avatar.yaw += ride.steer*grip*(ride.speed >= 0 ? 1.9 : -1.2)*(ride.drift ? S.turn : 1)*dt;
     // the way you travel follows the way you point: at once with grip, slowly in a slide (and
     // catching up smoothly as the tyres bite again)
@@ -2930,7 +2934,7 @@ function mount(el, api){
     if(ride.drift) ride.speed = Math.max(0, ride.speed - (0.15*ride.speed + Math.abs(Math.sin(slip))*S.bleed/Math.max(0.2, S.max))*dt);
     var d = ride.speed*dt;
     // the 3D city's hills: slower uphill, a little faster down (world.js slopeFactor per kind)
-    if(d && cur.camModes && !ride.boost) d *= slopeFactor(slopeAlong(avatar.x, avatar.z, ride.head, 1.5)*(d < 0 ? -1 : 1), ride.base);
+    if(d && cur.camModes && !ride.boost && !AIRB) d *= slopeFactor(slopeAlong(avatar.x, avatar.z, ride.head, 1.5)*(d < 0 ? -1 : 1), ride.base);
     var sh = Math.sin(ride.head), ch = Math.cos(ride.head), nx = avatar.x + sh*d, nz = avatar.z + ch*d;
     // the body, every corner of it, stays out of the walls; a body already touching one may still
     // move or turn as long as that does not push it further in
@@ -2984,10 +2988,12 @@ function mount(el, api){
     avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - ry0)/dt : 0) - avatar.rate)*ease(10, dt); avatar.rideYaw = avatar.yaw;
     // where you are headed is where the vehicle travels (ride.head: in a slide that is not where it points)
     avatar.travelYaw = Math.abs(ride.speed) > 0.05 ? (ride.speed < 0 ? wrapPi(ride.head + PI) : ride.head) : null;
-    if(ride.snapY){ avatar.hy = groundAt(avatar.x, avatar.z); avatar.hyV = 0; avatar.hyG = null; } else rideSettle(ride.wy, dt);   // [stunts] a ramp at speed: on it, not a spring behind it
+    if(ride.snapY){ avatar.hy = groundAt(avatar.x, avatar.z); avatar.hyV = 0; avatar.hyG = null; ride.jump = null; }   // [stunts] a ramp at speed: on it, not a spring behind it
+    else if(!rideAir(dt, Math.hypot(avatar.x - sx0, avatar.z - sz0))) rideSettle(ride.wy, dt);
+    // [airtime] the suspension's dip and bounce on a touchdown is drawn only out of Calm and Reduce motion
     // [insane] a wheelie pivots on the rear axle, a stoppie on the front: the wheel that stays down stays on the road
     var wp = ride.wh ? ride.wh.p : 0, wbh = (V.wb || WHEELBASE[ride.base] || 1.4)/2;
-    avatar.g.position.set(avatar.x, avatar.hy + Math.sin(Math.abs(wp))*wbh, avatar.z);
+    avatar.g.position.set(avatar.x, avatar.hy + Math.sin(Math.abs(wp))*wbh + (ride.susp && !E.calm() && !(camSet && camSet.reduced) ? ride.susp.y : 0), avatar.z);
     avatar.g.rotation.y = avatar.yaw; avatar.g.rotation.x = -(ride.pitch + wp); avatar.g.rotation.z = ride.roll;
     var b = rideProp(); if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
@@ -3014,8 +3020,11 @@ function mount(el, api){
         wantR = Math.atan((g[0] + g[2] - g[1] - g[3])/(4*P[0][0]));
       } else wantP = Math.atan((g[0] - g[1])/(2*P[0][1]));
     }
+    // [airtime] in the air: the nose follows the arc a little (AIR.PITCH of its angle), the body level side to side
+    var J = ride.jump, AK = HQV.hqVehiclePhys && HQV.hqVehiclePhys.AIR;
+    if(J && J.up && AK){ wantP = (ride.speed < 0 ? -1 : 1)*AK.PITCH*Math.atan2(J.vy || 0, Math.max(1, Math.abs(ride.speed))); wantR = 0; }
     // body roll in a turn (V.roll, rad at full lock from 15 m/s: an SUV leans out, the starter car does not)
-    if(ride.V.roll && !E.calm()) wantR += ride.steer*Math.min(1, Math.abs(ride.speed)/15)*ride.V.roll;
+    if(ride.V.roll && !E.calm() && !(J && J.up)) wantR += ride.steer*Math.min(1, Math.abs(ride.speed)/15)*ride.V.roll;
     var a = tiltSpring(ride.pitch, ride.pv, wantP, dt), r = tiltSpring(ride.roll, ride.rv, wantR, dt);
     ride.pitch = a[0]; ride.pv = a[1]; ride.roll = r[0]; ride.rv = r[1];
     // a wheel at [left, fwd] sits fwd*sin(pitch) + left*sin(roll) over the body's origin: the origin as low as it goes
@@ -4202,6 +4211,45 @@ function mount(el, api){
     if(!(avatar.hy >= gy)){ avatar.hy = gy; avatar.hyV = Math.max(0, avatar.hyV || 0); }
     avatar.hyG = null;
     return gy;
+  }
+  // [airtime] a car or a motorbike leaves the ground where it falls away faster than gravity can follow at its speed (a
+  // crest, a ramp's lip, a bridge's end): a ballistic arc (games/hqvehiclephys.js airStep), then a touchdown on the
+  // suspension (suspStep: a dip and a bounce) at a little of its speed (airKeep), and on a hard one a shake of the camera
+  // (none in Calm or with Reduce motion). Never under its ground, never through a tunnel's roof or a deck overhead
+  // (rideCeil). The ground it lands on is read at its height (groundAt: the level you are at), so it comes down on the
+  // deck it flew over, not the road under it. d: m driven this frame. -> false when it is not this vehicle's (a bicycle)
+  function rideAir(dt, d){
+    var PH = HQV.hqVehiclePhys;
+    if(!PH || !PH.airStep || (ride.base !== "car" && ride.base !== "moto") || !(cur && cur.camModes)){ ride.jump = null; return false; }
+    var J = ride.jump || (ride.jump = {air: false, up: false, vy: 0, t: 0, top: 0}), S = ride.susp || (ride.susp = {y: 0, v: 0});
+    var gy = isFinite(ride.wy) ? ride.wy : groundAt(avatar.x, avatar.z), sg = ride.speed < 0 ? -1 : 1;
+    var o = PH.airStep(J, {y: avatar.hy, ground: gy, d: d, dt: dt, slope: sg*slopeAlong(avatar.x, avatar.z, ride.head, 1.5),
+                           ceil: rideCeil(avatar.x, avatar.z, gy)});
+    avatar.hy = o.y; avatar.hyV = 0; avatar.hyG = gy; avatar.hyX = avatar.x; avatar.hyZ = avatar.z;
+    if(o.impact > 0){
+      ride.speed *= PH.airKeep(o.impact);
+      if(o.impact > 4){
+        if(!E.calm() && !(camSet && camSet.reduced)) GN.shake = Math.max(GN.shake, Math.min(0.35, (o.impact - 4)*0.05));
+        E.sfx("hit");
+      }
+    }
+    PH.suspStep(S, dt, o.impact);
+    return true;
+  }
+  // [airtime] the highest a vehicle's origin may be at (x, z) at height y (its roof under the ceiling), or null in the open:
+  // a tunnel's roof (cur.rideCeil), and a level over you (a flyover's deck: the ground read at your roof's height is a
+  // level up from yours, gy, when your roof meets its underside)
+  var RIDE_ROOF = {car: 1.5, moto: 1.4}, DECK_UNDER = 1;
+  function rideCeil(x, z, gy){
+    var H = ride.V && ride.V.dims && +ride.V.dims.heightM > 0 ? +ride.V.dims.heightM : RIDE_ROOF[ride.base] || 1.5;
+    return function(y){
+      var c = cur && cur.rideCeil ? cur.rideCeil(x, z, gy) : null, cap = c != null && isFinite(c) ? c - H : null;
+      var h0 = avatar.hy; avatar.hy = y + H;
+      var up = groundAt(x, z);
+      avatar.hy = h0;
+      if(isFinite(up) && up > gy + 2){ var u = up - DECK_UNDER - H; cap = cap == null ? u : Math.min(cap, u); }
+      return cap;
+    };
   }
   // a vehicle (rideMove): the spring is on the gap over its ground (e = hy - ground), not on the height, so a slope is
   // followed with no lag. The ground moving no more than a slope could over the distance driven (0.05 m + 60% of it)

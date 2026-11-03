@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.40.0",
+      "title": "The planned city is live",
+      "body": "The Commons and every island are now drawn by City Gen v5. Vehicles you left out are back home and moved garages are back at their default spot, because the streets moved. Cars and bikes now get air over a crest taken too fast. Achievement pop-ups are a Settings switch, off by default, and the engine sound no longer crackles."
+    },
+    {
       "version": "3.39.0",
       "title": "Your township grows with your Claude work",
       "body": "Every township now has two neighbouring plots reserved beside it on its street, fenced off as Room to grow. Your Claude worker-hours (each session's active hours a day, at most 24 a day) are build points: at 10 the first plot is added at bare ground, then it climbs foundations, buildings, amenities and a landmark before the second plot is added and climbs the same. The township's wall and name move out round every plot it has.\n\nEvery live Claude session is a builder on the plot being built, in a hard hat and hi-vis vest, carrying planks or hammering under a tower crane (still under Calm or reduced motion). Visitors see your plots, stage and builders, and the minimap draws a township's plots with it.\n\nPrivacy: only while your HQ is open to the city, its heartbeat sends two dates and two whole numbers (yesterday's and today's worker-hours). No session ids, titles, paths or text."

@@ -128,6 +128,7 @@ function openSettings(){
   var lt=$("setLargeText"); if(lt) lt.checked=largePref();
   var cm=$("setCalm"); if(cm) cm.checked=calmPref();
   var fz=$("setFatigue"); if(fz) fz.checked = c.creatureFatigue!==false;
+  var at=$("setAchToasts"); if(at) at.checked = c.achievementToasts===true;
   var ms=$("setMusicShare"); if(ms) ms.checked = c.musicShare!==false;
   var mc=$("setMusicCookies"); if(mc) mc.value = c.musicCookies || "";
   var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs");
@@ -173,6 +174,7 @@ function saveSettings(){
   };
   if($("setWorkSignals")){ body.workSignals=!!$("setWorkSignals").checked; body.workSignalsPRs=body.workSignals && !!($("setWorkSignalsPRs") && $("setWorkSignalsPRs").checked); }
   if($("setAccountBoard")) body.arenaAccountBoard=!!$("setAccountBoard").checked;
+  if($("setAchToasts")) body.achievementToasts=!!$("setAchToasts").checked;
   phoneSettingsRead(body);   // [3.15] the phone: local keys into body, the SMS opt-in to the Arena
   var acctWas = (typeof CONFIG!=="undefined" && CONFIG && CONFIG.arenaAccountBoard===true);
   if(body.character===undefined) delete body.character;   // no WebGL2: the 3D character is left as it was

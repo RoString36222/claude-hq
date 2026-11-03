@@ -3101,6 +3101,11 @@ HQV.hqWorlds.city3d = function(c, w){
     var d = underDeck(x, z);
     return d ? underCeil(d) : null;
   };
+  // [airtime] the roof over a vehicle at (x, z) on the ground y under it (hq3d rideCeil): a road tunnel's ceiling, or null
+  w.rideCeil = function(x, z, y){
+    var t = W && WD.tunnelAt && y != null && isFinite(y) ? WD.tunnelAt(W, x, z, y) : null;
+    return t && t.ceil != null ? t.ceil : null;
+  };
   // [stations] below the street the camera rig pulls in at once (no easing into a wall) and goes to your eyes where the
   // room is too tight for it behind you
   w.camHard = function(){ return !!(transit && transit.under && transit.under()); };

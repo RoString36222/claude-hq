@@ -357,6 +357,7 @@ function renderLog(){
     box.appendChild(row);
   });
 }
+function achToastsOn(){ return !!(typeof CONFIG!=="undefined" && CONFIG && CONFIG.achievementToasts===true); }
 function checkCelebration(season){
   if(!season) return;
   var lvl=season.level;
@@ -366,7 +367,10 @@ function checkCelebration(season){
   if(typeof progLevel==="function" && progLevel()) lvl=null;
   if(lvl!=null && PREV_LEVEL!=null && lvl>PREV_LEVEL){ toast("🎉 Level "+lvl+"!","level"); confettiBurst(); logEvent("🎉","Reached Level "+lvl); }
   Object.keys(unlocked).forEach(function(id){
-    if(!PREV_ACH[id]){ toast("🏅 Achievement: "+unlocked[id],"ach"); confettiBurst(); logEvent("🏅","Achievement unlocked: "+unlocked[id]); }
+    if(PREV_ACH[id]) return;
+    // the toast and confetti only with the Settings switch (achievementToasts, off by default); the event log keeps it
+    if(achToastsOn()){ toast("🏅 Achievement: "+unlocked[id],"ach"); confettiBurst(); }
+    logEvent("🏅","Achievement unlocked: "+unlocked[id]);
   });
   PREV_LEVEL=lvl; PREV_ACH=unlocked;
 }

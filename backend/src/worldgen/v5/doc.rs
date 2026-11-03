@@ -161,9 +161,13 @@ pub fn layers(seed: &str, edits: &[Edit]) -> Result<Layers, String> {
     let mut terrain = land.t.clone();
     grade_airport(&mut terrain, &land, &ap);
     grade_terminal(&mut terrain, tat, tn);
-    grade_townships(&mut terrain, &doc.lots);
+    // the roads are seated on the land before the townships are graded: a township's level never moves a street (the
+    // grading keeps off them, `grade_townships`, and the carve below brings the land under each back to its own road)
+    let mut land_t = terrain.clone();
+    land_t.apply(edits)?;
+    grade_townships(&mut terrain, &doc.lots, &roads);
     terrain.apply(edits)?;
-    roads.seat(&terrain, &p)?;
+    roads.seat(&land_t, &p)?;
     roads.carve(&mut terrain, |q| land.river.as_ref().is_some_and(|r| r.wet(q)));
     let water = match (land.plan.take(), land.river.as_ref(), land.coast.as_ref()) {
         (Some(plan), Some(r), Some(co)) => Some(plan.finish(&p, &roads, &mut doc, r, co)),
@@ -226,45 +230,84 @@ fn grade_terminal(t: &mut super::super::terrain::Terrain, o: P, n: (f64, f64)) {
     }
 }
 
-/// Each township (an HQ lot with gates; with its neighbouring plots, `town_ground`) graded level at its door's height (the ground in the middle of its street front):
-/// the lot drawn flat on it (worldgeom.js), its HQ, drive and gardens on one level, easing back to the land over
-/// `TOWN_EASE_CM` round it (level out to a terrain cell and a half past its edge: the ground between the vertices is
-/// their blend, so its own edge is level too).
+/// Each township (an HQ lot with gates; with its neighbouring plots, `town_ground`) graded level at its door's height (the
+/// ground in the middle of its street front): the lot drawn flat on it (worldgeom.js), its HQ, drive and gardens on one
+/// level. Inside its ground the land is level; round it, level out to a terrain cell and a half past its edge (the ground
+/// between the vertices is their blend, so its own edge is level too), then easing back to the land over `TOWN_EASE_CM`,
+/// longer where the level is further off the land (`TOWN_EASE_PER_M` cm per metre: no bank steeper than about 1 in 2.7).
+/// Never the streets round it: no land within a road's half width and `SHOULDER_CM` of its centre line, nor past a road
+/// (from the township's side), is graded, so the roads keep the land's own grade (they are seated on the land before
+/// this) and the carve brings the ground under them to them. Between a township's edge and its street the land is a bank
+/// from the one level to the other, no steeper off a road's edge than `TOWN_BANK` (rise over run): the land beside a street
+/// never drops away (or rises) under its kerb; the lot's walls (worldgeom.js) stand over the bank where the township is
+/// the higher, where it is cut into the hill the bank runs on to its edge.
 const TOWN_EASE_CM: f64 = 1_000.0;
-fn grade_townships(t: &mut super::super::terrain::Terrain, lots: &[Lot]) {
-    use super::super::organic::geom::{inside, seg_dist2};
+const TOWN_EASE_PER_M: f64 = 400.0;
+const TOWN_BANK: f64 = 0.5;
+fn grade_townships(t: &mut super::super::terrain::Terrain, lots: &[Lot], roads: &Roads) {
+    use super::super::organic::geom::{inside, nearest_on, seg_dist2};
     let flat = t.cell_cm as f64 * 1.5;
-    let m = (flat + TOWN_EASE_CM) as i64;
+    // (the furthest the ease can reach: a level 20 m off the land)
+    let m = (flat + TOWN_EASE_CM.max(20.0 * TOWN_EASE_PER_M)) as i64;
     // each township: its outline, its level, its box grown by the grading's reach
     let towns: Vec<(Vec<P>, f64, (i64, i64, i64, i64))> = lots.iter().filter(|l| l.kind == "hq" && l.gates.is_some()).filter_map(|l| {
         let r: Vec<P> = town_ground(l)?;
         let b = r.iter().fold((i64::MAX, i64::MIN, i64::MAX, i64::MIN), |b, q| (b.0.min(q.0), b.1.max(q.0), b.2.min(q.1), b.3.max(q.1)));
         Some((r, t.height_at(l.door[0], l.door[2]) as f64, (b.0 - m, b.1 + m, b.2 - m, b.3 + m)))
     }).collect();
+    // the road segments (centre line, half width + shoulder) that could keep a township's grading off them
+    let segs: Vec<(P, P, i64, i64)> = roads.edges.iter().flat_map(|e| {
+        let keep = e.width / 2 + super::super::roads::SHOULDER_CM;
+        e.points.windows(2).map(move |w| ((w[0][0], w[0][2]), (w[1][0], w[1][2]), e.width / 2, keep))
+    }).collect();
     // every vertex in reach takes the nearest township's level (two in one block each keep their own ground)
-    let mut grade: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
+    // (vertex -> its distance from the township, the township's level, the nearest road's height and how far the vertex is
+    // off its edge (cm))
+    let mut grade: BTreeMap<usize, (f64, f64, Option<(f64, f64)>)> = BTreeMap::new();
     for (r, y, b) in &towns {
         let n = r.len();
+        let near: Vec<&(P, P, i64, i64)> = segs.iter().filter(|s| {
+            let k = s.3;
+            s.0 .0.max(s.1 .0) + k >= b.0 && s.0 .0.min(s.1 .0) - k <= b.1 && s.0 .1.max(s.1 .1) + k >= b.2 && s.0 .1.min(s.1 .1) - k <= b.3
+        }).collect();
         for iz in 0..t.n {
             for ix in 0..t.n {
                 let q = t.vertex_pos(ix, iz);
                 if q.0 < b.0 || q.0 > b.1 || q.1 < b.2 || q.1 > b.3 {
                     continue;
                 }
-                let d = if inside(q, r) { 0.0 } else { ((0..n).map(|e| seg_dist2(r[e], r[(e + 1) % n], q, q)).min().unwrap_or(i64::MAX) as f64).sqrt() };
+                let (d, bank) = if inside(q, r) {
+                    (0.0, None)
+                } else {
+                    // the nearest point of its outline; off a road's corridor and on the township's side of every road only
+                    let (p, d2) = (0..n).map(|e| nearest_on(q, r[e], r[(e + 1) % n])).min_by_key(|x| x.1).unwrap();
+                    if near.iter().any(|s| nearest_on(q, s.0, s.1).1 < s.3 * s.3 || seg_dist2(p, q, s.0, s.1) < s.2 * s.2) {
+                        continue;
+                    }
+                    // the nearest road: its height there (the land it is seated on) and the vertex's distance off its edge
+                    let bank = near.iter().map(|s| (nearest_on(q, s.0, s.1), s.2)).min_by_key(|x| x.0 .1 - x.1 * x.1)
+                        .map(|((rp, rd2), half)| (t.height_at(rp.0, rp.1) as f64, (rd2 as f64).sqrt() - half as f64));
+                    ((d2 as f64).sqrt(), bank)
+                };
                 let k = iz * t.n + ix;
                 if grade.get(&k).is_none_or(|g| d < g.0) {
-                    grade.insert(k, (d, *y));
+                    grade.insert(k, (d, *y, bank));
                 }
             }
         }
     }
-    for (k, (d, y)) in grade {
-        let e = (1.0 - (d - flat).max(0.0) / TOWN_EASE_CM).clamp(0.0, 1.0);
+    for (k, (d, y, bank)) in grade {
+        let h = &mut t.heights[k];
+        let ease = TOWN_EASE_CM.max((y - *h as f64).abs() / 100.0 * TOWN_EASE_PER_M);
+        let e = (1.0 - (d - flat).max(0.0) / ease).clamp(0.0, 1.0);
         let w = e * e * (3.0 - 2.0 * e);
         if w > 0.0 {
-            let h = &mut t.heights[k];
-            *h = (*h as f64 + (y - *h as f64) * w).round() as i32;
+            let mut g = *h as f64 + (y - *h as f64) * w;
+            if let Some((ry, off)) = bank {
+                let most = (TOWN_BANK * off).max(0.0);
+                g = g.clamp(ry - most, ry + most);
+            }
+            *h = g.round() as i32;
         }
     }
 }
@@ -1083,7 +1126,7 @@ mod hq_lot_tests {
 
     fn layers4() -> &'static Layers {
         static L: std::sync::OnceLock<Layers> = std::sync::OnceLock::new();
-        L.get_or_init(|| layers("claude-hq@4", &[]).unwrap())
+        L.get_or_init(|| layers("claude-hq", &[]).unwrap())
     }
 
     /// A township's whole ground: its lot and its neighbouring plots.
@@ -1195,7 +1238,9 @@ mod hq_lot_tests {
     }
 
     /// Every township level, its neighbouring plots too: its ground (the terrain) within 30 cm of its door's over its inside
-    /// (a 4 m grid, 10 m in from its edges), and within 2 m on its edges (where the streets' carving meets it, under its walls).
+    /// (a 4 m grid, 10 m in from its edges), and within 2 m on its edges (under its walls) or, where a street runs within
+    /// 15 m of an edge (the streets keep the land's grade: `grade_townships`), between its level and that street's (the
+    /// bank from the one to the other, 50 cm either way).
     #[test]
     fn townships_are_graded_level() {
         let l = layers4();
@@ -1221,8 +1266,22 @@ mod hq_lot_tests {
             }
             for k in 0..4 {
                 for q in [r[k], ((r[k].0 + r[(k + 1) % 4].0) / 2, (r[k].1 + r[(k + 1) % 4].1) / 2)] {
-                    let dy = l.terrain.height_at(q.0, q.1) - a.door[1];
-                    if dy.abs() > 200 {
+                    let h = l.terrain.height_at(q.0, q.1);
+                    let dy = h - a.door[1];
+                    // the nearest street within 15 m of its kerb: its height there
+                    let street = l.roads.edges.iter().filter(|e| e.bridge.is_none() && e.under.is_none()).flat_map(|e| e.points.windows(2).map(move |w| (w[0], w[1], e.width / 2)))
+                        .map(|(p0, p1, half)| {
+                            let (np, d2) = super::super::super::organic::geom::nearest_on(q, (p0[0], p0[2]), (p1[0], p1[2]));
+                            let (l2, f2) = ((p1[0] - p0[0]).pow(2) + (p1[2] - p0[2]).pow(2), (np.0 - p0[0]).pow(2) + (np.1 - p0[2]).pow(2));
+                            let f = if l2 > 0 { ((f2 as f64) / (l2 as f64)).sqrt() } else { 0.0 };
+                            ((d2 as f64).sqrt() - half as f64, p0[1] as f64 + (p1[1] - p0[1]) as f64 * f)
+                        })
+                        .filter(|x| x.0 <= 1_500.0).min_by(|x, y| x.0.total_cmp(&y.0));
+                    let ok = match street {
+                        Some((_, ry)) => (h as f64) >= ry.min(a.door[1] as f64) - 50.0 && (h as f64) <= ry.max(a.door[1] as f64) + 50.0,
+                        None => dy.abs() <= 200,
+                    };
+                    if !ok {
                         bad.push((a.id, q, dy));
                     }
                 }
@@ -1231,11 +1290,71 @@ mod hq_lot_tests {
         assert!(bad.is_empty(), "townships not level (lot, at, cm off its door's): {bad:?}");
     }
 
+    /// A township's grading never breaks the land round it: every street within 40 m of a township's ground keeps a
+    /// street's grade (at most 12 % from point to point: the land's own, as the roads are seated before the grading), and
+    /// no two neighbouring terrain vertices within 40 m outside its ground are steeper than 0.7 apart (rise over run: a
+    /// bank, no cliff; a lake's or the river's own banks, within 30 m of the water, aside). The client's scan
+    /// (tests/test_township_terrain.py) checks the drawn mesh and the ride over it.
+    #[test]
+    fn township_grading_leaves_streets_and_banks_smooth() {
+        let l = layers4();
+        let t = &l.terrain;
+        let towns: Vec<Vec<P>> = l.lots.iter().filter(|x| x.kind == "hq" && x.gates.is_some()).map(ground).collect();
+        let near = |q: P, m: i64| -> Option<i64> {
+            towns.iter().filter_map(|r| {
+                if inside(q, r) { return Some(0); }
+                let d2 = (0..r.len()).map(|e| seg_dist2(r[e], r[(e + 1) % r.len()], q, q)).min().unwrap();
+                (d2 <= m * m).then_some(d2)
+            }).min()
+        };
+        let mut steep_roads = Vec::new();
+        for e in l.roads.edges.iter().filter(|e| e.bridge.is_none() && e.under.is_none()) {
+            for w in e.points.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let run = (((b[0] - a[0]).pow(2) + (b[2] - a[2]).pow(2)) as f64).sqrt();
+                if run < 100.0 || near((a[0], a[2]), 4_000).is_none() {
+                    continue;
+                }
+                let g = (b[1] - a[1]).abs() as f64 / run;
+                if g > 0.12 {
+                    steep_roads.push((e.id, (a[0], a[2]), (g * 100.0).round() as i64));
+                }
+            }
+        }
+        assert!(steep_roads.is_empty(), "streets by a township steeper than 12 % (edge, at, %): {steep_roads:?}");
+        let lakes: Vec<Vec<P>> = l.water.iter().flat_map(|w| w.bodies.iter().map(|b| b.poly.iter().map(|v| (v[0], v[1])).collect())).collect();
+        let river = |q: P| l.river.as_ref().is_some_and(|r| {
+            (0..=16).any(|k| { let (a, d) = (k as f64 * std::f64::consts::PI / 8.0, if k == 16 { 0.0 } else { 3_000.0 });
+                r.wet((q.0 + (a.cos() * d) as i64, q.1 + (a.sin() * d) as i64)) })
+        });
+        let wet = |q: P| river(q) || lakes.iter().any(|r| {
+            inside(q, r) || (0..r.len()).any(|e| seg_dist2(r[e], r[(e + 1) % r.len()], q, q) <= 3_000 * 3_000)
+        });
+        let mut cliffs = Vec::new();
+        for iz in 0..t.n - 1 {
+            for ix in 1..t.n - 1 {
+                let q = t.vertex_pos(ix, iz);
+                if !near(q, 4_000).is_some_and(|d| d > 0) || wet(q) {
+                    continue;
+                }
+                let h = t.heights[iz * t.n + ix] as f64;
+                for (dx, dz) in [(1i64, 0i64), (0, 1), (1, 1), (-1, 1)] {
+                    let o = t.heights[(iz as i64 + dz) as usize * t.n + (ix as i64 + dx) as usize] as f64;
+                    let g = (o - h).abs() / (t.cell_cm as f64 * ((dx * dx + dz * dz) as f64).sqrt());
+                    if g > 0.7 {
+                        cliffs.push((q, (g * 100.0).round() as i64));
+                    }
+                }
+            }
+        }
+        assert!(cliffs.is_empty(), "terrain cliffs beside a township (at, rise over run %): {cliffs:?}");
+    }
+
     /// No township on the water, the airport, a station, a metro entrance or under a railway line at the ground or above.
     #[test]
     fn townships_keep_off_water_airport_and_stations() {
         let l = layers4();
-        let city = super::super::City::plan("claude-hq@4").unwrap();
+        let city = super::super::City::plan("claude-hq").unwrap();
         let ap = l.sites.iter().find_map(|s| s.runway.as_ref()).map(|r| r.area.iter().map(|v| (v[0], v[1])).collect::<Vec<P>>()).unwrap();
         let metro = l.metro.as_ref().unwrap();
         let rail = l.rail.as_ref().unwrap();

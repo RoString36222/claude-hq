@@ -32,3 +32,15 @@ fn a_planned_island_generates() {
     let v = validate::hard(&w.layers);
     assert!(v.is_empty(), "{}", validate::report(&v));
 }
+
+/// Islands whose pier airport's strip runs in over a beach lower than its apron: the airport's box reaches down to that
+/// ground (v5/airport.rs), so no block or lot stands under the deck (they once passed under a box carved from the
+/// apron's level only) and no hard rule breaks.
+#[test]
+fn nothing_is_built_under_a_pier_airport_on_low_ground() {
+    for id in ["user:cca8b31b-c915-5734-8422-b17ace76e74c@4", "user:e82705b1-af79-5222-868d-834a404894cd@4"] {
+        let w = generate(id, &[]).unwrap();
+        let v = validate::hard(&w.layers);
+        assert!(v.is_empty(), "{id}: {}", validate::report(&v));
+    }
+}

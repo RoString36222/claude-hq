@@ -33,6 +33,8 @@
  *     out = {rpm, gear (-1 R, 0 N, 1..n), manual, drive (0..1.8 on the engine's pull), cap (m/s), engineBrake
  *            (m/s^2), limiter, slip (0..1 wheelspin), launch (held at a standstill), events: ["up", "down",
  *            "refused", "manual", "auto", "launch"]}
+ *   airStep(J, inp) / airKeep(impact) / suspStep(S, dt, impact)   airtime off a crest or a lip, the speed a touchdown
+ *                                     costs, the suspension's dip and bounce after it (below, at AIR)
  * entry = {kind: "car"|"bike", type: "sedan"|"coupe"|"suv"|"hatch"|"pickup"|"hyper"|"super"|"naked"|"sport"|
  *          "adventure"|"cruiser"|"scooter"|"dirt"|"classic"|"hypersport"|"formula" ([3.17] an F1 car), spec: {cc, cyl, layout, aspiration, electric, powerKw,
  *          torqueNm, massKg, drive, topKmh, zeroTo100s, gears}, dims: {lengthM, widthM, heightM, wheelbaseM},
@@ -402,8 +404,62 @@ function derive(entry){
   return V;
 }
 
+/* [airtime] A car or a motorbike off a crest, a ramp's lip or a bridge's end (games/hq3d.js rideMove). J = {air, vy (m/s,
+   + up), t (s aloft), top (m: the most air under it so far)}; inp = {y (the body's height now), ground (its wheels' ground
+   where it is this frame: hq3d's ride.wy), d (m driven this frame), slope (the ground's rise per metre ahead there: its
+   rate at a touchdown), ceil (function(y) -> the highest the body may be there, or null: a tunnel's roof, a deck overhead), dt}.
+   On the ground the body moves up and down with the ground under it (at most AIR.SLOPE times the speed, a rise no faster
+   than AIR.LIFT_A lifts it); where the ground then falls away faster than gravity can follow it (under the arc it would fly)
+   it leaves it on that arc, falls at AIR.G and lands where the arc meets the ground again. Never under
+   its ground, never over its ceiling (it stops rising there). A jump of more than AIR.SNAP m (a teleport) lands at once.
+   J.up: really up (more than AIR.UP m of air, or AIR.UP_T s: a kink in the road is not a jump; the controls go light).
+   -> {y, air, took (left the ground this frame), impact (m/s into the ground at a touchdown, else 0), t (s it was up)} */
+var AIR = {G: 9.81, LIFT: 1e-4, LIFT_A: 30, UP: 0.15, UP_T: 0.2, SLOPE: 0.7, SNAP: 20, CTRL: 0.1, STEER: 0.15, PITCH: 0.5,
+           OMEGA: 11, ZETA: 0.3, KICK: 0.32, KICK_MAX: 2.6, LOSS: 0.025, LOSS_MAX: 0.2};
+function airStep(J, inp){
+  inp = inp || {};
+  var dt = Math.max(0, Math.min(0.1, +inp.dt || 0)), y = +inp.y, g = +inp.ground, d = Math.abs(+inp.d || 0);
+  var out = {y: isFinite(g) ? g : y, air: false, took: false, impact: 0, t: 0};
+  if(!(dt > 0) || !isFinite(y) || !isFinite(g) || d > AIR.SNAP){ J.air = false; J.up = false; J.vy = 0; J.t = 0; J.top = 0; return out; }
+  // the arc, a step at a time (the speed first): it leaves the ground where the ground's rate drops by more than gravity
+  // takes off it in a frame (v^2 x curvature > G over a crest, at any frame rate); once up, the exact parabola
+  var lim = AIR.SLOPE*d/dt, vy = +J.vy || 0, vb = vy - AIR.G*dt, yb = J.air ? y + (vy + vb)/2*dt : y + vb*dt;
+  var cap = typeof inp.ceil === "function" ? inp.ceil(yb) : null;
+  if(cap != null && isFinite(cap) && yb > cap){ yb = Math.max(Math.min(y, cap), g); vb = Math.min(0, vb); }
+  if(J.air || yb > g + AIR.LIFT){
+    if(yb > g){
+      if(!J.air){ J.air = true; J.up = false; J.t = 0; J.top = 0; out.took = true; }
+      J.t += dt; J.vy = vb; J.top = Math.max(J.top, yb - g); J.up = J.top > AIR.UP || J.t > AIR.UP_T;
+      out.y = yb; out.air = true; out.t = J.t;
+      return out;
+    }
+    // touchdown, against the ground's own rate there (its slope ahead times the speed)
+    var gv = clamp(+inp.slope || 0, -AIR.SLOPE, AIR.SLOPE)*d/dt;
+    out.impact = Math.max(0, gv - vb); out.t = J.t;
+    J.air = false; J.up = false; J.t = 0; J.top = 0; J.vy = Math.min(gv, 0);
+    return out;
+  }
+  // on the ground: up and down with it, but a rise takes the body up no faster than its springs can lift it
+  // (AIR.LIFT_A m/s^2: a kerb or a seam in the road is climbed at once and launches nothing; a ramp does)
+  J.vy = clamp(Math.min((g - y)/dt, Math.max(vy, 0) + AIR.LIFT_A*dt), -lim, lim);
+  return out;
+}
+// the share of its speed a vehicle keeps on a touchdown at `impact` m/s (a hop of under 2 m/s, a kerb's, costs nothing)
+function airKeep(impact){ return 1 - Math.min(AIR.LOSS_MAX, AIR.LOSS*Math.max(0, (+impact || 0) - 2)); }
+// the body on its springs after a touchdown: S = {y (m, - a squat), v}; impact (m/s, optional) kicks it down. A lightly
+// damped spring: a dip and a small bounce, settled in about a second. -> S.y
+function suspStep(S, dt, impact){
+  dt = Math.max(0, Math.min(0.1, +dt || 0));
+  if(impact > 0) S.v = Math.min(+S.v || 0, -Math.min(AIR.KICK_MAX, impact*AIR.KICK));
+  var y = +S.y || 0, v = +S.v || 0, n = Math.max(1, Math.ceil(dt/0.004)), h = dt/n, w = AIR.OMEGA;
+  for(var i = 0; i < n; i++){ v += (-w*w*y - 2*AIR.ZETA*w*v)*h; y += v*h; }
+  if(Math.abs(y) < 1e-4 && Math.abs(v) < 1e-3){ y = 0; v = 0; }
+  S.y = Math.max(-0.3, Math.min(0.15, y)); S.v = v;
+  return S.y;
+}
+
 HQV.hqVehiclePhys = {derive: derive, accFor: accFor, t0100: t0100, timeTo: timeTo, estimate0100: estimate0100,
                      voiceFor: voiceFor, gearsFor: gearsFor, engineFor: engineFor, tyreCirc: tyreCirc, gearState: gearState, gearStep: gearStep, autoGear: autoGear, shiftPoints: shiftPoints, MODES: MODES, MODE_ORDER: MODE_ORDER,
-                     nitroStep: nitroStep, perfStep: perfStep, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
+                     nitroStep: nitroStep, perfStep: perfStep, airStep: airStep, airKeep: airKeep, suspStep: suspStep, AIR: AIR, wheelieStep: wheelieStep, WHEELIE: {BAL: BAL, LOOP: LOOP, OVER: OVER, STOPPIE_V: STOPPIE_V}, REVS: REVS, SLIDE: SLIDE, LEAN: LEAN, ROLL: ROLL,
                      FLOOR: FLOOR, FLOOR_EV: FLOOR_EV, FORMULA: FORMULA};
 })();

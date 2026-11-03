@@ -33,6 +33,9 @@ services:
       # kept out of the image) so they survive a redeploy. Drop files into
       # backend/sounds/ on the host; they appear in GET /v1/sounds immediately.
       ARENA_SOUNDS_DIR: /srv/sounds
+      # HQ 3.40: the live worlds (the @3 ids) are drawn by City Gen v5. To roll back to the old generator, set
+      # ARENA_WORLDGEN=v3 in backend/.env on the host and restart.
+      ARENA_WORLDGEN: ${ARENA_WORLDGEN:-v5}
       # Prometheus metrics on their own port, for the monitoring profile below.
       # Caddy only proxies app:8080, so /metrics is never public.
       ARENA_METRICS_BIND: 0.0.0.0:9091

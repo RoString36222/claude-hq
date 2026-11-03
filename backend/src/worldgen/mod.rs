@@ -121,8 +121,8 @@ pub fn profile_for(seed: &str, version: u32) -> profile::Profile {
         _ => profile::commons(),
     };
     let p = if version >= 3 { profile::with_water(p) } else { p };
-    // ARENA_WORLDGEN=v5 builds the @3 ids with v5 too: a local Arena, so today's client draws the planned city
-    // (never set on the live host)
+    // ARENA_WORLDGEN=v5 builds the @3 ids with v5 too, so today's client draws the planned city: a local Arena, and
+    // production since HQ 3.40 (backend/docker-compose.yml; ARENA_WORLDGEN=v3 in the host's .env rolls it back)
     let v5 = version >= 4 || (version == 3 && std::env::var("ARENA_WORLDGEN").is_ok_and(|v| v == "v5"));
     if !v5 {
         return p;

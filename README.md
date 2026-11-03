@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 3.39.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 3.40.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -850,6 +850,7 @@ The full history is in [CHANGELOG.md](CHANGELOG.md). Recent releases:
   - **100%** fills every road to the plan's comfortable level (at most 22 cars a km of lane).
   - **0%** leaves the roads to the buses, trams and you.
 
+- **3.40.0** — City Gen v5 goes live: the planned city on every island; airtime over fast crests; streets stay on the land; achievement pop-ups are now an opt-in setting; engine sound no longer crackles.
 - **3.39.0** — HQ growth: townships grow over two neighbouring plots with your Claude work; every live session is a builder.
 - **3.38.8** — Strike Zone: the dance pose is fixed (nobody dances at kick-off), six joke totems — banana, lava, goose, reverse, black hole, roulette — that actually drop, and totem effects that stack instead of replacing each other.
 - **3.38.7** — Strike Zone: drone wreck totems no longer vanish when the next drone falls.

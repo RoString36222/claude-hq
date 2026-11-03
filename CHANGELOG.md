@@ -3,6 +3,15 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.40.0 — City Gen v5 goes live.**
+  - **The planned city:** the Commons and every island are now drawn by City Gen v5. Vehicles left out go home and
+    moved garages return to their default spot, because the streets and lots under them have moved.
+  - **Airtime:** cars and motorbikes leave the ground over a crest taken too fast, and land with a bounce.
+  - **Terrain:** a township's grading keeps off the roads, so no cliffs or buried streets. Airports hold their whole
+    footprint down to low ground, so no block or lot stands in it.
+  - **Achievements:** pop-ups are a Settings switch (Notifications), off by default. The log still records them.
+  - **Sound:** the engine no longer crackles: the distortion is oversampled and the master goes through a limiter.
+
 - **3.39.0 — HQ growth: your township grows with your Claude work.**
   - **Room to grow:** every township has two neighbouring plots reserved beside it on its street (one township to a
     home block). The generator clears and levels them; until they are yours they are fenced off: "Room to grow".

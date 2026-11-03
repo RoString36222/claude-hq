@@ -842,6 +842,15 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
  @keyframes clearedout{to{transform:scaleY(0);opacity:0}}
  @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 
+ /* The scope: one canvas over the brief. */
+ .scopebox{position:relative;margin:0 0 14px;border:1px solid var(--line);background:#050505;overflow:hidden}
+ #scope{display:block;width:100%;height:clamp(300px,50vw,500px);cursor:grab;touch-action:pan-y;user-select:none;-webkit-user-select:none}
+ #scope:focus-visible{outline:2px solid var(--ink);outline-offset:-3px}
+ .scopecard{position:absolute;max-width:min(22rem,calc(100% - 12px));padding:7px 10px;pointer-events:none;background:rgba(5,5,5,.92);
+   border:1px solid var(--ink);font-size:10.5px;letter-spacing:.06em;text-transform:none;overflow-wrap:anywhere}
+ .scopecard b{display:block;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+ .scopecard span{display:block;margin-top:2px;color:var(--dim)}
+
  .hold{display:none;position:relative;margin-top:10px;padding:16px;gap:18px;
    grid-template-columns:auto minmax(0,1fr);align-items:center;overflow:hidden;
    border:1px solid rgba(255,176,0,.5);transform-origin:top;
@@ -1009,6 +1018,9 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
 
  <output class="msg" id="msg"></output>
 
+ <div class="scopebox"><canvas id="scope" tabindex="0" role="application" aria-label="Deploy scope. Arrow keys step through the rings, commits and checks; Escape lets go."></canvas>
+  <output class="scopecard" id="scopecard" hidden></output></div>
+
  <!-- The brief (HQ 3.36): three questions, answered top to bottom in plain words. What is live and is it well;
       where the newest commit on main is on its way to live; what the one button will do, and why it can't yet. -->
  <section class="brief" id="brief" aria-labelledby="bheadtxt">
@@ -1093,6 +1105,7 @@ var VERDICT={ci_failed:"ci red \u00b7 nothing shipped",
   rolled_back:"aborted \u00b7 rolled back", failed:"failed"};
 function finish(ok,reason){
   if(ENDED) return; ENDED=true;
+  SCOPE.end(ok,reason==="ci_timeout"||reason==="ci_unreachable");
   var rig=$id("rig"), fl=$id("flash");
   // Held, not failed: nothing went wrong on this box, so no alarm.
   var held=reason==="ci_timeout"||reason==="ci_unreachable";
@@ -1208,6 +1221,7 @@ function paintHold(j){
 }
 
 function paint(j){
+  SCOPE.job(j);
   var rig=$id("rig");
   // Keep whichever ending has already landed: className is rebuilt here.
   var ended=(rig.className.match(/done-\\w+/)||[""])[0];
@@ -1311,13 +1325,14 @@ function tick(){
 var STATE_WORD={done:"done",active:"under way",ready:"ready",fail:"failed",idle:"not yet"}, ROLLTO=null;
 function clear(n){ while(n.firstChild) n.removeChild(n.firstChild); }
 function drawBrief(b){
+  SCOPE.brief(b);
   $id("brief").className="brief "+(b.tone||"ok");
   $id("bheadtxt").textContent=b.headline;
   $id("bline").textContent=b.line;
   $id("bwhen").textContent=b.deployed_at?"Deployed "+ago(Date.now()/1000-b.deployed_at):"";
   var ol=$id("steps"); clear(ol);
   (b.steps||[]).forEach(function(s,i){
-    var li=el("li","st "+s.state);
+    var li=el("li","st "+s.state); li.dataset.scope="ring:"+i;
     li.appendChild(el("b",null,(i+1)+"  "+s.label)); li.appendChild(el("span",null,s.detail||""));
     li.setAttribute("aria-label",s.label+": "+(STATE_WORD[s.state]||s.state)+(s.detail?". "+s.detail:""));
     ol.appendChild(li);
@@ -1326,7 +1341,7 @@ function drawBrief(b){
   $id("deploylbl").textContent=b.action.label; $id("why").textContent=b.action.why;
   $id("rolllbl").textContent=b.rollback.label; ROLLTO=b.rollback.version;
   var ul=$id("ships"); clear(ul);
-  (b.changes||[]).forEach(function(c){ var li=el("li"); li.appendChild(el("code",null,c.sha)); li.appendChild(document.createTextNode(c.subject)); ul.appendChild(li); });
+  (b.changes||[]).forEach(function(c){ var li=el("li"); li.dataset.scope="pill:c"+c.sha; li.appendChild(el("code",null,c.sha)); li.appendChild(document.createTextNode(c.subject)); ul.appendChild(li); });
   if(b.more) ul.appendChild(el("li",null,"and "+b.more+" more"));
   var n=(b.changes||[]).length+(b.more||0);
   $id("shipsbox").hidden=!n;
@@ -1336,6 +1351,408 @@ function brief(){
   fetch("/api/status",{headers:{"X-Panel-Token":CSRF}}).then(function(r){return r.json();}).then(drawBrief)
     .catch(function(){ $id("why").textContent="Could not read the status. Trying again in 20 seconds."; });
 }
+// The scope: a holographic table over the brief, drawn only from what /api/status and /api/progress report. The four
+// rings are the four steps, outside in; a pillar is a commit, a check, the release; the core is what is live, and the
+// trace under it flatlines when the health check fails. Every state has its own camera, colour and sweep (MODES). Drag
+// to turn it, point at or tap anything to read it, arrow keys to step through. It only reads: the buttons deploy.
+var SCOPE=(function(){
+  var cv=$id("scope"), card=$id("scopecard"), noop=function(){}, g=cv&&cv.getContext&&cv.getContext("2d");
+  if(!g) return {brief:noop,job:noop,end:noop,hot:noop};
+  var calm=!!(window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches);
+  var COL={ok:"74,246,38",warn:"255,176,0",bad:"230,25,25",idle:"125,125,125",cool:"70,215,255",hot:"255,236,190"};
+  var STATE={done:"ok",active:"warn",ready:"cool",fail:"bad",idle:"idle"};
+  // col, camera (tilt, zoom), sweep (speed, width, beams), and how it behaves.
+  var MODES={
+    boot:   {col:"idle",tilt:.6, zoom:.92,spd:.6, arc:1.2,beams:1,title:"reading the board"},
+    clear:  {col:"ok",  tilt:.96,zoom:.86,spd:.7, arc:2.4,beams:1,title:"all clear"},
+    ready:  {col:"cool",tilt:.46,zoom:1,  spd:1.3,arc:1.3,beams:1,title:"ready to deploy"},
+    ci:     {col:"warn",tilt:.66,zoom:.94,spd:1.8,arc:.8, beams:2,title:"ci is running"},
+    publish:{col:"warn",tilt:.52,zoom:.96,spd:1.5,arc:1,  beams:1,title:"publishing the release"},
+    cifail: {col:"bad", tilt:.7, zoom:.94,spd:.28,arc:.6, beams:1,title:"ci failed",alarm:1},
+    down:   {col:"bad", tilt:.82,zoom:.9, spd:.5, arc:.5, beams:1,title:"not answering",alarm:1,dying:1},
+    deploy: {col:"hot", tilt:.3, zoom:1.1,spd:3.2,arc:.9, beams:3,title:"deploying",tall:1,streams:1},
+    hold:   {col:"warn",tilt:.6, zoom:1,  spd:2.2,arc:.7, beams:2,title:"holding for ci"},
+    shipped:{col:"ok",  tilt:.8, zoom:.94,spd:1,  arc:2,  beams:1,title:"live"},
+    fail:   {col:"bad", tilt:.76,zoom:.94,spd:.2, arc:.5, beams:1,title:"deploy failed",alarm:1,dying:1}
+  };
+  var TIERS=[1,.74,.5,.27], TAU=Math.PI*2, MONO='ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+  var W=0,H=0,DPR=1,cx=0,cy=0,R=0,tilt=.6,zoom=.92,glow=COL.idle.split(",").map(Number);
+  var last=0,T0=0,sw=-.6,spd=.6,seen=true,raf=0,now_t=0;
+  var B=null,J=null,shock=null,pills=[],rot=0,vel=0,lift=0;
+  var drag=null,hover=null,pin=null,pointer={x:0,y:0};
+  function hash(s){ var h=2166136261; s=String(s); for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0)/4294967296; }
+  function rgba(c,a){ return "rgba("+c+","+Math.max(0,Math.min(1,a)).toFixed(3)+")"; }
+  function px(r,a){ return cx+R*r*Math.cos(a+rot); }
+  function py(r,a,z){ return cy+R*r*Math.sin(a+rot)*tilt-(z||0)*R; }
+  function ring(r,z,c,a,lw,dash){
+    g.beginPath(); g.ellipse(cx,cy-(z||0)*R,Math.max(1,R*r),Math.max(1,R*r*tilt),0,0,TAU);
+    g.setLineDash(dash||[]); g.lineWidth=lw||1; g.strokeStyle=rgba(c,a); g.stroke(); g.setLineDash([]);
+  }
+  function text(s,x,y,c,a,size,align,weight){
+    g.font=(weight||400)+" "+(size||10)+"px "+MONO; g.textAlign=align||"left"; g.fillStyle=rgba(c,a); g.fillText(String(s),x,y,Math.max(40,W-40));
+  }
+  function mode(){
+    var st=(B&&B.steps)||[], s=function(i){ return st[i]?st[i].state:""; };
+    if(J&&J.state==="running") return J.phase==="CI GATE"&&J.ci&&J.ci.state==="waiting"?"hold":"deploy";
+    if(J&&J.state==="fail") return "fail";
+    if(J&&J.state==="ok") return "shipped";
+    if(!B) return "boot";
+    if(B.tone==="bad") return "down";
+    if(s(1)==="fail"||s(2)==="fail") return "cifail";
+    if(s(1)==="active") return "ci";
+    if(s(2)==="active") return "publish";
+    if(s(3)==="ready") return "ready";
+    return "clear";
+  }
+  function fit(){
+    var d=Math.min(window.devicePixelRatio||1,2), w=cv.clientWidth|0, h=cv.clientHeight|0;
+    if(w!==W||h!==H||d!==DPR){ W=w; H=h; DPR=d; cv.width=w*d; cv.height=h*d; }
+    cx=W/2; cy=H*(tilt>.8?.5:.57);
+    R=Math.min(W*.44,H*.39/tilt)*zoom;
+  }
+  function checkCol(st){ return st==="pending"?"warn":/^(success|skipped|neutral)$/.test(st)?"ok":"bad"; }
+  // One pillar per thing the server named; where it stands comes from its name, so a reload keeps the picture.
+  function build(){
+    var old={}, out=[]; pills.forEach(function(p){ old[p.key]=p; });
+    function add(key,label,r,a,col,z,head,body){
+      var o=old[key]; out.push({key:key,label:label,r:r,a:a,col:col,z:z,head:head,body:body,lit:o?o.lit:(calm?.7:0),ping:o?o.ping:-1,sx:0,sy:0,ty:0});
+    }
+    var ch=(B&&B.changes)||[], ci=(J&&J.ci&&J.ci.checks)||(B&&B.checks)||[], st=(B&&B.steps)||[];
+    ch.forEach(function(c){ add("c"+c.sha,c.sha,.84+.13*hash(c.sha+"r"),hash(c.sha)*TAU,mode()==="ready"?"cool":"warn",.09+.09*hash(c.sha+"z"),"commit "+c.sha,c.subject||""); });
+    ci.forEach(function(c,i){
+      var col=checkCol(c.status);
+      add("k"+c.name,c.name,TIERS[1]-.05,i/Math.max(1,ci.length)*TAU+.7,col,col==="bad"?.3:.14,"check: "+c.name,c.status.replace("_"," "));
+    });
+    if(st[2]&&st[2].state!=="idle") add("r","release",TIERS[2]-.04,-2.2,STATE[st[2].state]||"idle",.2,"release",st[2].detail||st[2].state);
+    pills=out;
+  }
+  function floor(t,c){
+    var hz=cy-R*tilt*.25, n=9, s=calm?0:(t*(mode()==="deploy"?.5:.06))%1, i;
+    g.lineWidth=1;
+    for(i=0;i<n;i++){ var k=(i+s)/n, y=hz+(H-hz)*k*k; g.strokeStyle=rgba(c,.1*k); g.beginPath(); g.moveTo(0,y); g.lineTo(W,y); g.stroke(); }
+    for(i=-10;i<=10;i++){ g.strokeStyle=rgba(c,.05); g.beginPath(); g.moveTo(cx+i*W*.03,hz); g.lineTo(cx+i*W*.2,H); g.stroke(); }
+  }
+  function sweep(c,m){
+    g.save(); g.translate(cx,cy); g.scale(1,tilt);
+    var n=calm?12:30, b, i;
+    for(b=0;b<m.beams;b++){
+      var at=sw+rot+b/m.beams*TAU;
+      for(i=0;i<n;i++){
+        g.beginPath(); g.moveTo(0,0); g.arc(0,0,R,at-(i+1)/n*m.arc,at-i/n*m.arc+.01); g.closePath();
+        g.fillStyle=rgba(c,.26*Math.pow(1-i/n,2.2)); g.fill();
+      }
+      g.beginPath(); g.moveTo(0,0); g.lineTo(R*Math.cos(at),R*Math.sin(at));
+      g.strokeStyle=rgba(c,.95); g.lineWidth=1.5; g.stroke();
+    }
+    g.restore();
+  }
+  function rimArc(r,from,to,c,a,lw){
+    g.save(); g.translate(cx,cy); g.scale(1,tilt); g.beginPath(); g.arc(0,0,R*r,from+rot,to+rot); g.restore();
+    g.lineWidth=lw; g.strokeStyle=rgba(c,a); g.stroke();
+  }
+  function bezel(t,c,m){
+    var off=calm?0:t*.05, i;
+    for(i=0;i<72;i++){
+      if(m.dying&&hash("t"+i)>.6) continue;    // a dead scope has lost half its graticule
+      var a=i/72*TAU+off, big=i%6===0, r0=1.05, r1=big?1.1:1.07;
+      g.beginPath(); g.moveTo(px(r0,a),py(r0,a)); g.lineTo(px(r1,a),py(r1,a));
+      g.strokeStyle=rgba(c,big?.55:.22); g.lineWidth=1; g.stroke();
+    }
+    ring(1.13,0,c,.18,1,[2,5]);
+    for(i=1;i<5;i++) ring(1.02,i*.055,c,.09-i*.015,1,[3,9]);   // the hologram's volume: ghost rings stacked over the table
+    var run=J&&J.state!=="idle";
+    if(run){  // the six stages of a release, round the rim
+      var idx=J.idx|0, seg=TAU/PHASES.length;
+      for(i=0;i<PHASES.length;i++){
+        var on=i<idx, cur=i===idx-1&&J.state==="running", from=-Math.PI/2+i*seg+.04;
+        rimArc(1.17,from,from+seg-.08,J.state==="fail"&&i===idx-1?COL.bad:on?COL.ok:COL.idle,on?(cur&&!calm?.65+.35*Math.sin(t*6):.9):.25,cur?4:3);
+      }
+    }
+    if(J&&J.state==="running"&&J.ci&&J.ci.budget&&J.ci.state==="waiting"){   // the hold's time budget, burning down
+      rimArc(1.22,-Math.PI/2,-Math.PI/2+TAU*Math.min(1,(J.ci.waited||0)/J.ci.budget),COL.warn,.9,2);
+    }
+  }
+  function tiers(t,m){
+    var st=(B&&B.steps)||[], sel=target();
+    TIERS.forEach(function(r,i){
+      var s=st[i], key=s?STATE[s.state]||"idle":"idle", c=COL[key], act=s&&s.state==="active", on=sel&&sel.kind==="ring"&&sel.i===i;
+      var dash=key==="idle"?[3,6]:act&&!calm?[14,8]:null;
+      if(m.dying&&!calm&&hash("r"+i+Math.floor(t*5))>.7) return;     // rings dropping out
+      if(act&&!calm){ g.lineDashOffset=-t*40; }
+      ring(r,0,c,on?1:key==="idle"?.3:act&&!calm?.6+.4*Math.sin(t*4):.85,on?3.4:act?2.4:1.3,dash);
+      g.lineDashOffset=0;
+      if(s&&s.state==="fail") ring(r+(calm?.02:.04*Math.abs(Math.sin(t*3))),0,COL.bad,.5,1);
+      if(s&&W>=420) text(s.label.toUpperCase(),cx,py(r,Math.PI/2-rot)-4,c,on?1:.85,on?10:9,"center",700);
+    });
+  }
+  // Ready: the target brackets close on what is live, and hold.
+  function reticle(t,c){
+    var k=calm?1:.5+.5*Math.sin(t*2.2), rr=TIERS[3]+.03+.05*(1-k), i;
+    for(i=0;i<4;i++){ var a=i/4*TAU+(calm?.4:t*.5); rimArc(rr,a-.3-rot,a+.3-rot,c,.95,3); }
+  }
+  function core(t,c,m){
+    var dead=m.dying&&!calm, flick=dead?(hash(Math.floor(t*14))>.55?1:.2):1, tall=m.tall;
+    var h=(tall?1.25:m.dying?.25:.6)*R, x=cx, y=cy, w=(tall?20:9)+(calm?0:2*Math.sin(t*3));
+    var gr=g.createLinearGradient(0,y-h,0,y);
+    gr.addColorStop(0,rgba(c,0)); gr.addColorStop(1,rgba(c,(tall?.85:.45)*flick));
+    g.fillStyle=gr; g.beginPath(); g.moveTo(x-w,y); g.lineTo(x-w*.25,y-h); g.lineTo(x+w*.25,y-h); g.lineTo(x+w,y); g.closePath(); g.fill();
+    var i, n=tall?5:2;
+    for(i=0;i<n;i++){   // rings climbing the beam
+      var k=calm?(i+1)/(n+1):((t*(tall?.9:.22)+i/n)%1);
+      ring(.1+.1*(1-k),k*h/R,c,(1-k)*.7*flick,1.2);
+    }
+    var sel=target(), on=sel&&sel.kind==="core";
+    g.beginPath(); g.ellipse(x,y,R*(on?.11:.085),R*(on?.11:.085)*tilt,0,0,TAU); g.fillStyle=rgba(c,.9*flick); g.fill();
+    if(m.dying) return;     // nothing lifts off a dead table
+    for(i=0;i<46;i++){
+      var a=hash("a"+i)*TAU, r=.12+.9*hash("b"+i), z=calm?hash("c"+i)*.5:(t*(.03+.05*hash("d"+i))*(tall?4:1)+hash("c"+i))%1, sp=calm?0:t*.04;
+      g.fillStyle=rgba(c,.5*(1-z)); g.fillRect(px(r,a+sp),py(r,a+sp,z*.55),1.5,1.5);
+    }
+  }
+  function drawPills(dt,t,prev){
+    var sel=target(), m=MODES[mode()];
+    pills.slice().sort(function(a,b){ return Math.sin(a.a+rot)*a.r-Math.sin(b.a+rot)*b.r; }).forEach(function(p){
+      if(dt>0){
+        var i, hit=false;
+        for(i=0;i<m.beams;i++){ var d=((sw+i/m.beams*TAU-p.a)%TAU+TAU)%TAU; if(d<sw-prev) hit=true; }
+        if(hit){ p.lit=1; p.ping=0; }
+        p.lit=Math.max(p.col==="bad"?.75:.12,p.lit-dt*.5);
+        if(p.ping>=0){ p.ping+=dt*1.4; if(p.ping>1) p.ping=-1; }
+      }
+      var on=sel&&sel.kind==="pill"&&sel.key===p.key, lit=on?1:p.lit;
+      var bob=p.col==="warn"&&p.key.charAt(0)==="k"&&!calm?.02*Math.sin(t*5+p.a):0;
+      var c=COL[p.col]||COL.idle, x=px(p.r,p.a), y=py(p.r,p.a), top=y-(p.z+bob)*R*(on?1.25:1);
+      p.sx=x; p.sy=y; p.ty=top;
+      g.strokeStyle=rgba(c,.2+.8*lit); g.lineWidth=on?3:2;
+      g.beginPath(); g.moveTo(x,y); g.lineTo(x,top); g.stroke();
+      var s=on?5:3;
+      g.fillStyle=rgba(c,.35+.65*lit); g.fillRect(x-s,top-s,s*2,s*2);
+      if(p.col==="bad"){ g.strokeStyle=rgba(COL.bad,1); g.lineWidth=2; g.beginPath(); g.moveTo(x-9,top-9); g.lineTo(x+9,top+9); g.moveTo(x+9,top-9); g.lineTo(x-9,top+9); g.stroke(); }
+      g.beginPath(); g.ellipse(x,y,5,5*tilt,0,0,TAU); g.strokeStyle=rgba(c,.5); g.lineWidth=1; g.stroke();
+      if(p.ping>=0){ g.beginPath(); g.ellipse(x,y,5+26*p.ping,(5+26*p.ping)*tilt,0,0,TAU); g.strokeStyle=rgba(c,1-p.ping); g.stroke(); }
+      if(W>=520&&lit>.25) text(p.label,x+(on?10:7),top+3,c,lit,on?11:9,"left",on?700:400);
+    });
+  }
+  // A release running: every commit on its way falls in to the core.
+  function streams(t){
+    pills.forEach(function(p){
+      if(p.key.charAt(0)!=="c") return;
+      var ph=(t*.35+hash(p.key))%1, i;
+      for(i=0;i<6;i++){
+        var k=Math.max(0,ph-i*.018), r=p.r*(1-k), a=p.a+k*2.2;
+        g.fillStyle=rgba(COL.hot,(1-i/6)*.9); g.fillRect(px(r,a)-1.5,py(r,a,(1-k)*p.z)-1.5,3,3);
+      }
+    });
+  }
+  // A dead scope's static; an alarm's slow red breathing at the edge.
+  function hazard(t,m){
+    if(calm) return;
+    if(m.alarm){
+      var k=.5+.5*Math.sin(t*2.4), v=g.createRadialGradient(cx,H/2,Math.min(W,H)*.35,cx,H/2,Math.max(W,H)*.7);
+      v.addColorStop(0,rgba(COL.bad,0)); v.addColorStop(1,rgba(COL.bad,.3*k)); g.fillStyle=v; g.fillRect(0,0,W,H);
+    }
+    if(m.dying){
+      var i, f=Math.floor(t*16);
+      for(i=0;i<26;i++){ g.fillStyle=rgba(COL.idle,.25*hash("s"+i+f)); g.fillRect(hash("x"+i+f)*W,hash("y"+i+f)*H,30+90*hash("w"+i+f),1); }
+    }
+  }
+  function beat(x){
+    if(x<.12||x>.42) return 0;
+    if(x<.18) return .16*Math.sin((x-.12)/.06*Math.PI);
+    if(x<.22) return -.14*(x-.18)/.04;
+    if(x<.25) return -.14+1.14*(x-.22)/.03;
+    if(x<.28) return 1-1.3*(x-.25)/.03;
+    if(x<.31) return -.3+.3*(x-.28)/.03;
+    return x>.34?.2*Math.sin((x-.34)/.08*Math.PI):0;
+  }
+  function trace(t){
+    var ok=!!B&&B.tone!=="bad", c=!B?COL.idle:ok?COL.ok:COL.bad, base=H-20, amp=13, sx, n=W<520?1.5:3;
+    g.beginPath(); g.lineWidth=1.4; g.strokeStyle=rgba(c,.9);
+    for(sx=0;sx<=W;sx+=2){
+      var v=ok?beat((((sx/W*n-(calm?.1:t*.8))%1)+1)%1):0;
+      if(sx) g.lineTo(sx,base-v*amp); else g.moveTo(sx,base-v*amp);
+    }
+    g.stroke();
+    text(!B?"reading":ok?"health ok":"no pulse: health check failing",12,base-16,c,.8,9);
+  }
+  function brackets(c){
+    var m=8,l=18; g.strokeStyle=rgba(c,.7); g.lineWidth=1.5; g.beginPath();
+    g.moveTo(m,m+l); g.lineTo(m,m); g.lineTo(m+l,m);
+    g.moveTo(W-m-l,m); g.lineTo(W-m,m); g.lineTo(W-m,m+l);
+    g.moveTo(m,H-m-l); g.lineTo(m,H-m); g.lineTo(m+l,H-m);
+    g.moveTo(W-m-l,H-m); g.lineTo(W-m,H-m); g.lineTo(W-m,H-m-l); g.stroke();
+  }
+  function hud(c,m){
+    var run=J&&J.state==="running";
+    text(m.title,20,33,c,1,W<520?15:22,"left",900);
+    var pend=((J&&J.ci&&J.ci.checks)||(B&&B.checks)||[]);
+    var sub=run?(J.ci&&J.ci.state==="waiting"
+        ?pend.filter(function(k){ return k.status==="pending"; }).length+" of "+pend.length+" checks still running"
+        :String(J.phase||"starting").toLowerCase()+(J.idx?" // "+(J.pct|0)+"%":""))
+      :J&&J.state==="fail"?(J.reason||"failed").replace(/_/g," "):B?(B.action.why||B.action.label):"";
+    text(sub,20,50,c,.75,10);
+    var n=pills.filter(function(p){ return p.key.charAt(0)==="c"; }).length+((B&&B.more)||0);
+    text(new Date().toISOString().slice(11,19)+" utc",W-20,33,c,.8,10,"right");
+    if(n) text(n+" commit"+(n===1?"":"s")+" inbound",W-20,50,c,.8,10,"right");
+    if(W>=520) text("drag to turn // point to read",W-20,H-34,c,.4,9,"right");
+  }
+  function blast(t){
+    if(!shock) return;
+    var k=(t-shock.at)/2.2, i;
+    if(k>1||k<0){ shock=null; return; }
+    for(i=0;i<3;i++){ var q=Math.max(0,k-i*.12); if(q>0) ring(.08+q*1.6,0,COL[shock.col],(1-q)*.95,3-i); }
+    if(shock.col==="ok") text("LIVE",cx,cy-R*.3,COL.ok,1-k,Math.min(64,W*.12),"center",900);
+    if(shock.col==="bad"){
+      for(i=0;i<7;i++){   // the picture tears
+        var y=hash("y"+i+Math.floor(t*11))*H, bh=4+18*hash("h"+i), dx=(hash("x"+i+Math.floor(t*11))-.5)*44*(1-k);
+        g.drawImage(cv,0,y*DPR,W*DPR,bh*DPR,dx,y,W,bh);
+      }
+    }
+  }
+  // What the pointer or the keys are on. Pinned wins over hovered.
+  function target(){ return pin||hover; }
+  function hit(x,y){
+    var best=null,bd=18*18;
+    pills.forEach(function(p){
+      var dy=Math.min(Math.abs(y-p.ty),Math.abs(y-p.sy)), inx=y>Math.min(p.ty,p.sy)&&y<Math.max(p.ty,p.sy);
+      var d=(x-p.sx)*(x-p.sx)+(inx?0:dy*dy);
+      if(d<bd){ bd=d; best={kind:"pill",key:p.key}; }
+    });
+    if(best) return best;
+    var nx=(x-cx)/R, ny=(y-cy)/(R*tilt), d=Math.sqrt(nx*nx+ny*ny), i;
+    if(d<.13) return {kind:"core"};
+    for(i=0;i<TIERS.length;i++) if(Math.abs(d-TIERS[i])<.045) return {kind:"ring",i:i};
+    return null;
+  }
+  function same(a,b){ return a===b||(!!a&&!!b&&a.kind===b.kind&&a.key===b.key&&a.i===b.i); }
+  // Set as text only: a commit subject or a check's name is never parsed as markup.
+  function drawCard(){
+    var sel=target(), head="", body="";
+    if(sel&&sel.kind==="pill"){
+      var p=pills.filter(function(q){ return q.key===sel.key; })[0];
+      if(p){ head=p.head; body=p.body; }
+    } else if(sel&&sel.kind==="core"){
+      head="now live"; body=B?(B.line||"")+(B.deployed_at?" // deployed "+ago(Date.now()/1000-B.deployed_at):""):"";
+    } else if(sel&&sel.kind==="ring"){
+      var s=B&&B.steps&&B.steps[sel.i];
+      if(s){ head=s.label+": "+(STATE_WORD[s.state]||s.state); body=s.detail||""; }
+    }
+    if(!head){ card.hidden=true; return; }
+    card.hidden=false;
+    if(card.dataset.txt!==head+body){
+      card.dataset.txt=head+body; clear(card);
+      card.appendChild(el("b",null,head)); if(body) card.appendChild(el("span",null,body));
+    }
+    var a=anchor(sel), cw=card.offsetWidth, ch=card.offsetHeight;
+    card.style.left=Math.max(6,Math.min(W-cw-6,a.x+14))+"px";
+    card.style.top=Math.max(6,Math.min(H-ch-6,a.y-ch-10))+"px";
+  }
+  function anchor(sel){
+    if(sel.kind==="pill"){ var p=pills.filter(function(q){ return q.key===sel.key; })[0]; if(p) return {x:p.sx,y:p.ty}; }
+    if(sel.kind==="core") return {x:cx,y:cy};
+    if(sel.kind==="ring") return {x:cx,y:py(TIERS[sel.i],Math.PI/2-rot)};
+    return pointer;
+  }
+  function targets(){
+    var all=pills.map(function(p){ return {kind:"pill",key:p.key}; });
+    for(var i=0;i<TIERS.length;i++) all.push({kind:"ring",i:i});
+    all.push({kind:"core"});
+    return all;
+  }
+  function step(dir){
+    var all=targets(), at=-1, i;
+    for(i=0;i<all.length;i++) if(same(all[i],pin)) at=i;
+    pin=all[(at+dir+all.length)%all.length];
+    poke();
+  }
+  function poke(){ if(calm) draw(0,0); }
+  function draw(t,dt){
+    var key=mode(), m=MODES[key], rgb=COL[m.col].split(",").map(Number), e=calm?1:Math.min(1,dt*1.8), i;
+    tilt+=(Math.max(.22,Math.min(1,m.tilt+lift))-tilt)*e; zoom+=(m.zoom-zoom)*e;
+    for(i=0;i<3;i++) glow[i]+=(rgb[i]-glow[i])*e;
+    fit(); if(!W||!H) return;
+    var c=Math.round(glow[0])+","+Math.round(glow[1])+","+Math.round(glow[2]), prev=sw;
+    spd+=(m.spd-spd)*Math.min(1,dt*2);
+    if(calm) sw=-.6;
+    else if(m.dying) sw=(sw+(hash(Math.floor(t*3))>.5?spd*dt*4:0))%(TAU*4);    // it catches, then runs on
+    else sw=(sw+spd*dt)%(TAU*4);
+    if(sw<prev) prev=sw;     // the wrap: no pillar is owed a ping for it
+    if(!drag&&Math.abs(vel)>.0005){ rot+=vel*dt*60; vel*=Math.pow(.92,dt*60); }
+    g.setTransform(DPR,0,0,DPR,0,0);
+    g.fillStyle="#050505"; g.fillRect(0,0,W,H);
+    var bg=g.createRadialGradient(cx,cy,0,cx,cy,R*1.5);
+    bg.addColorStop(0,rgba(c,.16)); bg.addColorStop(1,rgba(c,0)); g.fillStyle=bg; g.fillRect(0,0,W,H);
+    floor(t,c); bezel(t,c,m); sweep(c,m); tiers(t,m);
+    if(key==="ready") reticle(t,COL.cool);
+    if(m.streams&&!calm) streams(t);
+    core(t,c,m); drawPills(dt,t,prev); blast(t); hazard(t,m); hud(c,m); brackets(c); trace(t);
+    drawCard();
+  }
+  function frame(now){
+    raf=0;
+    if(document.hidden||!seen) return;
+    raf=requestAnimationFrame(frame);
+    if(now-last<33) return;     // thirty frames a second is plenty on a deploy box's page
+    var dt=last?Math.min(.1,(now-last)/1000):0; last=now;
+    if(!T0) T0=now;
+    now_t=(now-T0)/1000;
+    draw(now_t,dt);
+  }
+  function wake(){ if(calm){ draw(0,0); return; } if(!raf&&!document.hidden&&seen){ last=0; raf=requestAnimationFrame(frame); } }
+  function at(e){ var r=cv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top}; }
+  cv.addEventListener("pointerdown",function(e){
+    var p=at(e); drag={x:p.x,y:p.y,sx:p.x,sy:p.y,lift:lift,moved:false}; vel=0;
+    if(cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener("pointermove",function(e){
+    var p=at(e); pointer=p;
+    if(drag){
+      var dx=p.x-drag.x;
+      if(Math.abs(p.x-drag.sx)+Math.abs(p.y-drag.sy)>5) drag.moved=true;
+      if(drag.moved){
+        rot+=dx*.008; vel=dx*.008;
+        if(e.pointerType!=="touch") lift=Math.max(-.35,Math.min(.35,drag.lift+(p.y-drag.sy)*.003));   // a finger's up-and-down scrolls the page
+        cv.style.cursor="grabbing";
+      }
+      drag.x=p.x;
+    } else {
+      hover=hit(p.x,p.y); cv.style.cursor=hover?"pointer":"grab";
+    }
+    poke();
+  });
+  cv.addEventListener("pointerup",function(e){
+    var p=at(e), moved=drag&&drag.moved; drag=null; cv.style.cursor="grab";
+    if(!moved){ var h=hit(p.x,p.y); pin=same(h,pin)?null:h; }    // tap to pin, tap again or tap away to let go
+    poke();
+  });
+  cv.addEventListener("pointercancel",function(){ drag=null; });
+  cv.addEventListener("pointerleave",function(){ hover=null; poke(); });
+  cv.addEventListener("dblclick",function(){ rot=0; vel=0; lift=0; poke(); });
+  cv.addEventListener("keydown",function(e){
+    if(e.key==="ArrowRight"||e.key==="ArrowDown") step(1);
+    else if(e.key==="ArrowLeft"||e.key==="ArrowUp") step(-1);
+    else if(e.key==="Escape"){ pin=null; rot=0; vel=0; lift=0; poke(); }
+    else return;
+    e.preventDefault();
+  });
+  cv.addEventListener("blur",function(){ pin=null; poke(); });
+  document.addEventListener("visibilitychange",wake);
+  window.addEventListener("resize",function(){ if(calm) draw(0,0); });
+  if(window.IntersectionObserver) new IntersectionObserver(function(es){ seen=es[es.length-1].isIntersecting; wake(); }).observe(cv);
+  wake();
+  return {
+    brief:function(b){ B=b; build(); poke(); },
+    job:function(j){ J=j; build(); poke(); },
+    end:function(ok,held){ if(!calm&&!held) shock={at:now_t,col:ok?"ok":"bad"}; poke(); },
+    // The brief's own rows point at what they name: hover a step, its ring lights.
+    hot:function(t){ hover=t; poke(); }
+  };
+})();
+$id("brief").addEventListener("mouseover",function(e){
+  var n=e.target.closest&&e.target.closest("[data-scope]"), p=n?n.dataset.scope.split(":"):null;
+  SCOPE.hot(!p?null:p[0]==="ring"?{kind:"ring",i:+p[1]}:{kind:"pill",key:p[1]});
+});
+$id("brief").addEventListener("mouseleave",function(){ SCOPE.hot(null); });
 history(); setInterval(history,30000); tick(); brief(); setInterval(brief,20000);
 $id("deploy").onclick=function(){act("/api/deploy");};
 $id("rollback").onclick=function(){
@@ -1432,7 +1849,7 @@ def brief(live, head, release, checks, healthy, rows, changes, mode="release"):
     latest {version, sha} or None; checks: GitHub's check runs on head (None: unknown); healthy: the health
     check; rows: _history_rows; changes: [{sha, subject}] the deploy would ship.
     -> {tone, headline, line, deployed_at, steps: [{key, label, state, detail}], action: {enabled, label, why},
-        rollback: {enabled, label, version}, changes}
+        rollback: {enabled, label, version}, changes, checks}
     """
     lsha, hsha = (live.get("sha") or ""), (head.get("sha") or "")
     def same(a, b):
@@ -1496,7 +1913,8 @@ def brief(live, head, release, checks, healthy, rows, changes, mode="release"):
     headline = ("Live and healthy" if healthy else "Live, but not answering its health check")
     line = " \u00b7 ".join(x for x in (cur or (lsha[:7] if lsha else "no release yet"), live.get("subject") or "") if x)
     return {"tone": tone, "headline": headline, "line": line, "deployed_at": deployed_at, "steps": steps,
-            "action": action, "rollback": rollback, "changes": changes[:12], "more": max(0, n - 12)}
+            "action": action, "rollback": rollback, "changes": changes[:12], "more": max(0, n - 12),
+            "checks": [{"name": c["name"], "status": c["status"]} for c in ci]}
 
 
 def overview():

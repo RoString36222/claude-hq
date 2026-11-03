@@ -2521,6 +2521,13 @@ function groundItems(W){
     // (a plane fitted to 88 m of hillside would tilt its ground through its lawns and drive), walled down to the land
     if(l.kind === "hq" && Array.isArray(l.gates) && l.door){ var c0 = polyCentroid(P), ly = (+l.door[1] || 0)/100;
       fill(P, {a: ly, gx: 0, gz: 0, cx: c0[0], cz: c0[1]}, KERB + LIFT + PAD, col, "lot", true);
+      // [growth 3.37] its two neighbouring plots (lot.annex) on the same level: the ground it grows over, fenced off until then
+      (Array.isArray(l.annex) ? l.annex : []).forEach(function(an){
+        var AP = an && Array.isArray(an.poly) && an.poly.length >= 3 ? an.poly.map(function(q){ return [q[0]/100, q[1]/100]; }) : null;
+        if(!AP || !AP.every(function(q){ return isFinite(q[0]) && isFinite(q[1]); })) return;
+        if(polyArea(AP) < 0) AP.reverse();
+        fill(AP, {a: ly, gx: 0, gz: 0, cx: c0[0], cz: c0[1]}, KERB + LIFT + PAD, col, "lot", true);
+      });
       // each gateway's apron: a ramp from the lot's level out over the verge to its street's pavement (TOWN_APRON m), so
       // a car drives in and out (no step up or down at the lot's edge)
       l.gates.forEach(function(g){

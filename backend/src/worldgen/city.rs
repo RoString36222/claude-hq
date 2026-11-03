@@ -77,6 +77,19 @@ pub struct Lot {
     /// City Gen v5 townships: an HQ lot's gateways on its street front (`Gate`), the way in first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gates: Option<Vec<Gate>>,
+    /// City Gen v5 townships (HQ 3.37): the neighbouring plots reserved beside an HQ lot on its street front, the order its
+    /// owner's township grows into them (hqwork.rs): the first on its +x side (past the way out), the second on its -x side.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annex: Option<Vec<Annex>>,
+}
+
+/// A township's reserved neighbouring plot (HQ 3.37): its middle and outline (cm, counter-clockwise, its street edge
+/// first), as deep as the township and flush with its side, so the township's wall moves out round both when it grows.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Annex {
+    pub x: i64,
+    pub z: i64,
+    pub poly: Vec<[i64; 2]>,
 }
 
 /// A township's gateway (City Gen v5 HQ lots): its middle on the lot's street edge (cm), `dir` the Q16 unit out of the
@@ -253,7 +266,7 @@ fn lots(seed: u64, p: &Profile, t: &Terrain, blocks: &[Block]) -> Vec<Lot> {
                 out.push(Lot {
                     id: 0, block: b.id, kind: "hq", district: b.district, x: b.x, z: b.z, w: b.w, d: b.d, facing: f,
                     door: door(t, b.x, b.z, b.d, f), floors: 0,
-                    rank: Some(rank), tier: Some(rank / p.hq_tier as u32), poly: None, front: None, grow: None, min_tier: None, gates: None,
+                    rank: Some(rank), tier: Some(rank / p.hq_tier as u32), poly: None, front: None, grow: None, min_tier: None, gates: None, annex: None,
                 });
                 rank += 1;
             }
@@ -277,7 +290,7 @@ fn lots(seed: u64, p: &Profile, t: &Terrain, blocks: &[Block]) -> Vec<Lot> {
                         };
                         out.push(Lot {
                             id: 0, block: b.id, kind: "building", district: b.district, x, z, w, d, facing: f,
-                            door: door(t, x, z, d, f), floors, rank: None, tier: None, poly: None, front: None, grow: None, min_tier: None, gates: None,
+                            door: door(t, x, z, d, f), floors, rank: None, tier: None, poly: None, front: None, grow: None, min_tier: None, gates: None, annex: None,
                         });
                     }
                 }

@@ -37,7 +37,7 @@
  *     mm.frame({x, z, yaw, view?, speed, route, waypoint, others, dt?})   view: the camera's heading (heading-up turns
  *                    by it; default yaw); yaw: where you face (the arrow)
  *     mm.setMode("heading" | "north"), mm.mode(), mm.zoom(+1 | -1), mm.view(), mm.destroy()
- *     mm.setLots([{id, n, poly: [[x, z]...] m, mine, owned, name, gates}])   the HQ lots (townships), filled in the one
+ *     mm.setLots([{id, n, poly: [[x, z]...] m, mine, owned, name, gates, plots}])   the HQ lots (townships), filled in the one
  *                    township colour (the --hq-map-town token; free ones faint and dashed, yours strongest), named by their HQ
  *                    zoomed in, their gateways marked; frame's f.lot (a lot id) is the one you stand on, edged bold
  *     The bitmap covers worldBox(W, coast, river, airfield): the world's square and whatever is built past it (the runway
@@ -810,7 +810,9 @@ function mount(el, opts){
     return changed;
   }
   // The HQ lots (each a township) drawn over the map: [{id, n (its number), poly: [[x, z]...] (m), mine, owned,
-  // name (its HQ's name, the label), gates: [{x, z (m), dir: [dx, dz] (out to the street), kind: "in" | "out", w (m)}]}]
+  // name (its HQ's name, the label), gates: [{x, z (m), dir: [dx, dz] (out to the street), kind: "in" | "out", w (m)}],
+  // plots (HQ 3.37): its neighbouring plots [{poly, open}], open the ones its township has grown over (drawn with it, one
+  // township), the rest faint and dashed (room to grow)}]
   function setLots(list){
     lots = [];
     (Array.isArray(list) ? list : []).forEach(function(l){
@@ -824,7 +826,15 @@ function mount(el, opts){
       var G = (Array.isArray(l.gates) ? l.gates : []).filter(function(q){ return q && isFinite(+q.x) && isFinite(+q.z) && Array.isArray(q.dir); })
         .slice(0, 4).map(function(q){ var dl = Math.hypot(+q.dir[0] || 0, +q.dir[1] || 0) || 1;
           return {x: +q.x, z: +q.z, dx: (+q.dir[0] || 0)/dl, dz: (+q.dir[1] || 0)/dl, out: q.kind === "out", w: clamp(num(q.w, 8), 2, 30)}; });
-      lots.push({id: l.id, n: l.n | 0, poly: P, x: x, z: z, r: r, mine: !!l.mine, owned: !!l.owned, name: name, gates: G});
+      var PL = (Array.isArray(l.plots) ? l.plots : []).slice(0, 4).map(function(q){
+        var A = q && Array.isArray(q.poly) ? q.poly.filter(function(v){ return Array.isArray(v) && isFinite(+v[0]) && isFinite(+v[1]); }).map(function(v){ return [+v[0], +v[1]]; }) : [];
+        return A.length >= 3 ? {poly: A, open: !!q.open} : null; }).filter(Boolean);
+      // (its middle and reach over the plots it has grown over too: its name in the middle of the whole township)
+      var all = P.concat.apply(P, PL.filter(function(q){ return q.open; }).map(function(q){ return q.poly; }));
+      if(all.length > P.length){ x = 0; z = 0; r = 0; all.forEach(function(q){ x += q[0]/all.length; z += q[1]/all.length; });
+        all.forEach(function(q){ r = Math.max(r, Math.hypot(q[0] - x, q[1] - z)); }); }
+      PL.forEach(function(q){ q.poly.forEach(function(v){ r = Math.max(r, Math.hypot(v[0] - x, v[1] - z)); }); });
+      lots.push({id: l.id, n: l.n | 0, poly: P, x: x, z: z, r: r, mine: !!l.mine, owned: !!l.owned, name: name, gates: G, plots: PL});
     });
     lots.sort(function(a, b){ return (a.mine ? 1 : 0) - (b.mine ? 1 : 0); });   // yours drawn last, on top
     return lots.length;
@@ -841,6 +851,14 @@ function mount(el, opts){
       var L = lots[i], m0 = P([L.x, L.z]), rp = L.r*s;
       if(m0[0] < -rp || m0[1] < -rp || m0[0] > lim + rp || m0[1] > lim + rp) continue;
       var cur = here != null && L.id === here;
+      // its plots first, under it: the ones it has grown over filled as it is, the rest a faint dashed outline
+      L.plots.forEach(function(Q){
+        g.beginPath(); Q.poly.forEach(function(q, k){ var p = P(q); if(k) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }); g.closePath();
+        if(Q.open){ g.globalAlpha = L.mine ? 0.55 : L.owned ? 0.3 : 0.14; g.fillStyle = pal.town; g.fill(); g.globalAlpha = 1; }
+        g.setLineDash && g.setLineDash(Q.open ? [] : [2, 3]);
+        g.globalAlpha = Q.open ? 1 : 0.5; g.lineWidth = Q.open ? (L.mine ? 2.5 : 1.2) : 1; g.strokeStyle = pal.town; g.stroke(); g.globalAlpha = 1;
+        g.setLineDash && g.setLineDash([]);
+      });
       g.beginPath();
       L.poly.forEach(function(q, k){ var p = P(q); if(k) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); });
       g.closePath();

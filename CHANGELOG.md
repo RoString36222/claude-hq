@@ -3,6 +3,19 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.39.0 — HQ growth: your township grows with your Claude work.**
+  - **Room to grow:** every township has two neighbouring plots reserved beside it on its street (one township to a
+    home block). The generator clears and levels them; until they are yours they are fenced off: "Room to grow".
+  - **Growth:** your Claude worker-hours (each session's active hours a day, at most 24 a day) are build points. At 10
+    the first plot is added at bare ground; it climbs foundations (25), buildings (55), amenities (100) and its
+    landmark (150), when the second plot is added and climbs the same (165, 195, 240, 290). The township's wall and
+    name move out round every plot it has.
+  - **Builders:** every live Claude session is a builder on the plot being built: a hard hat and a hi-vis vest,
+    carrying planks from the site's pallets or hammering, under a tower crane. Calm or reduced motion: they stand still.
+  - **Visitors and the minimap:** others see your plots, stage and builders; the line under your HQ's name says how
+    far it has grown; the minimap draws a township's plots with it (the ones not yet added faint and dashed).
+  - **Privacy:** only while your HQ is open, two dates and two whole numbers a heartbeat (`/v1/hq/me/work`).
+
 - **3.38.8 — Strike Zone: the dance looks like a dance, and six more joke totems.**
   - **Nobody dances at kick-off anymore.** The dance pose's `else` branch zeroed every bone rotation each frame after
     the mixer ran, so once a character existed the idle/walk pose was wiped and *everyone* stood in the disco pose from

@@ -21,6 +21,7 @@ mod strike;
 mod hq;
 mod hqgarage;
 mod hqstyle;
+mod hqwork;
 mod kart;
 mod loot;
 mod mapkey;

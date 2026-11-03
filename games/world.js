@@ -301,7 +301,7 @@ function index(W){
   if(W.index) return W.index;
   var nb = bucketsOf(W), n = nb*nb;
   var I = {nb: nb, lots: lists(n), sites: lists(n), bld: lists(n), pads: lists(n), segs: lists(n), trees: null, treeList: null,
-           bldRect: new Float64Array(4*W.lots.length), bldBox: [], padList: []};
+           bldRect: new Float64Array(4*W.lots.length), bldBox: [], padList: [], annex: lists(n), annexList: []};
   W.lots.forEach(function(l, i){
     var R = rectM(l);
     eachBucket(W, nb, R.x0, R.x1, R.z0, R.z1, function(b){ I.lots[b].push(i); });
@@ -320,7 +320,16 @@ function index(W){
     // an HQ lot's level pad: its polygon where it has one (a v5 township is turned to its block: its w x d box would reach
     // across the street), else its w x d box
     if(l.kind === "hq"){ var PP = l.poly && l.poly.length >= 3 ? l.poly.map(function(q){ return [q[0]/100, q[1]/100]; }) : null;
-      I.padList.push({y: ((l.door && l.door[1]) || 0)/100, rect: PP ? polyRect(PP) : R, poly: PP}); }
+      I.padList.push({y: ((l.door && l.door[1]) || 0)/100, rect: PP ? polyRect(PP) : R, poly: PP});
+      // [growth 3.37] its neighbouring plots (lot.annex): level with it, and its ground (lotAt: the township's)
+      (Array.isArray(l.annex) ? l.annex : []).forEach(function(an){
+        var AP = an && Array.isArray(an.poly) && an.poly.length >= 3 ? an.poly.map(function(q){ return [q[0]/100, q[1]/100]; }) : null;
+        if(!AP || !AP.every(function(q){ return isFinite(q[0]) && isFinite(q[1]); })) return;
+        var AR = polyRect(AP), k = I.annexList.length;
+        I.annexList.push({lot: l, poly: AP, rect: AR});
+        I.padList.push({y: ((l.door && l.door[1]) || 0)/100, rect: AR, poly: AP});
+        eachBucket(W, nb, AR.x0, AR.x1, AR.z0, AR.z1, function(b){ I.annex[b].push(k); });
+      }); }
   });
   W.sites.forEach(function(s, i){
     var R = rectM(s);
@@ -619,6 +628,8 @@ function inRectCm(o, xc, zc){ return Math.abs(xc - o.x) <= o.w/2 && Math.abs(zc 
 function lotAt(W, x, z){
   var I = index(W), nb = I.nb, L = I.lots[bOf(W, z, nb)*nb + bOf(W, x, nb)], xc = Math.round(x*100), zc = Math.round(z*100);
   for(var i = 0; i < L.length; i++) if(inRectCm(W.lots[L[i]], xc, zc)) return W.lots[L[i]];
+  var A = I.annex[bOf(W, z, nb)*nb + bOf(W, x, nb)];                    // [growth 3.37] a township's plot: its township
+  for(var k = 0; k < A.length; k++){ var an = I.annexList[A[k]]; if(inRect(an.rect, x, z) && inPolyM(an.poly, x, z)) return an.lot; }
   return null;
 }
 function siteAt(W, x, z){

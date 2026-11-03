@@ -65,7 +65,9 @@ class LoadOrderAndProtocol(unittest.TestCase):
                           # the HQ revamp: HQ Studio's style document and the tower it styles (before the Base that builds it)
                           "hqstyle", "hqtower", "hqroof", "hqdecor", "hqbase", "hqskate", "world", "worldgeom",
                           # city life (3.21): read by the world worker and the City, before both
-                          "citylife", "worldbuild", "camrig", "hqhud", "hqcityparts", "hqcity", "hqmerge",
+                          "citylife", "worldbuild", "camrig", "hqhud", "hqcityparts",
+                          # HQ growth (3.37): a township's plots and builders, read by the City
+                          "hqgrowth", "hqcity", "hqmerge",
                           # Cities (3.0): the civic kit, residents, traffic, the sea, boats, travel
                           "hqcivic", "npcsim", "npcdraw", "traffic", "ocean", "hqboat", "hqheli",
                           # vehicles (3.2): the catalogue, handling from specs, their bodies, the (temporary) Showroom

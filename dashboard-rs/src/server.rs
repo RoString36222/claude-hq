@@ -1054,7 +1054,17 @@ fn arena_post(app: &App, path: &str, body: &Value) -> (u16, Value) {
         }
         "/api/arena/hq/me" => {
             let crew = py::opt_truthy(b.get("crew")).then(|| app.hq_crew_counts());
-            app.arena_hq_update(b.get("open"), b.get("look"), crew.as_ref())
+            let (code, mut r) = app.arena_hq_update(b.get("open"), b.get("look"), crew.as_ref());
+            // HQ growth (HQ 3.37): with the crew, while the HQ is open to the city, its worker-hours (two whole numbers);
+            // the Arena's build comes back on the reply (an older Arena's 404 leaves the reply as it was)
+            if crew.is_some() && code == 200 && r.get("open") == Some(&Value::Bool(true)) {
+                if let (200, w) = app.arena_hq_work() {
+                    if let (Some(o), Some(bd)) = (r.as_object_mut(), w.get("build")) {
+                        o.insert("build".into(), bd.clone());
+                    }
+                }
+            }
+            (code, r)
         }
         "/api/arena/hq/style" => {
             let (c, r) = app.arena_hq_style_put(b.get("style"));

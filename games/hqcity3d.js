@@ -3009,9 +3009,15 @@ HQV.hqWorlds.city3d = function(c, w){
   // [3.36] the ceiling over the camera (m), or null in the open: below the street, that of the deck you are on (underCeil)
   w.camCeil = function(x, z){
     if(!(transit && transit.under() && transit.floorAt)) return null;
+    // [stations] the ceiling of the room your head is in (a stair's tube, the hall, a platform), else your deck's
+    var a = underFeet(), cl = a && transit.ceilAt ? transit.ceilAt(x, a.hy + 1.3, z) : null;
+    if(cl != null) return cl;
     var d = underDeck(x, z);
     return d ? underCeil(d) : null;
   };
+  // [stations] below the street the camera rig pulls in at once (no easing into a wall) and goes to your eyes where the
+  // room is too tight for it behind you
+  w.camHard = function(){ return !!(transit && transit.under && transit.under()); };
   w.camGround = function(x, z){
     // [3.36] below the street the camera's floor is the station's (where you are when it is past the station's edge): the
     // street's floor held it up at street level, looking down on the station's roof
@@ -4141,7 +4147,7 @@ HQV.hqWorlds.city3d = function(c, w){
     if(!W) return 1;
     // [3.36] below the street only the station's own ceiling and walls stop the camera: the terrain and the buildings over
     // it are above you there, so a ray from you up to the camera met the ground at once and held the camera on your head
-    if(transit && transit.under() && transit.floorAt) return underHit(from, to);
+    if(transit && transit.under() && transit.floorAt) return transit.camHit ? transit.camHit(from, to) : underHit(from, to);
     var t = WD.rayGround(W, from, to, undefined, tunnelLevel());   // [3.30] in a tunnel: its walls and ceiling
     var x0 = Math.min(from.x, to.x), x1 = Math.max(from.x, to.x), z0 = Math.min(from.z, to.z), z1 = Math.max(from.z, to.z);
     if(Math.hypot(to.x - from.x, to.z - from.z) > 60){ var u = 60/Math.hypot(to.x - from.x, to.z - from.z);   // only what is within 60 m

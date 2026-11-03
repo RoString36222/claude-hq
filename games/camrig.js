@@ -403,16 +403,17 @@ function pullIn(s, from, want, radius, dt, q){
 // after corner, and without the hold the camera pumped in (fast) and out (slow) at every one.
 // [3.36] under a ceiling: the camera stays CEIL_GAP m below it, and no lower than CEIL_MIN m over your feet
 var CEIL_GAP = 0.45, CEIL_MIN = 1.2;
+var TIGHT = 1.3, FP_UP = 1.65, NEAR_HARD = 0.08;   // [stations] in closed rooms: the camera at your eyes under TIGHT m back; its near plane
 function chaseCollide(s, from, want, radius, dt, q){
   var _ = s._, vec = v3(want.x - from.x, want.y - from.y, want.z - from.z), len = vlen(vec) || 1e-6;
   var t = clamp(num(q.hit(from, want), 1), 0, 1), goal = 1;
   if(t < 1){
-    var d = Math.min(len, Math.max(0.6, t*len - radius));
+    var d = Math.min(len, Math.max(q.hard ? 0 : 0.6, t*len - radius));
     if(_.colG == null || d < _.colG || d > _.colG + COL_HYST) _.colG = d;
     goal = Math.min(1, _.colG/len); _.colHold = COL_HOLD;
   } else if(_.colG != null && (_.colHold = (_.colHold || 0) - dt) > 0) goal = Math.min(1, _.colG/len);   // hold
   else _.colG = null;
-  if(_.colFrac == null){ _.colFrac = goal; _.colV = 0; }
+  if(_.colFrac == null || (q.hard && goal < _.colFrac)){ _.colFrac = goal; _.colV = 0; }   // [stations] hard walls: in at once
   else {
     var cs = spring(_.colFrac, _.colV, goal, goal < _.colFrac ? COL_IN : COL_OUT, dt);
     _.colFrac = cs[0]; _.colV = cs[1];
@@ -512,13 +513,29 @@ function chasePose(s, mode, T, dt, q){
   if(V && V.boostShake && !red && _.bst > 0.01){ var sa = V.boostShake*clamp(_.bst, 0, 1);
     pos.x += sa*Math.sin(_.shk*37.0)*0.7; pos.y += sa*Math.sin(_.shk*29.0 + 1.3); pos.z += sa*Math.sin(_.shk*41.0 + 2.1)*0.5; }
   var lk = v3(P.x + A.x, P.y, P.z + A.z);
+  // [stations] closed rooms (q.hard: below the street): too tight to stand back (under TIGHT m from your head) the camera
+  // goes to your eyes and looks the way it was looking, you hidden; else it keeps close with a short near plane
+  var tight = false;
+  if(!q.hard) _.tightOn = false;
+  if(q.hard){
+    var bd = Math.sqrt((pos.x - P.x)*(pos.x - P.x) + (pos.y - P.y)*(pos.y - P.y) + (pos.z - P.z)*(pos.z - P.z));
+    _.tightOn = bd < (_.tightOn ? TIGHT + 0.4 : TIGHT);      // (a little hysteresis: no flicker on the edge)
+    if(_.tightOn){
+      tight = true;
+      var fw = rotYaw(0, 1, camYaw), pt = Math.atan2(P.y - want.y, Math.max(0.5, horiz))*0.5;
+      pos = v3(H.x, H.y + FP_UP - LOOK_H, H.z);
+      var cl2 = q.ceil ? q.ceil(H.x, H.z) : null; if(cl2 != null && isFinite(cl2)) pos.y = Math.min(pos.y, cl2 - 0.12);
+      lk = v3(pos.x + fw.x*10, pos.y + Math.sin(pt)*10, pos.z + fw.z*10);
+    }
+  }
   var kick = red ? 0 : Math.min(10, T.speed*0.5)*(V ? V.fovSpeedKick : 1);
   var p = basePose(mode);
   p.pos = pos; p.look = lk; p.focus = H;
   // the near plane: a twelfth of the way to the pivot (never under the mode's, at most NEAR_MAX m): a camera far
   // behind a plane or a ship gets the depth precision that stops the shore and the water flickering far off (3.2)
   var pd = Math.sqrt((pos.x - P.x)*(pos.x - P.x) + (pos.y - P.y)*(pos.y - P.y) + (pos.z - P.z)*(pos.z - P.z));
-  p.near = clamp(pd/12, M.near, NEAR_MAX);
+  p.near = q.hard ? NEAR_HARD : clamp(pd/12, M.near, NEAR_MAX);
+  if(tight) p.hideAvatar = true;
   p.fov = fovSpring(s, M.fov + fovOff(s) + kick + (red || !V || !V.boostFov ? 0 : V.boostFov*_.bst), dt);
   p.roll = red || !V ? 0 : rollCap(V, V.roll*T.lean*0.5);
   s.lookYaw = Math.atan2(lk.x - pos.x, lk.z - pos.z);
@@ -690,7 +707,7 @@ function step(s, tgt, dt, q){
   var T = normTgt(tgt);
   var Q = {ground: typeof q.ground === "function" ? function(x, z){ return num(q.ground(x, z), T.y); } : function(){ return T.y; },
            hit: typeof q.hit === "function" ? q.hit : function(){ return 1; },
-           ceil: typeof q.ceil === "function" ? q.ceil : null};
+           ceil: typeof q.ceil === "function" ? q.ceil : null, hard: !!q.hard};
   if(q.viewH) _.viewH = q.viewH;
   _.tgt = T; _.t += dt;
   var pose, settle = null;

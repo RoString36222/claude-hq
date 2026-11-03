@@ -256,14 +256,17 @@ pub fn plan(land: &Land, hub: P, port: Option<(P, P)>, ap: &Airport, space: &mut
     if let Some(c) = &land.coast {
         let mut ranked: Vec<(i64, usize, P, f64)> = (0..36).filter_map(|k| {
             let a = (k as f64 * 10.0).to_radians();
-            // the coast along this bearing: the last dry point
+            // the coast along this bearing: the last dry point before the sea (a river, a canal or a lake on the way is
+            // crossed: the line ends on the shore, not on the first bank, so its sea viaduct never runs on over the city)
             let mut at = None;
-            for s in (2..60).map(|s| s as f64 * 2_000.0) {
+            for s in (2..120).map(|s| s as f64 * 2_000.0) {
                 let q = (hub.0 + (a.cos() * s) as i64, hub.1 + (a.sin() * s) as i64);
-                if inside(q, &c.poly) && land.dry(q) {
+                if !inside(q, &c.poly) {
+                    if at.is_some() {
+                        break;
+                    }
+                } else if land.dry(q) {
                     at = Some(q);
-                } else if at.is_some() {
-                    break;
                 }
             }
             let q = at?;

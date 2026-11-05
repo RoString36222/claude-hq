@@ -37,6 +37,9 @@
  * furniture, one per kind within 300 m); a river adds 1 world-wide
  * and 1 per tile a bridge crosses (HQ 3.30: and 1 per tile a tunnel or cutting crosses); @3 water adds at most 3 world-wide (surface, works, foam). A terrain hole (@3) is cut
  * out of the tiles' own meshes and adds none.
+ * Ready: wb.ready resolves once every tile has its first build, or, after wb.focus(x, z) (the City's spawn), once every
+ * tile within READY_NEAR of that point has: the rest keep building nearest the camera first, and the world-wide
+ * props are rebuilt once when the last of them is in. Up to MAX_WORKERS workers share the tiles (one W copy each).
  * HQV.worldbuild.governor is pure (node-tested): frame times -> quality level, pixel ratio, shadows (LOD scale stays fixed).
  * No THREE, no DOM at load time: THREE comes from c.THREE inside create().
  */
@@ -46,7 +49,10 @@ var root = typeof window !== "undefined" ? window : self;
 var HQV = root.HQV = root.HQV || {};
 
 var NEAR = 300, PROPS_NEAR = 300, B0_NEAR = 350, LOD0 = 160, LOD1 = 480, SHADOW_NEAR = 120, HYST = 12;
-var LOD_SCALE = [0.6, 0.8, 1], TREE_DENSITY = [0.5, 0.8, 1], MAX_INFLIGHT = 2;
+var LOD_SCALE = [0.6, 0.8, 1], TREE_DENSITY = [0.5, 0.8, 1], MAX_INFLIGHT = 2;   // MAX_INFLIGHT per worker
+// [3.40.1] the v5 Commons' 256 tiles took 10 s+ through one worker before the City opened: up to 4 workers (cores - 1),
+// and wb.ready waits only for the tiles within READY_NEAR m of the spawn (wb.focus)
+var MAX_WORKERS = 4, READY_NEAR = 400;
 var TREE_COL = {pine: [0.17, 0.36, 0.20], round: [0.30, 0.52, 0.24]};
 // city life's footpath furniture: the kinds (one world-wide instanced mesh each) and the radius each one blocks (m)
 var FURN = ["bench", "bin", "bikerack", "newsstand", "stall", "table"], FURN_R = {bench: 0.6, bin: 0.3, bikerack: 0.5, newsstand: 0.9, stall: 0.9, table: 0.8};
@@ -168,7 +174,8 @@ function create(c, W, opts){
   Gm.grid(W);   // the tiles cover W's square (8 x 8 over 2,048 m, 16 x 16 over the v5 Commons' 4,096 m)
   var NT = Gm.NT, TILE = Gm.TILE, ORIGIN = Gm.ORIGIN;
   var quality = opts.quality != null ? clamp(opts.quality|0, 0, 2) : 2, lodScale = LOD_SCALE[quality], shadowsOn = quality > 0;
-  var wb = {root: new THREE.Group()}, destroyed = false, nextId = 1, readyLeft = NT*NT;
+  var wb = {root: new THREE.Group()}, destroyed = false, nextId = 1, readyLeft = NT*NT, resolved = false;
+  var focus = null, nearLeft = -1, lateProps = false;   // wb.focus: the spawn, how many tiles near it still owe a first build
   wb.root.name = "worldbuild";
   var U = {uNight: {value: 0}, uHour: {value: 20}, uFade: {value: [-1, -1, -1, -1, -1, -1, -1, -1]}, uPostUv: {value: new THREE.Vector2(0, 0)}, uWaterT: {value: 0},
            uSnow: {value: 0}, uWet: {value: 0}};   // what the weather has left on the ground (settle)
@@ -558,6 +565,7 @@ function create(c, W, opts){
         world.signs = world.signs.concat(m.props.signs);
         world.gantries = world.gantries.concat(m.props.gantries);
         world.furniture = world.furniture.concat(T.pp.furniture);
+        if(world.built) lateProps = true;   // in after an early ready: the world-wide meshes are rebuilt once all are in
       } else world.stale = true;   // a tier change: the world-wide lists are rebuilt once every tile's props are in
       applyDensity(T);
     }
@@ -698,8 +706,8 @@ function create(c, W, opts){
     return G;
   }
 
-  /* ----- jobs: worker first, main thread in idle slices as the fallback ----- */
-  var worker = null, workerUp = false, useWorker = false, queue = [], inflight = {}, nIn = 0, idleOn = false;
+  /* ----- jobs: a pool of workers first, main thread in idle slices as the fallback ----- */
+  var workers = [], useWorker = false, queue = [], inflight = {}, nIn = 0, idleOn = false;
   // the tiles (per product) that differ between two tiers, cached per pair
   function diffOf(a, b){
     var k = a + ">" + b;
@@ -722,28 +730,36 @@ function create(c, W, opts){
     }
     if(T.initial){
       T.initial = false;
-      if(--readyLeft === 0){ buildWorldProps(); resolveReady(wb); }
+      readyLeft--;
+      if(focus && tileDist(T, focus.x, focus.z) < READY_NEAR) nearLeft--;
+      checkReady();
+      if(readyLeft === 0 && lateProps){ lateProps = false; rebuildWorldProps(); world.refillAt = null; }
     }
+  }
+  function checkReady(){
+    if(resolved || destroyed || !(readyLeft === 0 || (focus && nearLeft <= 0))) return;
+    resolved = true; buildWorldProps(); resolveReady(wb);
   }
   var warned = false;
   function warn(err){ if(warned) return; warned = true; try { console.warn("hq-worldbuild: tile failed: " + ((err && err.message) || err)); } catch(e){} }
-  function fail(err){ if(readyLeft > 0) rejectReady(err instanceof Error ? err : new Error(String(err))); }
-  function onMessage(ev){
+  function fail(err){ if(!resolved) rejectReady(err instanceof Error ? err : new Error(String(err))); }
+  function onMessage(K, ev){
     var m = ev.data || {};
-    if(m.op === "ready"){ workerUp = true; pump(); return; }
+    if(m.op === "ready"){ K.up = true; pump(); return; }
     var job = inflight[m.id];
     if(!job) return;
-    delete inflight[m.id]; nIn--;
+    delete inflight[m.id]; nIn--; K.n--;
     if(m.op === "error"){ toMain("worker job: " + m.message, job); return; }
     done(job.T, m, job);
     pump();
   }
-  // move everything to the main thread (the worker died or cannot build)
+  // move everything to the main thread (a worker died or cannot build)
   function toMain(why, job){
     if(useWorker){
       try { console.warn("hq-worldbuild: main-thread fallback (" + why + ")"); } catch(e){}
       useWorker = false;
-      if(worker){ try { worker.terminate(); } catch(e){} worker = null; }
+      workers.forEach(function(K){ try { K.w.terminate(); } catch(e){} });
+      workers = [];
     }
     var back = Object.keys(inflight).map(function(k){ return inflight[k]; });
     if(job) back.push(job);
@@ -751,33 +767,39 @@ function create(c, W, opts){
     queue = back.concat(queue);
     pump();
   }
-  function startWorker(){
+  function startWorkers(){
     if(opts.worker === false || typeof root.Worker !== "function") return;
-    try {
-      worker = new root.Worker("/games/worldbuild-worker.js");
-      useWorker = true;
-      worker.onmessage = onMessage;
-      worker.onerror = function(e){ if(e && e.preventDefault) e.preventDefault(); toMain("error " + ((e && e.message) || "")); };
-      var Wc = {};
-      for(var k in W) if(Object.prototype.hasOwnProperty.call(W, k)) Wc[k] = W[k];
-      Wc.index = null;   // world.js rebuilds its lazy index in the worker
-      worker.postMessage({op: "init", W: Wc});
-    } catch(e){ worker = null; useWorker = false; }
-  }
-  function send(job){
-    if(useWorker){
-      if(!workerUp) return false;
-      inflight[job.id] = job; nIn++;
-      try { worker.postMessage({op: "tile", id: job.id, tx: job.tx, tz: job.tz, lods: job.lods, want: job.want, tier: job.tier, gap: job.gap}); }
-      catch(e){ toMain("post " + e.message); }
-      return true;
+    var cores = root.navigator && root.navigator.hardwareConcurrency > 0 ? root.navigator.hardwareConcurrency|0 : 2;
+    var n = clamp(cores - 1, 1, MAX_WORKERS), Wc = {};
+    for(var k in W) if(Object.prototype.hasOwnProperty.call(W, k)) Wc[k] = W[k];
+    Wc.index = null;   // world.js rebuilds its lazy index in each worker
+    for(var i = 0; i < n; i++){
+      try {
+        var K = {w: new root.Worker("/games/worldbuild-worker.js"), up: false, n: 0};
+        K.w.onmessage = onMessage.bind(null, K);
+        K.w.onerror = function(e){ if(e && e.preventDefault) e.preventDefault(); toMain("error " + ((e && e.message) || "")); };
+        K.w.postMessage({op: "init", W: Wc});
+        workers.push(K);
+      } catch(e){ break; }
     }
-    return false;
+    useWorker = workers.length > 0;
+  }
+  // the least busy started worker with room for one more job, else null
+  function freeWorker(){
+    var best = null;
+    workers.forEach(function(K){ if(K.up && K.n < MAX_INFLIGHT && (!best || K.n < best.n)) best = K; });
+    return best;
+  }
+  function send(K, job){
+    inflight[job.id] = job; nIn++; K.n++;
+    try { K.w.postMessage({op: "tile", id: job.id, tx: job.tx, tz: job.tz, lods: job.lods, want: job.want, tier: job.tier, gap: job.gap}); }
+    catch(e){ toMain("post " + e.message); }
   }
   function pump(){
     if(destroyed) return;
     if(useWorker){
-      while(nIn < MAX_INFLIGHT && queue.length && workerUp) send(queue.shift());
+      var K;
+      while(useWorker && queue.length && (K = freeWorker())) send(K, queue.shift());
       return;
     }
     if(idleOn || !queue.length) return;
@@ -872,10 +894,11 @@ function create(c, W, opts){
     });
     // requests: nearest first
     req.sort(function(a, b){ return a.d - b.d; }).forEach(function(r){ if(!r.T.pending) request(r.T, r.want, r.lods); });
+    queue.sort(function(a, b){ return a.T.d - b.T.d; });   // [3.40.1] first builds still owed and re-LODs, nearest first
     pump();
     // world-wide props within 300 m (refill when the camera moved 15 m or the mode changed); after a tier change
     // they are rebuilt once no tile still owes its props
-    if(world.built && world.stale && tiles.every(function(T){ return !(T.dirty && T.dirty.props); })){ rebuildWorldProps(); world.refillAt = null; }
+    if(world.built && world.stale && readyLeft === 0 && tiles.every(function(T){ return !(T.dirty && T.dirty.props); })){ rebuildWorldProps(); world.refillAt = null; }
     var rf = world.refillAt;
     if(world.built && (!rf || rf.map !== map || Math.abs(rf.x - x) > 15 || Math.abs(rf.z - z) > 15)) refillWorld(x, z, map);
     ["parked", "signs", "frames", "plates"].concat(FURN.map(function(k){ return "f:" + k; })).forEach(function(k){
@@ -977,11 +1000,23 @@ function create(c, W, opts){
   wb.terrainMeshes = function(){ return tiles.map(function(T){ return T.m.terrain; }).filter(Boolean); };
   // runtime quality (governor or Settings pin) toggles shadows only; LOD scale and tree density stay as created
   wb.setQuality = function(q){ shadowsOn = clamp(q|0, 0, 2) > 0; };
-  wb.stats = function(){ return {drawCalls: stats.drawCalls, triangles: stats.triangles, tiles: stats.tiles, pending: queue.length + nIn, worker: useWorker}; };
+  wb.stats = function(){ return {drawCalls: stats.drawCalls, triangles: stats.triangles, tiles: stats.tiles, pending: queue.length + nIn, worker: useWorker,
+                                 workers: workers.length, unbuilt: readyLeft}; };
+  // [3.40.1] where the City will put you (its spawn): the first builds go nearest it, and wb.ready waits only for the
+  // tiles within READY_NEAR of it; null goes back to waiting for every tile
+  wb.focus = function(x, z){
+    if(destroyed) return;
+    x = +x; z = +z;
+    if(!isFinite(x) || !isFinite(z)){ focus = null; nearLeft = -1; return; }
+    focus = {x: x, z: z}; nearLeft = 0;
+    tiles.forEach(function(T){ T.d = tileDist(T, x, z); if(T.initial && T.d < READY_NEAR) nearLeft++; });
+    queue.sort(function(a, b){ return a.T.d - b.T.d; });
+    checkReady();
+  };
   wb.destroy = function(){
     if(destroyed) return;
     destroyed = true;
-    if(worker){ try { worker.terminate(); } catch(e){} worker = null; }
+    workers.forEach(function(K){ try { K.w.terminate(); } catch(e){} }); workers = [];
     queue = []; inflight = {};
     tiles.forEach(function(T){ Object.keys(T.m).forEach(function(k){ var me = T.m[k]; if(me && !me.isInstancedMesh && me.geometry) me.geometry.dispose(); if(me && me.isInstancedMesh && me.dispose) me.dispose(); }); });
     Object.keys(world.meshes).forEach(function(k){ var im = world.meshes[k]; if(im){ im.geometry.dispose(); if(im.dispose) im.dispose(); } });
@@ -1039,11 +1074,11 @@ function create(c, W, opts){
     request(T, hasGround ? ["terrain", "roads", "ground", "buildings1", "props"] : ["terrain", "roads", "buildings1", "props"],
             [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
   });
-  startWorker();
+  startWorkers();
   pump();
   return wb;
 }
 
 HQV.worldbuild = {create: create, governor: governor, mergeGeo: mergeGeo, lodFor: lodFor, waterPhase: waterPhase,
-                  LIMITS: {near: NEAR, props: PROPS_NEAR, b0: B0_NEAR, lod0: LOD0, lod1: LOD1, shadow: SHADOW_NEAR}};
+                  LIMITS: {near: NEAR, props: PROPS_NEAR, b0: B0_NEAR, lod0: LOD0, lod1: LOD1, shadow: SHADOW_NEAR, ready: READY_NEAR, workers: MAX_WORKERS}};
 })();

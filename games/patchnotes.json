@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.40.1",
+      "title": "The City opens fast again",
+      "body": "Leaving the lobby no longer waits for the whole v5 world to be built. The City opens once the streets around you are ready and builds the rest around you, with up to four background workers instead of one."
+    },
+    {
       "version": "3.40.0",
       "title": "The planned city is live",
       "body": "The Commons and every island are now drawn by City Gen v5. Vehicles you left out are back home and moved garages are back at their default spot, because the streets moved. Cars and bikes now get air over a crest taken too fast. Achievement pop-ups are a Settings switch, off by default, and the engine sound no longer crackles."

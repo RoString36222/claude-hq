@@ -3,6 +3,13 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.40.1 — The City opens fast again.**
+  - **Out of the lobby in a second or two:** the City used to wait for all 256 tiles of the v5 world, built one at a
+    time, before it let you in (10 s or more). It now opens once the tiles round where you arrive are built (400 m),
+    and the rest fill in around you, nearest first. Parked cars, signs and street furniture far away arrive with the
+    last tile.
+  - **Faster building:** up to four background workers (your cores minus one) share the tiles instead of one.
+
 - **3.40.0 — City Gen v5 goes live.**
   - **The planned city:** the Commons and every island are now drawn by City Gen v5. Vehicles left out go home and
     moved garages return to their default spot, because the streets and lots under them have moved.

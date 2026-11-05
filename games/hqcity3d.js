@@ -3950,6 +3950,8 @@ HQV.hqWorlds.city3d = function(c, w){
     buildStatic();
     if(V2) citiesSetup();
     build();
+    // [3.40.1] open once the tiles round the spawn are in; the rest of the world keeps building around you
+    if(w.spawn && wb.focus) wb.focus(w.spawn.x, w.spawn.z);
     navSetup();
     wb.setNight(night);
     return wb.ready;

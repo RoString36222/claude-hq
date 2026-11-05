@@ -4,7 +4,8 @@ One node process loads the vendored three.js, world.js, citylife.js, worldgeom.j
 that speaks games/worldbuild-worker.js's protocol (buildTile a tick later), and creates the world from the fixtures:
 the v2 Commons (8 x 8 tiles) and the v5 Commons (16 x 16). With wb.focus(spawn), wb.ready resolves while most tiles
 still owe their first build, and only once every tile within READY_NEAR of the spawn has one; without it, only after
-every tile (as before). Either way every tile is built in the end, the world-wide instanced props (parked cars, signs,
+every tile (as before). Either way every tile is built in the end while frames run (wb.update each tick, so the world-wide props are refilled round the camera
+with late tiles arriving), the world-wide instanced props (parked cars, signs,
 gantries, furniture) come out the same, and the tiles are spread over the workers (cores - 1, at most 4).
 Skipped when node is not installed. Stdlib only."""
 import json
@@ -45,7 +46,12 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
       if(Math.sqrt(dx*dx + dz*dz) < B.LIMITS.ready) near++;
     }
     out.near = near;
+    // frames go on while the late tiles come in (refillWorld fills the world-wide props round the camera)
+    // while tiles come in late the camera wanders over the whole world (so it stands by them), then it stays put
+    var tick = 0, half = G.NT*G.TILE/2, cam = {x: 300, z: -200};
     (function wait(){
+      if(wb.stats().unbuilt > 0){ tick++; cam = {x: ((tick*733) % (2*half)) - half, z: ((tick*419) % (2*half)) - half}; }
+      wb.update(cam);
       var s2 = wb.stats();
       if(s2.unbuilt > 0 || s2.pending > 0) return setTimeout(wait, 2);
       out.left = s2.unbuilt; out.used = Object.keys(busy).length;

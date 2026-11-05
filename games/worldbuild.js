@@ -561,11 +561,15 @@ function create(c, W, opts){
       T.pp = {parked: m.props.parked, signs: m.props.signs, gantries: m.props.gantries, furniture: m.props.furniture || []};
       if(!T.propsIn){
         T.propsIn = true;
-        world.parked = world.parked.concat(m.props.parked);
-        world.signs = world.signs.concat(m.props.signs);
-        world.gantries = world.gantries.concat(m.props.gantries);
-        world.furniture = world.furniture.concat(T.pp.furniture);
-        if(world.built) lateProps = true;   // in after an early ready: the world-wide meshes are rebuilt once all are in
+        // in after an early ready: kept in T.pp only (the built meshes have no room or atlas cells for them);
+        // rebuildWorldProps takes every tile's T.pp once the last tile is in
+        if(world.built) lateProps = true;
+        else {
+          world.parked = world.parked.concat(m.props.parked);
+          world.signs = world.signs.concat(m.props.signs);
+          world.gantries = world.gantries.concat(m.props.gantries);
+          world.furniture = world.furniture.concat(T.pp.furniture);
+        }
       } else world.stale = true;   // a tier change: the world-wide lists are rebuilt once every tile's props are in
       applyDensity(T);
     }

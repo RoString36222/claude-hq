@@ -3,6 +3,11 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.40.2 — Fix: the City no longer throws walking up to a late-built tile.**
+  - Signs, parked cars and street furniture from tiles that finish after the City opens waited for their texture cells
+    in the world-wide lists; the props round the camera were refilled from those lists and threw near them. They now
+    wait on their own tile until the last tile is in and the world-wide props are rebuilt.
+
 - **3.40.1 — The City opens fast again.**
   - **Out of the lobby in a second or two:** the City used to wait for all 256 tiles of the v5 world, built one at a
     time, before it let you in (10 s or more). It now opens once the tiles round where you arrive are built (400 m),

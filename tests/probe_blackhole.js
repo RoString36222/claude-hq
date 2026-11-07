@@ -116,7 +116,7 @@ check(/TOTEMS\.blackhole\.hue/.test(js), "and it uses the totem's own colour");
 // --- the judge lets the drag through (not rubber-banded) ---
 console.log("\nBlack Hole — the referee lets the drag through");
 check(/pub hole_drag: f64/.test(rs), "the player carries a hole_drag clock");
-check(/p\.slip_until > t \|\| p\.hole_drag > t \{ SPRINT_MAX_SPEED \}/.test(rs),
+check(/p\.slip_until > t \|\| p\.hole_drag > t \|\| p\.vortex_until > t/.test(rs),
       "the speed cap opens while the drag runs");
 check(/p\.hole_drag = t \+ 0\.4;/.test(rs), "the drag stamps the clock");
 check(/self\.hole_drag = 0\.0;/.test(rs), "a respawn clears it");

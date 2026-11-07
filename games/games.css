@@ -1168,8 +1168,17 @@ html.hq-calm .hq3d-drive-read{display:block}
   font-weight:700;text-align:center;color:var(--ink);background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg)}
 /* ==== pets (HQ 3.14, games/hqpets.js): E at the Pet shop, or beside a pet in your lobby ==== */
 .hqpets-prompt{position:absolute;z-index:6;left:50%;bottom:118px;transform:translateX(-50%);padding:6px 14px;border-radius:999px;font-weight:800;font-size:13px;
-  background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:none;white-space:nowrap}
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);pointer-events:none;white-space:nowrap;
+  display:flex;align-items:center;gap:8px}
 .hqpets-prompt[hidden],.hqpets-prompt:empty{display:none}
+/* the mount's inhale meter: the same read as .vg-fps-rl (the gun reloading), so a dead
+   click while the dragon draws breath reads as "reloading", not "broken". Tokens only —
+   every theme already carries --line / --brand / --brand2. */
+.hqpets-prompt-rl{position:relative;display:inline-block;width:64px;height:5px;border-radius:999px;
+  background:color-mix(in srgb,var(--line) 70%,transparent);overflow:hidden;vertical-align:middle}
+.hqpets-prompt-rl[hidden]{display:none}
+.hqpets-prompt-rl b{display:block;height:100%;width:0;border-radius:999px;background:var(--brand2)}
+.hqpets-prompt-s{font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted)}
 /* ==== [3.17] the Grand Prix Circuit's panel (games/hqgpvenue.js, E under its arch in the 3D City) ==== */
 .hqgpv{position:absolute;z-index:7;top:12px;left:50%;transform:translateX(-50%);width:min(860px,calc(100% - 24px));max-height:calc(100% - 24px);
   display:grid;grid-template-rows:auto auto 1fr;color:var(--ink);background:color-mix(in srgb,var(--panel) 96%,transparent);

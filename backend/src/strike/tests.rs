@@ -630,6 +630,279 @@ fn a_drop_life_rides_the_sky_without_the_two_second_snap() {
 }
 
 #[test]
+fn a_live_canopy_is_never_fix_slapped_back_to_the_sky() {
+    // The sky-fall loop: a refused frame mid-glide answered with "fix" placeMe()'d the
+    // client back to the judge's copy, which also cleared its V.dropUntil — so the
+    // canopy died, the body fell again, every later frame was refused, and the next
+    // "fix" repeated it. A live drop owns the body until it lands: no correction.
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, -8.0, t, Some(0));
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.y = DROP_HEIGHT;
+        p.drop = true;
+        p.drop_t = t;
+        p.spawn_t = t;
+        p.air_at = t;
+        p.hist = VecDeque::from([(t, p.x, p.y, p.z)]);
+    }
+    // a frame that is wildly off (teleport-sized) is refused — but while the canopy is
+    // up the referee must stay silent, never rubber-band a glide to the floor.
+    let (ok, fix) = s.pos("u0", &json!({"x": cm(20.0), "y": cm(DROP_HEIGHT), "z": cm(20.0),
+                                        "r": 0, "p": 0, "q": 50}), t + 0.2);
+    assert!(!ok, "the teleport-sized step is still refused");
+    assert!(fix.is_none(), "a live canopy is never corrected: {fix:?}");
+    // past the canopy the same frame is corrected again (the ordinary rubber-band).
+    // FIX_GAP throttles corrections to one every 0.5 s, so wait it out first.
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.drop = false;
+        p.drop_t = 0.0;
+    }
+    let (_ok, fix) = s.pos("u0", &json!({"x": cm(20.0), "y": cm(DROP_HEIGHT), "z": cm(20.0),
+                                         "r": 0, "p": 0, "q": 60}), t + 0.8);
+    assert!(fix.is_some(), "once the canopy is over the referee corrects again");
+}
+
+#[test]
+fn a_refused_frame_still_takes_the_totem_under_your_feet() {
+    // Pickups used to run only on an accepted "pos", against the judge's own copy of
+    // the body. A refused frame froze that copy, so the totem under the player's boots
+    // was "not taken" — and then shipped in a bulk once an accepted frame landed again.
+    // The claim (the body the client just named) is what the take is judged against.
+    let (mut s, t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    // the judge's copy is 2 m short of the totem (a previous refusal left it there)
+    put(&mut s, "u0", 0.0, 0.0, -10.0, t, Some(0));
+    s.items[n_map] = None;
+    s.kinds[n_map] = "wings";
+    s.spots[n_map] = [0.0, 0.0, -8.0];
+    s.player_mut("u0").unwrap().air_at = t;
+    // a refused frame naming the real body — standing on the totem. The step is 2 m in
+    // 0.01 s of clock, so the speed cap refuses it; the claim is still believed, and
+    // the take lands on that same frame (not "later, in a bulk").
+    let (ok, _) = s.pos("u0", &json!({"x": cm(0.0), "y": cm(0.0), "z": cm(-8.0),
+                                      "r": 0, "p": 0, "q": 1}), t + 0.3);
+    assert!(!ok, "the overspeed frame is refused");
+    assert!(s.items[n_map].is_some(), "the take lands on the refused frame itself");
+    let evs = s.tick(t + 0.35, true);
+    assert!(evs.iter().any(|(ev, d)| ev == &"pick" && d["i"].as_i64() == Some(n_map as i64)),
+            "the pick reaches the client on the next tick");
+}
+
+#[test]
+fn a_walk_over_always_takes_even_when_the_totem_has_no_target() {
+    // Solo: a mole with no enemy bots still takes ("nothing eligible"). MP used to
+    // refuse, leaving the totem under the player's feet for later — "not taken, then
+    // bulk". A walk-over is a take; a target-less effect simply does nothing.
+    let (mut s, t) = started(2, 2, 0.0);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    // nobody else is up: every bot and the other human is out of the round
+    for (u, p) in s.players.iter_mut() {
+        if u != "u0" {
+            p.dead = true;
+            p.gone = true;
+        }
+    }
+    assert!(s.take_totem(i0, "mole", t), "a mole with nobody to turn is still taken");
+    assert!(s.take_totem(i0, "freeze", t), "a paralyser with nobody to freeze is still taken");
+    assert!(s.take_totem(i0, "fate", t), "a fate splitter with nobody to link is still taken");
+    assert!(s.take_totem(i0, "bodyswap", t), "a body swap with nobody to swap is still taken");
+    assert!(s.take_totem(i0, "disco", t), "a disco with nobody to dance is still taken");
+    assert!(s.take_totem(i0, "lottery", t), "a death lottery with nobody home is still taken");
+}
+
+#[test]
+fn a_canopy_from_the_sky_sees_the_deck_under_it() {
+    // The "through the floor" respawn: top_under needs the body to already overlap a
+    // box, so a probe from DROP_HEIGHT never matches — floor = None, the whole
+    // descent sank at DROP_SINK and only normal gravity brought the body back up.
+    // deck_under scans the boxes by XZ alone.
+    let m = &MAP;
+    // the dockyard floor at a spawn
+    assert_eq!(top_under(m, 0.0, 11.0, -12.0), None, "a canopy cannot see the floor");
+    assert_eq!(deck_under(m, 0.0, -12.0), Some(0.0), "the deck probe finds it from the sky");
+    // a raised catwalk: same story, and it must land ON the catwalk, not y=0
+    let (cx, cz) = (-30.0, -26.8);
+    assert_eq!(top_under(m, cx, DROP_HEIGHT, cz), None);
+    assert_eq!(deck_under(m, cx, cz), Some(2.5), "the catwalk top, not the floor below it");
+    // a real gap (off the map box) is None — never a phantom y=0 floor over water
+    assert_eq!(deck_under(m, 100.0, 100.0), None, "no box under this XZ: keep the void clock");
+    // the same 0.6 XZ pad holeGroundY uses: a body hanging just off the catwalk rim
+    // still lands on the catwalk, not on the floor a metre below it
+    assert_eq!(deck_under(m, cx, -25.5), Some(2.5), "the rim pad still finds the catwalk");
+}
+
+#[test]
+fn a_walk_through_a_cluster_takes_every_totem_on_the_same_pass() {
+    // Solo's local take is a square of half-extent PICK_R; the judge used a circle,
+    // which is strictly smaller — a diagonal sweep left the corner totems standing and
+    // they flushed later in bulk. Both pickup bodies use the square reach now.
+    let (mut s, t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    put(&mut s, "u0", 0.0, 0.0, -12.0, t, Some(0));
+    // a 2x2 cluster of drop totems, centres 1.0 m apart, so the corner sits at
+    // (dx, dz) = (1.0, 1.0): inside the square (1.0 <= PICK_R), outside any circle
+    // of radius PICK_R (hypot(1,1) ≈ 1.414 > 1.1).
+    let cluster = [("wings", [0.0, 0.0, -12.0]), ("speed", [1.0, 0.0, -12.0]),
+                   ("leap", [0.0, 0.0, -11.0]), ("cloak", [1.0, 0.0, -11.0])];
+    for (k, (kind, at)) in cluster.iter().enumerate() {
+        let j = n_map + k;
+        while s.items.len() <= j {
+            s.items.push(None);
+            s.kinds.push("");
+            s.spots.push([0.0, 0.0, 0.0]);
+            s.cursed.push(false);
+        }
+        s.items[j] = None;
+        s.kinds[j] = kind;
+        s.spots[j] = *at;
+    }
+    s.player_mut("u0").unwrap().air_at = t;
+    // one walk-over at the cluster's centre-left: the square reach must take all four
+    s.pickups(0, t);
+    for (k, (kind, _)) in cluster.iter().enumerate() {
+        let j = n_map + k;
+        assert!(s.items[j].is_some(), "{kind} left standing in the cluster");
+    }
+    let picks = s.pending.iter().filter(|(ev, d)| *ev == "pick" && d["i"].as_i64().is_some()
+        && d["i"].as_i64().unwrap() >= n_map as i64).count();
+    assert_eq!(picks, cluster.len(), "every take lands on the same pass, not in a bulk later");
+}
+
+#[test]
+fn a_live_claim_outside_the_judges_leash_still_takes_the_totem_under_it() {
+    // The starvation the player kept hitting: the judge's copy freezes on a speed-cap
+    // / canopy / token-bucket refusal, the walk keeps going, and the moment the claim
+    // sat more than CLAIM_R from that frozen copy it was thrown away -- so neither body
+    // was near the totem and the take never landed ("even going through them they are
+    // left behind"). A LIVE claim (rewritten every pos frame) is the walk itself and is
+    // believed at the body the player named, wherever our copy happens to be.
+    let (mut s, t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    // the judge's copy is parked 8 m short of the totem and has been there a while
+    put(&mut s, "u0", 0.0, 0.0, -12.0, t, Some(0));
+    s.items[n_map] = None;
+    s.kinds[n_map] = "wings";
+    s.spots[n_map] = [0.0, 0.0, -8.0];
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.air_at = t;
+        p.at = t;
+        p.claim = None;
+    }
+    // one fresh "pos" naming the body the player is actually standing in: 8 m from our
+    // copy (past CLAIM_R), same totem. The frame is overspeed so the referee refuses
+    // the MOVE -- but the claim is what the take is judged against.
+    let (ok, _) = s.pos("u0", &json!({"x": cm(0.0), "y": cm(0.0), "z": cm(-8.0),
+                                      "r": 0, "p": 0, "q": 1}), t + 0.05);
+    assert!(!ok, "the overspeed frame is refused (the judge's copy does not move)");
+    assert!(s.items[n_map].is_some(), "the take lands anyway -- the live claim is the walk");
+}
+
+#[test]
+fn a_stale_claim_far_from_the_judges_copy_cannot_take_from_across_the_map() {
+    // Anti-teleport: a live claim is the walk, but a STALLING one (nobody has sent a
+    // frame for CLAIM_R_SECS) is only believed near our own copy. A single far-off
+    // "pos" that never follows up must not harvest a totem across the arena.
+    let (mut s, t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    // the judge's copy sits at the far end of the dockyard; the totem is 20 m away
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, Some(0));
+    s.items[n_map] = None;
+    s.kinds[n_map] = "wings";
+    s.spots[n_map] = [0.0, 0.0, -20.0];
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.air_at = t;
+        p.at = t;
+        // a claim already old (past CLAIM_FRESH) and 20 m from our copy: a stall
+        p.claim = Some((0.0, 0.0, -20.0, t - 0.5));
+    }
+    s.pickups(0, t + 0.4);
+    assert!(s.items[n_map].is_none(), "a stalled far-off claim does not take");
+    // the same claim, young (a live walk), does take — the walk is what the player is in
+    s.player_mut("u0").unwrap().claim = Some((0.0, 0.0, -20.0, t + 0.4));
+    s.pickups(0, t + 0.42);
+    assert!(s.items[n_map].is_some(), "the live walk at the same body does take");
+}
+
+#[test]
+fn a_claim_out_of_the_arena_is_never_believed() {
+    // A far-off "pos" naming a body outside the map bounds is rejected outright: the
+    // claim is the player's own name for where they stand, but it must still be a
+    // place a body can stand in THIS arena.
+    let (mut s, t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    put(&mut s, "u0", 0.0, 0.0, -12.0, t, Some(0));
+    s.items[n_map] = None;
+    s.kinds[n_map] = "wings";
+    s.spots[n_map] = [0.0, 0.0, -8.0];
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.air_at = t;
+        // a fresh claim, but the body is named as sitting on the moon
+        p.claim = Some((0.0, 0.0, -5000.0, t));
+    }
+    s.pickups(0, t + 0.02);
+    assert!(s.items[n_map].is_none(), "a claim outside the arena never takes a totem");
+}
+
+#[test]
+fn a_bucket_dropped_frame_still_writes_the_claim() {
+    // The token bucket used to return before the claim write, so a burst of frames
+    // left the claim stale at the OLD body while the player had already walked on --
+    // and the totem under the new boots was "not taken". Every frame of the current
+    // life names the body; the bucket only decides whether the MOVE is accepted.
+    let (mut s, t) = started(2, 2, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, -12.0, t, Some(0));
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.air_at = t;
+        p.claim = None;
+    }
+    // a burst far past POS_RATE + POS_BURST: the later frames are bucket-dropped
+    let mut accepted = 0;
+    for k in 0..40 {
+        let (ok, _) = s.pos("u0", &json!({"x": cm(0.0), "y": cm(0.0), "z": cm(-11.0),
+                                          "r": 0, "p": 0, "q": k + 1}), t + k as f64 * 0.01);
+        if ok { accepted += 1; }
+    }
+    assert!(accepted < 40, "the bucket really did drop some frames");
+    let claim = s.player("u0").unwrap().claim;
+    assert!(claim.is_some(), "every current-life frame writes the claim, bucket or not");
+    let (cx, cy, cz, _ct) = claim.unwrap();
+    assert_eq!((cx, cy, cz), (0.0, 0.0, -11.0), "the claim is the last named body, not the last accepted one");
+}
+
+#[test]
+fn a_respawn_drops_the_old_life_claim() {
+    // place() bumps life and clears the claim: a totem at the previous life's boots
+    // must not be taken by the new life's first frame arriving from across the map.
+    let (mut s, t) = started(2, 2, 0.0);
+    let n_map = MAP.pickups.len();
+    put(&mut s, "u0", 0.0, 0.0, -12.0, t, Some(0));
+    s.items[n_map] = None;
+    s.kinds[n_map] = "wings";
+    s.spots[n_map] = [0.0, 0.0, -8.0];
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.air_at = t;
+        // the previous life was standing on the totem
+        p.claim = Some((0.0, 0.0, -8.0, t));
+    }
+    let life0 = s.player("u0").unwrap().life;
+    // respawn elsewhere on the map
+    { let m = s.map(); s.player_mut("u0").unwrap().place([0.0, 0.0, -20.0, 0.0], t + 1.0, m); }
+    let life1 = s.player("u0").unwrap().life;
+    assert_eq!(life1, life0 + 1, "place() bumps the life");
+    assert!(s.player("u0").unwrap().claim.is_none(), "place() drops the old life's claim");
+    // the new life's first pickup pass cannot take the totem the old life stood on
+    s.pickups(0, t + 1.0);
+    assert!(s.items[n_map].is_none(), "a respawn does not take at the previous life's body");
+}
+
+#[test]
 fn the_shooters_own_blast_never_scores_a_direct() {
     // Regression: a shot detonating at the shooter's eye judged `dist < DIRECT_R` (0.8) as
     // direct → an instant 120 self-kill every time a bot fired through its own chin (its eye
@@ -1360,6 +1633,12 @@ fn modifier_disasters_chip_and_every_disaster_has_an_impact_number() {
     assert_eq!(DD_WIND_PUSH, 7.5);
     assert_eq!(DD_WIND_R, 6.0);
     assert_eq!(DD_WIND_DMG, 3);
+    // hurricane vortex: taken up, spun around the core, held off the deck
+    assert_eq!(DD_WIND_CATCH_R, 3.6);
+    assert_eq!(DD_WIND_TOP, 4.2);
+    assert_eq!(DD_WIND_LIFT, 3.2);
+    assert_eq!(DD_WIND_SPIN, 2.6);
+    assert_eq!(DD_WIND_CATCH, 1.6);
     // proximity crush: more damage near the strike (twin of markDamage / mark_damage)
     assert_eq!(DD_NEAR_R, 0.35);
     assert_eq!(DD_NEAR_MIN, 0.45);
@@ -1515,6 +1794,60 @@ fn every_disaster_kind_chips_or_hits_hp() {
         });
         assert!(chipped, "{kind} must chip HP, slow or blind");
     }
+}
+
+#[test]
+fn a_hurricane_vortex_lifts_and_spins_without_letting_go() {
+    // User ask: "anyone who goes inside it … should be revolving around hurricane,
+    // lifted in air, not able to control at all". The column must take the body:
+    // orbit the core, rise off the deck, and hold the grip across frames.
+    let (mut s, t) = started(2, 2, 0.0);
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.hp = 100;
+        p.protect = 0.0;
+        p.shield_totem_until = 0.0;
+        p.slow_until = 0.0;
+        p.y = 0.0;
+    }
+    assert!(s.start_disaster("hurricane", t));
+    let t0 = t + DIS_WARN + 0.05;
+    // put the body right on the walking column so the catch is immediate
+    let d = s.disasters.last().unwrap().clone();
+    let span = (d.until - d.warn_at).max(0.1);
+    let u = ((t0 - d.warn_at) / span).clamp(0.0, 1.0);
+    let b = s.map().bounds();
+    let (cx0, cz0, cx1, cz1) = (b[0], b[2], b[3], b[5]);
+    let wx = cx0 + hash_match(d.seed, 21) * (cx1 - cx0)
+        + ((cx0 + hash_match(d.seed, 23) * (cx1 - cx0)) - (cx0 + hash_match(d.seed, 21) * (cx1 - cx0))) * u;
+    let wz = cz0 + hash_match(d.seed, 22) * (cz1 - cz0)
+        + ((cz0 + hash_match(d.seed, 24) * (cz1 - cz0)) - (cz0 + hash_match(d.seed, 22) * (cz1 - cz0))) * u;
+    {
+        let p = s.player_mut("u0").unwrap();
+        p.x = wx;
+        p.z = wz;
+        p.y = 0.0;
+    }
+    s.disaster_tick(t0);
+    let (x0, z0, y0) = {
+        let p = s.player("u0").unwrap();
+        assert!(p.vortex_until > t0, "standing in the column must catch you");
+        assert!(p.slow_until > t0, "loose footing while gripped");
+        (p.x, p.z, p.y)
+    };
+    // several frames later: still gripped, higher up, and NOT standing still
+    for k in 1..=8 {
+        s.disaster_tick(t0 + k as f64 * 0.05);
+    }
+    let p = s.player("u0").unwrap();
+    assert!(p.vortex_until > t0 + 0.4, "the grip holds across frames");
+    assert!(p.y > y0 + 0.05, "the updraught lifts you off the deck");
+    assert!(p.y <= DD_WIND_TOP + 1e-6, "…but only up to the top of the column");
+    let moved = ((p.x - x0).powi(2) + (p.z - z0).powi(2)).sqrt();
+    assert!(moved > 0.2, "you revolve around the core, not stand still (moved {moved})");
+    // and the body stays inside the column's reach
+    let dd = (p.x - p.vortex_x).hypot(p.z - p.vortex_z);
+    assert!(dd <= DD_WIND_R + 1e-6, "the orbit stays inside the column (dd {dd})");
 }
 
 #[test]
@@ -1675,7 +2008,7 @@ fn aim_msg(s: &Strike, uid: &str, tgt: [f64; 3], w: usize, q: i64) -> Value {
 /// Head of the Warden — the only clear lane over the centre blocks.
 fn warden_head(s: &Strike) -> [f64; 3] {
     let wd = s.warden.as_ref().expect("warden lives");
-    [wd.x, WARDEN_SEE_HEAD, wd.z]
+    [wd.x, wd.gy + WARDEN_SEE_HEAD, wd.z]
 }
 
 /// Stand above the centre blocks and pour rounds into the head (w=0, q steps of 20).
@@ -1932,6 +2265,12 @@ fn when_the_warden_dies_the_match_is_back() {
     assert!(s.disaster_at.is_some(), "auto-disaster clock restored");
     let live = s.ms_left(end + 0.05);
     assert!(live <= frozen + 200, "the clock is running again");
+    // the summons stay after the boss — pull them out of this firing lane so the
+    // PvP check is about fighters, not about a beast eating the shot
+    for d in s.dragons.iter_mut() {
+        d.x = 200.0;
+        d.z = 200.0;
+    }
 
     // a shot that was a no-op during the fight hurts again
     let hp0 = s.player(&foe).unwrap().hp;
@@ -2684,6 +3023,516 @@ fn a_dancing_bot_holds_still_and_holds_its_fire() {
     assert!((p.x - x).hypot(p.z - z) > 0.0 || p.dance_until <= t, "the dance ends with the window");
 }
 
+#[test]
+fn the_warden_dances_too_when_the_disco_totem_hits() {
+    // If the boss is up, a Disco window puts it on the floor: same clock as the
+    // players, every attack held, and the snap carries it as ms-dance.
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some(), "the boss is up");
+
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let td = t + 0.2;
+    assert!(s.take_totem(i0, "disco", td), "the totem applies");
+    let wd = s.warden.as_ref().unwrap();
+    assert!(
+        (wd.dance_until - (td + DISCO)).abs() < 1e-9,
+        "the boss dances for the same window"
+    );
+    assert_eq!(wd.slab_arm, 0.0, "no slam telegraph survives the groove");
+    assert_eq!(wd.laser_on, 0.0, "no laser survives the groove");
+    assert_eq!(wd.grip_on, 0.0, "no grip survives the groove");
+
+    // while it dances the attack clocks never advance
+    let (slab0, laser0, grip0) = {
+        let wd = s.warden.as_ref().unwrap();
+        (wd.slab_at, wd.laser_at, wd.grip_at)
+    };
+    for k in 1..20 {
+        s.tick(td + f64::from(k) / HZ, true);
+    }
+    let wd = s.warden.as_ref().unwrap();
+    assert_eq!(wd.slab_at, slab0, "no slam is scheduled mid-groove");
+    assert_eq!(wd.laser_at, laser0, "no laser is scheduled mid-groove");
+    assert_eq!(wd.grip_at, grip0, "no grip is scheduled mid-groove");
+
+    // the snap carries the dance clock (ms-dance, index 16)
+    s.mark_all();
+    let snap = s.snap(td + 0.1);
+    let row = snap["wd"].as_array().unwrap();
+    assert!(row.len() > 16, "wd row carries ms-dance: {:?}", row.len());
+    assert!(row[16].as_i64().unwrap_or(0) > 0, "ms-dance is live: {:?}", row[16]);
+
+    // and the groove ends with the window
+    s.player_mut("u1").unwrap().dance_until = 0.0;
+    if let Some(wd) = s.warden.as_mut() {
+        wd.dance_until = td + 0.5;
+    }
+    s.tick(td + 1.0, true);
+    let wd = s.warden.as_ref().unwrap();
+    assert!(wd.dance_until <= td + 1.0, "the dance ends with the window");
+}
+
+// ---------------------------------------------------------- Dragons ----
+// Six elemental mounts the Warden summons (fire → golden). Players ride them and
+// breathe; the only attack is the breath (30 dps, 4 s spray, 4 s inhale). Untaken
+// dragons roam and bite. The Warden never hurts a dragon; disasters deal one the
+// same damage they deal a fighter (1x); gunfire always can. Out of bounds kills
+// mount + rider. The feed names what fell the mount. Snapshot carries "drg".
+
+#[test]
+fn the_warden_summons_six_dragons_on_the_bounds_ring() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some(), "the boss is up");
+    assert_eq!(s.dragons.len(), WARDEN_DRAGON_N, "six dragons ride in with the boss");
+    // one of each tier, fire → golden
+    let mut seen = [false; 6];
+    for d in &s.dragons {
+        assert!(d.tier < WARDEN_DRAGON_TIERS.len(), "tier in range");
+        seen[d.tier] = true;
+        assert_eq!(d.hp, DRAGON_HP, "fresh dragon, full tank");
+        assert_eq!(d.max, DRAGON_HP);
+        assert!(d.rider.is_empty(), "nobody is on it yet");
+        assert_eq!(d.breath_left, DRAGON_BREATH_SECS, "the breath starts full");
+    }
+    assert!(seen.iter().all(|&b| b), "one of each tier: {:?}", seen);
+    // they stand on the ring, not on the boss
+    let b = s.map().bounds();
+    let (cx, cz) = ((b[0] + b[3]) * 0.5, (b[2] + b[5]) * 0.5);
+    for d in &s.dragons {
+        let dd = (d.x - cx).hypot(d.z - cz);
+        assert!(dd > 10.0, "on the ring, not at the feet: {dd}");
+    }
+    // the snap carries them
+    let snap = s.snap(t + 0.1);
+    let rows = snap["drg"].as_array().expect("drg rows");
+    assert_eq!(rows.len(), WARDEN_DRAGON_N, "one row per dragon");
+    let r0 = rows[0].as_array().unwrap();
+    assert!(r0.len() >= 11, "drg row shape: {:?}", r0.len());
+    assert_eq!(r0[8].as_i64().unwrap(), -1, "mount_slot -1 when idle");
+}
+
+#[test]
+fn a_rider_mounts_and_dismounts_a_dragon() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    assert_eq!(s.dragons.len(), WARDEN_DRAGON_N);
+    // park a dragon under u0
+    let (dx, dz) = (s.dragons[0].x, s.dragons[0].z);
+    put(&mut s, "u0", dx + 1.0, 0.0, dz, t + 0.1, Some(0));
+    assert!(s.mount("u0", &Value::Null, t + 0.2), "mount in reach");
+    assert_eq!(s.dragons[0].rider, "u0", "u0 is in the saddle");
+    assert!(s.player("u0").unwrap().dragon_rider, "the rider flag is set");
+    // the snap names the saddle
+    let snap = s.snap(t + 0.3);
+    let rows = snap["drg"].as_array().unwrap();
+    let slot0 = s.player("u0").unwrap().slot;
+    let mount_slots: Vec<i64> = rows.iter().map(|r| r[8].as_i64().unwrap()).collect();
+    assert!(mount_slots.contains(&slot0), "mount_slot carries the rider: {mount_slots:?}");
+    // guns are stowed — fire refuses
+    let (shot, _) = s.fire("u0", &json!({"w": 0, "ox": 0, "oy": 0, "oz": 0, "r": 0, "p": 0, "q": 1, "ip": 0}), t + 0.4);
+    assert!(shot.is_none(), "the guns are stowed on a saddle");
+    // dismount steps off to the side
+    assert!(s.mount("u0", &Value::Null, t + 0.5), "dismount");
+    assert!(s.dragons[0].rider.is_empty(), "the saddle is free");
+    assert!(!s.player("u0").unwrap().dragon_rider, "the rider flag clears");
+}
+
+#[test]
+fn the_breath_sprays_then_inhales() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    // the breath is a weapon only after the boss: while the Warden lives a
+    // summons is a calm pet and its spray can hit nobody (twin: dragon_tick).
+    let t = drain_warden(&mut s, t + 0.1);
+    assert!(s.warden.is_none(), "the boss is gone — the breath is armed");
+    // everyone else leaves the field so no bot can claim a mount or wander in
+    let others: Vec<String> = s
+        .players
+        .iter()
+        .map(|(u, _)| u.clone())
+        .filter(|u| u != "u0" && u != "u1")
+        .collect();
+    for u in &others {
+        if let Some(p) = s.player_mut(u) {
+            p.dead = true;
+            p.gone = true;
+        }
+    }
+    let (dx, dz) = (s.dragons[0].x, s.dragons[0].z);
+    put(&mut s, "u0", dx + 1.0, 0.0, dz, t + 0.1, Some(0));
+    assert!(s.mount("u0", &Value::Null, t + 0.2), "mount in reach");
+    let di = s
+        .dragons
+        .iter()
+        .position(|d| d.rider == "u0")
+        .expect("u0 is in a saddle");
+    // The mount now takes its pose from the rider (the client flies it), so aim the
+    // RIDE, not a frozen dragon. Pet-space forward is (sin, cos): look yaw PI →
+    // pet yaw 0 → the head points along +z. Twin: dragon_tick's `PI - r` copy.
+    if let Some(p) = s.player_mut("u0") {
+        p.r = 18000;
+    }
+    s.dragons[di].yaw = 0.0;
+    // after the first tick the dragon sits on the rider (dx+1, -DRAGON_SEAT, dz),
+    // its head 3.2 m along +z
+    put(&mut s, "u1", dx + 1.0, 0.0, dz + 8.2, t + 0.3, Some(0));
+    let bot_hp0 = s.player("u1").unwrap().hp;
+    // hold the trigger every frame — JS renews sprayUntil while the mouse is down,
+    // and the judge twin does the same through a "breathe" op per tick
+    assert!(s.breathe("u0", &Value::Null, t + 0.3), "the breath opens");
+    let mut now = t + 0.3;
+    for _ in 0..20 {
+        now += 1.0 / HZ;
+        s.breathe("u0", &Value::Null, now);
+        s.tick(now, true);
+    }
+    let hp_after = s.player("u1").unwrap().hp;
+    assert!(hp_after < bot_hp0, "the cone bites: {hp_after} < {bot_hp0}");
+    let left = s.dragons[di].breath_left;
+    assert!(left < DRAGON_BREATH_SECS, "the tank drains while spraying: {left}");
+    // keep holding until the tank empties (DRAGON_BREATH_SECS at HZ frames a second)
+    let hold = (DRAGON_BREATH_SECS * HZ) as usize + 10;
+    for _ in 0..hold {
+        now += 1.0 / HZ;
+        s.breathe("u0", &Value::Null, now);
+        s.tick(now, true);
+    }
+    assert!(s.dragons[di].breath_left <= 0.0, "the tank is dry");
+    assert!(s.dragons[di].recharge_at > now, "the inhale is running");
+    // and refills after the inhale
+    now = s.dragons[di].recharge_at + 0.05;
+    s.tick(now, true);
+    assert!(
+        (s.dragons[di].breath_left - DRAGON_BREATH_SECS).abs() < 1e-9,
+        "the tank refills after the inhale"
+    );
+}
+
+#[test]
+fn disasters_deal_normal_damage_to_a_dragon() {
+    // No 2x. A disaster hits a dragon for exactly what it hits a fighter for,
+    // and gunfire hits it for the weapon's own damage. Twin: dragonHurt in strike.js.
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    let hp0 = s.dragons[0].hp;
+    s.dragon_hurt(0, 10, "meteorshower", t + 0.1);
+    assert_eq!(s.dragons[0].hp, hp0 - 10, "a disaster deals the same 10 a fighter takes");
+    let hp1 = s.dragons[0].hp;
+    s.dragon_hurt(0, 10, "gunfire", t + 0.2);
+    assert_eq!(s.dragons[0].hp, hp1 - 10, "a bullet is the same 10");
+    let hp2 = s.dragons[0].hp;
+    s.dragon_hurt(0, 25, "thunder", t + 0.3);
+    assert_eq!(s.dragons[0].hp, hp2 - 25, "a thunder strike is 25, not 50");
+}
+
+#[test]
+fn the_warden_never_hurts_a_dragon() {
+    // The Warden cannot hurt a dragon at all. The laser sweeps, the arm slams and
+    // the gravity grip all leave a summon untouched — only disasters and gunfire
+    // bring one down mid-fight. Twin: wardenTick in games/strike.js.
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some(), "the boss is up");
+    assert_eq!(s.dragons[0].hp, DRAGON_HP, "full hp at the summons");
+    // park every Warden attack except the ones under test, and point the beam
+    // straight at dragon 0 so a laser that COULD bite would.
+    let (bx, bz) = (s.dragons[0].x, s.dragons[0].z);
+    for i in 1..s.dragons.len() {
+        s.dragons[i].x = bx + 40.0;
+        s.dragons[i].z = bz + 40.0;
+    }
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.dis_at = t + 1000.0;
+        wd.laser_yaw = (bz - wd.z).atan2(bx - wd.x);
+        wd.laser_warn = t + 0.2;
+        wd.laser_on = t + 0.2 + WARDEN_LASER_HOLD;
+        wd.laser_at = t + 1000.0;
+    }
+    let mut now = t + 0.1;
+    for _ in 0..((WARDEN_LASER_HOLD * HZ) as usize + 20) {
+        now += 1.0 / HZ;
+        s.tick(now, true);
+    }
+    assert_eq!(
+        s.dragons[0].hp, DRAGON_HP,
+        "the laser goes right past a dragon — the Warden never hurts one"
+    );
+    // an arm slam and a gravity grip leave it just as untouched
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.laser_on = 0.0;
+        wd.laser_at = now + 1000.0;
+        wd.slab_at = now + 0.1;
+        wd.grip_at = now + 0.1;
+        wd.grip_warn = 0.0;
+    }
+    for _ in 0..(HZ as usize) {
+        now += 1.0 / HZ;
+        s.tick(now, true);
+    }
+    assert_eq!(
+        s.dragons[0].hp, DRAGON_HP,
+        "the fist and the open hand hit the DECK, never a summon"
+    );
+    // gunfire still brings one down
+    s.dragon_hurt(0, DRAGON_HP, "gunfire", now + 0.1);
+    assert_eq!(s.dragons[0].hp, 0, "gunfire kills a dragon");
+}
+
+#[test]
+fn a_rider_in_the_saddle_is_not_a_ground_target() {
+    // A floor beam, an arm slam and the gravity grip are DECK attacks. The mount
+    // soaks them; they must never delete the rider out of the saddle. The Warden
+    // does not hurt the dragon either — the skip is about the RIDER, not the beast.
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    let (dx, dz) = (s.dragons[0].x, s.dragons[0].z);
+    put(&mut s, "u0", dx + 1.0, 0.0, dz, t + 0.1, Some(0));
+    assert!(s.mount("u0", &Value::Null, t + 0.2), "board the mount");
+    assert!(s.player("u0").unwrap().dragon_rider, "in the saddle");
+    let deaths0 = s.player("u0").unwrap().deaths;
+    let hp0 = s.player("u0").unwrap().hp;
+    // park the arm/disaster clocks, then run a full laser sweep across the pair
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.dis_at = t + 1000.0;
+        wd.slab_at = t + 1000.0;
+        wd.slab_arm = 0.0;
+        wd.slab_land = 0.0;
+        wd.grip_at = t + 1000.0;
+        wd.grip_warn = 0.0;
+        wd.grip_on = 0.0;
+        wd.laser_yaw = (dz - wd.z).atan2(dx - wd.x);
+        wd.laser_warn = t + 0.3;
+        wd.laser_on = t + 0.3 + WARDEN_LASER_HOLD;
+        wd.laser_at = t + 1000.0;
+    }
+    let mut now = t + 0.25;
+    for _ in 0..((WARDEN_LASER_HOLD * HZ) as usize + 20) {
+        now += 1.0 / HZ;
+        s.tick(now, true);
+    }
+    assert!(
+        !s.player("u0").unwrap().dead,
+        "the floor laser must not delete a rider out of the saddle"
+    );
+    assert_eq!(s.player("u0").unwrap().deaths, deaths0, "no death counted");
+    assert_eq!(s.player("u0").unwrap().hp, hp0, "the rider is untouched");
+    assert!(s.player("u0").unwrap().dragon_rider, "still in the saddle");
+    // and the mount is untouched too — the Warden cannot hurt a dragon
+    assert_eq!(s.dragons[0].hp, DRAGON_HP, "the Warden never hurts a dragon");
+}
+
+#[test]
+fn a_dragon_can_fly_anywhere_with_no_out_of_bounds() {
+    // The sky is open: no map edge, no ceiling. A rider who flies the mount past
+    // the arena keeps flying — the pair is neither killed nor rubber-banded home.
+    // Twin: dragonTick in games/strike.js (client flies the mount).
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    let (dx, dz) = (s.dragons[0].x, s.dragons[0].z);
+    put(&mut s, "u0", dx + 1.0, 0.0, dz, t + 0.1, Some(0));
+    assert!(s.mount("u0", &Value::Null, t + 0.2), "board the mount");
+    // fling the RIDER past the map edge and up over the old ceiling
+    let deaths0 = s.player("u0").unwrap().deaths;
+    let (b0, b3, b4) = {
+        let b = s.map().bounds();
+        (b[0], b[3], b[4])
+    };
+    let fling_x = b0 - 30.0;
+    let fling_y = b4 + 40.0;
+    if let Some(p) = s.player_mut("u0") {
+        p.x = fling_x;
+        p.y = fling_y;
+        p.z = 100.0;
+    }
+    s.tick(t + 0.3, true);
+    assert_eq!(s.dragons[0].hp, DRAGON_HP, "no out-of-bounds damage");
+    assert!(!s.player("u0").unwrap().dead, "the rider is still alive");
+    assert_eq!(s.player("u0").unwrap().deaths, deaths0, "no death counted");
+    assert_eq!(s.dragons[0].rider, "u0", "still in the saddle");
+    // the mount followed the rider off the map
+    assert!(s.dragons[0].x < b0 - 10.0, "the mount is outside the map edge");
+    assert!(s.dragons[0].y > b4 + 10.0, "the mount is above the old ceiling");
+    // and a far-side fling is the same — the other edge is not a wall either
+    if let Some(p) = s.player_mut("u0") {
+        p.x = b3 + 50.0;
+        p.y = 0.0;
+        p.z = -120.0;
+    }
+    s.tick(t + 0.5, true);
+    assert_eq!(s.dragons[0].hp, DRAGON_HP, "still no out-of-bounds damage");
+    assert!(!s.player("u0").unwrap().dead, "still alive at the far edge");
+    assert_eq!(s.dragons[0].rider, "u0", "still in the saddle");
+}
+
+#[test]
+fn an_untaken_dragon_roams_and_bites() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    // roaming + biting is a post-boss behaviour: while the Warden lives the
+    // summons only patrol (twin: dragonRoam / dragon_tick's roam gate).
+    let t = drain_warden(&mut s, t + 0.1);
+    assert!(s.warden.is_none(), "the boss is gone — the beasts are loose");
+    // every other fighter is out of the hunt so u1 is the only target, and u1
+    // starts outside bite range so the beast has to walk in before it can bite
+    let (dx, dz, dy) = (s.dragons[0].x, s.dragons[0].z, s.dragons[0].y);
+    let others: Vec<String> = s.players.iter().map(|(u, _)| u.clone()).filter(|u| u != "u1").collect();
+    for u in &others {
+        if let Some(p) = s.player_mut(u) {
+            p.dead = true;
+            p.gone = true;
+        }
+    }
+    put(&mut s, "u1", dx + 8.0, dy, dz, t + 0.1, Some(0));
+    let hp0 = s.player("u1").unwrap().hp;
+    let mut now = t + 0.1;
+    for _ in 0..60 {
+        now += 1.0 / HZ;
+        s.tick(now, true);
+    }
+    assert!(s.player("u1").unwrap().hp < hp0, "the beast bites");
+    // and the bones walk
+    assert!((s.dragons[0].x - dx).hypot(s.dragons[0].z - dz) > 0.5, "it prowls");
+}
+
+#[test]
+fn while_the_warden_lives_nobody_hurts_a_dragon_and_a_dragon_hurts_nobody() {
+    // The Warden never touches a dragon, but anyone with a gun can — gunfire is
+    // the one attack that always bites a summon. A summons is still a calm pet
+    // until the boss falls (it does not bite back mid-fight).
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some(), "the boss is up");
+    let hp0 = s.dragons[0].hp;
+    // a human can still open up on a summon — gunfire hurts a dragon even while
+    // the Warden lives (twin: fire_inner picks the NEARER of dragon / boss).
+    // Bots never spend a shot on a summon mid-fight; that has its own test.
+    let (dx, dz, dy) = (s.dragons[0].x, s.dragons[0].z, s.dragons[0].y);
+    put(&mut s, "u1", dx + 2.0, dy, dz, t + 0.1, Some(0));
+    let tgt = [dx, dy + 1.6, dz];
+    let msg = aim_msg(&s, "u1", tgt, 0, 30);
+    let _ = s.fire("u1", &msg, t + 0.2);
+    s.tick(t + 0.25, true);
+    assert!(s.dragons[0].hp < hp0, "gunfire hurts a summons even while the boss lives");
+    // and the summons cannot bite anyone
+    let u1_hp = s.player("u1").unwrap().hp;
+    put(&mut s, "u1", dx + 2.0, dy, dz, t + 0.3, Some(0));
+    let mut now = t + 0.3;
+    for _ in 0..60 {
+        now += 1.0 / HZ;
+        s.tick(now, true);
+    }
+    assert_eq!(s.player("u1").unwrap().hp, u1_hp, "no bite while the boss lives");
+    // the roster is still there after the boss
+    let _end = drain_warden(&mut s, now + 0.1);
+    assert!(s.warden.is_none(), "the boss is gone");
+    assert_eq!(s.dragons.len(), WARDEN_DRAGON_N, "the summons stay after the boss");
+}
+
+#[test]
+fn a_bot_spends_no_shot_on_a_summon_while_the_warden_lives() {
+    // While the boss lives a bot's bullet is for the boss alone — it will not
+    // spend a shot on a summon, even one sitting on the line of fire. The
+    // human-fire path still picks the nearer body. Twin: bot_fire in strike.js
+    // botJudge.
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    assert!(s.warden.is_some(), "the boss is up");
+    let hp0 = s.dragons[0].hp;
+    // park the slam / laser / disaster clocks so they cannot steal the frame
+    {
+        let wd = s.warden.as_mut().unwrap();
+        wd.dis_at = t + 1000.0;
+        wd.laser_at = t + 1000.0;
+        wd.laser_warn = 0.0;
+        wd.laser_on = 0.0;
+        wd.slab_at = t + 1000.0;
+    }
+    // put a bot right where it can shoot the summon, and aim it at the summon
+    let bid = s
+        .players
+        .iter()
+        .find(|(_, p)| p.is_bot())
+        .map(|(u, _)| u.clone())
+        .expect("a bot filler");
+    let (dx, dz, dy) = (s.dragons[0].x, s.dragons[0].z, s.dragons[0].y);
+    put(&mut s, &bid, dx + 2.0, dy, dz, t + 0.1, Some(0));
+    {
+        let p = s.player_mut(&bid).unwrap();
+        if let Some(b) = p.bot.as_mut() {
+            b.body.x = dx + 2.0;
+            b.body.y = dy;
+            b.body.z = dz;
+            b.body.vx = 0.0;
+            b.body.vy = 0.0;
+            b.body.vz = 0.0;
+            b.fire_at = -1e9;
+            b.think_at = t;
+            b.seen_at = Some(t);
+            // aim the bot straight at the summon's body — the OLD rule would
+            // have eaten the shot on the dragon here
+            let tgt = [dx, dy + 1.6, dz];
+            let o = [dx + 2.0, dy + EYE, dz];
+            b.aim_y = (tgt[0] - o[0]).atan2(-(tgt[2] - o[2])).to_degrees();
+            b.aim_p = (tgt[1] - o[1]).atan2((tgt[0] - o[0]).hypot(tgt[2] - o[2])).to_degrees();
+        }
+    }
+    let mut now = t + 0.1;
+    for _ in 0..20 {
+        now += 1.0 / HZ;
+        s.tick(now, true);
+    }
+    assert_eq!(
+        s.dragons[0].hp, hp0,
+        "a bot spends no shot on a summon while the boss lives"
+    );
+}
+
+#[test]
+fn the_roster_stays_after_the_warden_falls() {
+    let (mut s, t) = started_warden(2, 2, 0.0);
+    let half = ((s.limit as f64) * WARDEN_TRIGGER).ceil() as i64;
+    s.scores[0] = half;
+    s.tick(t + 0.05, true);
+    let end = drain_warden(&mut s, t + 0.1);
+    assert!(s.warden.is_none(), "the boss is gone");
+    assert_eq!(s.dragons.len(), WARDEN_DRAGON_N, "the roster stays after the boss");
+    // a ridden dragon stays under its rider
+    let (dx, dz) = (s.dragons[0].x, s.dragons[0].z);
+    put(&mut s, "u0", dx + 1.0, 0.0, dz, end + 0.1, Some(0));
+    assert!(s.mount("u0", &Value::Null, end + 0.2), "mount after the boss");
+    assert_eq!(s.dragons[0].rider, "u0", "the saddle is yours");
+    // match teardown is what clears it
+    s.end();
+    assert!(s.dragons.is_empty(), "teardown clears the roster");
+}
+
 // -------------------------------------------------- Wave F: joke world totems --
 #[test]
 fn banana_panic_scatters_deterministic_peels() {
@@ -2903,4 +3752,331 @@ fn weapon_roulette_re_rolls_and_refills_the_mag() {
         }
     }
     assert_eq!(flagged, s.players.len(), "FLAG_ROULETTE rides every living row");
+}
+
+// -------------------------------------------------- Wave G: trap-and-gadget set --
+#[test]
+fn mini_turret_drops_three_and_shoots_the_nearest_enemy() {
+    // TURRET_N turrets scatter from world_k (never Math.random), hold the taker's
+    // team, and fire TURRET_DMG every TURRET_GAP at the nearest ENEMY in range.
+    let (mut s, t) = started(4, 2, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u2", 1.0, 0.0, 0.0, t, None);   // team-mate (team 0)
+    put(&mut s, "u1", 4.0, 0.0, 0.0, t, None);   // enemy near
+    put(&mut s, "u3", 30.0, 0.0, 0.0, t, None);  // enemy far (beyond TURRET_RANGE)
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "turret", t + 0.1), "the totem applies");
+    assert_eq!(s.turrets.len(), TURRET_N, "TURRET_N turrets drop in");
+    assert!(s.turret_until > t + 0.1, "the window opens");
+    for tu in &s.turrets {
+        assert_eq!(tu.team, 0, "they hold the taker's side");
+        assert_eq!(tu.hp, TURRET_HP, "and start at TURRET_HP");
+    }
+    // a second take stacks, never replaces
+    assert!(s.take_totem(i0, "turret", t + 0.1));
+    assert_eq!(s.turrets.len(), 2 * TURRET_N, "the second take appends");
+    // the snapshot carries them under "tr"
+    let snap = s.snap(t + 0.2);
+    assert_eq!(snap["tr"].as_array().unwrap().len(), 2 * TURRET_N, "snap key tr");
+    // now let the turrets work: only the NEAR enemy should lose hp, and never the team-mate
+    let hp_u2 = s.player("u2").unwrap().hp;
+    let hp_u3 = s.player("u3").unwrap().hp;
+    let mut t2 = t + 0.2;
+    for _ in 0..(HZ as usize) {
+        t2 += 1.0 / HZ;
+        s.tick(t2, true);
+    }
+    let p2 = s.player("u2").unwrap();
+    let p3 = s.player("u3").unwrap();
+    assert_eq!(p2.hp, hp_u2, "a turret never shoots a team-mate");
+    assert_eq!(p3.hp, hp_u3, "nor anyone beyond TURRET_RANGE");
+    assert!(s.player("u1").unwrap().hp < HP, "the near enemy is taking fire");
+}
+
+#[test]
+fn mini_turret_is_destructible_by_gunfire() {
+    // A turret has TURRET_HP of life; a bullet (waveg_hit) bruises it and a big
+    // enough hit puts it out. Twin: wavegHit / fire() in games/strike.js.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -4.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "turret", t + 0.1));
+    assert_eq!(s.turrets.len(), TURRET_N);
+    let hp0 = s.turrets[0].hp;
+    s.waveg_hit(0, 0, 10, "u0", t + 0.2);
+    assert_eq!(s.turrets[0].hp, hp0 - 10, "a hit takes hp off the turret");
+    s.waveg_hit(0, 0, TURRET_HP, "u0", t + 0.2);
+    assert_eq!(s.turrets[0].hp, 0, "enough damage puts it out");
+}
+
+#[test]
+fn explosive_barrels_fall_from_the_sky_and_go_up_10x_a_launcher() {
+    // BARREL_N barrels crash down from BARREL_FALL and land. The blast is the
+    // launcher's own curve scaled 10x: 1200 direct, 750 -> 250 out to BARREL_R.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -4.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "barrel", t + 0.1), "the totem applies");
+    assert_eq!(s.barrels.len(), BARREL_N, "BARREL_N barrels land");
+    for b in &s.barrels {
+        assert!((b.y - BARREL_FALL).abs() < 1e-9, "they start in the sky");
+        assert!(!b.landed, "and are still falling");
+    }
+    // the 10x lock: the barrel curve is exactly ten times the launcher's own,
+    // stretched out to BARREL_R (the launcher only reaches BLAST_R).
+    assert_eq!(BARREL_DIRECT, 1200);
+    assert_eq!(blast_damage(0.0, true) * 10, BARREL_DIRECT, "direct is 10x a launcher");
+    assert_eq!(BARREL_DMG, 750);
+    assert_eq!(BARREL_MIN, 250);
+    for (dist, want) in [(0.0f64, 1200i64), (0.4, 1200), (3.0, 625), (6.0, 500), (11.0, 292)] {
+        let got = if dist < DIRECT_R {
+            BARREL_DIRECT
+        } else if dist < BARREL_R {
+            (BARREL_DMG as f64 - (BARREL_DMG - BARREL_MIN) as f64 * (dist / BARREL_R)).round() as i64
+        } else {
+            0
+        };
+        assert_eq!(got, want, "the falloff at {} m", dist);
+    }
+    assert_eq!(blast_damage(0.0, true), 120);
+    assert_eq!(blast_damage(0.0, false), 75);
+    assert_eq!(blast_damage(2.0, false), 50);
+    assert_eq!(blast_damage(3.9, false), 26);
+    assert_eq!(blast_damage(BLAST_R, false), 0);
+    // they fall and land
+    let mut t2 = t + 0.1;
+    for _ in 0..(3 * HZ as usize) {
+        t2 += 1.0 / HZ;
+        s.tick(t2, true);
+    }
+    for b in &s.barrels {
+        assert!(b.landed, "the barrels land");
+        assert!((b.y).abs() < 1e-6, "and sit on the deck");
+    }
+}
+
+#[test]
+fn shooting_a_barrel_detonates_it_and_chains_the_next() {
+    // One bullet (waveg_hit) on a barrel fires barrel_blast; a barrel inside
+    // BARREL_R goes off too, with the same kill credit. Twin: barrelBlast().
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 20.0, 0.0, 20.0, t, None);   // the shooter stands clear (floor)
+    // the victim stands ON the deck under barrel 0 — the blast centre is that deck
+    // (ground_y) + 0.5, so an absolute y=0 would put them 3.5 m underground.
+    let deck = ground_y(s.map(), 0.0, 0.0);
+    put(&mut s, "u1", 0.6, deck, 0.0, t, None);     // victim in DIRECT_R of barrel 0
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "barrel", t + 0.1));
+    // park two barrels side by side on the deck and clear the third away
+    for b in s.barrels.iter_mut() {
+        b.y = 0.0;
+        b.landed = true;
+    }
+    s.barrels[0].x = 0.0;
+    s.barrels[0].z = 0.0;
+    s.barrels[1].x = 1.0;
+    s.barrels[1].z = 0.0;
+    s.barrels[2].x = 40.0;
+    s.barrels[2].z = 40.0;
+    let hp1 = s.player("u1").unwrap().hp;
+    s.waveg_hit(1, 0, BARREL_HP, "u0", t + 0.2);
+    // the victim stood inside DIRECT_R of barrel 0's blast → BARREL_DIRECT
+    assert_eq!(s.player("u1").unwrap().hp, (hp1 - BARREL_DIRECT).max(0),
+               "the direct hit is BARREL_DIRECT");
+    assert_eq!(s.barrels[0].hp, 0, "the shot barrel is gone");
+    assert_eq!(s.barrels[1].hp, 0, "and it chained the one beside it");
+    assert_eq!(s.barrels[2].hp, BARREL_HP, "the far barrel is untouched");
+}
+
+#[test]
+fn the_laser_grid_kills_on_touch_but_a_jump_saves_you() {
+    // A tripwire is a thick segment (LASER_HALF) at LASER_Y. Walk into it and you
+    // die; height ABOVE THE DECK >= LASER_CLEAR is a clean jump and you live.
+    // The gate is ground-relative: the dockyard's origin is a raised platform
+    // (top 3.5), so an absolute world y would let a walker straight through.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 20.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -20.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "laser", t + 0.1), "the totem applies");
+    assert_eq!(s.lasers.len(), LASER_N, "LASER_N tripwires criss-cross");
+    assert!(s.laser_until > t + 0.1, "the window opens");
+    // plant one wire straight through the origin and stand a body on it
+    s.lasers.clear();
+    s.lasers.push(Laser { id: 1, ax: -10.0, az: 0.0, bx: 10.0, bz: 0.0, until: t + 10.0 });
+    let deck = ground_y(s.map(), 0.0, 0.0);
+    // 1. standing on the wire at deck height → instant death
+    put(&mut s, "u1", 0.0, deck + 0.2, 0.0, t + 0.2, None);
+    let mut t2 = t + 0.2;
+    s.tick(t2 + 1.0 / HZ, true);
+    assert!(s.player("u1").unwrap().dead, "walking into the beam kills you");
+    // 2. jumping clean over it (height above the deck >= LASER_CLEAR) → you live
+    put(&mut s, "u1", 0.0, deck + LASER_CLEAR + 0.4, 0.0, t + 1.0, None);
+    s.player_mut("u1").unwrap().dead = false;
+    s.player_mut("u1").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().respawn_at = 0.0;
+    t2 = t + 1.0;
+    s.tick(t2 + 1.0 / HZ, true);
+    assert!(!s.player("u1").unwrap().dead, "jumping over the beam saves you");
+    // 3. standing BESIDE it (clear of LASER_HALF) → you live
+    put(&mut s, "u1", 0.0, deck, LASER_HALF + 0.5, t + 2.0, None);
+    s.player_mut("u1").unwrap().dead = false;
+    s.player_mut("u1").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().respawn_at = 0.0;
+    t2 = t + 2.0;
+    s.tick(t2 + 1.0 / HZ, true);
+    assert!(!s.player("u1").unwrap().dead, "walking beside the beam saves you");
+    let snap = s.snap(t + 2.1);
+    assert_eq!(snap["lg"].as_array().unwrap().len(), 1, "snap key lg");
+}
+
+#[test]
+fn the_laser_gate_is_height_above_the_deck_not_world_y() {
+    // THE walk-through bug: the beams are planted ON the deck under you
+    // (ground_y), but the old gate read an absolute world y. On the dockyard's
+    // raised centre (top 3.5) a walking player stands at y≈3.5, which passes
+    // "y >= LASER_CLEAR" and walks straight through every beam.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 20.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -20.0, t, None);
+    s.lasers.clear();
+    s.lasers.push(Laser { id: 1, ax: -10.0, az: 0.0, bx: 10.0, bz: 0.0, until: t + 10.0 });
+    let deck = ground_y(s.map(), 0.0, 0.0);
+    assert!(deck >= 3.0, "the origin is the raised centre (deck {})", deck);
+    assert!(deck >= LASER_CLEAR, "and its top is above LASER_CLEAR — the old gate would treat a walker as jumped");
+    // 1. a WALKER on the raised deck (world y = deck+0.2) is still cut down
+    put(&mut s, "u1", 0.0, deck + 0.2, 0.0, t + 0.2, None);
+    s.tick(t + 0.2 + 1.0 / HZ, true);
+    assert!(s.player("u1").unwrap().dead, "a walker on the raised deck is zapped");
+    // 2. only a jump that clears LASER_CLEAR ABOVE that deck saves you
+    s.player_mut("u1").unwrap().dead = false;
+    s.player_mut("u1").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().respawn_at = 0.0;
+    put(&mut s, "u1", 0.0, deck + LASER_CLEAR + 0.1, 0.0, t + 1.0, None);
+    s.tick(t + 1.0 + 1.0 / HZ, true);
+    assert!(!s.player("u1").unwrap().dead, "a real jump off the raised deck saves you");
+    // 3. on the flat deck the old numbers still work
+    let flat = ground_y(s.map(), 0.0, 20.0);
+    assert!(flat < 0.5, "z=20 is the floor ({}), not the platform", flat);
+    s.lasers.push(Laser { id: 2, ax: -10.0, az: 20.0, bx: 10.0, bz: 20.0, until: t + 10.0 });
+    s.player_mut("u1").unwrap().dead = false;
+    s.player_mut("u1").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().respawn_at = 0.0;
+    put(&mut s, "u1", 0.0, flat + 0.2, 20.0, t + 2.0, None);
+    s.tick(t + 2.0 + 1.0 / HZ, true);
+    assert!(s.player("u1").unwrap().dead, "on the floor a walker is still zapped");
+    s.player_mut("u1").unwrap().dead = false;
+    s.player_mut("u1").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().respawn_at = 0.0;
+    put(&mut s, "u1", 0.0, flat + LASER_CLEAR + 0.1, 20.0, t + 3.0, None);
+    s.tick(t + 3.0 + 1.0 / HZ, true);
+    assert!(!s.player("u1").unwrap().dead, "and on the floor a jump still saves you");
+    // the same gate class: a jump pad planted on the raised deck still fires
+    // for a body standing on it (the pad gate is height-above-deck too).
+    s.lasers.clear();
+    s.pads.clear();
+    s.pads.push(JumpPad { id: 1, x: 0.0, z: 0.0, until: t + 10.0 });
+    s.player_mut("u1").unwrap().dead = false;
+    s.player_mut("u1").unwrap().hp = HP;
+    s.player_mut("u1").unwrap().respawn_at = 0.0;
+    put(&mut s, "u1", 0.0, deck + 0.1, 0.0, t + 4.0, None);
+    s.player_mut("u1").unwrap().pad_cool = 0.0;
+    s.tick(t + 4.0 + 1.0 / HZ, true);
+    let p1 = s.player("u1").unwrap();
+    assert!(p1.pad_cool > t + 4.0, "the pad on the raised deck fires for a walker on it");
+}
+
+#[test]
+fn a_jump_pad_throws_you_into_the_sky_then_waits() {
+    // PAD_N pads scatter on the ground. Step on one (y near the deck, inside PAD_R)
+    // and your body gets PAD_LAUNCH; PAD_COOL is both the re-launch lock and the
+    // air let-up that lets the judge buy the flight.
+    let (mut s, t) = started(2, 1, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u1", 0.0, 0.0, -4.0, t, None);
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    assert!(s.take_totem(i0, "jumppad", t + 0.1), "the totem applies");
+    assert_eq!(s.pads.len(), PAD_N, "PAD_N pads drop in");
+    assert!(s.pad_until > t + 0.1, "the window opens");
+    // plant one pad under u1
+    s.pads.clear();
+    s.pads.push(JumpPad { id: 1, x: 0.0, z: -4.0, until: t + 10.0 });
+    let bot = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone());
+    if let Some(bid) = bot {
+        put(&mut s, &bid, 0.0, 0.0, -4.0, t + 0.2, None);
+        s.player_mut(&bid).unwrap().y = 0.0;
+        s.tick(t + 0.2 + 1.0 / HZ, true);
+        let p = s.player(&bid).unwrap();
+        assert!(p.pad_cool > t + 0.2, "the cool-down opens");
+        let b = p.bot.as_ref().unwrap();
+        assert!((b.body.vy - PAD_LAUNCH).abs() < 1e-9, "the body gets PAD_LAUNCH");
+    }
+    // a second step inside PAD_COOL does not re-launch
+    if let Some(bid) = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone()) {
+        let cool = s.player(&bid).unwrap().pad_cool;
+        s.tick(t + 0.3, true);
+        let p = s.player(&bid).unwrap();
+        assert!(p.pad_cool <= cool + 1e-9, "the cool-down holds the pad down");
+    }
+    // airborne bodies (y > 0.35) are ignored
+    if let Some(bid) = s.players.iter().find(|(_, p)| p.is_bot()).map(|(u, _)| u.clone()) {
+        let p = s.player_mut(&bid).unwrap();
+        p.pad_cool = 0.0;
+        p.y = 2.0;
+        if let Some(b) = p.bot.as_mut() {
+            b.body.y = 2.0;
+            b.body.vy = 0.0;
+        }
+        s.tick(t + 0.4, true);
+        let p = s.player(&bid).unwrap();
+        assert_eq!(p.pad_cool, 0.0, "a body in the air does not trigger the pad");
+    }
+    let snap = s.snap(t + 0.5);
+    assert_eq!(snap["pd"].as_array().unwrap().len(), 1, "snap key pd");
+}
+
+#[test]
+fn the_death_lottery_picks_one_living_enemy_and_never_a_team_mate() {
+    // Instant: one living ENEMY is chosen by world_k (never Math.random) and
+    // either heals to LOTTERY_HEAL or drops dead. The taker and their side are
+    // never in the pool.
+    let (mut s, t) = started(4, 2, 0.0);
+    put(&mut s, "u0", 0.0, 0.0, 0.0, t, None);
+    put(&mut s, "u2", 2.0, 0.0, 0.0, t, None);   // team-mate of u0 (team 0)
+    put(&mut s, "u1", -2.0, 0.0, 0.0, t, None);  // enemy (team 1)
+    put(&mut s, "u3", -6.0, 0.0, 0.0, t, None);  // enemy (team 1)
+    let i0 = s.players.iter().position(|(u, _)| u == "u0").unwrap();
+    let mut healed = 0;
+    let mut killed = 0;
+    for n in 0..16 {
+        // put everyone back on their feet so the pool stays the same shape
+        for uid in ["u1", "u3"] {
+            let p = s.player_mut(uid).unwrap();
+            p.dead = false;
+            p.hp = HP;
+            p.respawn_at = 0.0;
+        }
+        let hp_before: Vec<i64> = ["u0", "u1", "u2", "u3"].iter()
+            .map(|u| s.player(u).unwrap().hp).collect();
+        assert!(s.take_totem(i0, "lottery", t + 0.1 + n as f64 * 0.01),
+                "the totem applies on take {}", n);
+        // never the taker, never a team-mate
+        assert_eq!(s.player("u0").unwrap().hp, hp_before[0], "the taker is never picked");
+        assert_eq!(s.player("u2").unwrap().hp, hp_before[2], "a team-mate is never picked");
+        let p1 = s.player("u1").unwrap();
+        let p3 = s.player("u3").unwrap();
+        let one_healed = p1.hp == LOTTERY_HEAL || p3.hp == LOTTERY_HEAL;
+        let one_dead = p1.dead || p3.dead;
+        assert!(one_healed || one_dead, "the ticket is always honoured");
+        if one_healed {
+            healed += 1;
+        }
+        if one_dead {
+            killed += 1;
+        }
+    }
+    assert!(healed > 0, "the lottery does heal ({} heals)", healed);
+    assert!(killed > 0, "and it does kill ({} kills)", killed);
 }

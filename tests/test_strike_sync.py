@@ -151,6 +151,145 @@ class StrikeSync(unittest.TestCase):
         # the Strikezone welcome card spells the boss out under its own heading
         self.assertIn('"The Warden"', js)
         self.assertIn("Summon the Warden", js)
+        # The Warden stands ON the deck, not buried at y=0: every hit volume and
+        # LOS probe is measured from the ground under it (the dockyard centre is
+        # a raised platform). Both sides carry the same ground helper + offset.
+        self.assertIn("function holeGroundY", js)
+        self.assertIn("pub fn ground_y", rs)
+        # A canopy lands ON the deck: topUnder needs the body to already overlap a
+        # box, so a probe from DROP_HEIGHT never sees the floor and the whole
+        # descent sinks below the map. deckUnder/deck_under scan by XZ alone and
+        # return null on a real gap (never a phantom y=0 floor over water).
+        self.assertIn("function deckUnder(m, x, z){", js)
+        self.assertIn("pub fn deck_under(m: &Map, x: f64, z: f64) -> Option<f64>", rs)
+        self.assertIn("var floor = FS.deckUnder(MAP, V.me.x, V.me.z);", js)
+        self.assertIn("deck_under(m, b.body.x, b.body.z).unwrap_or(0.0)", rs)
+        self.assertIn("function wardenGY", js)
+        self.assertIn("gy: f64", rs)
+        self.assertIn("wardenGY(W)", js)
+        self.assertIn("wd.gy +", rs)
+        self.assertIn("gy + y0", rs)  # hit volumes lift with the deck
+        # The skirt is 18.6 m wide and the raised centre is only 8 m — plant the
+        # base at the FLOOR under the skirt rim, not the platform top ("floating").
+        self.assertIn("function wardenGroundY", js)
+        self.assertIn("pub fn warden_ground_y", rs)
+        self.assertIn("wardenGroundY(cx, cz)", js)
+        self.assertIn("warden_ground_y(self.map(), cx, cz)", rs)
+        # Disco: The Warden dances too when it is up — same window, attacks held.
+        self.assertIn("function wardenDanceOn", js)
+        self.assertIn("dance_until: f64", rs)
+        self.assertIn("V.warden.danceUntil = t + d", js)
+        self.assertIn("wd.dance_until = t + DISCO", rs)
+        self.assertIn("ms_dance", js)
+        self.assertIn("ms-dance", rs)
+        # ---- Dragons: six elemental mounts the Warden summons (fire → golden) ----
+        for name in (
+            "WARDEN_DRAGON_N", "WARDEN_DRAGON_TIERS", "DRAGON_HP",
+            "DRAGON_BREATH_DPS", "DRAGON_BREATH_SECS", "DRAGON_INHALE_SECS",
+            "DRAGON_BREATH_LEN", "DRAGON_BREATH_W", "DRAGON_SPEED", "DRAGON_ROAM_SPEED",
+            "DRAGON_BITE_R", "DRAGON_BITE_DMG", "DRAGON_BITE_CD", "DRAGON_CAT",
+            "DRAGON_MOUNT_R", "DRAGON_BOT_MOUNT", "DRAGON_SEAT",
+        ):
+            self.assertIn(name, js, "JS missing " + name)
+            self.assertIn(name, rs, "Rust missing " + name)
+        # a fresh mount hands you a FULL breath tank on BOTH judges — an empty one made
+        # the first click start the inhale instead of breathing ("click does nothing")
+        self.assertIn("breathLeft: DRAGON_BREATH_SECS", js)
+        self.assertIn("breath_left: DRAGON_BREATH_SECS", rs)
+        # the inhale reads on screen (the mount pill): words + a bar that fills toward ready
+        self.assertIn("inhaling…", js)
+        self.assertIn("hqpets-prompt-rl", js)
+        # spawn / tick / hit / mount helpers on both sides
+        for name in ("dragonSpawn", "dragonTick", "dragonHurt", "dragonKill",
+                     "dragonTryMount", "dragonScanHit", "dragonBoxes",
+                     "dragonBreathStep", "dragonRoam", "dragonDisaster"):
+            self.assertIn("function " + name, js, "JS missing " + name)
+        for name in ("dragon_tick", "dragon_hurt", "dragon_kill", "mount",
+                     "dragon_scan_hit", "dragon_boxes", "breathe"):
+            self.assertIn("fn " + name, rs, "Rust missing " + name)
+        # snapshot key + mount slot (old Arenas omit "drg" — client degrades)
+        self.assertIn('"drg"', js)
+        self.assertIn('"drg"', rs)
+        self.assertIn("mount_slot", js)
+        self.assertIn("mount_slot", rs)
+        self.assertIn('"mount"', js)
+        self.assertIn('"mount"', rs)
+        self.assertIn('"breathe"', js)
+        self.assertIn('"breathe"', rs)
+        # breath is the only attack while mounted; disasters deal a dragon the
+        # SAME damage they deal a fighter (1x — no 2x multiplier on either judge)
+        self.assertIn("dragonRiding(t)) return false", js)
+        self.assertIn("|| p.dragon_rider", rs)
+        self.assertNotIn('source === "dis") dealt *= 2', js)
+        self.assertNotIn("dealt *= 2", js)
+        self.assertNotIn("dealt *= 2;", rs)
+        self.assertNotIn("if dis {\n                dealt *= 2;", rs)
+        # the Warden never hurts a dragon: laser / slam / grip skip the roster
+        self.assertIn("The Warden cannot hurt a dragon", js)
+        self.assertIn("The Warden cannot hurt a dragon", rs)
+        # gunfire always hurts a dragon — but a bot spends no shot on a summon
+        # while The Warden lives (the boss is the target), and a player's shot
+        # takes the nearer body: a dragon in front of the boss eats the bullet,
+        # one behind the boss does not.
+        self.assertIn("Gunfire always hurts a dragon", js)
+        self.assertIn("Gunfire always hurts a dragon", rs)
+        self.assertIn("var dh = dragonScanHit(e, d, end);", js)
+        self.assertIn("if let Some((di, th)) = self.dragon_scan_hit(o, d, reach)", rs)
+        self.assertIn("While The Warden lives a bot's bullet is for the boss alone", js)
+        self.assertIn("While The Warden lives a bot's bullet is for the boss alone", rs)
+        self.assertIn("The nearer body takes the bullet", js)
+        self.assertIn("The nearer body takes the bullet", rs)
+        self.assertIn("dhB.t < tW", js)
+        self.assertIn("th < wth", rs)
+        # a dragon death names what fell it: "dragon:<cause>" on both judges,
+        # and the feed says it as a sentence ("Your dragon fell to gunfire · You")
+        self.assertIn('var how = "dragon:" + cc;', js)
+        self.assertIn('format!("dragon:{cause}")', rs)
+        self.assertIn('fell to " + envLabel(f.dis)', js)
+        self.assertIn("dragonDown) kName = ", js)
+        self.assertIn("Your dragon fell to", js)
+        # ride the saddle: G / "interact" (never a taken bit — 1<<31 breaks JS).
+        # E is the Commons mount key; G is the Strike extra. Both land on "interact".
+        self.assertIn('keys: ["KeyG"]', js)
+        self.assertIn('["G", "mount / dismount dragon"]', js)
+        self.assertNotIn('dragonNearOrMine', js)
+        self.assertIn("DRAGON_SEAT", js)
+        self.assertIn("DRAGON_SEAT: f64", rs)
+        # the summons STAY after the boss: untaken ones roam and bite anyone,
+        # ridden ones stay under their rider. Only match teardown clears the roster.
+        self.assertIn("function dragonDismiss", js)
+        self.assertIn("fn dragon_dismiss", rs)
+        self.assertIn("the summons STAY", js)
+        self.assertIn("the summons STAY", rs)
+        self.assertIn("self.dragon_dismiss()", rs)  # called from Strike::end
+        # while the Warden lives a dragon hurts nobody (patrol only) and the
+        # Warden never hurts a dragon — but gunfire always can
+        self.assertIn("Gunfire always hurts a dragon", js)
+        self.assertIn("No spray can hit anyone while the boss is up", js)
+        self.assertIn("While the Warden lives a summons is a calm pet", js)
+        self.assertIn("While the Warden lives a summons is a calm pet", rs)
+        # bots claim a mount only after the boss
+        self.assertIn("if(cand && !V.warden) dragonMount", js)
+        # the Commons-style mount prompt
+        self.assertIn("hqpets-prompt", js)
+        self.assertIn("function dragonPrompt", js)
+        self.assertIn("G  Ride ", js)
+        # art: the SAME drake build as the Commons pet (games/hqpets.js wyvernModel),
+        # lazy-loaded the way ui/app/40-pets.js does; boxes only if that module is missing
+        self.assertIn("var DRAGON_PET", js)
+        self.assertIn('fire: "firedragon"', js)
+        self.assertIn('golden: "golddragon"', js)
+        self.assertIn('sc.src = "/games/hqpets.js"', js)
+        self.assertIn("function dragonPetsWant", js)
+        self.assertIn("dragonPetBuild(D) || buildDragon(D)", js)
+        self.assertIn("P.pose(Mo, st, at, quiet, null)", js)
+        # every beast carries its own health bar (canvas plate, like the player tag)
+        self.assertIn("function dragonHpPlate", js)
+        self.assertIn("function dragonHpBarSet", js)
+        self.assertIn("dragonHpBarSet(dp.userData.hpBar", js)
+        # the Commons +z facing: pet yaw is PI - the player's look yaw on both judges
+        self.assertIn("Math.PI - V.yaw", js)
+        self.assertIn("std::f64::consts::PI -", rs)
 
     def test_drones_and_the_grappling_gun(self):
         """Match flight drones + player-only zero-damage grapple (file-text twins)."""
@@ -690,6 +829,7 @@ class StrikeSync(unittest.TestCase):
            whole match. Must be `DISASTERS.indexOf(kind)`.
         """
         js = read(STRIKE_JS)
+        rs = read(STRIKE_RS)
         self.assertIn("function disKind(seed, salt, n)", js,
                       "disKind must exist (hashMatch's top-bit read collapses small counters)")
         self.assertIn("Math.imul(seed|0, 0x9e3779b9)", js,
@@ -706,6 +846,34 @@ class StrikeSync(unittest.TestCase):
         self.assertNotIn("Math.abs(V.me.y - pk.at[1]) > 1.2) return;",
                          js[js.find("MAP.pickups.forEach"):js.find("MAP.pickups.forEach") + 500],
                          "the 1.2 m Y window rejects every ground drop from a crate/ledge")
+        # a cluster of totems is taken like solo: square XZ reach, not a circle.
+        # hypot(1.1) is strictly smaller than the |dx|<=1.1 && |dz|<=1.1 box, so a
+        # diagonal sweep left corner totems standing and they flushed later in bulk.
+        self.assertIn("if(Math.abs(V.me.x - pk.at[0]) > 1.1 || Math.abs(V.me.z - pk.at[2]) > 1.1) return;",
+                      js[js.find("MAP.pickups.forEach"):js.find("MAP.pickups.forEach") + 500],
+                      "solo takes a totem on a square XZ reach")
+        self.assertIn("if (x - at[0]).abs() > PICK_R || (z - at[2]).abs() > PICK_R {", rs,
+                      "the judge takes a totem on the same square reach")
+        self.assertNotIn("hypot(z - at[2]) > PICK_R", rs,
+                         "no circular pickup reach — a walk-through takes the whole cluster")
+        # A live walk is believed at the body the player named: the judge's copy freezes
+        # on a speed-cap / canopy / token-bucket refusal, and the old 4 m leash to that
+        # frozen copy threw the claim away mid-walk ("I went through it and it was left
+        # behind"). The leash only binds a STALLED claim.
+        self.assertIn("pub const CLAIM_FRESH: f64 = 0.2", rs)
+        self.assertIn("pub const SPEED_CARRY: f64 = 12.0", rs)
+        self.assertIn("pub const CLAIM_R_MAX: f64 = 14.0", rs)
+        self.assertIn("let reach = (CLAIM_R + SPEED_CARRY * lag).min(CLAIM_R_MAX);", rs)
+        self.assertIn("if age <= CLAIM_FRESH {", rs)
+        # a respawn drops the old life's claim; every current-life frame rewrites it
+        self.assertIn("self.claim = None;", rs)
+        self.assertIn("p.claim = Some((xm, ym, zm, t));", rs)
+        # a claim naming a body outside the arena is never believed
+        self.assertIn("*cy > b[4] + 8.0", rs)
+        # MP lights the top-left chip like solo: liveEffects() builds it from V.taken,
+        # and only totemApply (solo) used to write it, so a taken totem showed nothing.
+        self.assertIn("V.taken = V.taken || {}; V.taken[knd] = t;", js)
+        self.assertIn("V.taken = V.taken || {}; V.taken[kind] = t;", js)
         # node: the spread over the real auto-disaster sequence must cover the roster
         if NODE:
             script = r"""
@@ -747,7 +915,7 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("R.addRift = function", js, "Rift openings must be painted")
         self.assertIn("if(R3 && R3.addRift) R3.addRift(rf)", js)
         self.assertIn("if(R3 && R3.addRift) R3.addRift(rfMP)", js)
-        self.assertIn("if(R3 && R3.addRift) R3.addRift(rfSnap)", js)
+        self.assertIn("if(R3.addRift) R3.addRift(rfSnap)", js, "the po snapshot paints through the painter (diffed, not repainted)")
         self.assertIn("(V.rifts || []).forEach", js, "2D map must show the rift pair")
         # 1b. The Rift is a STANDING portal pair the PLAYER walks through (user-reported:
         #     "1 purple circle in ground and nothing happens in that"). One ring in front
@@ -777,8 +945,15 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn('if((dis === "sandstorm" || dis === "absolutezero" || dis === "emp" || dis === "hurricane") && t >= dHitAt){', js)
         self.assertIn('var chipD = dis === "sandstorm" ? DD_SAND_DMG', js)
         self.assertIn('(dis === "hurricane" ? DD_WIND_DMG', js, "hurricane chip")
-        # hurricane must shove bots in solo too (it used to only shove you / MP players)
-        self.assertIn("shoveHB", js, "hurricane must shove solo bots")
+        # hurricane is a vortex: caught bodies orbit, lift and lose control
+        self.assertIn("inWindCatch(", js, "hurricane must spin caught bodies")
+        self.assertIn("DD_WIND_CATCH_R", js)
+        self.assertIn("DD_WIND_TOP", js)
+        self.assertIn("DD_WIND_SPIN", js)
+        self.assertIn("DD_WIND_LIFT", js)
+        self.assertIn("DD_WIND_CATCH", js)
+        # the grip is applied to you AND bots (it used to only shove you / MP players)
+        self.assertIn("ai.body.vortex", js, "hurricane must spin solo bots")
         # sandstorm is denser than the old 140-sprite wall (3.38.3 raised it to 420)
         self.assertIn("n = 420", js)
         # 3.38.3: every disaster paints a real scene, not a tint
@@ -936,9 +1111,9 @@ process.stdout.write(JSON.stringify(out));
                       "the client renews a short TTL off the snapshot, never Infinity")
         self.assertIn("if self.big_head_until > t { FLAG_BIGHEAD } else { 0 }", rs)
         # 7. it is on the PERSONAL roster in both languages (a joke power-up, not a disaster)
-        self.assertEqual(js.count('"king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
+        self.assertEqual(js.count('"king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];'), 3,
                          "all three JS drop rosters (totemSpawn / wardenLoot / nonDisTotems) name it")
-        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
+        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];'), 3,
                          "exactly the three personal rosters")
         self.assertIn("\"bighead\",", rs)
         self.assertIn("totemSpawn", js)
@@ -994,11 +1169,11 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("vic.danceUntil = 0; clearMarks(vic, \"disco\");", js)
         self.assertIn("V.danceUntil = 0;", js)
         # 7. personal drop roster in both languages, never a disaster kind
-        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
-                         "all three personal rosters end with Wave F")
+        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];'), 3,
+                         "all three personal rosters end with Wave G")
         self.assertIn("\"disco\",", rs)
         self.assertIn("\"bighead\", \"disco\",", rs, "TOTEM_KINDS carries it next to Big Head")
-        self.assertIn("pub const TOTEM_KINDS: [&str; 55]", rs, "the roster grew with Wave F")
+        self.assertIn("pub const TOTEM_KINDS: [&str; 60]", rs, "the roster grew with Wave G")
         kinds_blk = rs.split("TOTEM_KINDS")[1].split("];")[0]
         self.assertIn('"disco"', kinds_blk, "disco is one of TOTEM_KINDS")
         # 8. help text + status string present
@@ -1069,10 +1244,10 @@ process.stdout.write(JSON.stringify(out));
                           ("REVERSE", "8.0"), ("BLACKHOLE", "6.0"), ("ROULETTE", "10.0")):
             self.assertIn("pub const %s: f64 = %s;" % (name, val), rs, name)
         # 3. TOTEM_KINDS grew by six, in roster order, and the JS rosters match
-        self.assertIn("pub const TOTEM_KINDS: [&str; 55]", rs)
+        self.assertIn("pub const TOTEM_KINDS: [&str; 60]", rs)
         self.assertIn("\"banana\", \"lava\", \"goose\", \"reverse\", \"blackhole\", \"roulette\",", rs)
-        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];'), 3,
-                         "all three JS drop rosters (totemSpawn / wardenLoot / nonDisTotems) end with Wave F")
+        self.assertEqual(js.count('"bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];'), 3,
+                         "all three JS drop rosters (totemSpawn / wardenLoot / nonDisTotems) end with Wave G")
         # 4. every one of the six has a help line and a totemApply arm
         for kind, word in (("banana", "Banana peels scatter"), ("lava", "random patches of the floor turn to lava"),
                            ("goose", "An angry goose spawns"), ("reverse", "everyone's WASD is reversed"),
@@ -1128,6 +1303,151 @@ process.stdout.write(JSON.stringify(out));
         self.assertNotIn("HOLE_R * 8.0", rs)
         self.assertIn("pub const HOLE_REACH: f64 = 56.0;", rs)
 
+    def test_the_wave_g_trap_and_gadget_set_is_wired_on_both_sides(self):
+        """User ask: five more totems — Mini Turret (10s, drops turrets that auto-shoot
+        enemies in range), Explosive Barrels (instant, three big barrels fall from the
+        sky, 10x launcher blast, shoot one to detonate), Laser Grid (8s, tripwires that
+        kill on touch — jump over or go beside), Jump Pad (10s, three pads that launch
+        you sky-high) and Death Lottery (instant, one living enemy heals to full or
+        dies). Geometry constants are STRIKE-SHARED twins; the personal roster ends
+        with all five; the five ride TOTEM_KINDS and the drop tables. Numbers live in
+        backend/src/strike/tests.rs; this locks the twins."""
+        js = read(STRIKE_JS)
+        src = block()
+        rs = read(STRIKE_RS)
+        # 1. the geometry is one frozen set of numbers on both sides
+        for name, val, typ in (
+            ("TURRET_N", "3", "usize"), ("TURRET_HP", "60", "i64"),
+            ("TURRET_RANGE", "14.0", "f64"), ("TURRET_DMG", "8", "i64"),
+            ("TURRET_GAP", "0.7", "f64"), ("TURRET_R", "0.55", "f64"),
+            ("BARREL_N", "3", "usize"), ("BARREL_HP", "40", "i64"),
+            ("BARREL_R", "12.0", "f64"), ("BARREL_DMG", "750", "i64"),
+            ("BARREL_MIN", "250", "i64"), ("BARREL_DIRECT", "1200", "i64"),
+            ("BARREL_RAD", "0.7", "f64"), ("BARREL_FALL", "18.0", "f64"),
+            ("LASER_N", "8", "usize"), ("LASER_Y", "0.85", "f64"),
+            ("LASER_HALF", "0.32", "f64"), ("LASER_LEN", "12.0", "f64"),
+            ("LASER_CLEAR", "1.15", "f64"),
+            ("PAD_N", "3", "usize"), ("PAD_R", "1.6", "f64"),
+            ("PAD_LAUNCH", "22.0", "f64"), ("PAD_COOL", "2.5", "f64"),
+            ("LOTTERY_HEAL", "100", "i64"),
+        ):
+            self.assertIn("%s = %s" % (name, val), src, name)
+            self.assertIn("pub const %s: %s = %s;" % (name, typ, val), rs, name)
+        # 2. the windows
+        for kind, dur in (("turret", 10), ("laser", 8), ("jumppad", 10)):
+            self.assertIn("dur: %d," % dur, js, "TOTEMS.%s.dur" % kind)
+        for name, val in (("TURRET", "10.0"), ("LASER", "8.0"), ("JUMPPAD", "10.0"),
+                          ("BARREL", "0.0"), ("LOTTERY", "0.0")):
+            self.assertIn("pub const %s: f64 = %s;" % (name, val), rs, name)
+        # 3. TOTEM_KINDS carries all five in roster order
+        self.assertIn("pub const TOTEM_KINDS: [&str; 60]", rs)
+        self.assertIn('"turret", "barrel", "laser", "jumppad", "lottery",', rs)
+        kinds_blk = rs.split("TOTEM_KINDS")[1].split("];")[0]
+        for kind in ("turret", "barrel", "laser", "jumppad", "lottery"):
+            self.assertIn('"%s"' % kind, kinds_blk, kind + " is one of TOTEM_KINDS")
+        # 4. every one of the five has a help line and a totemApply arm
+        for kind, word in (("turret", "Drops 3 mini turrets"),
+                           ("barrel", "3 big explosive barrels crash down"),
+                           ("laser", "laser tripwires criss-cross"),
+                           ("jumppad", "Places 3 launch pads"),
+                           ("lottery", "Instant: picks one living enemy at random")):
+            self.assertIn(word, js, "TOTEM_HELP." + kind)
+            self.assertIn('kind === "%s"' % kind, js, "totemApply arm for " + kind)
+        # 5. the four world objects ride snapshot keys and get meshes
+        for key, fn in (("tr", "addTurret"), ("br", "addBarrel"),
+                        ("lg", "addLaser"), ("pd", "addPad")):
+            self.assertIn("m.%s" % key, js, "snapshot key %s" % key)
+            self.assertIn("R.%s" % fn, js, "mesh builder %s" % fn)
+            self.assertIn('"%s"' % key, rs, "the judge emits snapshot key %s" % key)
+        self.assertIn("pub turrets: Vec<Turret>", rs)
+        self.assertIn("pub barrels: Vec<Barrel>", rs)
+        self.assertIn("pub lasers: Vec<Laser>", rs)
+        self.assertIn("pub pads: Vec<JumpPad>", rs)
+        self.assertIn("self.turrets.push(", rs)
+        self.assertIn("self.barrels.push(", rs)
+        self.assertIn("self.lasers.push(", rs)
+        self.assertIn("self.pads.push(", rs)
+        self.assertIn("R.moveTurret", js)
+        self.assertIn("R.moveBarrel", js)
+        self.assertIn("R.moveLasers", js)
+        self.assertIn("R.movePads", js)
+        # 6. the shared geometry helpers are in the STRIKE-SHARED block (frozen)
+        for name in ("segDist2", "barrelBox", "turretBox"):
+            self.assertIn("function %s" % name, src, name)
+        for name in ("seg_dist2", "barrel_box", "turret_box"):
+            self.assertIn("fn %s" % name, rs, name)
+        self.assertIn("segDist2: segDist2", js, "FS must export the shared helpers")
+        self.assertIn("barrelBox: barrelBox", js)
+        self.assertIn("turretBox: turretBox", js)
+        # 7. barrel blast is 10x a launcher: DIRECT 1200, falloff 750->250 to BARREL_R
+        self.assertIn("if(dist < FS.DIRECT_R) dmg = FS.BARREL_DIRECT;", js)
+        self.assertIn("Math.round(FS.BARREL_DMG - (FS.BARREL_DMG - FS.BARREL_MIN) * (dist / FS.BARREL_R))", js)
+        self.assertIn("if dist < DIRECT_R {", rs)
+        self.assertIn("BARREL_DIRECT", rs)
+        self.assertIn(".round() as i64", rs, "the falloff rounds like Math.round")
+        # 8. laser trip: only when the body is BELOW LASER_CLEAR ABOVE THE DECK
+        #    (jumping over saves you). The beams are planted on the deck under the
+        #    body, so the gate is height-above-ground — never an absolute world y
+        #    (a walker on the dockyard's raised centre stands at y=3.5).
+        self.assertIn("if(((B.y || 0) - holeGroundY(B.x, B.z)) >= FS.LASER_CLEAR) return;", js)
+        self.assertIn("if v.y - ground_y(self.map(), v.x, v.z) >= LASER_CLEAR {", rs)
+        self.assertIn("segDist2(B.x, B.z, LG.ax, LG.az, LG.bx, LG.bz)", js)
+        self.assertIn("seg_dist2(v.x, v.z, lz.ax, lz.az, lz.bx, lz.bz)", rs)
+        self.assertIn('self.env_kill(j, "laser", t);', rs)
+        self.assertIn('endBotLife(null, P, t, false, "laser");', js)
+        self.assertIn('endBotLife(null, null, t, false, "laser");', js,
+                      "YOUR laser death goes through endBotLife, the real death site")
+        # 9. jump pad: PAD_LAUNCH on the body, PAD_COOL cool-down, air let-up so the
+        #    judge buys the flight (PAD_COOL must cover the 2*PAD_LAUNCH/GRAVITY arc)
+        self.assertIn("B.vy = FS.PAD_LAUNCH;", js)
+        self.assertIn("B.padCool = t + FS.PAD_COOL;", js)
+        self.assertIn("p.pad_cool = t + PAD_COOL;", rs)
+        self.assertIn("b.body.vy = PAD_LAUNCH;", rs)
+        self.assertIn("let pad_let_up = p.pad_cool > t;", rs,
+                      "the judge buys the pad flight like a wing")
+        self.assertIn("if(((B.y || 0) - holeGroundY(B.x, B.z)) > 0.35) return;", js,
+                      "the pad gate is height above the deck, not an absolute y")
+        self.assertIn("p.y - ground_y(m, p.x, p.z) > 0.35", rs,
+                      "the judge's pad gate is height above the deck (map hoisted out of the mut loop)")
+        self.assertGreaterEqual(2.5, 2.0 * 22.0 / 18.0,
+                                "PAD_COOL covers the PAD_LAUNCH arc (2*22/18 = 2.44s)")
+        # 10. turret fire: nearest ENEMY in TURRET_RANGE, TURRET_DMG, every TURRET_GAP
+        self.assertIn("if(P.team === TU.team) return;", js, "a turret never shoots a team-mate")
+        self.assertIn("if v.dead || v.gone || v.team == tteam {", rs, "nor a dead body")
+        self.assertIn("FS.TURRET_DMG", js)
+        self.assertIn("TURRET_DMG", rs)
+        self.assertIn("t < (TU.next || 0)", js)
+        self.assertIn("TURRET_GAP", rs)
+        # 11. destructible hits: turret or barrel eats the bullet in fire() / bot_fire()
+        self.assertIn("function wavegRay(", js)
+        self.assertIn("function wavegHit(", js)
+        self.assertIn("function barrelBlast(", js)
+        self.assertIn("fn waveg_ray(", rs)
+        self.assertIn("fn waveg_hit(", rs)
+        self.assertIn("fn barrel_blast(", rs)
+        self.assertIn("self.waveg_ray(o, d, reach)", rs)
+        self.assertIn("wavegRay(e, d, end)", js)
+        # 12. death lottery: one living ENEMY, heal to full or die — never Math.random
+        self.assertIn("P.team !== V.team", js, "the lottery only picks enemies")
+        self.assertIn("team != taker_team", rs, "nor team-mates")
+        self.assertIn("FS.LOTTERY_HEAL", js)
+        self.assertIn("LOTTERY_HEAL", rs)
+        self.assertIn('self.env_kill(pick, "lottery", t);', rs)
+        self.assertIn('endBotLife({uid: myId()', js)
+        self.assertIn("hash_match(seed, 3) < 0.5", rs, "the flip is deterministic")
+        self.assertIn("hashMatch(lseed2, 3) < 0.5", js)
+        self.assertNotIn("Math.random(", re.sub(r"/\*.*?\*/", "", re.sub(r"//.*?$", "", js, flags=re.M), flags=re.S))
+        # 13. ENV_NAMES covers all four kill causes (the fifth — jumppad — never kills)
+        for cause, label in (("turret", "a mini turret"), ("barrel", "an explosive barrel"),
+                             ("laser", "the laser grid"), ("lottery", "the death lottery")):
+            self.assertIn('"%s": "%s"' % (cause, label), js, "ENV_NAMES." + cause)
+        # 14. barrels fall out of the sky and land
+        self.assertIn("BO.vy = (BO.vy || 0) - 28 * dt;", js)
+        self.assertIn("bo.vy -= 28.0 * dt;", rs)
+        self.assertIn("BARREL_FALL", js)
+        self.assertIn("BARREL_FALL", rs)
+        self.assertIn("pub vy: f64,", rs, "Barrel carries a fall velocity")
+
     def test_lightning_is_zigzag_and_near_strikes_hit_harder(self):
         """User ask: lightning must zig-zag (not a straight line), and the blast must
         bite harder near the bolt. Every disaster also needs a fitting non-HP impact
@@ -1162,6 +1482,11 @@ process.stdout.write(JSON.stringify(out));
             ("DD_TOXIC_SLOW", "0.75"),
             ("DD_SINK_SLOW", "0.65"),
             ("DD_WIND_SLOW", "0.7"),
+            ("DD_WIND_CATCH_R", "3.6"),
+            ("DD_WIND_TOP", "4.2"),
+            ("DD_WIND_LIFT", "3.2"),
+            ("DD_WIND_SPIN", "2.6"),
+            ("DD_WIND_CATCH", "1.6"),
             ("DD_SLOW_MULT", "0.65"),
             ("DD_SAND_SCATTER", "1.2"),
             ("DD_WIND_SCATTER", "2.4"),
@@ -1173,6 +1498,15 @@ process.stdout.write(JSON.stringify(out));
         self.assertIn("V.slowUntil = Math.max(V.slowUntil|0, t + DD_QUAKE_SLOW)", js)
         self.assertIn("p.blind_until = t + DD_THUNDER_BLIND", rs)
         self.assertIn("p.slow_until = t + DD_QUAKE_SLOW", rs)
+        # hurricane vortex: the Rust twin flies the same orbit
+        self.assertIn("fn wind_catch(", rs)
+        self.assertIn("vortex_until", rs)
+        self.assertIn("Self::wind_catch(", rs)
+        self.assertIn("DD_WIND_CATCH_R", rs)
+        self.assertIn("DD_WIND_TOP", rs)
+        self.assertIn("DD_WIND_SPIN", rs)
+        self.assertIn("DD_WIND_LIFT", rs)
+        self.assertIn("DD_WIND_CATCH", rs)
         # wild aim / grit / EMP scatter on every shot (solo fire + MP judge)
         self.assertIn("disAimScatter(t)", js)
         self.assertIn("fn disaster_scatter(&self, t: f64) -> f64", rs)

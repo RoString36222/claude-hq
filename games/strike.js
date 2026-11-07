@@ -38,8 +38,13 @@ var FS = (function(){
   var STAMINA_MAX = 100, STAMINA_DRAIN = 12.5, STAMINA_REGEN = 14, SPRINT_SLOW = 0.015;
   // v4: respawns are parachute drops — a spawn lifts you to this height and you steer a
   // gentle glide down for up to DROP_TIME seconds (the Arena too accepts "drop" hints and
-  // relaxes its action-air guard while a drop still has legs)
-  var DROP_HEIGHT = 11.0, DROP_TIME = 3.0, DROP_SINK = 2.8, DROP_DRIFT = 4.5;
+  // relaxes its action-air guard while a drop still has legs). SINK is tuned so
+  // DROP_HEIGHT/SINK (≈2.89 s) lands inside DROP_TIME: the steer window, the air let-up
+  // and the drop shield must all still be up at touchdown. A sink that outlasted the
+  // window left the glider exposed mid-air — a camper then deleted them and the next
+  // life dropped again (the "sky loop"). DROP_LAND_GRACE is the backstop past DROP_TIME
+  // before a glide that never touched down is abandoned and becomes a normal fall.
+  var DROP_HEIGHT = 11.0, DROP_TIME = 3.0, DROP_SINK = 3.8, DROP_DRIFT = 4.5, DROP_LAND_GRACE = 1.5;
   var JUMP_V = 6.5, FALL_MAX = 25.0, BODY_R = 0.4, BODY_H = 1.4, HEAD_R = 0.25, HEAD_TOP = 1.9;
   // the Big Head totem's head scale: the head AABB grows OUTWARD and UPWARD only
   // (never down into the body, so a chest shot cannot become a headshot). Twin:
@@ -86,6 +91,17 @@ var FS = (function(){
   // cover the whole arena (the help promises "everything and everyone"), not a bubble.
   var HOLE_R = 2.2, HOLE_PULL = 14.0, HOLE_REACH = 56.0;
   var ROULETTE_GAP = 2.0;
+  // ---- Wave G: the trap-and-gadget totems (Mini Turret / Explosive Barrels /
+  // Laser Grid / Jump Pad / Death Lottery). Every number here is judged on both
+  // sides. Twins: the same names in backend/src/strike.rs.
+  var TURRET_N = 3, TURRET_HP = 60, TURRET_RANGE = 14.0, TURRET_DMG = 8, TURRET_GAP = 0.7;
+  var TURRET_R = 0.55;          // the body a bullet has to find
+  var BARREL_N = 3, BARREL_HP = 40, BARREL_R = 12.0, BARREL_DMG = 750, BARREL_MIN = 250, BARREL_DIRECT = 1200;
+  var BARREL_RAD = 0.7;         // the body a bullet has to find
+  var BARREL_FALL = 18.0;       // the sky it drops from
+  var LASER_N = 8, LASER_Y = 0.85, LASER_HALF = 0.32, LASER_LEN = 12.0, LASER_CLEAR = 1.15;
+  var PAD_N = 3, PAD_R = 1.6, PAD_LAUNCH = 22.0, PAD_COOL = 2.5;
+  var LOTTERY_HEAL = 100;
   var MISSILE_V = 22.0, MISSILE_G = 6.0, MISSILE_TTL = 3.5, BLAST_R = 4.0, DIRECT_R = 0.8;
   // blast damage by distance from the explosion (direct hit / falloff to BLAST_R)
   function blastDamage(dist, direct){
@@ -129,6 +145,22 @@ var FS = (function(){
     for(var i = 0; i < m.boxes.length; i++){
       var b = m.boxes[i];
       if(x + R > b[0] && x - R < b[3] && y + H > b[1] && y < b[4] && z + R > b[2] && z - R < b[5] && (best === null || b[4] > best)) best = b[4];
+    }
+    return best;
+  }
+  // The deck under a canopy: the top of the highest box whose XZ covers (x, z), or
+  // null when nothing is there at all (a real floor gap — keep sinking into the void
+  // clock). topUnder needs the body to already overlap a box, so a probe from
+  // DROP_HEIGHT never sees the floor and the whole descent sinks below the map;
+  // this scans the boxes by XZ alone. Unlike holeGroundY it does NOT default to 0,
+  // so a drop over water cannot plant the body on a floor that isn't. Twin: deck_under
+  // in backend/src/strike.rs.
+  function deckUnder(m, x, z){
+    var best = null;
+    if(!m || !m.boxes) return best;
+    for(var i = 0; i < m.boxes.length; i++){
+      var b = m.boxes[i];
+      if(x > b[0] - 0.6 && x < b[3] + 0.6 && z > b[2] - 0.6 && z < b[5] + 0.6 && (best === null || b[4] > best)) best = b[4];
     }
     return best;
   }
@@ -425,6 +457,24 @@ var FS = (function(){
       {a: [xe, y, zs],  b: [xs, y, ze],  s: 3.7}
     ];
   }
+  // squared distance from a ground point to a 2D segment (laser tripwire).
+  // Twin: seg_dist2 in backend/src/strike.rs.
+  function segDist2(px, pz, ax, az, bx, bz){
+    var dx = bx - ax, dz = bz - az, l2 = dx*dx + dz*dz;
+    var u = l2 > 0 ? ((px - ax)*dx + (pz - az)*dz) / l2 : 0;
+    u = u < 0 ? 0 : (u > 1 ? 1 : u);
+    var qx = ax + dx*u - px, qz = az + dz*u - pz;
+    return qx*qx + qz*qz;
+  }
+  // the body a bullet has to find. Twin: barrel_box / turret_box.
+  function barrelBox(b){
+    return [b[0]-BARREL_RAD, (b[1]||0) - BARREL_RAD, b[2]-BARREL_RAD,
+            b[0]+BARREL_RAD, (b[1]||0) + BARREL_RAD*1.6, b[2]+BARREL_RAD];
+  }
+  function turretBox(tu){
+    return [tu[0]-TURRET_R, (tu[1]||0) - TURRET_R, tu[2]-TURRET_R,
+            tu[0]+TURRET_R, (tu[1]||0) + TURRET_R*1.8, tu[2]+TURRET_R];
+  }
   // first match-drone hit along the ray: [dist, index] or null. Twin: drone_hit.
   function droneHit(o, d, routes, t, maxd){
     var best = null, bi = -1;
@@ -440,11 +490,12 @@ var FS = (function(){
           LEAP_MULT: LEAP_MULT, SPEED_MULT: SPEED_MULT, WING_TOP: WING_TOP, WING_RISE: WING_RISE, WING_SINK: WING_SINK, WING_DRIFT: WING_DRIFT,
           STAMINA_MAX: STAMINA_MAX, STAMINA_DRAIN: STAMINA_DRAIN, STAMINA_REGEN: STAMINA_REGEN, SPRINT_SLOW: SPRINT_SLOW,
           DROP_HEIGHT: DROP_HEIGHT, DROP_TIME: DROP_TIME, DROP_SINK: DROP_SINK, DROP_DRIFT: DROP_DRIFT,
+          DROP_LAND_GRACE: DROP_LAND_GRACE,
           FALL_MAX: FALL_MAX, BODY_R: BODY_R, BODY_H: BODY_H, HEAD_R: HEAD_R, HEAD_TOP: HEAD_TOP,
           BIG_HEAD_S: BIG_HEAD_S, WEAPONS: WEAPONS,
           VOID_Y: VOID_Y, VOID_SECS: VOID_SECS, inVoid: inVoid,
           markDamage: markDamage,
-          compileMap: compileMap, overlaps: overlaps, topUnder: topUnder, move: move, dirOf: dirOf, mb32: mb32,
+          compileMap: compileMap, overlaps: overlaps, topUnder: topUnder, deckUnder: deckUnder, move: move, dirOf: dirOf, mb32: mb32,
           spreadOf: spreadOf, rayBox: rayBox, rayMap: rayMap, hitBoxes: hitBoxes, rayPlayer: rayPlayer, targetAt: targetAt,
           buildNav: buildNav, navNext: navNext, losMap: losMap,
           LAUNCH: LAUNCH, MISSILE_V: MISSILE_V, MISSILE_G: MISSILE_G, MISSILE_TTL: MISSILE_TTL,
@@ -460,6 +511,11 @@ var FS = (function(){
           LAVA_ZONES: LAVA_ZONES, LAVA_R: LAVA_R, LAVA_HOLD: LAVA_HOLD, LAVA_DMG: LAVA_DMG, LAVA_LAUNCH: LAVA_LAUNCH,
           GOOSE_SPEED: GOOSE_SPEED, GOOSE_HIT_R: GOOSE_HIT_R, GOOSE_DMG: GOOSE_DMG, GOOSE_KNOCK: GOOSE_KNOCK,
           HOLE_R: HOLE_R, HOLE_PULL: HOLE_PULL, HOLE_REACH: HOLE_REACH, ROULETTE_GAP: ROULETTE_GAP,
+          TURRET_N: TURRET_N, TURRET_HP: TURRET_HP, TURRET_RANGE: TURRET_RANGE, TURRET_DMG: TURRET_DMG, TURRET_GAP: TURRET_GAP, TURRET_R: TURRET_R,
+          BARREL_N: BARREL_N, BARREL_HP: BARREL_HP, BARREL_R: BARREL_R, BARREL_DMG: BARREL_DMG, BARREL_MIN: BARREL_MIN, BARREL_DIRECT: BARREL_DIRECT, BARREL_RAD: BARREL_RAD, BARREL_FALL: BARREL_FALL,
+          LASER_N: LASER_N, LASER_Y: LASER_Y, LASER_HALF: LASER_HALF, LASER_LEN: LASER_LEN, LASER_CLEAR: LASER_CLEAR,
+          PAD_N: PAD_N, PAD_R: PAD_R, PAD_LAUNCH: PAD_LAUNCH, PAD_COOL: PAD_COOL, LOTTERY_HEAL: LOTTERY_HEAL,
+          segDist2: segDist2, barrelBox: barrelBox, turretBox: turretBox,
           grappleRoutes: grappleRoutes, droneHit: droneHit};
 })();
 /* STRIKE-SHARED END */
@@ -887,6 +943,14 @@ var TOTEMS = {mole:   {hue: "#e0b325", n: "Mole",      dur: 8,  c: 0xe0b325},
               reverse:   {hue: "#74c0fc", n: "Reverse Controls", dur: 8, c: 0x74c0fc},
               blackhole: {hue: "#5f3dc4", n: "Black Hole", dur: 6,  c: 0x5f3dc4},
               roulette:  {hue: "#f783ac", n: "Weapon Roulette", dur: 10, c: 0xf783ac},
+              // ---- Wave G: the trap-and-gadget set (turrets / barrels / lasers /
+              // jump pads / death lottery). Personal takes; the objects stay until
+              // they expire or someone shoots them down. ----
+              turret:    {hue: "#4dabf7", n: "Mini Turret",       dur: 10, c: 0x4dabf7},
+              barrel:    {hue: "#ff6b6b", n: "Explosive Barrels", dur: 0,  c: 0xff6b6b},
+              laser:     {hue: "#ff2d95", n: "Laser Grid",        dur: 8,  c: 0xff2d95},
+              jumppad:   {hue: "#69db7c", n: "Jump Pad",          dur: 10, c: 0x69db7c},
+              lottery:   {hue: "#ffd43b", n: "Death Lottery",     dur: 0,  c: 0xffd43b},
               // ---- Wave D: Arena Disasters (both sides suffer, the taker too) ----
               sandstorm:   {hue: "#d8bc8c", n: "Sandstorm",       dur: 12, c: 0xd8bc8c},
               meteorshower:{hue: "#d9480f", n: "Meteor Shower",   dur: 10, c: 0xd9480f},
@@ -937,17 +1001,22 @@ var TOTEM_HELP = {mole:   "Charms an enemy bot for 8s: it shoots its own team, a
                   king: "For 15s your whole side is marked as royalty: more reserve ammo and faster reloads.",
                   radarjam: "For 10s your team vanishes from the enemy radar and plants fake blips.",
                   bighead: "For 10s EVERY head in the arena doubles — yours included. Headshots get easy; dignity does not survive.",
-                  disco: "For 8s everyone but you breaks into a disco dance — both teams, bots included. They can't shoot, they can only dance. You keep your gun.",
+                  disco: "For 8s everyone but you breaks into a disco dance — both teams, bots included, and The Warden too if it is up. They can't shoot, they can only dance. You keep your gun.",
                   banana: "Banana peels scatter across the arena for 10s. Anyone stepping on one slips, spins and slides forward — bots included.",
                   lava: "For 8s random patches of the floor turn to lava. Stand on one too long and it launches you up and burns you. Get to higher ground to save yourself.",
                   goose: "An angry goose spawns for 10s and chases the nearest player at top speed. If it catches you, it headbutts you for 18 and knocks you flying.",
                   reverse: "For 8s everyone's WASD is reversed: W moves backward, A moves right. Bots get the same treatment.",
                   blackhole: "A tiny black hole opens at the centre of the arena for 6s and sucks everything and everyone toward it.",
                   roulette: "For 10s every player's weapon randomly switches every 2 seconds. Magazines are refilled on each switch. Bots too.",
+                  turret: "Drops 3 mini turrets for 10s. They track and shoot enemies in range for small damage — shoot them down first (they have 60 hp).",
+                  barrel: "Instant: 3 big explosive barrels crash down from the sky. Shoot one and it goes up in a 12 m blast that hits 10× a launcher — and chains the next barrel.",
+                  laser: "For 8s laser tripwires criss-cross the arena. Touch one and you die. Jump clean over the beam (or walk beside it) to survive.",
+                  jumppad: "Places 3 launch pads for 10s. Step on one and it throws you sky-high. Anyone can use them — friends too.",
+                  lottery: "Instant: picks one living enemy at random. They either heal to full or drop dead on the spot. No refunds.",
                   // ---- Wave D: Arena Disasters (one line each; everyone suffers) ----
                   sandstorm: "DISASTER: 12s dust wall. The whole map disappears into a sandstorm — sprint drains twice as fast, bots lose half their vision, shots scatter in the grit, and it chips 3 hp a second.",
                   meteorshower: "DISASTER: 10s fire from the sky. Meteors streak down across the map; a glowing circle warns 1s ahead. Get under a shed roof — overhead cover stops it. Near the crater it bites harder and the flash blinds.",
-                  hurricane: "DISASTER: 10s. A giant wind column walks the whole map and shoves anyone it reaches. Loose footing (you slow), wild aim (you and bots spray), and it chips 3 hp a second.",
+                  hurricane: "DISASTER: 10s. A giant wind column walks the whole map. Step inside and it takes you: lifted into the air and spun around the core with no way to walk out. Wild aim (you and bots spray), and it chips 3 hp a second.",
                   thunder: "DISASTER: 8s. Zig-zag lightning bolts slam the map from the sky — flash, then a blast. Stand under one and it hits harder and blinds you. Shed roofs stop it.",
                   earthquake: "DISASTER: 8s. The whole arena shakes and the floor erupts in cracks and dust. Near a crack it hits harder and throws your step (you slow).",
                   shockring: "DISASTER: one huge expanding ring from the centre, visible across the map. It knocks, hurts and briefly blinds everyone it crosses once. Jumping or cover softens it.",
@@ -965,7 +1034,7 @@ var DIS_HOLD = {sandstorm: 12, meteorshower: 10, hurricane: 10, thunder: 8, eart
 // what the banner says WHILE the disaster is tearing up the map (warn already says INCOMING)
 var DIS_LIVE = {sandstorm: "DUST WALL — visibility crushed",
                 meteorshower: "FIRE FROM THE SKY — get under a roof",
-                hurricane: "WIND COLUMN — it will shove you",
+                hurricane: "WIND COLUMN — it will pick you up and spin you",
                 thunder: "LIGHTNING STRIKES — roofs stop it",
                 earthquake: "THE FLOOR IS BREAKING",
                 shockring: "SHOCKWAVE EXPANDING",
@@ -984,6 +1053,13 @@ var DD_TOXIC_CHIP_DMG = 3;   // the green gas fills the arena — everyone chips
 
 var DD_SINK_R = 4.5, DD_SINK_DMG = 12, DD_SINK_PULL = 4;
 var DD_WIND_R = 6, DD_WIND_PUSH = 7.5, DD_WIND_DMG = 3;
+// Hurricane vortex: a caught body is taken up and spun around the column with no
+// way to walk out. Twin: DD_WIND_CATCH_* in strike.rs.
+var DD_WIND_CATCH_R = 3.6;   // the orbit it settles onto
+var DD_WIND_TOP = 4.2;       // how high the updraught holds you
+var DD_WIND_LIFT = 3.2;      // metres a second, on the way up
+var DD_WIND_SPIN = 2.6;      // radians a second around the column
+var DD_WIND_CATCH = 1.6;     // seconds the grip holds after you leave the column
 // exposure bites for the three "modifier" disasters — every disaster must have a
 // visual AND an impact (sandstorm grit / frostbite / EMP overload / hurricane blast).
 	// Twin: DD_*_DMG in strike.rs.
@@ -1026,11 +1102,12 @@ var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake 
 	var WARDEN_CKPT = 3;
 	// silhouette scale: the boss (and its hit volumes) are 3× the first cut
 	var WARDEN_SCALE = 3.0;
-	// hit volumes: (half-width, half-depth, y0, y1) — already × WARDEN_SCALE
+	// hit volumes: (half-width, half-depth, y0, y1) — already × WARDEN_SCALE,
+	// measured from the deck under the boss (W.y), never from y=0
 	var WARDEN_BOX_WAIST = [5.4, 3.6, 0.0, 4.8];
 	var WARDEN_BOX_CHEST = [6.6, 3.9, 4.8, 11.4];
 	var WARDEN_BOX_HEAD = [2.7, 2.7, 11.4, 15.6];
-	var WARDEN_BOX_ARM = [1.8, 1.8, 5.4, 15.0];
+	var WARDEN_BOX_ARM = [1.8, 1.8, 0.0, 15.0];   // hangs to the deck: the fist rests on it
 	var WARDEN_ARM_X = 8.7;
 	var WARDEN_ARM_DMG_MULT = 0.35;
 	var WARDEN_ARM_HP = 2000;
@@ -1050,21 +1127,76 @@ var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake 
 	var WARDEN_CK1_PUSH = 12.0;
 	var WARDEN_SLAB_WIRE = 0.9;
 	var WARDEN_CHECK_NAMES = ["", "I", "II", "III"];
-	// aim / LOS probe heights (arm, chest, waist) and the laser-eye origin.
-	// Never prefer the head — it is no weak point and must not be the default aim.
+	// aim / LOS probe heights (arm, chest, waist) and the laser-eye origin, all
+	// measured from the deck under the boss. Never prefer the head — it is no weak
+	// point and must not be the default aim.
 	var WARDEN_SEE_HEAD = 13.5;
 	var WARDEN_SEE_CHEST = 7.8;
 	var WARDEN_SEE_WAIST = 3.6;
 	var WARDEN_SEE_ARM = 10.2;
+	// ---- The Warden's dragons ----
+	// When the boss rises, six elemental dragons land around the arena. Walk up to
+	// one and press G (interact) to mount it; G again sends you down. While it is
+	// untaken it roams the ground and bites any fighter that gets close. A rider's
+	// ONLY attack is the breath — the guns are stowed. Gunfire always hurts a
+	// dragon, and what a disaster deals them is doubled. The Warden cannot hurt a
+	// dragon at all — only disasters and gunfire bring one down mid-fight. There is
+	// no out-of-bounds on a dragon: the sky is open, fly anywhere.
+	var WARDEN_DRAGON_N = 6;
+	// the elemental roster, Fire → Golden.
+	var WARDEN_DRAGON_TIERS = ["fire", "crystal", "storm", "ice", "shadow", "golden"];
+	var DRAGON_HP = 300;           // fat enough to survive a walk-up (bots no longer shred them)
+	var DRAGON_BREATH_DPS = 30;      // damage per second the breath deals
+	var DRAGON_BREATH_SECS = 4.0;    // how long one spray lasts
+	var DRAGON_INHALE_SECS = 4.0;    // the reload between sprays
+	var DRAGON_BREATH_LEN = 15.0;    // how far the breath reaches (a widening cone)
+	var DRAGON_BREATH_W = 2.2;       // its half-width at the tip
+	var DRAGON_SPEED = 8.0;          // rider's cruise speed (between run and sprint)
+	// Commons flight feel (games/hqpetride.js VEHICLES.dragon / subFly), paced for an
+	// 80 m arena and kept under the referee's rider caps (DRAGON_SPEED * 1.35 across
+	// and up; FALL_MAX holds the dive). W/S hold a speed, Space climbs on big beats,
+	// Shift dives and trades height for speed, neither glides (wings spread, sinking)
+	// or — slow — hovers. Client feel only: the judge never reads these.
+	var DRAGON_FLY = {
+	  top: 10.0, cruise: 8.0, hover: 3.0, acc: 6.0, dec: 8.0,
+	  climb: 5.5, sink: 4.0, dive: 12.0, diveGain: 2.4, glide: 1.1,
+	  yawR: 1.0, yawHover: 1.8, bank: 0.6
+	};
+	var DRAGON_ROAM_SPEED = 3.0;     // an untaken dragon's walk
+	var DRAGON_BITE_R = 2.4, DRAGON_BITE_DMG = 14, DRAGON_BITE_CD = 1.4;
+	var DRAGON_CAT = 2.0;            // reserved — a dragon has no map edge or ceiling
+	var DRAGON_MOUNT_R = 6.0;        // how close you must be to press G (the body is long)
+	// the HUD pill lights up from further out than the mount itself, so a new player
+	// sees "G  Ride fire" while walking up (the world-space plate on the beast covers
+	// the rest). The bind still needs DRAGON_MOUNT_R.
+	var DRAGON_PROMPT_R = 16.0;
+	var DRAGON_BOT_MOUNT = 12.0;     // a bot claims an idle dragon after this long
+	// rider's feet (the camera adds FS.EYE 1.6). The pet saddle sits at ~0.72 × DRAGON_ART_S,
+	// so this keeps your eyes on the saddle whatever battle size the art uses.
+	var DRAGON_SEAT = 0.42;
+	// 3rd-person ride camera (the Commons chase framing, games/camrig.js dragon: backMul 2.3,
+	// upMul 1.6 on a chase seat of back 7 / up 3.8). Tight enough that the beast fills the
+	// frame over its own shoulders instead of sitting as a distant speck — 7.5 m at FOV 75
+	// reads a ~4 m tall mount at about a third of the screen. Sits behind your look (the
+	// breath aims down it) and restores to first-person the moment you step off. Client art
+	// only — no judge twin.
+	var DRAGON_CAM_BACK = 7.5, DRAGON_CAM_UP = 3.0;
 	// kill feed: keep causes readable long enough to see how you died
 	var FEED_TTL = 8;
 	var FEED_MAX = 6;
-	// env kill causes that are not totems (twin of the Rust `dis` strings)
+	// env kill causes that are not totems (twin of the Rust `dis` strings).
+	// "dragon" is a BITE (a roaming mount ate you) — never "your dragon", which
+	// used to print as "The map · your dragon · You" and told you nothing. A
+	// mount that fell and took you with it arrives as "dragon:<cause>" instead.
 	var ENV_NAMES = {
 	  "warden": "The Warden",
 	  "warden-slam": "arm slam",
 	  "warden-laser": "laser eyes",
-  "warden-grip": "gravity grip",
+	  "warden-grip": "gravity grip",
+	  "dragon": "a dragon",
+	  "dragon-disaster": "a disaster",
+	  "dragon-oob": "out of bounds",
+	  "dragon-breath": "dragon breath",
 	  "sandstorm": "Sandstorm",
 	  "meteorshower": "Meteorshower",
 	  "hurricane": "Hurricane",
@@ -1074,7 +1206,11 @@ var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake 
 	  "toxicfog": "Toxic Fog",
 	  "absolutezero": "Absolute Zero",
 	  "sinkhole": "Sinkhole",
-	  "emp": "EMP"
+	  "emp": "EMP",
+	  "turret": "a mini turret",
+	  "barrel": "an explosive barrel",
+	  "laser": "the laser grid",
+	  "lottery": "the death lottery"
 	};
 // True when a solid slab sits overhead — a shed roof, a container top, a catwalk.
 // This is the cover that keeps an overhead impact (Meteor Shower, Thunder) off you.
@@ -1155,12 +1291,15 @@ var HOLE_VIS = 6.0;
 var DIS_SLOTS = 2, DIS_GAP_DROP = 16, DIS_FIRST_DROP = 12;
 var KEYS = [["W A S D / stick", "move"], ["mouse / right stick", "look"], ["click / RT / F", "fire"], ["R / X", "reload"],
             ["Shift / stick click", "sprint"], ["Q / E", "lean to peek"], ["right-click or `~ / LT", "scope in"], ["1 2 3 4 5 / wheel / Tab", "weapon"], ["Space / A", "jump"],
-            ["B / Back", "scores"], ["I", "item guide"], ["H", "hide these keys"], ["Esc", "release the mouse"]];
+            ["G", "mount / dismount dragon"], ["B / Back", "scores"], ["I", "item guide"], ["H", "hide these keys"], ["Esc", "release the mouse"]];
 var BUTTONS = {w1: {keys: ["Digit1"]}, w2: {keys: ["Digit2"]}, w3: {keys: ["Digit3"]}, w4: {keys: ["Digit4"]}, w5: {keys: ["Digit5"]}, swap: {keys: [], pad: [3]}, shoot: {keys: ["KeyF"]},
                trig: {keys: [], pad: [7]}, peekL: {keys: ["KeyQ"], pad: [14]}, peekR: {keys: ["KeyE"], pad: [15]}, score: {keys: ["KeyB"], pad: [8]},
                items: {keys: ["KeyI"], pad: [2]},
                sprint: {keys: ["ShiftLeft", "ShiftRight"], pad: [10]},
                wheel: {keys: ["Tab"]},
+               // mount / dismount the nearest idle dragon (twin: "mount" op in strike.rs).
+               // G only — E stays lean-to-peek.
+               interact: {keys: ["KeyG"], pad: [1]},
                // scope in: hold the right mouse button, or (trackpad) the `~ key above Tab; gamepad LT works too
                aim: {keys: ["Backquote"], pad: [6], mouse: 2}};
 // weapon "wheel" (hold Tab): emoji glyphs for the slots, in FS.WEAPONS order
@@ -1249,6 +1388,35 @@ function mapNav(){
 function mapNavNext(x, z, tx, tz, y, ty){
   return MAP ? FS.navNext(MAP, x, z, tx, tz, mapWps(), mapNav(), y, ty) : [tx, tz];
 }
+// the deck height at a point: the top of the highest box under it (0 if none).
+// FS.topUnder probes a full player body, so a probe at deck level never sees a
+// thin platform — this scans the boxes directly and takes the top. Used to plant
+// the Black Hole and The Warden ON the deck (the dockyard centre is a raised
+// platform, not y=0). Twin: ground_y in backend/src/strike.rs.
+function holeGroundY(x, z){
+  var top = 0;
+  if(!MAP || !MAP.boxes) return top;
+  for(var i = 0; i < MAP.boxes.length; i++){
+    var b = MAP.boxes[i];
+    if(x > b[0] - 0.6 && x < b[3] + 0.6 && z > b[2] - 0.6 && z < b[5] + 0.6 && b[4] > top) top = b[4];
+  }
+  return top;
+}
+// The Warden's plant height. It is NOT the platform top: the golem's skirt is 18.6 m
+// wide and the dockyard's raised centre is only 8 m across, so parking the mesh on the
+// platform leaves most of the skirt hanging in mid-air — the "floating" look. Plant the
+// base at the lowest ground under the skirt's footprint, so the whole silhouette is on
+// the floor; the centre platform then passes through the skirt, which is exactly what a
+// colossal golem standing on the map would look like. Everything measured from
+// `wardenGY` rides with it. Twin: warden_ground_y in backend/src/strike.rs.
+function wardenGroundY(x, z){
+  // skirt half-extents (part(18.6, 2.4, 12.0, …) in wardenBuild): 9.3 x 6.0, plus a margin
+  var rx = 9.5, rz = 6.2;
+  var g = holeGroundY(x, z);
+  var a = holeGroundY(x - rx, z - rz), b = holeGroundY(x + rx, z - rz);
+  var c = holeGroundY(x - rx, z + rz), d = holeGroundY(x + rx, z + rz);
+  return Math.min(g, Math.min(Math.min(a, b), Math.min(c, d)));
+}
 
 /* =============================== the game view =============================== */
 var CUR = null;
@@ -1278,7 +1446,7 @@ function makeGame(host, opts){
     // ---- The Warden ----
     // Summon the Warden is ON by default (only an explicit off / 0 keeps it off)
     wardenOn: (sv.wardenOn === undefined || sv.wardenOn === null) ? true : (sv.wardenOn !== false && sv.wardenOn !== 0),
-    warden: null, wardenDone: false};
+    warden: null, wardenDone: false, dragons: []};
   if(sv.wardenOn === undefined || sv.wardenOn === null){ sv.wardenOn = true; }
   function myId(){ return V.mode === "mp" && MP ? MP.me() : "me"; }
   var LAUNCH_W = FS.LAUNCH_W|0 || 3;  // the launcher's index (rocket path); grapple is FS.GRAPPLE_W
@@ -1290,12 +1458,17 @@ function makeGame(host, opts){
   function W(){ return FS.WEAPONS[V.w] || FS.LAUNCH; }
   function magOf(w){ return w === LAUNCH_W ? V.magX : V.mag; }
   function resOf(w){ return w === LAUNCH_W ? V.resX : V.res; }
-  // protocol v2 servers fly the launcher too; a v1 Arena serves the first three only
+  // protocol v2 servers fly the launcher too; a v1 Arena serves the first three only.
+  // A missing games.strike (pre-2.0 welcome, or the key never landed) is NOT a v1 Arena —
+  // this repo's own judge serves the full roster, and clamping to 3 here made the
+  // launcher unselectable ("w4" is a no-op once weaponCount() is 3).
   function weaponCount(){
     if(V.mode !== "mp") return FS.WEAPONS.length;
     var gi = window.ARENA && window.ARENA.arena && window.ARENA.arena.games && window.ARENA.arena.games.strike;
-    var v = (gi && (gi.v|0)) || 0;
-    if(v < 2) return 3;
+    if(!gi) return FS.WEAPONS.length;
+    var v = gi.v|0;
+    if(v > 0 && v < 2) return 3;
+    if(v === 0) return FS.WEAPONS.length;
     // grapple rides the same roster but only on an Arena that knows the "dr" snap key
     return v >= 9 ? FS.WEAPONS.length : 4;
   }
@@ -1491,6 +1664,41 @@ function makeGame(host, opts){
   var wardenLock = api.mk("div", "vg-warden-lock hidden");
   wardenBar.appendChild(wardenHp);
   [disOv, disLogBox, blindOv, vignette, shOv, clOv, scope, cross, hitm, hurt, hpBox, ammoBox, topBox, feedBox, center, stamBox, shPill, effBox, radarWrap, wardenBar, wardenLock].forEach(function(n){ hud.appendChild(n); });
+  // Commons-style mount pill (twin of hqpets.js showPrompt + .hqpets-prompt): "G  Ride fire"
+  // when an idle dragon is in reach, "G  dismount · click to breathe" in the saddle.
+  // While the mount is drawing breath the pill says so and a small bar fills toward
+  // ready — the same idiom as the gun's reload bar, so a dead click reads as "reloading"
+  // instead of "broken". Rides the view wrapper (the positioned ancestor), outside the
+  // aria-hidden HUD, so announce() can still reach it.
+  var mountPrompt = api.mk("div", "hqpets-prompt");
+  mountPrompt.setAttribute("aria-live", "polite");
+  mountPrompt.hidden = true;
+  var mountWords = api.mk("span", "hqpets-prompt-w");
+  // the seconds tick every frame: aria-hidden, so the live region only speaks when the
+  // PHRASE changes ("click to breathe" ↔ "inhaling…"), never once a second.
+  var mountSecs = api.mk("span", "hqpets-prompt-s");
+  mountSecs.setAttribute("aria-hidden", "true");
+  // decorative bar (aria-hidden): the live pill text is what a screen reader gets
+  var mountTrack = api.mk("i", "hqpets-prompt-rl");
+  mountTrack.setAttribute("aria-hidden", "true");
+  mountTrack.hidden = true;
+  var mountMeter = api.mk("b");
+  mountTrack.appendChild(mountMeter);
+  mountPrompt.appendChild(mountWords);
+  mountPrompt.appendChild(mountSecs);
+  mountPrompt.appendChild(mountTrack);
+  var mountPromptFor = "", mountSecsFor = "";
+  wrap.appendChild(mountPrompt);   // .vg-golf-view is the positioned ancestor
+  function dragonPrompt(text, frac, secs){
+    if(mountPromptFor !== text){ mountPromptFor = text; mountWords.textContent = text || ""; mountPrompt.hidden = !text; }
+    var s = secs || "";
+    if(mountSecsFor !== s){ mountSecsFor = s; mountSecs.textContent = s; }
+    // frac 0..1 = how far through the inhale we are (null/0 = no bar: ride prompt or ready)
+    var on = frac != null && frac > 0;
+    mountTrack.hidden = !on;
+    var w = on ? Math.round(clamp(frac, 0, 1) * 100) + "%" : "0%";
+    if(mountMeter.style.width !== w) mountMeter.style.width = w;
+  }
   var board = api.mk("div", "vg-golf-card vg-fps-board hidden"); board.setAttribute("role", "dialog"); board.setAttribute("aria-label", "Scoreboard");
   // the item guide (press I): what each light column on the map hands you
   var guide = api.mk("div", "vg-golf-card vg-fps-board hidden"); guide.setAttribute("role", "dialog"); guide.setAttribute("aria-label", "Item guide");
@@ -1506,6 +1714,40 @@ function makeGame(host, opts){
     KEYS.forEach(function(r){ var it = api.mk("span", "vg-golf-key"); it.appendChild(api.mk("kbd", null, r[0])); it.appendChild(document.createTextNode(" "+r[1])); keysBox.appendChild(it); });
   }
   var canvas = null, R3 = null, R2 = null, IN = null, raf = 0, lastT = 0, acc = 0, ro = null, TOK = tokens(), tokAt = 0;
+
+  // one disposer for floating damage numbers. `V.dmgNums = []` WITHOUT this orphans
+  // every live sprite in the scene — they keep rendering at their last opacity and
+  // pile up as glowing numbers all over the arena. Every drop (reset, cap, expiry)
+  // goes through here.
+  function killDmgNums(){
+    (V.dmgNums || []).forEach(function(D){
+      if(D && D.o){
+        if(D.o.parent) D.o.parent.remove(D.o);
+        if(D.o.material){
+          if(D.o.material.map && D.o.material.map.dispose) D.o.material.map.dispose();
+          if(D.o.material.dispose) D.o.material.dispose();
+        }
+        D.o = null;
+      }
+    });
+    V.dmgNums = [];
+  }
+  function pushDmgNum(x, y, z, n, head, t){
+    V.dmgNums = V.dmgNums || [];
+    V.dmgNums.push({x: x, y: y, z: z, n: n, head: !!head, at: t, o: null});
+    // overflow drops the OLDEST — but it must pull its sprite out of the scene first
+    while(V.dmgNums.length > 12){
+      var old = V.dmgNums.shift();
+      if(old && old.o){
+        if(old.o.parent) old.o.parent.remove(old.o);
+        if(old.o.material){
+          if(old.o.material.map && old.o.material.map.dispose) old.o.material.map.dispose();
+          if(old.o.material.dispose) old.o.material.dispose();
+        }
+        old.o = null;
+      }
+    }
+  }
 
   /* ---------- players ---------- */
   function ensure(uid, info){
@@ -1525,6 +1767,30 @@ function makeGame(host, opts){
 
   /* ---------- screens ---------- */
   var WB = null;    // HQ 2.1 spectate: follow any player, or stop watching
+  // Pointer lock, like solo: grab it on a user gesture and keep it for the match.
+  // Bots/practice lock in startBotMatch/startPractice; MP used to never lock at all,
+  // so every player had to click the screen just to aim. requestPointerLock needs a
+  // gesture, so the "Join the match" click (and any click on the stage) is the hook.
+  function grabLock(){
+    if(canvas){ try { canvas.focus(); } catch(e){} }
+    if(IN && IN.lock) IN.lock();
+  }
+  // Pointer lock drops mid-match (the kill cam touching the canvas, a focus blip, the
+  // browser nudging it after a respawn) and look then freezes with no way back except
+  // a click — "stuck in look while respawning / falling down". Esc is a deliberate
+  // "give the mouse back", so never steal the lock behind the user; but the instant
+  // they press a play key they are clearly trying to aim, so re-grab then. (The
+  // click-to-aim fallbacks below still work.)
+  var lockWanted = 0;
+  function wantLock(){
+    return !!(canvas && IN && V.phase === "round" && !V.paused && !V.watch
+      && V.mode && !document.hidden && !document.pointerLockElement);
+  }
+  if(typeof document !== "undefined"){
+    document.addEventListener("keydown", function(){
+      if(wantLock() && now() - lockWanted > 0.4){ lockWanted = now(); grabLock(); }
+    }, true);
+  }
   function showStage(on){ stage.classList.toggle("hidden", !on); menu.classList.toggle("hidden", on); if(on){ ensureRenderer(); renderTools(); renderKeys(); }
     if(!WB) WB = E.watchBar(stage, {list: function(){ return Object.keys(V.players).filter(function(u){ return u !== myId() && !V.players[u].gone; }).map(function(u){ return {id: u, name: V.players[u].name}; }); },
       get: function(){ return V.watch; }, set: function(id){ V.watch = id; },
@@ -1772,7 +2038,15 @@ function makeGame(host, opts){
       menu.appendChild(row);
       if(V.results) menu.appendChild(resultsTable(V.results, "Last match"));
       if(V.round && (V.round.phase === "warmup" || V.round.phase === "round"))
-        menu.appendChild(api.btn("Join the match", "primary", function(){ requestView(); }));
+        menu.appendChild(api.btn("Join the match", "primary", function(){
+          // This click IS the user gesture the browser requires for pointer lock.
+          // Stand the stage up first (a hidden element cannot take the lock) and
+          // grab the mouse here — waiting for the async view left every player
+          // with a free cursor they had to click back into the arena to fix.
+          showStage(true);
+          grabLock();
+          requestView();
+        }));
       menu.appendChild(welcomeCard());
     } else {
       // solo: a full offline bot match by default; the classic drone range is the warm-up
@@ -1826,7 +2100,14 @@ function makeGame(host, opts){
     V.disasters = []; V.disasterAt = 0; V.disasterLog = [];
     V.warden = null; V.wardenDone = false;
     (V.missiles || []).forEach(function(m){ if(m.o && R3) R3.rocket(null, m); }); V.missiles = [];
-    clearPlayers(); V.phase = "idle"; V.results = null; V.feed = []; V.drones = []; V.tracers = []; V.dmgNums = []; V.killCam = null;
+    // set every rider down and clear the roster BEFORE clearPlayers() — the
+    // dismiss hops bodies back onto the deck (twin: Strike::end)
+    dragonDismiss(now(), true);
+    clearPlayers(); V.phase = "idle"; V.results = null; V.feed = []; V.drones = []; V.tracers = []; V.killCam = null;
+    // damage numbers die with the match — AFTER clearPlayers so their sprites (parented
+    // to dyn) are still in the scene graph for clearDynamic to pull out. Dropping the
+    // array first orphans every live sprite in the arena and they float there forever.
+    killDmgNums();
     V.mdrones = []; V.mdronesSnap = false; V.hookUntil = 0; V.swingUntil = 0; V.hookTo = null; V.hookPull = null; V.swingY = 0; V.hookDrone = null;
     cardBox.classList.add("hidden"); board.classList.add("hidden"); guide.classList.add("hidden"); center.classList.add("hidden"); V.board = false; V.guide = false;
     if(R3) R3.clearDynamic();
@@ -1841,6 +2122,8 @@ function makeGame(host, opts){
     V.rifts = []; V.mines = []; V.meteors = []; V.beacons = []; V.bubbles = []; V.cursed = {}; V.rings = [];
     V.riftCool = 0;
     V.bananas = []; V.bananaUntil = 0; V.lavaZones = []; V.lavaUntil = 0;
+    V.turrets = []; V.turretUntil = 0; V.barrels = []; V.lasers = []; V.laserUntil = 0;
+    V.pads = []; V.padUntil = 0;
     V.taken = {}; V.liveSig = "";
     V.geese = []; V.blackholes = [];
     V.reverseUntil = 0; V.rouletteUntil = 0; V.rouletteNext = 0;
@@ -1852,7 +2135,11 @@ function makeGame(host, opts){
     V.slowUntil = 0; V.blindUntil = 0;
     var M = V.me; M.x = x; M.y = y; M.z = z; M.vx = 0; M.vy = 0; M.vz = 0; M.g = true;
     V.voidAt = 0;  // a place is back on the map
-    if(yawDeg != null){ V.yaw = yawDeg*Math.PI/180; V.pitch = 0; }
+    // Look: a respawn keeps the aim you died with. Resetting pitch (and snapping yaw)
+    // on every place made a drop feel like the camera had been taken away — "stuck in
+    // look while respawning". Only a yaw the server actually names is applied, and
+    // pitch is never zeroed. (dropSpawn / spawn passes the spawn's own yaw.)
+    if(yawDeg != null){ V.yaw = yawDeg*Math.PI/180; }
     V.dropUntil = 0;  // a plain ground spawn isn't a drop; dropSpawns set this explicitly
   }
   function randomDropSpot(t, slot, team){
@@ -1872,7 +2159,9 @@ function makeGame(host, opts){
   function dropSpawn(slot){
     var sp = randomDropSpot(now(), slot, V.team);
     placeMe(sp[0], FS.DROP_HEIGHT, sp[2], sp[3]);
-    V.dropUntil = now() + FS.DROP_TIME;
+    // the canopy outlasts the steer window by DROP_LAND_GRACE so a glide that never
+    // touched down (a floor gap) still times out instead of sticking forever
+    V.dropUntil = now() + FS.DROP_TIME + FS.DROP_LAND_GRACE;
     V.me.g = false;
     V.voidAt = 0;
     return sp;
@@ -1921,11 +2210,14 @@ function makeGame(host, opts){
     P.w = Math.floor(FS.mb32(seed & 0xFFFF)*(FS.BOT_WEAPON_MAX|0 || 4));  // never the grapple
     P.mag = FS.WEAPONS.map(function(wp){ return wp.mag; });
     P.res = FS.WEAPONS.map(function(wp){ return wp.reserve; });
-    P.reloadAt = 0; P.protUntil = t + 1.5; // PROTECT (strike.py): 1.5 s of spawn cover, gone once they fire
+    P.reloadAt = 0;
     P.ai.body = {x: sp[0], y: sp[1], z: sp[2], vx: 0, vy: 0, vz: 0, g: true};
     P.ai.voidAt = 0;   // a place is back on the map
-    // v4: a spawn from the sky (initial join comes from a ground spawn list, respawns don't)
-    P.ai.dropUntil = sp[1] > 0.5 ? t + FS.DROP_TIME : 0;
+    // v4: a spawn from the sky (initial join comes from a ground spawn list, respawns don't).
+    // The canopy window carries DROP_LAND_GRACE so a glide that never lands times out;
+    // spawn cover starts at touchdown, not here (twin: place()'s protect in strike.rs).
+    P.ai.dropUntil = sp[1] > 0.5 ? t + FS.DROP_TIME + FS.DROP_LAND_GRACE : 0;
+    P.protUntil = sp[1] > 0.5 ? 0 : t + 1.5; // PROTECT: 1.5 s of spawn cover, starting at touchdown
     P.ai.aim_y = sp[3]|0; P.ai.aim_p = 0; P.ai.goal = null; P.ai.target = null; P.ai.seenAt = null; P.ai.fireAt = -1e9; P.ai.thinkAt = t + BOT_THINK;
     P.ai.errAt = 0; P.ai.err_y = 0; P.ai.err_p = 0;
     P.ai.stuckAt = 0; P.ai.stuck_x = sp[0]; P.ai.stuck_z = sp[2];
@@ -1969,10 +2261,515 @@ function makeGame(host, opts){
     }
   }
   /* ---------- The Warden (mid-match boss) ---------- */
+  // The deck under the boss (0 on flat ground, 2.2-3.5 on the dockyard centre
+  // platform). Every hit volume and LOS probe is measured from here, never from
+  // y=0 — the map's raised platforms would bury the art and the judge together.
+  function wardenGY(W){
+    W = W || V.warden;
+    return (W && W.y) || 0;
+  }
+  // Disco: The Warden dances too. Same window as the players — and while it grooves
+  // it holds every attack (slam / laser / grip / disaster). Twin: Warden.dance_until
+  // in backend/src/strike.rs.
+  function wardenDanceOn(W, t){
+    W = W || V.warden;
+    return !!(W && W.danceUntil && t < W.danceUntil);
+  }
+
+  /* ---------- The Warden's dragons ----------
+     Six elemental drift-wyrms land when the boss rises. Press G to mount one —
+     the rider's only attack is the breath (30 dps, 4 s spray, 4 s inhale). An
+     untaken dragon roams the deck and bites anyone it finds. Dragons take
+     ordinary bullet damage and the same damage a disaster deals a fighter. The
+     Warden cannot hurt a dragon at all — only disasters and gunfire bring one
+     down mid-fight. There is no out-of-bounds on a dragon: fly anywhere.
+     Twin: Dragon / dragons in backend/src/strike.rs. */
+  function dragonRing(i, n){
+    var b = (MAP && MAP.bounds && MAP.bounds.length === 6) ? MAP.bounds : [-42, -1, -30, 42, 12, 30];
+    var cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2;
+    var rx = (b[3] - b[0]) / 2 * 0.72, rz = (b[5] - b[2]) / 2 * 0.72;
+    var a = (((i|0) / (n||1)) * Math.PI * 2) - Math.PI / 2;
+    return [cx + Math.cos(a) * rx, cz + Math.sin(a) * rz];
+  }
+  function dragonSpawn(t){
+    V.dragons = [];
+    var n = WARDEN_DRAGON_N|0;
+    for(var i = 0; i < n; i++){
+      var p = dragonRing(i, n), tier = WARDEN_DRAGON_TIERS[i] || "fire";
+      var gy = holeGroundY(p[0], p[1]);
+      V.dragons.push({
+        id: i, tier: tier,
+        hp: DRAGON_HP, max: DRAGON_HP,
+        x: p[0], y: (gy != null ? gy : 0), z: p[1], yaw: 0,
+        rider: null, riderIsMe: false,
+        // a fresh mount starts with a FULL tank (twin: strike.rs spawn `breath_left: DRAGON_BREATH_SECS`).
+        // An empty one made the first click start the inhale instead of breathing — "click does nothing".
+        breathLeft: DRAGON_BREATH_SECS, rechargeAt: 0, sprayUntil: 0,
+        biteAt: 0, roamAt: t + 1, dead: false, hit: 0
+      });
+    }
+  }
+  function dragonRiding(t){
+    // a live rider on a live mount — a dead pilot is already off (dragonTick drops the
+    // saddle), and the camera must fall back to first-person / kill cam the moment you go down
+    var d = myDragon(t);
+    return !!(d && d.riderIsMe && !d.dead && !V.dead);
+  }
+  function myDragon(t){
+    var list = V.dragons || [];
+    for(var i = 0; i < list.length; i++){
+      if(list[i] && list[i].riderIsMe && !list[i].dead) return list[i];
+    }
+    return null;
+  }
+  function dragonByRider(uid){
+    var list = V.dragons || [];
+    for(var i = 0; i < list.length; i++){
+      if(list[i] && list[i].rider === uid && !list[i].dead) return list[i];
+    }
+    return null;
+  }
+  // A fighter on a saddle is not a ground target. The mount soaks the ground
+  // attacks (the laser bites the dragon itself); a floor beam or arm slam must
+  // never delete the rider out of the saddle. Twin: Player.dragon_rider in strike.rs.
+  function qOnDragon(Q, t){
+    if(!Q) return false;
+    return Q.__me ? dragonRiding(t) : !!dragonByRider(Q.uid || Q.user);
+  }
+  function dragonKill(D, t, cause){
+    if(!D || D.dead) return;
+    D.dead = true; D.hp = 0;
+    var wasMe = !!D.riderIsMe;
+    var uid = D.rider;
+    D.rider = null; D.riderIsMe = false;
+    var cc = cause || "dragon-disaster";
+    // a cause that already carries the envelope must not nest ("dragon:dragon:oob")
+    if(cc.indexOf("dragon:") === 0) cc = cc.slice(7);
+    // the feed names what actually brought the mount down — "dragon:<cause>"
+    // reads back as "Your dragon fell to <cause> · You" (twin: dragon_kill in strike.rs)
+    var how = "dragon:" + cc;
+    if(wasMe && !V.dead){
+      // endBotLife does the death bookkeeping (deaths++, dead, feed + say)
+      endBotLife(null, null, t, false, how);
+    } else if(uid && V.players && V.players[uid] && !V.players[uid].dead){
+      endBotLife(null, V.players[uid], t, false, how);
+    }
+  }
+  // full match teardown only: every rider is set down beside its mount
+  // (never killed — only out-of-bounds does that) and the roster clears so a
+  // leftover body cannot sit in the post-match firing lane. The Warden falling
+  // does NOT call this — his summons stay to roam. Twin: dragon_dismiss
+  // in backend/src/strike.rs.
+  function dragonDismiss(t, silent){
+    (V.dragons || []).forEach(function(D){
+      if(!D || !D.rider) return;
+      if(D.riderIsMe){
+        D.riderIsMe = false; D.rider = null;
+        var sx = Math.sin(D.yaw || 0) * 2.2, sz = Math.cos(D.yaw || 0) * 2.2;
+        var gy = holeGroundY(D.x + sx, D.z + sz);
+        V.me.x = D.x + sx; V.me.z = D.z + sz;
+        V.me.y = (gy != null ? gy : D.y); V.me.vx = 0; V.me.vy = 0; V.me.vz = 0; V.me.g = true;
+        V.voidAt = 0; V.dropUntil = 0;
+        if(!silent) say("Your dragon scattered when the arena fell quiet — you land on your feet");
+      } else {
+        var P = V.players && V.players[D.rider];
+        if(P && P.ai && P.ai.body){
+          P.ai.body.x = D.x + Math.sin(D.yaw || 0) * 2.2;
+          P.ai.body.z = D.z + Math.cos(D.yaw || 0) * 2.2;
+          P.ai.body.y = holeGroundY(P.ai.body.x, P.ai.body.z) || 0;
+          P.ai.body.g = true;
+        }
+        D.rider = null;
+      }
+    });
+    V.dragons = [];
+    if(R3 && R3.clearDragons) R3.clearDragons();
+  }
+  function dragonDismount(D, t, silent){
+    if(!D || !D.rider) return;
+    if(D.riderIsMe){
+      D.riderIsMe = false; D.rider = null;
+      // step off to the side of the body so you don't clip back in
+      var sx = Math.sin(D.yaw || 0) * 2.2, sz = Math.cos(D.yaw || 0) * 2.2;
+      var gy = holeGroundY(D.x + sx, D.z + sz);
+      V.me.x = D.x + sx; V.me.z = D.z + sz;
+      V.me.y = (gy != null ? gy : D.y); V.me.vx = 0; V.me.vy = 0; V.me.vz = 0; V.me.g = true;
+      V.voidAt = 0; V.dropUntil = 0;
+      if(!silent) say("Dismounted the " + (D.tier || "dragon"));
+    } else {
+      var P = V.players && V.players[D.rider];
+      if(P && P.ai && P.ai.body){
+        P.ai.body.x = D.x + Math.sin(D.yaw || 0) * 2.2;
+        P.ai.body.z = D.z + Math.cos(D.yaw || 0) * 2.2;
+        P.ai.body.y = holeGroundY(P.ai.body.x, P.ai.body.z) || 0;
+        P.ai.body.g = true;
+      }
+      D.rider = null;
+    }
+  }
+  function dragonMount(D, uid, isMe, t){
+    if(!D || D.dead || D.rider) return false;
+    D.rider = uid; D.riderIsMe = !!isMe;
+    if(isMe){
+      V.me.g = false; V.me.vy = 0;
+      say("Riding the " + (D.tier || "dragon") + " — press G to dismount, click to breathe");
+    }
+    return true;
+  }
+  function dragonTryMount(t){
+    // G: hop on the nearest idle dragon within reach, or step off the one you're on
+    var riding = myDragon(t);
+    if(riding){
+      dragonDismount(riding, t);
+      if(V.mode === "mp" && MP) MP.send("strike", "mount", {d: (riding.id|0), on: 0});
+      return;
+    }
+    var best = null, bestD = DRAGON_MOUNT_R;
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.dead || D.rider) return;
+      var d = Math.hypot(V.me.x - D.x, V.me.z - D.z);
+      if(d < bestD){ bestD = d; best = D; }
+    });
+    if(best){
+      dragonMount(best, myId(), true, t);
+      // MP: the Arena judge owns the saddle (twin: "mount" op in strike.rs)
+      if(V.mode === "mp" && MP) MP.send("strike", "mount", {d: (best.id|0), on: 1});
+    } else if(V.mode === "mp" && MP){
+      MP.send("strike", "mount", {d: -1, on: 0});
+    }
+  }
+  // Pet-space yaw: forward is (sin yaw, cos yaw) — the same +z-forward the Commons
+  // drake build and the roam/chase paths already use. A player's look yaw is
+  // (sin, -cos), so riding stores `Math.PI - V.yaw` here.
+  function dragonHead(D){
+    if(!D) return [0, 0, 0];
+    var f = Math.sin(D.yaw || 0), g = Math.cos(D.yaw || 0);
+    return [D.x + f * 3.2, (D.y || 0) + 1.6, D.z + g * 3.2];
+  }
+  // hit box: a long body slab + a wing slab, so a shot aimed at the beast lands
+  // on it from the side or from above. Twin: dragon_boxes in strike.rs.
+  function dragonBoxes(D){
+    if(!D || D.dead) return null;
+    var c = Math.cos(D.yaw || 0), s = Math.sin(D.yaw || 0);
+    function box(hw, hd, y0, y1){
+      // axis-aligned in world by sampling the rotated footprint corners
+      var ex = Math.abs(hw * c) + Math.abs(hd * s), ez = Math.abs(hw * s) + Math.abs(hd * c);
+      return [(D.x||0) - ex, (D.y||0) + y0, (D.z||0) - ez, (D.x||0) + ex, (D.y||0) + y1, (D.z||0) + ez];
+    }
+    return {
+      body: box(3.6, 1.4, 0.2, 3.4),
+      neck: box(1.6, 1.1, 1.0, 3.2),
+      wings: box(4.4, 5.2, 1.6, 3.0)
+    };
+  }
+  function dragonHitIndex(D, o, d, reach){
+    var B = dragonBoxes(D);
+    if(!B) return null;
+    var best = null, bestT = reach == null ? 1e9 : reach;
+    ["wings", "body", "neck"].forEach(function(k){
+      var h = FS.rayBox(o, d, B[k]);
+      if(h !== null && h < bestT){ bestT = h; best = k; }
+    });
+    return best ? {part: best, t: bestT} : null;
+  }
+  function dragonScanHit(o, d, reach){
+    // nearest dragon along the ray (solo/bots judge; MP uses the server twin)
+    var best = null, bestT = reach == null ? 1e9 : reach;
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.dead) return;
+      var h = dragonHitIndex(D, o, d, bestT);
+      if(h && h.t < bestT){ bestT = h.t; best = {dragon: D, part: h.part, t: h.t}; }
+    });
+    return best;
+  }
+  function dragonBreathOn(D, t){
+    return !!(D && D.sprayUntil && t < D.sprayUntil && D.breathLeft > 0);
+  }
+  function dragonCanBreathe(D, t){
+    return !!(D && !D.dead && D.rider && !(D.rechargeAt && t < D.rechargeAt) && D.breathLeft > 0);
+  }
+  function dragonBreathe(dt, t){
+    var D = myDragon(t);
+    if(!D || D.dead) return;
+    if(D.rechargeAt && t < D.rechargeAt) return;
+    if(!(D.breathLeft > 0)){
+      // the spray ran dry: inhale for DRAGON_INHALE_SECS, then refill
+      if(!D.rechargeAt || t >= D.rechargeAt){
+        D.rechargeAt = t + DRAGON_INHALE_SECS;
+        D.sprayUntil = 0;
+      }
+      return;
+    }
+    D.sprayUntil = t + 0.2;   // short self-renewing window while the trigger is held
+    D.breathLeft = Math.max(0, D.breathLeft - dt);
+    if(D.breathLeft <= 0){ D.rechargeAt = t + DRAGON_INHALE_SECS; D.sprayUntil = 0; }
+    // MP: the Arena judge drains the tank (twin: "breathe" op in strike.rs)
+    if(V.mode === "mp" && MP) MP.send("strike", "breathe", {d: (D.id|0)});
+    // damage lives in dragonBreathStep (both judges apply the same cone)
+  }
+  function dragonBreathStep(dt, t){
+    // one judge pass over every spraying dragon (solo + MP client prediction).
+    // Twin: dragon_breath in backend/src/strike.rs.
+    // No spray can hit anyone while the boss is up — the fight is Warden-only.
+    if(V.warden) return;
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.dead || !dragonBreathOn(D, t)) return;
+      var head = dragonHead(D), f = Math.sin(D.yaw || 0), g = Math.cos(D.yaw || 0);
+      // the cone: from the head, reaching DRAGON_BREATH_LEN out to half-width DRAGON_BREATH_W
+      var victims = [];
+      [{__me: 1}].concat(others()).forEach(function(P){
+        var isMe = !!P.__me;
+        var qx = isMe ? V.me.x : P.x, qy = isMe ? V.me.y : P.y, qz = isMe ? V.me.z : P.z;
+        var qdead = isMe ? V.dead : P.dead, qgone = isMe ? false : P.gone;
+        if(qdead || qgone) return;
+        if(D.rider && (isMe ? D.riderIsMe : D.rider === (P.uid || P.user))) return;
+        var dx = qx - head[0], dz = qz - head[2];
+        var along = dx * f + dz * g;
+        if(along < 0 || along > DRAGON_BREATH_LEN) return;
+        var side = Math.abs(dx * -g + dz * f);
+        if(side > DRAGON_BREATH_W * (0.35 + 0.65 * (along / DRAGON_BREATH_LEN))) return;
+        victims.push({P: P, isMe: isMe, dist: along});
+      });
+      // 30 dps across the frame: carry the fraction on the victim so a fast frame
+      // still pays out the whole point it earned (Math.round(30 * 1/60) is 1 here, but
+      // any dt under 1/60 rounds to 0 and the spray does nothing).
+      victims.forEach(function(Vv){
+        if(Vv.isMe){
+          if(V.protUntil && t < V.protUntil) return;
+          if(meShielded(t)) return;
+          V.breathAcc = (V.breathAcc || 0) + DRAGON_BREATH_DPS * dt;
+          var dmg = Math.floor(V.breathAcc);
+          if(dmg <= 0) return;
+          V.breathAcc -= dmg;
+          V.hp = Math.max(0, (V.hp|0) - dmg);
+          V.hurtAt = t;
+          if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, "dragon-breath");
+        } else {
+          var P = Vv.P;
+          if(botShielded(P, t)) return;
+          P.breathAcc = (P.breathAcc || 0) + DRAGON_BREATH_DPS * dt;
+          var dmg = Math.floor(P.breathAcc);
+          if(dmg > 0){ P.breathAcc -= dmg; P.hp = (P.hp|0) - dmg; }
+          // the spray is a stream, not a bullet: one damage number per victim per
+          // quarter-second, the total dealt in that window, so the rider can read
+          // who is in the cone and how hard it hits. Only for the jet YOU are flying —
+          // every other dragon's spray is someone else's fight and must not paint
+          // the screen with numbers.
+          if(D.riderIsMe && !V.watch){
+            P.hitAcc = (P.hitAcc || 0) + dt;
+            P.hitWin = (P.hitWin || 0) + dmg;
+            if(P.hitAcc >= 0.25 && P.hitWin > 0){
+              P.hitAcc = 0;
+              V.hitAt = t;
+              pushDmgNum(P.x, (P.y || 0) + 1.2, P.z, P.hitWin|0, false, t);
+              P.hitWin = 0;
+            }
+          } else {
+            P.hitAcc = 0; P.hitWin = 0;
+          }
+          if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, "dragon-breath");
+        }
+      });
+    });
+  }
+  function dragonRoam(dt, t){
+    // untaken dragons walk the deck and bite anything that comes close.
+    // Twin: dragon_roam in backend/src/strike.rs.
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.dead || D.rider) return;
+      var best = null, bestB = null, bestD = 22;
+      [{__me: 1}].concat(others()).forEach(function(P){
+        var isMe = !!P.__me;
+        var qx = isMe ? V.me.x : P.x, qy = isMe ? V.me.y : P.y, qz = isMe ? V.me.z : P.z;
+        var qdead = isMe ? V.dead : P.dead, qgone = isMe ? false : P.gone;
+        if(qdead || qgone) return;
+        if((qy|0) > ((D.y|0) + 2.2)) return;   // it bites on the ground, not at flyers
+        // While the Warden lives a summons is a calm pet: patrol, never chase or bite.
+        if(V.warden) return;
+        var d = Math.hypot(qx - D.x, qz - D.z);
+        if(d < bestD){ bestD = d; best = P; bestB = isMe ? V.me : (P.ai && P.ai.body) || P; }
+      });
+      if(best && bestB){
+        var dx = bestB.x - D.x, dz = bestB.z - D.z, len = Math.hypot(dx, dz) || 1;
+        D.yaw = Math.atan2(dx, dz);
+        if(len > DRAGON_BITE_R * 0.85){
+          D.x += (dx / len) * DRAGON_ROAM_SPEED * dt;
+          D.z += (dz / len) * DRAGON_ROAM_SPEED * dt;
+        }
+        if(len <= DRAGON_BITE_R && t >= (D.biteAt || 0)){
+          D.biteAt = t + DRAGON_BITE_CD;
+          bestB.vx = (dx / len) * 4; bestB.vz = (dz / len) * 4;
+          var isMeb = best.__me === 1;
+          if(isMeb){
+            if(!(V.protUntil && t < V.protUntil) && !meShielded(t)){
+              V.hp = Math.max(0, (V.hp|0) - DRAGON_BITE_DMG);
+              V.hurtAt = t;
+              say("A dragon sank its teeth into you!");
+              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, "dragon");
+            }
+          } else if(!botShielded(best, t)){
+            best.hp = (best.hp|0) - DRAGON_BITE_DMG;
+            if(best.hp <= 0 && !best.dead) endBotLife(null, best, t, false, "dragon");
+          }
+        }
+      } else {
+        // idle wander: a slow deterministic patrol so it never freezes in place
+        var w = hashMatch((D.id|0) * 71 + 13, ((t * 0.2)|0)) * Math.PI * 2;
+        D.yaw = D.yaw + (((w - (D.yaw||0) + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 1.2);
+        D.x += Math.sin(D.yaw) * DRAGON_ROAM_SPEED * 0.45 * dt;
+        D.z += Math.cos(D.yaw) * DRAGON_ROAM_SPEED * 0.45 * dt;
+      }
+      // keep the body on whatever is under it (deck, platform, sand)
+      var gy = holeGroundY(D.x, D.z);
+      if(gy != null) D.y = gy;
+    });
+  }
+  function dragonHurt(D, dmg, t, source){
+    if(!D || D.dead || !dmg) return;
+    var dealt = Math.max(0, Math.round(dmg));
+    // Disasters deal a dragon the SAME damage they deal a fighter — no 2x. The
+    // Warden cannot hurt a dragon at all; gunfire and weather both bring one down.
+    // `source` is the real cause ("gunfire", "meteorshower", "toxicfog", …) so the
+    // kill feed can name what actually fell the mount. Twin: dragon_hurt in strike.rs.
+    D.hp = Math.max(0, (D.hp|0) - dealt);
+    D.hit = t;
+    if(R3 && R3.dmgNum) R3.dmgNum(D.x, (D.y || 0) + 2.2, D.z, dealt, false);
+    pushDmgNum(D.x, (D.y || 0) + 2.2, D.z, dealt, false, t);
+    if(D.hp <= 0) dragonKill(D, t, source || "dragon-disaster");
+  }
+  // every live disaster also bites the beasts — the same rate as a fighter, so
+  // the weather itself can bring one down. Twin: the disaster arms in strike.rs.
+  function dragonDisaster(x, z, r, dmg, t, onceKey, kind){
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.dead) return;
+      if(onceKey){
+        D.disHit = D.disHit || {};
+        if(D.disHit[onceKey]) return;
+        D.disHit[onceKey] = 1;
+      }
+      var dd = Math.hypot((D.x||0) - x, (D.z||0) - z);
+      if(dd > r) return;
+      dragonHurt(D, dmg, t, kind || "dragon-disaster");
+    });
+  }
+  // Commons flight ease (games/hqpetride.js): a spring toward a goal, and an angle
+  // wrapped to (-π, π]. Pure helpers — no state, no random calls.
+  function springTo(x, goal, k, h){ return x + (goal - x) * Math.min(1, Math.max(0, 1 - Math.exp(-k * h))); }
+  function wrapPi(a){ return ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI; }
+  function dragonTick(dt, t){
+    if(!V.dragons || !V.dragons.length) return;
+    // mounted flight: the rider steers, Space/A climbs, Shift sinks
+    var D = myDragon(t);
+    // going down in the saddle drops you off beside the mount — a corpse never keeps
+    // the seat (respawn would otherwise yank you back onto the dragon) and the ride
+    // camera must restore to first-person / kill cam the same frame
+    if(D && V.dead){ dragonDismount(D, t, true); D = null; }
+    if(D && !D.dead){
+      if(D.rechargeAt && t >= D.rechargeAt && !(D.breathLeft > 0)){
+        D.breathLeft = DRAGON_BREATH_SECS;
+        D.rechargeAt = 0;
+        say("The " + (D.tier || "dragon") + " is ready to breathe again");
+      }
+      if(!V.dead && !V.paused && !danceOn(t) && (V.phase === "round" || (V.mode === "practice" || V.mode === "bots"))){
+        var canM = !V.watch;
+        var ax = canM && IN ? IN.axis("x") : 0, ay = canM && IN ? IN.axis("y") : 0;
+        if(V.reverseUntil && t < V.reverseUntil){ ax = -ax; ay = -ay; }
+        var rise = canM && IN && IN.down("jump");
+        var sink = canM && IN && IN.down("sprint");
+        // pet-space forward is (sin, cos); player look is (sin, -cos) — the mount yaws
+        // with your look so the breath still aims down it, and the turn rate banks.
+        var newYaw = Math.PI - V.yaw;
+        var dts = Math.max(0.001, Math.min(0.1, dt));
+        if(D.yaw == null) D.yaw = newYaw;
+        var yawRate = wrapPi(newYaw - D.yaw) / dts;
+        D.yaw = newYaw;
+        // Commons subFly (games/hqpetride.js): W/S hold the speed, Space climbs, Shift
+        // dives (trading height for speed), neither glides or hovers. Pitch noses up
+        // climbing, down diving; roll banks into the turn (mouse look IS the turn here).
+        // A/D stays Strike's strafe (a sideslip that dies away, like Commons vS) so
+        // nothing that already worked breaks.
+        var F = DRAGON_FLY, fwd = ay, lift = (rise ? 1 : 0) - (sink ? 1 : 0);
+        if(fwd > 0) D.tgt = Math.min(F.top, (D.tgt || 0) + F.acc * fwd * dts);
+        else if(fwd < 0) D.tgt = Math.max(0, (D.tgt || 0) + F.dec * fwd * dts);
+        else if(D.tgt == null) D.tgt = 0;
+        D.tgt = Math.max(0, Math.min(F.top, D.tgt || 0));
+        var vF = (D.vF != null ? D.vF : D.tgt);
+        var hover = vF < F.hover && D.tgt < F.hover, diving = lift < 0 && !hover, climbing = lift > 0;
+        var goalF = D.tgt + (diving ? F.diveGain * (-lift) : 0)
+          - (lift > 0 && D.tgt > F.cruise ? (D.tgt - F.cruise) * 0.5 * lift : 0);
+        // never above the referee's rider cap (strike.rs: DRAGON_SPEED * 1.35) — a dive
+        // trades height for speed, but not for a rubber-band in MP
+        goalF = Math.min(goalF, DRAGON_SPEED * 1.35 - 0.3);
+        vF = springTo(vF, goalF, vF < goalF ? (diving ? 1.0 : 1.2) : 0.9, dts);
+        D.vF = vF;
+        var sl = clamp(vF / F.top, 0, 1);
+        // up and down: climb / dive / glide-sink / hover
+        var gy = holeGroundY(D.x, D.z);
+        var agl = (D.y || 0) - (gy != null ? gy : 0);
+        var goalY = lift > 0 ? lift * F.climb * (hover ? 0.8 : 1)
+          : lift < 0 ? (hover ? lift * F.sink : lift * F.dive)
+          : hover ? 0 : -F.glide;
+        // the last beats: a soft touchdown, and pull out of a dive near the ground
+        if(goalY < 0 && agl < 3 && !diving) goalY = Math.max(goalY, -(0.8 + agl * 0.9));
+        if(goalY < 0 && agl < 3 && diving) goalY = Math.max(goalY, -(2 + agl * 1.6));
+        D.vy = springTo(D.vy || 0, goalY, 3, dts);
+        // nose: up climbing / hovering, down in a dive; banked into the turn
+        var pGoal = climbing ? 0.22 + 0.08 * Math.max(0, lift) : diving ? -0.45 * (-lift) : hover ? 0.1 : -0.04;
+        D.pitch = springTo(D.pitch || 0, pGoal, 4, dts);
+        D.roll = springTo(D.roll || 0, clamp(-yawRate * 0.5 * (0.3 + sl), -F.bank, F.bank), 4, dts);
+        D.wing = climbing ? "climb" : diving ? "dive" : hover ? "hover" : "glide";
+        D.turn = yawRate;
+        // move along the mount's own forward (the turn is already in the yaw), plus
+        // Strike's A/D sideslip on player-right (cos V.yaw, sin V.yaw) — the walk model's
+        // lateral axis, at the old DRAGON_SPEED. The pair is normalized like the old wx/wz
+        // so a diagonal is not faster than the faster axis, and stays under the referee cap.
+        var fsx = Math.sin(D.yaw), fsz = Math.cos(D.yaw);
+        var rgtX = Math.cos(V.yaw), rgtZ = Math.sin(V.yaw);
+        var lat = (ax || 0) * DRAGON_SPEED;
+        var hx = fsx * vF + rgtX * lat, hz = fsz * vF + rgtZ * lat;
+        var hl = Math.sqrt(hx * hx + hz * hz);
+        var hmax = Math.max(Math.abs(vF), Math.abs(lat), 0.001);
+        if(hl > hmax){ hx *= hmax / hl; hz *= hmax / hl; hl = hmax; }
+        var hcap = DRAGON_SPEED * 1.35 - 0.3;
+        if(hl > hcap && hl > 0){ hx *= hcap / hl; hz *= hcap / hl; }
+        D.x += hx * dts;
+        D.z += hz * dts;
+        D.y = (D.y || 0) + D.vy * dts;
+        // No ceiling and no map edge: the sky is open. The only floor is the
+        // soft touchdown the climb/dive ease already handles.
+        V.me.x = D.x; V.me.y = (D.y || 0) + DRAGON_SEAT; V.me.z = D.z;
+        V.me.vx = 0; V.me.vy = 0; V.me.vz = 0; V.me.g = false;
+        V.voidAt = 0; V.dropUntil = 0;
+      }
+    }
+    dragonRoam(dt, t);
+    dragonBreathStep(dt, t);
+    // bots claim an idle dragon after DRAGON_BOT_MOUNT
+    (V.dragons || []).forEach(function(Dr){
+      if(!Dr || Dr.dead || Dr.rider) return;
+      if(!Dr.roamAt) Dr.roamAt = t + DRAGON_BOT_MOUNT;
+      if(t < Dr.roamAt) return;
+      if(V.mode === "mp") return;   // the Arena judge owns bot mounting in MP
+      var cand = null, candD = 26;
+      others().forEach(function(P){
+        if(!P || !P.bot || P.dead || P.gone) return;
+        if(dragonByRider(P.uid || P.user)) return;
+        var d = Math.hypot(P.x - Dr.x, P.z - Dr.z);
+        if(d < candD){ candD = d; cand = P; }
+      });
+      // While the Warden is up the summons are a reward, not bots' horses:
+      // nobody claims one. After the boss falls the bots hop the stragglers.
+      if(cand && !V.warden) dragonMount(Dr, cand.uid || cand.user, false, t);
+    });
+    if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
+    // prune dead bodies after a beat so the mesh can play out its fall
+    V.dragons = (V.dragons || []).filter(function(D){ return D && !D.dead; });
+    if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
+  }
   function wardenBoxes(W){
-    var cx = (W && W.x) || 0, wz = (W && W.z) || 0;
+    var cx = (W && W.x) || 0, wz = (W && W.z) || 0, gy = wardenGY(W);
     function vol(t, ox){
-      return [cx + (ox||0) - t[0], t[2], wz - t[1], cx + (ox||0) + t[0], t[3], wz + t[1]];
+      return [cx + (ox||0) - t[0], gy + t[2], wz - t[1], cx + (ox||0) + t[0], gy + t[3], wz + t[1]];
     }
     // 0 waist, 1 chest, 2 head (crit), 3 left arm, 4 right arm
     return [vol(WARDEN_BOX_WAIST), vol(WARDEN_BOX_CHEST), vol(WARDEN_BOX_HEAD),
@@ -2013,9 +2810,7 @@ function makeGame(host, opts){
       W.hp = Math.max(0, (W.hp|0) - dealt);
     }
     V.hitAt = t;
-    V.dmgNums = V.dmgNums || [];
-    V.dmgNums.push({x: W.x, y: (arm >= 0 ? 3.0 : 2.2), z: W.z, n: dealt, head: head, at: t, o: null});
-    if(V.dmgNums.length > 12) V.dmgNums.shift();
+    pushDmgNum(W.x, wardenGY(W) + (arm >= 0 ? 3.0 : 2.2), W.z, dealt, head, t);
     wardenAfterDamage(W, t);
   }
   function wardenBlast(W, at, t){
@@ -2080,7 +2875,7 @@ function makeGame(host, opts){
     var ALL = ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
       "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
       "wallrun","secondwind","fakedeath","ghost","cluster","overclock","ricochet","infchamber",
-      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];
+      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];
     var W = V.warden; if(!W) return;
     var born = (W.born|0) || 1;
     var seed = (((born * 0x9E3779B9) + 0x57A71001 + ((ckpt|0) * 64)) >>> 0);
@@ -2123,6 +2918,8 @@ function makeGame(host, opts){
     V.disasterAt = t + DIS_FIRST;
     if(V.endsAt != null && W.pausedMs){ V.endsAt = t + W.pausedMs/1000; }
     if(R3 && R3.wardenClear) R3.wardenClear();
+    // the summons STAY: untaken dragons now roam and bite anyone; ridden ones
+    // stay under their rider (breath only, left click — guns are stowed).
   }
   function wardenSummon(t){
     if(V.warden || V.wardenDone || V.mode === "practice") return;
@@ -2130,22 +2927,34 @@ function makeGame(host, opts){
     var max = clamp(WARDEN_HP_PER * fighters, WARDEN_MIN_HP, WARDEN_MAX_HP);
     var b = (MAP && MAP.bounds && MAP.bounds.length === 6) ? MAP.bounds : [-42, -1, -30, 42, 12, 30];
     var cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2;
+    var gy = wardenGroundY(cx, cz);   // stand on the FLOOR — the skirt is wider than the centre platform
     var nowMs = Math.max(0, Math.round(Math.max(0, (V.endsAt || 0) - t) * 1000));
     V.warden = {
-      hp: max, max: max, phase: "live", x: cx, z: cz, yaw: 0,
+      hp: max, max: max, phase: "live", x: cx, z: cz, y: gy, yaw: 0,
       slabAt: t + 2.5, slabArm: 0, slabLand: 0, slamArm: 0,
       laserAt: t + WARDEN_LASER_CD, laserWarn: 0, laserOn: 0, laserYaw: 0,
       disAt: t + WARDEN_DIS_CD,
       ck: [false, false, false],
       armL: WARDEN_ARM_HP, armR: WARDEN_ARM_HP,
       born: t, pausedMs: nowMs, wdArmWarn: false,
-      coreUntil: 0, gripWarn: 0, gripOn: 0, gripAt: t + 8.0
+      coreUntil: 0, gripWarn: 0, gripOn: 0, gripAt: t + 8.0, danceUntil: 0
     };
+    // already grooving: if a Disco window is live when the boss rises, it joins it
+    (function(){
+      var left = 0;
+      [{__me: 1}].concat(others()).forEach(function(P){
+        var du = P.__me ? V.danceUntil : P.danceUntil;
+        if(du && du > t && du > left) left = du;
+      });
+      if(left) V.warden.danceUntil = left;
+    })();
     V.wdArmWarn = false;
     // suspend normal drops + auto-disaster; only the boss may call disasters / drop loot
     V.totemAt = null; V.packAt = null; V.disAt = null; V.disasterAt = null;
-    onEvent({ev: "warden", phase: "rise", hp: max, max: max, x: Math.round(cx*100), z: Math.round(cz*100), armL: WARDEN_ARM_HP, armR: WARDEN_ARM_HP});
+    onEvent({ev: "warden", phase: "rise", hp: max, max: max, x: Math.round(cx*100), z: Math.round(cz*100), y: Math.round(gy*100), armL: WARDEN_ARM_HP, armR: WARDEN_ARM_HP});
     if(R3 && R3.wardenRise) R3.wardenRise(V.warden);
+    // the elemental roster lands with the boss — six drift-wyrms, Fire → Golden
+    dragonSpawn(t);
   }
   function wardenTick(dt, t){
     if(V.mode === "practice") return;
@@ -2156,6 +2965,11 @@ function makeGame(host, opts){
       return;
     }
     var W = V.warden;
+    // ---- Disco: the boss grooves and holds every attack for the window ----
+    if(wardenDanceOn(W, t)){
+      if(R3 && R3.wardenSync) R3.wardenSync(W);
+      return;
+    }
     // ---- body turn: the torso faces around the arena (twin of Rust warden_tick) ----
     if(W.laserOn > 0 && t >= W.laserWarn){
       W.yaw = W.laserYaw || 0;
@@ -2177,6 +2991,7 @@ function makeGame(host, opts){
         [{__me: 1}].concat(others()).forEach(function(Q){
           var qx = Q.__me ? V.me.x : Q.x, qz = Q.__me ? V.me.z : Q.z, qdead = Q.__me ? V.dead : Q.dead;
           if(qdead) return;
+          if(qOnDragon(Q, t)) return;   // the fist hits the DECK — a rider is up on a saddle
           var dsl = Math.hypot(qx - p.x, qz - p.z);
           if(dsl <= WARDEN_SLAB_R_HIT){
             endBotLife(null, Q.__me ? null : Q, t, false, "warden-slam");
@@ -2235,13 +3050,15 @@ function makeGame(host, opts){
     }
     if(W.laserOn > t && t >= W.laserWarn){
       // ground laser: the eye looks down and the beam slants to the floor —
-      // anyone in that ground band (and not behind cover) dies
-      var ox = W.x, oy = WARDEN_SEE_HEAD, oz = W.z;
+      // anyone in that ground band (and not behind cover) dies. A fighter up in a
+      // saddle is not a ground target: the mount soaks it, never a floor beam.
+      var ox = W.x, oy = wardenGY(W) + WARDEN_SEE_HEAD, oz = W.z;
       var dx = Math.cos(W.laserYaw), dz = Math.sin(W.laserYaw);
       [{__me: 1}].concat(others()).forEach(function(Q){
         var qx = Q.__me ? V.me.x : Q.x, qy = Q.__me ? V.me.y : Q.y, qz = Q.__me ? V.me.z : Q.z, qdead = Q.__me ? V.dead : Q.dead;
         if(qdead) return;
         if(Q.__me && V.protUntil && t < V.protUntil) return;
+        if(qOnDragon(Q, t)) return;   // the dragon eats the beam, not the rider
         var px = qx - ox, pz = qz - oz;
         var along = px * dx + pz * dz;
         var runK = mapLaserRun(ox, oz, W.laserYaw || 0);
@@ -2253,6 +3070,8 @@ function makeGame(host, opts){
         if(!los([ox, oy, oz], [qx, qy + 0.9, qz])) return;
         endBotLife(null, Q.__me ? null : Q, t, false, "warden-laser");
       });
+      // The Warden cannot hurt a dragon at all. Disasters and gunfire are the
+      // only ways to bring one down mid-fight — the beam goes right past them.
     }
     // ---- disaster call ----
     if(t >= (W.disAt || 0)){
@@ -2272,11 +3091,11 @@ function makeGame(host, opts){
         var qx = Q.__me ? V.me.x : Q.x, qy = Q.__me ? V.me.y : Q.y, qz = Q.__me ? V.me.z : Q.z;
         var qdead = Q.__me ? V.dead : Q.dead;
         if(qdead) return;
+        if(qOnDragon(Q, t)) return;   // the open hand pulls ground fighters — a saddle flies on
         if(Q.__me ? meShielded(t) : botShielded(Q, t)) return;
-        // sprint / dash breaks the pull; cover does too
         if(Q.__me && V.sprinting) return;
         if(!Q.__me && Q.speedUntil && t < Q.speedUntil) return;
-        if(!los([W.x, WARDEN_SEE_CHEST, W.z], [qx, qy + 0.9, qz])) return;
+        if(!los([W.x, wardenGY(W) + WARDEN_SEE_CHEST, W.z], [qx, qy + 0.9, qz])) return;
         var dx = W.x - qx, dz = W.z - qz, d = Math.hypot(dx, dz);
         if(d > WARDEN_GRIP_R) return;
         if(d <= WARDEN_GRIP_MIN){
@@ -2312,25 +3131,27 @@ function makeGame(host, opts){
   // damage); never the head — it is no weak point.
   function wardenAim(W, slot){
     // open core: every bot focuses the exposed chest (still never the head)
+    var gy = wardenGY(W);
     if(W && W.coreUntil && now() < W.coreUntil){
-      return {x: ((W && W.x) || 0), y: WARDEN_SEE_CHEST, z: ((W && W.z) || 0), side: 0, core: 1};
+      return {x: ((W && W.x) || 0), y: gy + WARDEN_SEE_CHEST, z: ((W && W.z) || 0), side: 0, core: 1};
     }
     var side = ((((slot|0) % 2) + 2) % 2) === 0 ? -1 : 1;
-    return {x: ((W && W.x) || 0) + side * WARDEN_ARM_X, y: WARDEN_SEE_ARM, z: ((W && W.z) || 0), side: side};
+    return {x: ((W && W.x) || 0) + side * WARDEN_ARM_X, y: gy + WARDEN_SEE_ARM, z: ((W && W.z) || 0), side: side};
   }
-  function wardenSee(ox, oy, oz, wx, wz, slot){
+  function wardenSee(ox, oy, oz, wx, wz, slot, gy){
     var side = ((((slot|0) % 2) + 2) % 2) === 0 ? -1 : 1;
     var open = !!(V.warden && V.warden.coreUntil && now() < V.warden.coreUntil);
+    if(gy == null) gy = wardenGY();
     var pts = open ? [
-      [wx, WARDEN_SEE_CHEST, wz],
-      [wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
-      [wx - side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
-      [wx, WARDEN_SEE_WAIST, wz]
+      [wx, gy + WARDEN_SEE_CHEST, wz],
+      [wx + side * WARDEN_ARM_X, gy + WARDEN_SEE_ARM, wz],
+      [wx - side * WARDEN_ARM_X, gy + WARDEN_SEE_ARM, wz],
+      [wx, gy + WARDEN_SEE_WAIST, wz]
     ] : [
-      [wx + side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
-      [wx - side * WARDEN_ARM_X, WARDEN_SEE_ARM, wz],
-      [wx, WARDEN_SEE_CHEST, wz],
-      [wx, WARDEN_SEE_WAIST, wz]
+      [wx + side * WARDEN_ARM_X, gy + WARDEN_SEE_ARM, wz],
+      [wx - side * WARDEN_ARM_X, gy + WARDEN_SEE_ARM, wz],
+      [wx, gy + WARDEN_SEE_CHEST, wz],
+      [wx, gy + WARDEN_SEE_WAIST, wz]
     ], i;
     for(i = 0; i < pts.length; i++){
       if(los([ox, oy, oz], pts[i])) return pts[i][1];
@@ -2342,8 +3163,9 @@ function makeGame(host, opts){
     if(V.warden){
       var W = V.warden, slot = (P && P.n) || 0;
       var aim = wardenAim(W, slot);
-      var seeY = (P && P.ai && P.ai.body) ? wardenSee(P.ai.body.x, P.ai.body.y + FS.EYE, P.ai.body.z, W.x, W.z, slot) : wardenSee(0, FS.EYE, 0, W.x, W.z, slot);
-      return [{x: aim.x, z: aim.z, y: seeY != null ? seeY : WARDEN_SEE_ARM, __warden: 1, __seeY: seeY != null ? seeY : WARDEN_SEE_ARM, vx: 0, vz: 0}];
+      var seeY = (P && P.ai && P.ai.body) ? wardenSee(P.ai.body.x, P.ai.body.y + FS.EYE, P.ai.body.z, W.x, W.z, slot, W.y) : wardenSee(0, FS.EYE, 0, W.x, W.z, slot, W.y);
+      var seeFall = seeY != null ? seeY : (wardenGY(W) + WARDEN_SEE_ARM);
+      return [{x: aim.x, z: aim.z, y: seeFall, __warden: 1, __seeY: seeFall, vx: 0, vz: 0}];
     }
     var px = Math.cos(V.yaw)*PEEK_SIDE*(V.peek || 0), pz = Math.sin(V.yaw)*PEEK_SIDE*(V.peek || 0);
     var out = others().concat([{__me: 1}]).filter(function(q){
@@ -2378,14 +3200,30 @@ function makeGame(host, opts){
   function botJudge(P, t, e, d, reach){
     var foes = botEnemies(P), end = reach, vic = null, head = false;
     if(V.warden){
-      // only the Warden can be hit; arms take reduced damage and can be disabled
+      // While The Warden lives a bot's bullet is for the boss alone — it will not
+      // spend a shot on a summon, even one sitting on the line of fire. You can
+      // still shoot a dragon yourself; the bots just have a bigger target.
+      // Arms take reduced damage and can be disabled.
       var W = V.warden, boxes = wardenBoxes(W), hit = wardenHitIndex(boxes, e, d, end);
-      if(hit < 0){ addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false); return; }
-      var vol = hit, hb = boxes[vol];
-      var tHit = FS.rayBox(e, d, hb);
-      end = (tHit != null && tHit < end) ? tHit : end;
+      var volW = hit, tHitW = null;
+      if(volW >= 0){ tHitW = FS.rayBox(e, d, boxes[volW]); if(tHitW != null && tHitW < end) end = tHitW; }
+      if(volW >= 0){
+        addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false);
+        wardenHit(W, volW, FS.WEAPONS[P.w].damage, t);
+      } else {
+        addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false);
+      }
+      return;
+    }
+    // No boss up: a summon in the way eats the bullet (gunfire always hurts a dragon).
+    var dh = dragonScanHit(e, d, end);
+    if(dh){ end = dh.t; dragonHurt(dh.dragon, FS.WEAPONS[P.w].damage, t, "gunfire"); addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false); return; }
+    // Wave G destructibles: a turret or barrel in the way eats the bullet (and only it)
+    var wgB = wavegRay(e, d, end);
+    if(wgB){
+      end = wgB.t;
+      wavegHit(wgB, FS.WEAPONS[P.w].damage, P, t);
       addTracer(muzzleOf(P), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], P.w, t, false);
-      wardenHit(W, vol, FS.WEAPONS[P.w].damage, t);
       return;
     }
     foes.forEach(function(V2){
@@ -2429,25 +3267,149 @@ function makeGame(host, opts){
   /* ---------- launcher: a slow missile that flies to where it hits and blasts ----------
    * Solo (bots/practice): the browser flies it (missilesStep). MP: the server flies it in its
    * 20 Hz tick and the snapshot's "r" rows drive the same meshes; "b" rows are booms. */
+  // One rocket in the air at a time — but only YOURS. In MP a teammate's rocket rides
+  // the same V.missiles list ("r" rows are arena-wide), so a raw length check blocked
+  // you whenever anyone fired. Index 7 of an "r" row is the shooter slot.
+  function myRocketUp(){
+    for(var i = 0; i < V.missiles.length; i++){
+      var m = V.missiles[i];
+      if(m.pred) return true;                              // our own unclaimed launch
+      if(m.mine != null && V.mySlot != null && m.mine === V.mySlot) return true;
+    }
+    return false;
+  }
   function spawnMissile(t, e, d, owner, fromServer){
     V.missiles.push({id: V.life*100 + (V.n|0), at: t, ttl: FS.MISSILE_TTL, px: e[0], py: e[1], pz: e[2],
                      vx: d[0]*FS.MISSILE_V, vy: d[1]*FS.MISSILE_V, vz: d[2]*FS.MISSILE_V, o: null, x: e[0], y: e[1], z: e[2],
-                     owner: owner || null, srv: !!fromServer});   // owner null: the local player
-    if(V.missiles.length > 2){ var old = V.missiles.shift(); if(old.o && R3) R3.rocket(null, old); }
+                     owner: owner || null, srv: !!fromServer,
+                     // whose rocket it is, as a roster slot — the one-rocket gate is per shooter.
+                     // Only a launch with no owner is yours (fire() passes none); a bot's rocket
+                     // passes its player and must never count against your trigger.
+                     mine: (!fromServer && !owner) ? V.mySlot : null,
+                     // a client-predicted launch in MP: drawn at once, adopted by the first
+                     // "r" row (then srv), never detonated here (the judge's "b" rows are the boom)
+                     pred: !fromServer && V.mode === "mp"});
+    if(V.missiles.length > 3){ var old = V.missiles.shift(); if(old.o && R3) R3.rocket(null, old); }
+  }
+  // ---- Wave G: destructible world objects (turrets / barrels) ----
+  // A bullet finds them by AABB along the ray, the same way it finds a drone.
+  // Twin: turret_box / barrel_box / waveg_hits in backend/src/strike.rs.
+  function bodyWaveG(P){ return P === V.me ? V.me : (P && P.ai && P.ai.body) ? P.ai.body : P; }
+  function wavegRay(e, d, end){
+    // nearest of [turret, barrel] along the ray: {kind, obj, t} or null
+    var best = null;
+    (V.turrets || []).forEach(function(TU){
+      if(!TU || TU.hp <= 0) return;
+      var h = FS.rayBox(e, d, FS.turretBox([TU.x, (TU.y||0) + holeGroundY(TU.x, TU.z), TU.z]));
+      if(h !== null && h < end && (!best || h < best.t)) best = {kind: "turret", obj: TU, t: h};
+    });
+    (V.barrels || []).forEach(function(BO){
+      if(!BO || BO.hp <= 0) return;
+      var h = FS.rayBox(e, d, FS.barrelBox([BO.x, (BO.y||0) + holeGroundY(BO.x, BO.z), BO.z]));
+      if(h !== null && h < end && (!best || h < best.t)) best = {kind: "barrel", obj: BO, t: h};
+    });
+    return best;
+  }
+  function barrelBlast(BO, shooter, t){
+    // 10× a launcher: the direct hit is BARREL_DIRECT, the falloff curve is the
+    // launcher's own scaled out to BARREL_R. Chains the next barrel inside the radius.
+    if(!BO || BO.hp <= 0) return;
+    BO.hp = 0;
+    var x = BO.x, y = (BO.y || 0) + holeGroundY(BO.x, BO.z) + 0.5, z = BO.z;
+    if(R3) R3.boom(x, y, z, t);
+    if(E.sfxAt) E.sfxAt("boom", [x, y, z], {kind: "blast", curve: true}); else E.sfx("boom");
+    V.shakeAt = t;
+    if(R3 && R3.removeBarrel) R3.removeBarrel(BO);
+    var harm = function(P, isMe){
+      if(!P) return;
+      if(isMe){ if(V.dead) return; }        // your flags are on V, not on V.me
+      else if(P.dead || P.gone) return;
+      var B = bodyWaveG(P);
+      var dist = Math.hypot((B.x||0) - x, ((B.y||0) + 0.9) - y, (B.z||0) - z);
+      var dmg = 0;
+      if(dist < FS.DIRECT_R) dmg = FS.BARREL_DIRECT;
+      else if(dist < FS.BARREL_R) dmg = Math.round(FS.BARREL_DMG - (FS.BARREL_DMG - FS.BARREL_MIN) * (dist / FS.BARREL_R));
+      if(dmg <= 0) return;
+      if(P.protUntil && t < P.protUntil) return;
+      if(!isMe && botShielded(P, t)) return;
+      if(isMe && meShielded(t)) return;
+      if(isMe){
+        V.hp = Math.max(0, (V.hp|0) - dmg); V.hurtAt = t;
+        V.hurtDir = Math.atan2(x - V.me.x, -(z - V.me.z)) - V.yaw;
+        // endBotLife is display-only in MP (the judge books the kill) — see its note
+        if(V.hp <= 0 && !V.dead) endBotLife(shooter || null, null, t, dist < FS.DIRECT_R, "barrel");
+        return;
+      }
+      P.hp -= dmg;
+      pushDmgNum(B.x, (B.y||0) + 1.2, B.z, dmg, dist < FS.DIRECT_R, t);
+      // World-object blast: the shooter is whoever detonated the barrel; if that
+      // is not a real fighter (chain / world tick) the map owns the kill.
+      if(P.hp <= 0 && !P.dead) endBotLife(shooter || null, P, t, dist < FS.DIRECT_R, "barrel");
+    };
+    harm(V.me, true);
+    others().forEach(function(P){ harm(P, false); });
+    // chain: a barrel inside the blast goes off too (with the same credit)
+    (V.barrels || []).forEach(function(BO2){
+      if(!BO2 || BO2.hp <= 0 || BO2 === BO) return;
+      if(Math.hypot((BO2.x||0) - x, (BO2.z||0) - z) <= FS.BARREL_R) barrelBlast(BO2, shooter, t);
+    });
+  }
+  function wavegHit(hit, dmg, shooter, t){
+    if(!hit || !hit.obj) return;
+    if(hit.kind === "barrel"){
+      var bh = (hit.obj.hp|0);
+      if(bh <= 0) return;
+      pushDmgNum(hit.obj.x, holeGroundY(hit.obj.x, hit.obj.z) + (hit.obj.y||0) + 1.0, hit.obj.z, dmg, false, t);
+      if(bh - dmg <= 0){
+        // barrelBlast zeroes hp itself; zeroing here first would make its
+        // "already spent" guard swallow the detonation.
+        barrelBlast(hit.obj, shooter, t);
+      } else {
+        hit.obj.hp = bh - dmg;
+      }
+      return;
+    }
+    var TU = hit.obj;
+    TU.hp = (TU.hp|0) - dmg;
+    pushDmgNum(TU.x, holeGroundY(TU.x, TU.z) + (TU.y||0) + 1.1, TU.z, dmg, false, t);
+    if(TU.hp <= 0){
+      TU.hp = 0;
+      if(R3 && R3.removeTurret) R3.removeTurret(TU);
+    } else if(R3 && R3.moveTurret) R3.moveTurret(TU, t);
   }
   function detonate(miss, t){
     if(miss.srv) return;  // server-flown: the "b" snapshot rows bring the boom and the damage
+    if(miss.pred) return; // a prediction the judge has not claimed yet — never book damage here
     var x = miss.x, y = miss.y, z = miss.z;
     if(R3) R3.boom(x, y, z, t);
     // [sound] heard where it went off: the blast kind's distance fade (curve on), its side of you, d/343 s late
     if(E.sfxAt) E.sfxAt("boom", [x, y, z], {kind: "blast", curve: true}); else E.sfx("boom");
     V.shakeAt = t;
     var shooter = miss.owner; // null: the local player; else a bot
-    // while The Warden lives, blasts only bruise the boss — players and bots take nothing
-    if(V.warden){
-      wardenBlast(V.warden, [x, y, z], t);
-      return;
-    }
+    // while The Warden lives, blasts only bruise the boss — players and bots take
+    // nothing. The summons still eat the blast: gunfire is gunfire, and the Warden
+    // is the only thing that never hurts a dragon.
+    if(V.warden) wardenBlast(V.warden, [x, y, z], t);
+    // the blast also bites the beasts — gunfire is gunfire, and it always counts
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.dead) return;
+      var dist = Math.hypot((D.x||0) - x, ((D.y||0) + 1.6) - y, (D.z||0) - z);
+      var dmg = FS.blastDamage(dist, dist < FS.DIRECT_R);
+      if(dmg > 0) dragonHurt(D, dmg, t, "gunfire");
+    });
+    if(V.warden) return;
+    // Wave G destructibles: the blast bruises turrets and detonates barrels in radius
+    (V.turrets || []).forEach(function(TU){
+      if(!TU || TU.hp <= 0) return;
+      var dist = Math.hypot((TU.x||0) - x, (holeGroundY(TU.x, TU.z) + (TU.y||0) + 0.6) - y, (TU.z||0) - z);
+      var dmg = FS.blastDamage(dist, dist < FS.DIRECT_R);
+      if(dmg > 0) wavegHit({kind: "turret", obj: TU, t: 0}, dmg, shooter || {uid: myId(), kills: V.kills, team: V.team, w: LAUNCH_W, name: "You"}, t);
+    });
+    (V.barrels || []).slice().forEach(function(BO){
+      if(!BO || BO.hp <= 0) return;
+      var dist = Math.hypot((BO.x||0) - x, (holeGroundY(BO.x, BO.z) + (BO.y||0) + 0.5) - y, (BO.z||0) - z);
+      if(dist < FS.BARREL_R) barrelBlast(BO, shooter || {uid: myId(), kills: V.kills, team: V.team, w: LAUNCH_W, name: "You"}, t);
+    });
     // every living thing in radius takes falloff; the shooter is NOT safe (honest rockets, friendlies included)
     others().forEach(function(P){
       if(P.gone || P.dead) return;
@@ -2462,8 +3424,7 @@ function makeGame(host, opts){
       P.hp -= dmg;
       if(miss.srv) return;
       if(!shooter) V.hitAt = t;
-      V.dmgNums.push({x: P.x, y: P.y + 1.2, z: P.z, n: dmg, head: dist < FS.DIRECT_R, at: t, o: null});
-      if(V.dmgNums.length > 12) V.dmgNums.shift();
+      pushDmgNum(P.x, P.y + 1.2, P.z, dmg, dist < FS.DIRECT_R, t);
       var killer = shooter && P !== shooter ? {uid: shooter.uid, kills: shooter.kills|0, team: shooter.team, w: LAUNCH_W, name: shooter.name}
                            : shooter ? null : {uid: myId(), kills: V.kills, team: V.team, w: LAUNCH_W, name: "You"};
       if(P.hp <= 0 && !P.dead) endBotLife(killer, P, t, dist < FS.DIRECT_R);
@@ -2479,10 +3440,18 @@ function makeGame(host, opts){
       var self = FS.blastDamage(md, false);
       if(self > 0 && !V.dead && !meShielded(t)){  // the drop shield stops blasts reaching a glider too
         V.hp -= self; V.hurtAt = t; V.hurtDir = Math.atan2(x - V.me.x, -(z - V.me.z)) - V.yaw;
-        if(V.hp <= 0){ V.hp = 0; V.dead = true; V.deadAt = t; V.deaths = (V.deaths|0) + 1; V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0; V.danceUntil = 0;
-          if(shooter && shooter.uid !== myId()) snapKillCam(shooter, LAUNCH_W, false);
-          onEvent({ev: "kill", k: shooter ? shooter.uid : null, v: myId(), w: LAUNCH_W, hs: false,
-                   kills: shooter ? (shooter.kills|0) : V.kills, deaths: V.deaths, scores: V.scores}); }
+        if(V.hp <= 0){
+          V.hp = 0;
+          // MP: the judge books the suicide — never latch V.dead locally (see endBotLife)
+          if(V.mode === "mp"){
+            V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0; V.danceUntil = 0;
+            if(shooter && shooter.uid !== myId()) snapKillCam(shooter, LAUNCH_W, false);
+          } else {
+            V.dead = true; V.deadAt = t; V.deaths = (V.deaths|0) + 1; V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0; V.danceUntil = 0;
+            if(shooter && shooter.uid !== myId()) snapKillCam(shooter, LAUNCH_W, false);
+            onEvent({ev: "kill", k: shooter ? shooter.uid : null, v: myId(), w: LAUNCH_W, hs: false,
+                     kills: shooter ? (shooter.kills|0) : V.kills, deaths: V.deaths, scores: V.scores}); }
+        }
       }
     }
   }
@@ -2543,6 +3512,24 @@ function makeGame(host, opts){
                  x: K.x, y: K.y, z: K.z, yaw: K.yaw || 0, pitch: K.pitch || 0, ref: K};
   }
   function endBotLife(killer, vic, t, head, dis){
+    // one death, one deathAt: a re-entry while the body is already down would
+    // book another kill AND rewind V.deadAt + RESPAWN. Every caller should
+    // guard too, but this is the site that owns the clock.
+    if(!vic){ if(V.dead) return; }
+    else if(vic.dead || vic.gone) return;
+    // MP: the Arena judge owns damage, deaths, scores and the feed ("kill"/"spawn").
+    // A local hit (barrel blast, dragon breath/bite, your own rocket) must only
+    // bruise you here — writing V.dead without the judge agreeing left a player
+    // stuck in respawn forever, because no "spawn" is ever sent for a death the
+    // server never booked. Second Wind / Phoenix / Fake Death are the judge's too.
+    if(V.mode === "mp"){
+      if(!vic){
+        V.hp = 0; V.hurtAt = t;
+        V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0; V.danceUntil = 0;   // a death pops the movement totems too
+        if(killer && killer.uid !== myId()) snapKillCam(killer, killer.w|0, !!head);
+      }
+      return;
+    }
     // Second Wind / Phoenix / Fake Death: the first killing blow just fails
     if(vic){
       if(vic.fakeUntil && t < vic.fakeUntil){ vic.fakeUntil = 0; say("Fake Death: the shot missed"); return; }
@@ -2812,9 +3799,17 @@ function makeGame(host, opts){
     if(kind === "disco"){
       // Everyone except the taker dances and cannot shoot. Per-player clocks (the
       // taker is the one who stays armed), the window drops on death like the
-      // Paralyser — but only the dancer's own death, not the taker's.
+      // Paralyser — but only the dancer's own death, not the taker's. The Warden
+      // dances too when it is up: same window, and it holds every attack.
       var d = TOTEMS.disco.dur;
       others().forEach(function(P){ if(P && !P.gone){ P.danceUntil = t + d; if(R3) R3.charm(P, "disco"); } });
+      if(V.warden){
+        V.warden.danceUntil = t + d;
+        // the boss grooves instead of attacking: drop any in-flight telegraph
+        V.warden.slabArm = 0; V.warden.slabLand = 0;
+        V.warden.laserWarn = 0; V.warden.laserOn = 0;
+        V.warden.gripWarn = 0; V.warden.gripOn = 0;
+      }
       if(R3 && R3.ring) R3.ring(V.me.x, (V.me.y || 0) + 0.08, V.me.z, 8, 0.55, t);
       return "Disco: everyone but you dances for "+d+"s — they can't shoot";
     }
@@ -2890,6 +3885,99 @@ function makeGame(host, opts){
       V.rouletteUntil = t + TOTEMS.roulette.dur;
       V.rouletteNext = t + FS.ROULETTE_GAP;
       return "Weapon Roulette: everyone's gun re-rolls every 2s for "+TOTEMS.roulette.dur+"s";
+    }
+    // ---- Wave G: the trap-and-gadget set. Objects are lists (a second take stacks),
+    // scattered from world_k so a user sees the same layout every time. ----
+    if(kind === "turret"){
+      V.worldK = (V.worldK|0) + 1;
+      V.turrets = V.turrets || [];
+      V.turretUntil = t + TOTEMS.turret.dur;
+      var tseed = ((V.worldK * 2654435761) >>> 0) + ((t * 1000)|0);
+      // a ring around the TAKER (twin of the Trapmaster mines), not a scatter
+      // across the map — these are meant to cover you, so they have to be in
+      // the fight you are already in. never Math.random: the angle comes from
+      // the world counter.
+      for(var ti = 0; ti < FS.TURRET_N; ti++){
+        var ta = (V.worldK|0) * 2.399 + ti * 2.1;
+        var tx = V.me.x + Math.cos(ta) * 1.8, tz = V.me.z + Math.sin(ta) * 1.8;
+        for(var tn = 0; tn < 16 && FS.overlaps(MAP, tx, 0.1, tz, 0.2) >= 0; tn++){
+          tx = V.me.x + Math.cos(ta) * (1.8 + tn * 0.3);
+          tz = V.me.z + Math.sin(ta) * (1.8 + tn * 0.3);
+        }
+        var tu = {id: "tu-" + (tseed % 99991) + "-" + ti, x: tx, y: 0, z: tz,
+                  hp: FS.TURRET_HP, max: FS.TURRET_HP, team: V.team, owner: myId(),
+                  born: t, until: t + TOTEMS.turret.dur, next: t, yaw: 0};
+        V.turrets.push(tu);
+        if(R3 && R3.addTurret) R3.addTurret(tu);
+      }
+      return "Mini Turret: "+FS.TURRET_N+" turrets drop in and cover you for "+TOTEMS.turret.dur+"s";
+    }
+    if(kind === "barrel"){
+      // Instant: three big barrels crash down from the sky. Shoot one and it goes up
+      // in a 10× launcher blast, and the blast chains the next barrel.
+      V.worldK = (V.worldK|0) + 1;
+      V.barrels = V.barrels || [];
+      var bseed = ((V.worldK * 2654435761) >>> 0) + ((t * 1000)|0);
+      for(var br = 0; br < FS.BARREL_N; br++){
+        var bspot = dropSpot((bseed + br * 0x9e3779b9) >>> 0);
+        var bo = {id: "br-" + (bseed % 99991) + "-" + br, x: bspot[0], y: FS.BARREL_FALL, z: bspot[2],
+                  hp: FS.BARREL_HP, max: FS.BARREL_HP, vy: 0, landed: 0, born: t};
+        V.barrels.push(bo);
+        if(R3 && R3.addBarrel) R3.addBarrel(bo);
+      }
+      return "Explosive Barrels: "+FS.BARREL_N+" barrels fall out of the sky — shoot one and run";
+    }
+    if(kind === "laser"){
+      V.worldK = (V.worldK|0) + 1;
+      V.lasers = V.lasers || [];
+      V.laserUntil = t + TOTEMS.laser.dur;
+      var lseed = ((V.worldK * 2654435761) >>> 0) + ((t * 1000)|0);
+      for(var lg = 0; lg < FS.LASER_N; lg++){
+        var a = dropSpot((lseed + lg * 0x9e3779b9) >>> 0);
+        var ang = hashMatch(lseed, lg * 13 + 5) * Math.PI * 2;
+        var half = FS.LASER_LEN * 0.5;
+        var lz2 = {id: "lg-" + (lseed % 99991) + "-" + lg,
+                   ax: a[0] - Math.cos(ang) * half, az: a[2] - Math.sin(ang) * half,
+                   bx: a[0] + Math.cos(ang) * half, bz: a[2] + Math.sin(ang) * half,
+                   y: FS.LASER_Y, born: t, until: t + TOTEMS.laser.dur};
+        V.lasers.push(lz2);
+        if(R3 && R3.addLaser) R3.addLaser(lz2);
+      }
+      return "Laser Grid: "+FS.LASER_N+" tripwires criss-cross the floor for "+TOTEMS.laser.dur+"s — jump them";
+    }
+    if(kind === "jumppad"){
+      V.worldK = (V.worldK|0) + 1;
+      V.pads = V.pads || [];
+      V.padUntil = t + TOTEMS.jumppad.dur;
+      var pseed = ((V.worldK * 2654435761) >>> 0) + ((t * 1000)|0);
+      for(var pi = 0; pi < FS.PAD_N; pi++){
+        var pspot = dropSpot((pseed + pi * 0x9e3779b9) >>> 0);
+        var pd = {id: "pd-" + (pseed % 99991) + "-" + pi, x: pspot[0], z: pspot[2],
+                  y: 0, born: t, until: t + TOTEMS.jumppad.dur, cd: 0};
+        V.pads.push(pd);
+        if(R3 && R3.addPad) R3.addPad(pd);
+      }
+      return "Jump Pad: "+FS.PAD_N+" launch pads for "+TOTEMS.jumppad.dur+"s — step on one and fly";
+    }
+    if(kind === "lottery"){
+      // Instant: one living ENEMY is chosen by the world counter (never Math.random).
+      // They either heal to full or drop dead on the spot.
+      var pool = [];
+      others().forEach(function(P){ if(P && !P.dead && !P.gone && P.team !== V.team) pool.push(P); });
+      if(!pool.length) return "Death Lottery: nobody home — the ticket voids itself";
+      V.worldK = (V.worldK|0) + 1;
+      var lseed2 = ((V.worldK * 2654435761) >>> 0) + ((t * 1000)|0);
+      var pick = pool[(((lseed2 >>> 8) % pool.length) + pool.length) % pool.length];
+      var live = hashMatch(lseed2, 3) < 0.5;
+      if(live){
+        pick.hp = FS.LOTTERY_HEAL; pick.bleed = 0;
+        say("Death Lottery: " + pick.name + " wins a full heal");
+        return "Death Lottery: " + pick.name + " heals to full";
+      }
+      pick.hp = 0;
+      if(typeof endBotLife === "function") endBotLife({uid: myId(), kills: V.kills, team: V.team, w: 0, name: "You"}, pick, t, false, "lottery");
+      say("Death Lottery: " + pick.name + " drew the short straw");
+      return "Death Lottery: " + pick.name + " drops dead";
     }
     // ---- Wave D: Arena Disasters. The totem unleashes the map-wide hazard and
     // the taker is just as exposed as everyone else. A Shield totem holder is the
@@ -2972,6 +4060,29 @@ function makeGame(host, opts){
     }
     return out;
   }
+  // Hurricane vortex: a caught body is taken up, spun around the column and held
+  // there with no way to walk out. Twin: wind_catch in strike.rs.
+  // s is {x, y, z, g, …} (V.me or an ai.body) and held is the catch window
+  // ({until, col, phase, rad}) hung off the body as `vortex`.
+  function inWindCatch(s, held, t, col, dt, spin, lift){
+    if(!s || !held || !col) return false;
+    if(!(t < (held.until || 0))){ s.vortex = null; return false; }
+    // the column walks — pull a caught body back onto the orbit it is already riding
+    var want = DD_WIND_CATCH_R;
+    var dd = Math.hypot(s.x - col[0], s.z - col[1]);
+    if(!(dd > 0.05)) dd = 1;
+    var rad = dd + (want - dd) * Math.min(1, 1.4 * (dt || 0.016));
+    rad = Math.max(0.35, Math.min(DD_WIND_R, rad));
+    held.rad = rad;
+    held.phase = (held.phase || 0) + (spin || 0) * (dt || 0.016);
+    s.x = col[0] + Math.cos(held.phase) * rad;
+    s.z = col[1] + Math.sin(held.phase) * rad;
+    // taken up off the deck, and it holds you there — no gravity, no stepping out
+    s.y = Math.min(DD_WIND_TOP, (s.y || 0) + (lift || 0) * (dt || 0.016));
+    s.g = false;
+    if(s.vy != null) s.vy = 0;
+    return true;
+  }
   // Hurricane's walking wind column: [x, z] on the map, lerped across the hold from
   // the disaster's frozen seed. Twin: the wx/wz lines in strike.rs disaster_tick.
   function disWindCol(D, t){
@@ -3012,13 +4123,13 @@ function makeGame(host, opts){
     var ALL = ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
       "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
       "wallrun","secondwind","fakedeath","ghost","cluster","overclock","ricochet","infchamber",
-      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];
+      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];
     var toks = canMole ? ALL : ALL.filter(function(k){ return k !== "mole"; });
     // personal roster only — Disaster totems live in disasterSpawn() on their own ring.
     // The newest joke set (Big Head … Roulette) is FEATURED: half the rolls come from it,
     // so a player actually meets them inside a match instead of waiting on a 1-in-45 roll.
     // (Split from a string so this list does not look like a fourth drop roster.)
-    var FEAT = "bighead,disco,banana,lava,goose,reverse,blackhole,roulette".split(",");
+    var FEAT = "bighead,disco,banana,lava,goose,reverse,blackhole,roulette,turret,barrel,laser,jumppad,lottery".split(",");
     var kind = (((tok >>> 8) & 1) === 1)
       ? FEAT[(((tok >>> 16) % FEAT.length) + FEAT.length) % FEAT.length]
       : toks[((tok % toks.length) + toks.length) % toks.length];
@@ -3068,7 +4179,7 @@ function makeGame(host, opts){
     return ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
       "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
       "wallrun","secondwind","fakedeath","ghost","cluster","overclock","ricochet","infchamber",
-      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"];
+      "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"];
   }
   // land at most DRONE_TOTEMS personal totems ON the wreck, not on a fresh dropSpot.
   // They get their own one-shot slots appended PAST the drop rings (the Warden's loot
@@ -3141,9 +4252,10 @@ function makeGame(host, opts){
         var Wd = V.warden;
         ai.thinkAt = t + BOT_THINK;
         ai.decoyAt = 0;
-        var seeH = wardenSee(x, P.ai.body.y + FS.EYE, z, Wd.x, Wd.z, P.n || 0);
+        var seeH = wardenSee(x, P.ai.body.y + FS.EYE, z, Wd.x, Wd.z, P.n || 0, Wd.y);
         var aimH = wardenAim(Wd, P.n || 0);
-        var stub = {x: aimH.x, z: aimH.z, y: seeH != null ? seeH : WARDEN_SEE_ARM, __warden: 1, __seeY: seeH != null ? seeH : WARDEN_SEE_ARM, vx: 0, vz: 0};
+        var seeFall = seeH != null ? seeH : (wardenGY(Wd) + WARDEN_SEE_ARM);
+        var stub = {x: aimH.x, z: aimH.z, y: seeFall, __warden: 1, __seeY: seeFall, vx: 0, vz: 0};
         stub.__uid = "warden";
         // keep the first sighting: restamping seenAt every think starves the
         // BOT_REACT gate and the bot never opens fire
@@ -3180,7 +4292,7 @@ function makeGame(host, opts){
         // a sandstorm arena event halves how far a bot can see (the dust is up)
         var botRange = ((V.arenaEvent === "storm" && t < (V.arenaEventUntil || 0))
           || disKindLive(t, "sandstorm")) ? STORM_RANGE : BOT_RANGE;
-        var seeAt = V2.__warden ? [V2.x, (V2.__seeY != null ? V2.__seeY : WARDEN_SEE_ARM), V2.z] : [V2.x, V2.y + FS.EYE, V2.z];
+        var seeAt = V2.__warden ? [V2.x, (V2.__seeY != null ? V2.__seeY : (wardenGY() + WARDEN_SEE_ARM)), V2.z] : [V2.x, V2.y + FS.EYE, V2.z];
         if(dd <= botRange && los([x, P.ai.body.y + FS.EYE, z], seeAt)){
           // every visible foe is a candidate, nearer likelier; whoever we already chase gets a bonus
           var w2 = 1/(0.2 + dd) * (cur && foes[i].__uid === cur.__uid ? 2.2 : 1);
@@ -3267,7 +4379,7 @@ function makeGame(host, opts){
       // genuinely farther than its shadow on the floor, so it earns more lead time
       var lead = Math.min(0.25, Math.hypot(txNow - x, (tyNow - P.ai.body.y) || 0, tzNow - z)/wp.range);
       var tx = txNow + tvx*lead, tz = tzNow + tvz*lead,
-          ty = (tgt2 && tgt2.__warden) ? ((tgt2.__seeY != null ? tgt2.__seeY : WARDEN_SEE_ARM))
+          ty = (tgt2 && tgt2.__warden) ? ((tgt2.__seeY != null ? tgt2.__seeY : (wardenGY() + WARDEN_SEE_ARM)))
               : tyNow + ((P.n + 1) % 3 === 0 ? 1.35 : 0.9);
       var want_yaw = Math.atan2(tx - x, -(tz - z))*180/Math.PI;
       var flat = Math.max(0.1, Math.hypot(tx - x, tz - z));
@@ -3309,7 +4421,7 @@ function makeGame(host, opts){
       // Aim the body, not the eyes (EYE is your head): eye-level LOS false-negatives when a
       // target is crouched or over a slope — the bot thinks it can't fire, plainly staring at you
       var clearNow = (tgt2 && tgt2.__warden)
-        ? wardenSee(x, P.ai.body.y + FS.EYE, z, txNow, tzNow) != null
+        ? wardenSee(x, P.ai.body.y + FS.EYE, z, txNow, tzNow, 0, wardenGY()) != null
         : los([x, P.ai.body.y + FS.EYE, z], [txNow, tyNow + 0.9, tzNow]);
       // launcher bots: a real missile with their aim; one in the air at a time, like the player
       if(P.hookUntil && t < P.hookUntil){
@@ -3394,13 +4506,45 @@ function makeGame(host, opts){
       // physics at the client's STEP — or glide it: a descending bot sinks gently with the
       // ground's own collide-and-slide absent (no FS.move during a drop, by design)
       var ai = P.ai, acc = dt;
+      // Hurricane vortex: a wind column takes bots too — lifted and spun like you are.
+      // Resolve the catch FIRST so the grip owns the body before any physics runs.
+      // Twin: in_wind_catch in strike.rs.
+      var gripHB = (ai.body.vortex && t < (ai.body.vortex.until || 0)) ? ai.body.vortex : null;
+      var colHB = null;
+      if(!botShielded(P, t) && !(ai.dropUntil && t < ai.dropUntil)){
+        (V.disasters || []).forEach(function(D){
+          if(colHB || D.kind !== "hurricane" || !disLive(t, D)) return;
+          var c = disWindCol(D, t);
+          if(!c) return;
+          if(gripHB || Math.hypot(ai.body.x - c[0], ai.body.z - c[1]) < DD_WIND_R) colHB = c;
+        });
+      }
+      if(colHB){
+        if(!gripHB){
+          // start the orbit where the body already stands — no teleport onto the ring
+          ai.body.vortex = {until: t + DD_WIND_CATCH, col: [colHB[0], colHB[1]],
+                            phase: Math.atan2(ai.body.z - colHB[1], ai.body.x - colHB[0]),
+                            rad: Math.max(0.35, Math.hypot(ai.body.x - colHB[0], ai.body.z - colHB[1]))};
+          gripHB = ai.body.vortex;
+        }
+        gripHB.until = Math.max(gripHB.until|0, t + DD_WIND_CATCH);
+        gripHB.col = [colHB[0], colHB[1]];
+      } else if(ai.body.vortex){ ai.body.vortex = null; }
+      var vortexB = !!(ai.body.vortex && t < (ai.body.vortex.until || 0));
       if(ai.dropUntil && t < ai.dropUntil){
-        var floor = FS.topUnder(MAP, ai.body.x, ai.body.z, ai.body.y);
+        var floor = FS.deckUnder(MAP, ai.body.x, ai.body.z);
         if(floor == null) floor = -1e9;   // a gap under the canopy: keep sinking into the void clock
         ai.body.y = Math.max(floor, ai.body.y - FS.DROP_SINK*dt);
         if(ai.body.y <= floor && floor > -1e8){ ai.dropUntil = 0; P.protUntil = t + 1.5; }
+      } else if(vortexB){
+        // a hurricane grip owns the body — no FS.move, no gravity (twin: the me branch)
+        inWindCatch(ai.body, ai.body.vortex, t, ai.body.vortex.col, dt, DD_WIND_SPIN, DD_WIND_LIFT);
+        P.slowUntil = Math.max(P.slowUntil|0, t + DD_WIND_SLOW);
+        ai.wx = 0; ai.wz = 0; ai.body.vx = 0; ai.body.vz = 0;
+        ai.aim_y = ((ai.aim_y||0) + DD_WIND_SPIN * 180/Math.PI * dt) % 360; P.yaw = ai.aim_y*Math.PI/180;
       } else {
-        if(ai.dropUntil) ai.dropUntil = 0;
+        // canopy window closed without touchdown: abandon the glide and start cover
+        if(ai.dropUntil){ ai.dropUntil = 0; P.protUntil = t + 1.5; }
         var bG = (P.gravUntil && t < P.gravUntil) ? 0.42 : 1;
         var bJ = (P.wallrunUntil && t < P.wallrunUntil) ? 1.2 : 1;
         var botTop = (ai.body && P.slowUntil && t < P.slowUntil) ? DD_SLOW_MULT : 1;
@@ -3422,21 +4566,6 @@ function makeGame(host, opts){
             botPlace(P, spB, t);
           }
         } else if(ai.voidAt){ ai.voidAt = 0; }
-        // Hurricane: the walking wind column shoves bots too (everyone suffers — see me).
-        // Several hurricanes can be live at once — each one's column pushes.
-        (V.disasters || []).forEach(function(D){
-          if(D.kind !== "hurricane" || !disLive(t, D) || botShielded(P, t)) return;
-          var colHB = disWindCol(D, t);
-          if(!colHB) return;
-          var ddxHB = ai.body.x - colHB[0], ddzHB = ai.body.z - colHB[1], ddHB = Math.hypot(ddxHB, ddzHB);
-          if(ddHB < DD_WIND_R){
-            var lnHB = Math.max(0.05, ddHB);
-            var shoveHB = DD_WIND_PUSH * (1 - ddHB / DD_WIND_R) * dt;
-            ai.body.x += (ddxHB / lnHB) * shoveHB;
-            ai.body.z += (ddzHB / lnHB) * shoveHB;
-            P.slowUntil = Math.max(P.slowUntil|0, t + DD_WIND_SLOW);   // loose footing
-          }
-        });
       }
       P.x = ai.body.x; P.y = ai.body.y; P.z = ai.body.z; P.moving = 1;
     });
@@ -3540,7 +4669,7 @@ function makeGame(host, opts){
   }
 
   /* ---------- multiplayer: the server's view ---------- */
-  function requestView(){ if(MP) MP.send("strike", "view"); }
+  function requestView(){ grabLock(); if(MP) MP.send("strike", "view"); }
   function inMatch(view){ return (view.players || []).some(function(p){ var id = p.user && (p.user.userId || p.user.id); return id === myId() && !p.gone; }); }
   function uidOf(p){ return p.user && (p.user.userId || p.user.id); }
   function applyView(view){
@@ -3573,7 +4702,10 @@ function makeGame(host, opts){
       if(uid === myId()){
         V.mySlot = p.slot|0; V.team = clamp(p.team|0, 0, 1); V.kills = p.kills|0; V.deaths = p.deaths|0; V.hp = p.hp|0;
         if(fresh || V.life !== (p.e|0) || view.phase === "warmup"){
-          placeMe((+p.x || 0)/100, (+p.y || 0)/100, (+p.z || 0)/100, (+p.r || 0)/100);
+          // A fresh join adopts the spawn's facing; a mid-match re-place (a view
+          // broadcast racing a respawn) keeps the aim you already had — snapping yaw
+          // there is what made a drop feel like the camera had been taken away.
+          placeMe((+p.x || 0)/100, (+p.y || 0)/100, (+p.z || 0)/100, fresh ? (+p.r || 0)/100 : null);
           V.life = p.e|0; fullAmmo(); V.w = p.w|0;
         }
         V.dead = !!p.dead;
@@ -3613,6 +4745,9 @@ function makeGame(host, opts){
     if(view.phase === "warmup"){ V.phase = "warmup"; V.goAt = now() + (view.goInMs|0)/1000; V.endsAt = V.goAt + V.minutes*60; ensureMatchDrones(); }
     else if(view.phase === "round"){ V.phase = "round"; V.startAt = now(); V.endsAt = now() + (view.msLeft|0)/1000; if(!V.mdrones || !V.mdrones.length) ensureMatchDrones(); }
     showStage(true);
+    // entering the match is the gesture's tail end (the "Join the match" click) —
+    // grab the mouse so MP aims like solo from the first frame
+    grabLock();
     if(fresh && R3) R3.buildMap();
     renderBoard();
   }
@@ -3624,6 +4759,7 @@ function makeGame(host, opts){
         V.warden = V.warden || {};
         V.warden.hp = +m.hp || 0; V.warden.max = +m.max || 1;
         V.warden.x = (+m.x || 0)/100; V.warden.z = (+m.z || 0)/100;
+        V.warden.y = (m.y != null ? (+m.y || 0)/100 : holeGroundY(V.warden.x, V.warden.z));
         V.warden.armL = +m.armL || WARDEN_ARM_HP; V.warden.armR = +m.armR || WARDEN_ARM_HP;
         V.warden.phase = "live"; V.warden.born = now();
         say("The Warden rises at the center of the map!");
@@ -3643,6 +4779,8 @@ function makeGame(host, opts){
         say("The Warden is down — the match is back on!");
         flashCenter("WARDEN DOWN");
         if(R3 && R3.wardenClear) R3.wardenClear();
+        // the summons stay after the boss: free dragons roam + bite, ridden ones
+        // stay under their rider. Only a match teardown clears the roster.
         return;
       }
       return;
@@ -3665,19 +4803,32 @@ function makeGame(host, opts){
     if(m.ev === "snap"){ onSnap(m, t); return; }
     if(m.ev === "kill"){
       var K = V.players[m.k], D = V.players[m.v];
-      if(K) K.kills = m.kills|0; if(D){ D.deaths = m.deaths|0; D.dead = true; D.deadAt = t; }
+      // "e" is the victim's life at the killing blow. A kill can share a tick with a
+      // respawn ("spawn" carries the new life) — a kill whose e does not match V.life
+      // is already stale (the body came back) and must not re-latch death on it, which
+      // used to send the player back up the sky-drop pipe over and over. The feed row
+      // still lands so the kill reads on the board.
+      var stale = (m.v === myId()) && (m.e != null) && ((m.e|0) !== V.life);
+      if(K) K.kills = m.kills|0;
+      if(D && !(D.uid === myId() && stale)){ D.deaths = m.deaths|0; D.dead = true; D.deadAt = t; }
       if(Array.isArray(m.scores)) V.scores = [m.scores[0]|0, m.scores[1]|0];
       var kName = K ? K.name : (m.k === myId() ? "You" : (m.dis ? envKiller(m.dis) : "Someone"));
       var vName = D ? D.name : (m.v === myId() ? "You" : "Someone");
+      // "dragon:<cause>": the mount fell and took its rider with it. Name whose
+      // dragon it was, so the row reads "Your dragon fell to gunfire · You" and
+      // not three bare words.
+      var dragonDown = m.dis && String(m.dis).indexOf("dragon:") === 0;
+      if(dragonDown) kName = (m.v === myId() ? "Your" : (vName === "You" ? "Your" : vName + "'s")) + " dragon";
       V.feed.unshift({k: kName, kt: K ? K.team : V.team,
         v: vName, vt: D ? D.team : V.team, w: m.w|0, hs: !!m.hs, at: t,
         dis: m.dis ? String(m.dis) : "", mine: m.k === myId() || m.v === myId()});
       if(m.k === myId()) E.sfx("hit");
       if(V.feed.length > FEED_MAX) V.feed.length = FEED_MAX;
-      if(m.v === myId()){ V.dead = true; V.deadAt = t; V.deaths = m.deaths|0; V.hp = 0;
+      if(m.v === myId() && !stale){ V.dead = true; V.deadAt = t; V.deaths = m.deaths|0; V.hp = 0;
         V.wingsUntil = 0; V.leapUntil = 0; V.speedUntil = 0; V.danceUntil = 0;   // a death pops the movement totems too
         if(K && K.uid !== myId()) snapKillCam(K, m.w|0, !!m.hs);
-        if(!K && m.dis) say(envKiller(m.dis)+" · "+envLabel(m.dis)+" got you. Respawning in "+RESPAWN+" seconds.");
+        if(dragonDown) say("Your dragon fell to "+(envLabel(m.dis) || "the map")+" — you with it. Respawning in "+RESPAWN+" seconds.");
+        else if(!K && m.dis) say(envKiller(m.dis)+" · "+envLabel(m.dis)+" got you. Respawning in "+RESPAWN+" seconds.");
         else say((K ? K.name : "Someone")+" got you. Respawning in "+RESPAWN+" seconds."); }
       if(m.k === myId()){ V.kills = m.kills|0; say("You got "+(D ? D.name : "someone")+(m.hs ? " with a headshot" : "")+". "+TEAMS[0].n+" "+V.scores[0]+" — "+V.scores[1]+" "+TEAMS[1].n+"."); }
       renderFeed(); renderBoard(); return;
@@ -3685,20 +4836,39 @@ function makeGame(host, opts){
     if(m.ev === "spawn"){
       var S = V.players[m.user];
       if(m.user === myId()){
-        placeMe((+m.x || 0)/100, (+m.y || 0)/100, (+m.z || 0)/100, (+m.r || 0)/100); V.life = m.e|0; V.dead = false; V.hp = 100; V.hpAcc = 0; V.killCam = null;
+        // null yaw: keep the aim you died with (the judge's r is the spawn's facing,
+        // not yours). Kill cam releases the instant the spawn lands.
+        placeMe((+m.x || 0)/100, (+m.y || 0)/100, (+m.z || 0)/100, null); V.life = m.e|0; V.dead = false; V.hp = 100; V.hpAcc = 0; V.killCam = null;
+        if(S) S.dead = false;
         V.voidAt = 0;
-        if(m.drop && dropOK()){ V.dropUntil = t + FS.DROP_TIME; V.me.g = false; }
+        if(m.drop && dropOK()){ V.dropUntil = t + FS.DROP_TIME + FS.DROP_LAND_GRACE; V.me.g = false; }
         fullAmmo(); center.classList.add("hidden"); say("You're back in.");
       } else if(S){ S.dead = false; S.snaps.length = 0; S.last = -1; S.x = (+m.x || 0)/100; S.y = (+m.y || 0)/100; S.z = (+m.z || 0)/100; S.yaw = (+m.r || 0)*Math.PI/18000; S.hp = 100; }
       return;
     }
     if(m.ev === "fix"){
       if((m.e|0) !== V.life) return;
+      // A live parachute owns the body until it lands. placeMe() clears V.dropUntil,
+      // so rubber-banding a mid-glide correction onto the floor cut the canopy, dropped
+      // the player again, and every later frame was refused until the next "fix" — the
+      // endless sky-fall loop. Steer the correction instead: keep the canopy clock and
+      // only take the XZ the judge named. (The judge also refuses to send "fix" during
+      // a live glide; this covers an Arena that has not been redeployed yet.)
+      var droppingNow = !!(V.dropUntil && t < V.dropUntil && !V.me.g);
+      if(droppingNow){
+        var fx = (+m.x || 0)/100, fz = (+m.z || 0)/100;
+        if(FS.overlaps(MAP, fx, V.me.y, fz, 0) < 0){ V.me.x = fx; V.me.z = fz; }
+        V.me.vx = 0; V.me.vz = 0; V.fixAt = t; return;
+      }
       placeMe((+m.x || 0)/100, (+m.y || 0)/100, (+m.z || 0)/100, null); V.fixAt = t; return;
     }
     if(m.ev === "ammo"){
       if(Array.isArray(m.mag)) V.mag = m.mag.map(function(n){ return n|0; });
       if(Array.isArray(m.res)) V.res = m.res.map(function(n){ return n|0; });
+      // the launcher keeps its own 1-slot arrays (magOf/resOf) — the judge's mag[LAUNCH_W]
+      // is the same shell, so mirror it or the HUD and canShoot() drift from the server
+      if(Array.isArray(m.mag) && m.mag.length > LAUNCH_W) V.magX = [m.mag[LAUNCH_W]|0];
+      if(Array.isArray(m.res) && m.res.length > LAUNCH_W) V.resX = [m.res[LAUNCH_W]|0];
       if(!m.reloading) V.reloadAt = 0;
       return;
     }
@@ -3713,6 +4883,12 @@ function makeGame(host, opts){
         if(knd === "health") say("Health pack: "+V.hp);
         else if(knd === "ammo") say("Ammo pack");
         else if(TOTEMS[knd]){
+          // stamp it like totemApply does in solo: liveEffects() builds the top-left
+          // chip from V.taken, and the MP pick handler used to never write it, so a
+          // taken totem showed nothing ("in solo as soon as I take it, it is activated
+          // and shown in the top left corner"). One-shots flash for 3s; windowed kinds
+          // already carry their own chip via the clocks below.
+          V.taken = V.taken || {}; V.taken[knd] = t;
           // MP: the server judged the effect; the local apply is only the cloak/shield's
           // local clock + the say (charm/freeze marks and the decoy ride the snapshot)
           if(knd === "cloak"){ V.cloakUntil = t + TOTEMS.cloak.dur; }
@@ -3778,6 +4954,7 @@ function makeGame(host, opts){
       V.rifts = V.rifts || [];
       var rx = (+m.x || 0)/100, rz = (+m.z || 0)/100, rx2 = (+m.x2 || 0)/100, rz2 = (+m.z2 || 0)/100;
       var rfMP = FS.riftPair(rx, rz, ((+m.ya || 0)/100)*Math.PI/180, rx2, rz2, t + TOTEMS.rift.dur);
+      rfMP.id = m.id;   // same id the "po" rows carry, so the snapshot relinks this mesh
       V.rifts.push(rfMP);
       if(R3 && R3.addRift) R3.addRift(rfMP);
       say("Rift opened");
@@ -3920,12 +5097,14 @@ function makeGame(host, opts){
     if(typeof m.ts === "number"){ var o = t - m.ts/1000; if(V.off === null || o < V.off) V.off = o; }
     // snap "wd": [hp, max, cm_x, cm_z, ms_slab_arm, ms_slab_land, ms_laser_warn,
     //             laser_on_ms, laser_yaw_cdeg, ms_dis, ck_bits, yaw_cdeg,
-    //             ms_core, ms_grip_warn, ms_grip_on, ms_grip_at]
+    //             ms_core, ms_grip_warn, ms_grip_on, ms_grip_at, ms_dance]
     if(Array.isArray(m.wd)){
       var wd = m.wd;
+      // (sparse snap: the key is present only while a Warden lives — see the else below)
       if(!V.warden) V.warden = {ck: [false, false, false], phase: "live", born: now(), yaw: 0};
       V.warden.hp = +wd[0] || 0; V.warden.max = +wd[1] || 1;
       V.warden.x = (+wd[2] || 0)/100; V.warden.z = (+wd[3] || 0)/100;
+      V.warden.y = holeGroundY(V.warden.x, V.warden.z);
       V.warden.yaw = (wd.length > 11 ? (+wd[11] || 0) : 0)/100 * Math.PI/180;
       // snap packs remaining ms-to-event (0 = idle) — convert to a clock, never |0 a float
       var tSnap = now();
@@ -3942,6 +5121,8 @@ function makeGame(host, opts){
       V.warden.gripWarn = (wd.length > 13 && +wd[13] > 0) ? tSnap + (+wd[13])/1000 : 0;
       V.warden.gripOn = (wd.length > 14 && +wd[14] > 0) ? tSnap + (+wd[14])/1000 : 0;
       V.warden.gripAt = (wd.length > 15 && +wd[15] > 0) ? tSnap + (+wd[15])/1000 : 0;
+      // Disco: the boss dances too (absent on an older Arena)
+      V.warden.danceUntil = (wd.length > 16 && +wd[16] > 0) ? tSnap + (+wd[16])/1000 : 0;
       if(V.warden.slabArm > 0 && !V.wdArmWarn){
         V.wdArmWarn = true;
         if(R3 && R3.wardenSlamArm) R3.wardenSlamArm(2, tSnap);
@@ -3951,7 +5132,7 @@ function makeGame(host, opts){
         if(R3 && R3.wardenSlam) R3.wardenSlam(tSnap);
       }
       if(R3 && R3.wardenSync) R3.wardenSync(V.warden, tSnap);
-    } else if(V.warden && m.wd === 0) V.warden = null;
+    } else if(V.warden && (m.wd === 0 || m.wd == null)) V.warden = null;   // sparse: omitted means gone
     if(typeof m.k === "number" && (V.k === null || m.k > V.k)){ V.k = m.k; V.kq = myClock(); }
     if(typeof m.ms === "number") V.endsAt = t + m.ms/1000;
     if(Array.isArray(m.sc)) V.scores = [m.sc[0]|0, m.sc[1]|0];
@@ -3964,6 +5145,10 @@ function makeGame(host, opts){
         P.hookPull = [(+e[1] || 0)/100, (+e[2] || 0)/100];
         if(uid === myId()) V.hookPull = P.hookPull;
       });
+    } else if(m.hk == null && V.mode === "mp"){
+      // sparse snap: the key is omitted when nobody is hooked (twin: snap() in strike.rs)
+      Object.keys(V.players || {}).forEach(function(u){ if(V.players[u]) V.players[u].hookPull = null; });
+      V.hookPull = null;
     }
     // snap "dr": match flight drones [id, cm_x, cm_y, cm_z, downMs] — grapple anchors
     if(Array.isArray(m.dr) && m.dr.length){
@@ -4049,7 +5234,17 @@ function makeGame(host, opts){
         if(f & 512) V.leapUntil = Infinity; else if(V.leapUntil === Infinity) V.leapUntil = 0;
         if(f & 1024) V.speedUntil = Infinity; else if(V.speedUntil === Infinity) V.speedUntil = 0;
       }
-      if(uid === myId()){ V.hp = e[6]|0; V.hpAcc = 0; V.prot = P.prot; if(f & 1) V.dead = true; return; }
+      if(uid === myId()){
+        V.hp = e[6]|0; V.hpAcc = 0; V.prot = P.prot;
+        // The snapshot is the judge's word on your body. Bit 1 SET means dead — but a
+        // one-way latch here left you in respawn forever whenever a local path marked
+        // you dead while the judge still thought you were alive (no "spawn" would ever
+        // come). Clear on bit 1 CLEAR, the same as the bot branch below.
+        if(f & 1){ if(!V.dead) V.deadAt = t; V.dead = true; P.dead = true; }
+        else if(V.dead || P.dead){ V.dead = false; P.dead = false; V.hpAcc = 0; V.killCam = null; }
+        else P.dead = false;
+        return;
+      }
       if(f & 1){ if(!P.dead) P.deadAt = t; P.dead = true; } else if(P.dead){ P.dead = false; P.snaps.length = 0; P.last = -1; }
       pushSnap(P, e, t);
     });
@@ -4063,8 +5258,7 @@ function makeGame(host, opts){
             var LV = V.players[slotUid(s[5])];
             if(LV && s[7] > 0){   // s[7]: the damage the server actually applied (0 through spawn cover)
               V.hitAt = t;
-              V.dmgNums.push({x: LV.x, y: LV.y + 1.2, z: LV.z, n: s[7]|0, head: false, at: t, o: null});
-              if(V.dmgNums.length > 12) V.dmgNums.shift();
+              pushDmgNum(LV.x, LV.y + 1.2, LV.z, s[7]|0, false, t);
             }
           }
           return;
@@ -4079,8 +5273,7 @@ function makeGame(host, opts){
           // (suppressed while the server still flags the victim spawn-protected — that hit did 0)
           var VIC = V.players[slotUid(s[5])], WP2 = FS.WEAPONS[s[1]|0];
           if(VIC && WP2 && !(VIC.prot & 2)){
-            V.dmgNums.push({x: VIC.x, y: VIC.y + (s[6] ? 1.75 : 1.2), z: VIC.z, n: s[6] ? WP2.head : WP2.damage, head: !!s[6], at: t, o: null});
-            if(V.dmgNums.length > 12) V.dmgNums.shift();
+            pushDmgNum(VIC.x, VIC.y + (s[6] ? 1.75 : 1.2), VIC.z, s[6] ? WP2.head : WP2.damage, !!s[6], t);
           }
         }
         return;
@@ -4096,12 +5289,21 @@ function makeGame(host, opts){
     (m.r || []).forEach(function(r){
       if(!Array.isArray(r) || r.length < 7) return;
       var key = "srv-"+(r[0]|0);
-      var mis = null;
-      for(var i = 0; i < V.missiles.length; i++) if(V.missiles[i].srvKey === key){ mis = V.missiles[i]; break; }
+      var rSlot = (r.length > 7) ? (r[7]|0) : -1;
+      var mis = null, pred = null;
+      for(var i = 0; i < V.missiles.length; i++){
+        if(V.missiles[i].srvKey === key){ mis = V.missiles[i]; break; }
+        // a launch WE predicted but the judge has not claimed yet — adopt it so MP draws
+        // ONE rocket per shot. Only ours: somebody else's "r" row must not steal our mesh.
+        if(V.missiles[i].pred && !V.missiles[i].srvKey && !pred
+           && (rSlot < 0 || (V.mySlot != null && rSlot === V.mySlot))) pred = V.missiles[i];
+      }
+      if(!mis && pred){ mis = pred; mis.srvKey = key; mis.pred = false; mis.srv = true; mis.id = "srv"+(r[0]|0); }
       if(!mis){
         mis = spawnMissile(t, [r[1]/100, r[2]/100, r[3]/100], [0, 0, 1], null, true);
         mis.srvKey = key; mis.id = "srv"+(r[0]|0);
       }
+      mis.mine = rSlot;
       mis.x = r[1]/100; mis.y = r[2]/100; mis.z = r[3]/100;
       var ln = Math.sqrt(r[4]*r[4] + r[5]*r[5] + r[6]*r[6]) || 1;   // velocity: aim the nose
       mis.vx = r[4]/ln*FS.MISSILE_V; mis.vy = r[5]/ln*FS.MISSILE_V; mis.vz = r[6]/ln*FS.MISSILE_V;
@@ -4113,6 +5315,9 @@ function makeGame(host, opts){
     for(var ri = V.missiles.length - 1; ri >= 0; ri--){
       var rm = V.missiles[ri];
       if(rm.srv && t - (rm.lastSrv || t) > 0.3){ if(rm.o && R3) R3.rocket(null, rm); V.missiles.splice(ri, 1); }
+      // a prediction the judge never claimed (a refused shot): drop it once the launch
+      // gap has passed — never detonate, the judge owns the boom
+      else if(rm.pred && t - (rm.at || t) > 1.2){ if(rm.o && R3) R3.rocket(null, rm); V.missiles.splice(ri, 1); }
     }
     // "b": a blast the server resolved — the boom, the shake and the hurt flash, minus the damage
     // (hp already came in the same snapshot's "p" rows / shot echoes). Disaster booms also
@@ -4133,49 +5338,83 @@ function makeGame(host, opts){
         }
       }
     });
-    // Wave C world extras (additive keys — an older client simply never reads them)
+    // Wave C world extras (additive keys — an older client simply never reads them).
+    // Diff, never repaint: each snapshot hands over fresh row objects, the adders
+    // relink by id (no new geometry), and R3.keep drops only the ones that left.
+    // The old clear-and-repaint rebuilt every mesh 20×/s — the frame hitch that
+    // swallowed fire clicks and starved the position send.
     V.rifts = V.rifts || []; V.mines = V.mines || []; V.meteors = V.meteors || [];
     V.beacons = V.beacons || []; V.bubbles = V.bubbles || [];
     if(Array.isArray(m.po)){
-      // snapshot is the source of truth for live rift pairs — repaint so a missed
-      // "rift" event still shows the openings (and a replaced pair drops its mesh)
-      if(R3 && R3.clearRifts) R3.clearRifts();
-      V.rifts = [];
+      // snapshot is the source of truth for live rift pairs — a missed "rift" event
+      // still shows the openings; R3.keep drops a replaced pair's mesh by id
+      var riftNext = [];
       for(var pi2 = 0; pi2 + 1 < m.po.length; pi2 += 2){
         var rfSnap = FS.riftPair((+m.po[pi2][1] || 0)/100, (+m.po[pi2][2] || 0)/100,
                                  ((+m.po[pi2][4] || 0)/100)*Math.PI/180,
                                  (+m.po[pi2+1][1] || 0)/100, (+m.po[pi2+1][2] || 0)/100,
                                  t + ((+m.po[pi2][3] || 0)/1000));
-        V.rifts.push(rfSnap);
-        if(R3 && R3.addRift) R3.addRift(rfSnap);
+        rfSnap.id = m.po[pi2][0];
+        riftNext.push(rfSnap);
       }
+      V.rifts = riftNext;
+      if(R3){
+        V.rifts.forEach(function(rfSnap){ if(R3.addRift) R3.addRift(rfSnap); });
+        if(R3.keep) R3.keep("rifts", V.rifts);
+      }
+    } else if(V.rifts && V.rifts.length && V.mode === "mp"){
+      if(R3 && R3.clearRifts) R3.clearRifts();
+      V.rifts = [];
     }
     if(Array.isArray(m.mi)){
-      if(R3 && R3.clearMines) R3.clearMines();
       V.mines = m.mi.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, team: r[3]|0}; });
-      V.mines.forEach(function(mn){ if(R3 && R3.addMine) R3.addMine(mn); });
+      if(R3){
+        V.mines.forEach(function(mn){ if(R3.addMine) R3.addMine(mn); });
+        if(R3.keep) R3.keep("mines", V.mines);
+      }
+    } else if(V.mines && V.mines.length && V.mode === "mp"){
+      if(R3 && R3.clearMines) R3.clearMines();
+      V.mines = [];
     }
     if(Array.isArray(m.me)){
-      if(R3 && R3.clearMeteorMarks) R3.clearMeteorMarks();
       V.meteors = m.me.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, hitAt: t + ((+r[3]||0)/1000)}; });
-      V.meteors.forEach(function(mm){ if(R3 && R3.addMeteorMark) R3.addMeteorMark(mm); });
+      if(R3){
+        V.meteors.forEach(function(mm){ if(R3.addMeteorMark) R3.addMeteorMark(mm); });
+        if(R3.keep) R3.keep("meteors", V.meteors);
+      }
+    } else if(V.meteors && V.meteors.length && V.mode === "mp"){
+      if(R3 && R3.clearMeteorMarks) R3.clearMeteorMarks();
+      V.meteors = [];
     }
     if(Array.isArray(m.bc)){
-      // snapshot is the source of truth — repaint so a missed take still shows the beacon
-      // (and a replaced/expired one drops its mesh). Same clear-and-repaint as the rifts.
-      if(R3 && R3.clearBeacons) R3.clearBeacons();
+      // snapshot is the source of truth — a missed take still shows the beacon;
+      // R3.keep drops a replaced/expired one's mesh by id
       V.beacons = m.bc.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, kind: String(r[3]||""), team: r[4]|0, until: t + ((+r[5]||0)/1000)}; });
-      V.beacons.forEach(function(bc){ if(R3 && R3.addBeacon) R3.addBeacon(bc); });
+      if(R3){
+        V.beacons.forEach(function(bc){ if(R3.addBeacon) R3.addBeacon(bc); });
+        if(R3.keep) R3.keep("beacons", V.beacons);
+      }
+    } else if(V.beacons && V.beacons.length && V.mode === "mp"){
+      if(R3 && R3.clearBeacons) R3.clearBeacons();
+      V.beacons = [];
     }
     if(Array.isArray(m.bu)){
-      if(R3 && R3.clearBubbles) R3.clearBubbles();
       V.bubbles = m.bu.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, y: (+r[2]||0)/100, z: (+r[3]||0)/100, r: (+r[4]||0)/100, team: r[5]|0, until: t + ((+r[6]||0)/1000)}; });
-      V.bubbles.forEach(function(bb){ if(R3 && R3.addBubble) R3.addBubble(bb); });
+      if(R3){
+        V.bubbles.forEach(function(bb){ if(R3.addBubble) R3.addBubble(bb); });
+        if(R3.keep) R3.keep("bubbles", V.bubbles);
+      }
+    } else if(V.bubbles && V.bubbles.length && V.mode === "mp"){
+      if(R3 && R3.clearBubbles) R3.clearBubbles();
+      V.bubbles = [];
     }
     // ---- Wave F: joke world totems (additive keys — an old server just omits them) ----
     if(Array.isArray(m.bn)){
       V.bananas = m.bn.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100}; });
-      V.bananas.forEach(function(bp){ if(R3 && R3.addBanana) R3.addBanana(bp); });
+      if(R3){
+        V.bananas.forEach(function(bp){ if(R3.addBanana) R3.addBanana(bp); });
+        if(R3.keep) R3.keep("bananas", V.bananas);
+      }
       V.bananaUntil = t + 0.45;   // short self-renewing TTL: the rows are the source of truth
     } else if(V.bananas && V.bananas.length && V.mode === "mp"){
       if(R3 && R3.clearBananas) R3.clearBananas();
@@ -4183,7 +5422,10 @@ function makeGame(host, opts){
     }
     if(Array.isArray(m.lz)){
       V.lavaZones = m.lz.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, r: (+r[3]||0)/100}; });
-      V.lavaZones.forEach(function(lz){ if(R3 && R3.addLavaZone) R3.addLavaZone(lz); });
+      if(R3){
+        V.lavaZones.forEach(function(lz){ if(R3.addLavaZone) R3.addLavaZone(lz); });
+        if(R3.keep) R3.keep("lava", V.lavaZones);
+      }
       V.lavaUntil = t + 0.45;
     } else if(V.lavaZones && V.lavaZones.length && V.mode === "mp"){
       if(R3 && R3.clearLavaZones) R3.clearLavaZones();
@@ -4196,7 +5438,10 @@ function makeGame(host, opts){
     else if(Array.isArray(m.gs)) gsRows = m.gs.filter(function(r){ return Array.isArray(r) && r.length >= 4; });
     if(gsRows.length){
       V.geese = gsRows.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, until: t + ((+r[3]||0)/1000), yaw: 0, hit: 0}; });
-      V.geese.forEach(function(G){ if(R3 && R3.addGoose) R3.addGoose(G); });
+      if(R3){
+        V.geese.forEach(function(G){ if(R3.addGoose) R3.addGoose(G); });
+        if(R3.keep) R3.keep("geese", V.geese);
+      }
     } else if(V.geese && V.geese.length && V.mode === "mp"){
       if(R3 && R3.clearGoose) R3.clearGoose();
       V.geese = [];
@@ -4206,10 +5451,109 @@ function makeGame(host, opts){
     else if(Array.isArray(m.bh)) bhRows = m.bh.filter(function(r){ return Array.isArray(r) && r.length >= 4; });
     if(bhRows.length){
       V.blackholes = bhRows.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100, until: t + ((+r[3]||0)/1000)}; });
-      V.blackholes.forEach(function(H){ if(R3 && R3.addBlackHole) R3.addBlackHole(H); });
+      if(R3){
+        V.blackholes.forEach(function(H){ if(R3.addBlackHole) R3.addBlackHole(H); });
+        if(R3.keep) R3.keep("holes", V.blackholes);
+      }
     } else if(V.blackholes && V.blackholes.length && V.mode === "mp"){
       if(R3 && R3.clearBlackHole) R3.clearBlackHole();
       V.blackholes = [];
+    }
+    // ---- Wave G: turrets / barrels / lasers / pads (additive keys) ----
+    if(Array.isArray(m.tr)){
+      // keep each turret's fire clock across the row refresh, or the client would
+      // draw a fresh shot on every snapshot
+      var tNext = {};
+      (V.turrets || []).forEach(function(TU){ if(TU && TU.id != null) tNext[TU.id] = TU.next; });
+      V.turrets = m.tr.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, y: 0, z: (+r[2]||0)/100,
+        team: r[3]|0, hp: r[4]|0, max: FS.TURRET_HP, until: t + ((+r[5]||0)/1000),
+        yaw: ((+r[6]||0)/100) * Math.PI / 180, next: tNext[r[0]] || 0}; });
+      if(R3){
+        V.turrets.forEach(function(TU){ if(R3.addTurret) R3.addTurret(TU); });
+        if(R3.keep) R3.keep("turrets", V.turrets);
+      }
+      V.turretUntil = t + 0.45;
+    } else if(V.turrets && V.turrets.length && V.mode === "mp"){
+      if(R3 && R3.clearTurrets) R3.clearTurrets();
+      V.turrets = []; V.turretUntil = 0;
+    }
+    if(Array.isArray(m.br)){
+      V.barrels = m.br.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, y: (+r[2]||0)/100, z: (+r[3]||0)/100,
+        hp: r[4]|0, max: FS.BARREL_HP, landed: 1, vy: 0, born: t}; });
+      if(R3){
+        V.barrels.forEach(function(BO){ if(R3.addBarrel) R3.addBarrel(BO); });
+        if(R3.keep) R3.keep("barrels", V.barrels);
+      }
+    } else if(V.barrels && V.barrels.length && V.mode === "mp"){
+      if(R3 && R3.clearBarrels) R3.clearBarrels();
+      V.barrels = [];
+    }
+    if(Array.isArray(m.lg)){
+      V.lasers = m.lg.map(function(r){ return {id: r[0], ax: (+r[1]||0)/100, az: (+r[2]||0)/100,
+        bx: (+r[3]||0)/100, bz: (+r[4]||0)/100, y: FS.LASER_Y, until: t + ((+r[5]||0)/1000), born: t}; });
+      if(R3){
+        V.lasers.forEach(function(LZ){ if(R3.addLaser) R3.addLaser(LZ); });
+        if(R3.keep) R3.keep("lasers", V.lasers);
+      }
+      V.laserUntil = t + 0.45;
+    } else if(V.lasers && V.lasers.length && V.mode === "mp"){
+      if(R3 && R3.clearLasers) R3.clearLasers();
+      V.lasers = []; V.laserUntil = 0;
+    }
+    if(Array.isArray(m.pd)){
+      V.pads = m.pd.map(function(r){ return {id: r[0], x: (+r[1]||0)/100, z: (+r[2]||0)/100,
+        y: 0, until: t + ((+r[3]||0)/1000), born: t, cd: 0}; });
+      if(R3){
+        V.pads.forEach(function(PD){ if(R3.addPad) R3.addPad(PD); });
+        if(R3.keep) R3.keep("pads", V.pads);
+      }
+      V.padUntil = t + 0.45;
+    } else if(V.pads && V.pads.length && V.mode === "mp"){
+      if(R3 && R3.clearPads) R3.clearPads();
+      V.pads = []; V.padUntil = 0;
+    }
+    // "drg": the Warden's dragons. Each row is
+    // [id, tier, cm x, cm y, cm z, yaw_cdeg, hp, max, mount_slot, breath_ms,
+    //  recharge_ms, spray_ms].
+    // mount_slot is -1 when nobody is riding (an older Arena omits the key entirely).
+    // spray_ms (> 0 only while the trigger is held) is the ONLY spray signal — an older
+    // Arena that omits it must read as "not spraying", never as "spraying" from tank
+    // left alone, or every idle mount paints flame and damage numbers across the map.
+    if(Array.isArray(m.drg)){
+      var drgRows = m.drg.filter(function(r){ return Array.isArray(r) && r.length >= 8; });
+      if(drgRows.length){
+        // keep the local flight prediction on the mount you are riding — the judge
+        // copies your pos onto the dragon every tick, so the snap would only lag it.
+        var mine = null, mi;
+        for(mi = 0; mi < (V.dragons || []).length; mi++){
+          if(V.dragons[mi] && V.dragons[mi].riderIsMe && !V.dragons[mi].dead){ mine = V.dragons[mi]; break; }
+        }
+        V.dragons = drgRows.map(function(r){
+          var id = +r[0]|0, tier = String(r[1] || "fire");
+          var slot = (+r[8]|0);
+          var meRide = slot >= 0 && slotUid(slot) === myId() && mine && mine.id === id;
+          // r[11] is ms of open spray left (absent on an older Arena → 0 → never spray)
+          var sprayMs = r.length > 11 ? (+r[11]||0) : 0;
+          return {
+            id: id, tier: tier,
+            x: meRide ? mine.x : (+r[2]||0)/100,
+            y: meRide ? mine.y : (+r[3]||0)/100,
+            z: meRide ? mine.z : (+r[4]||0)/100,
+            yaw: meRide ? mine.yaw : ((+r[5]||0)/100) * Math.PI / 180,
+            hp: +r[6]|0, max: +r[7]|0 || DRAGON_HP,
+            rider: slot >= 0 ? slotUid(slot) : null,
+            riderIsMe: slot >= 0 && slotUid(slot) === myId(),
+            breathLeft: meRide ? (mine.breathLeft != null ? mine.breathLeft : (+r[9]||0)/1000) : (+r[9]||0)/1000,
+            rechargeAt: meRide && mine.rechargeAt != null ? mine.rechargeAt : ((+r[10]||0) > 0 ? t + ((+r[10]||0)/1000) : 0),
+            sprayUntil: meRide && mine.sprayUntil != null ? mine.sprayUntil : (sprayMs > 0 ? t + (sprayMs/1000) : 0),
+            biteAt: 0, dead: false, hit: 0
+          };
+        });
+        if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
+      }
+    } else if(V.dragons && V.dragons.length && V.mode === "mp"){
+      if(R3 && R3.clearDragons) R3.clearDragons();
+      V.dragons = [];
     }
     // "fa"/"ae" durations are milliseconds left on the clock (not the clock itself)
     if(Array.isArray(m.fa)){ V.fateUntil = t + ((+m.fa[0] || 0)/1000); }
@@ -4314,6 +5658,9 @@ function makeGame(host, opts){
                   yaw: (dc[5]|0)/100, srv: true, srvId: dc[0]|0};
         V.decoys.push(nd); if(R3) R3.addDecoy(nd);
       });
+    } else if(V.decoys && V.decoys.length && V.mode === "mp"){
+      // sparse snap: the key is omitted when no ghost lives (twin: snap() in strike.rs)
+      for(var dj = V.decoys.length - 1; dj >= 0; dj--){ if(V.decoys[dj].srv) V.decoys.splice(dj, 1); }
     }
   }
   function onError(m){
@@ -4459,6 +5806,7 @@ function makeGame(host, opts){
     if((V.mode === "practice" || V.mode === "bots") && V.phase !== "round") return false;
     if(V.hookUntil && t < V.hookUntil) return false;  // a live hook locks the trigger
     if(danceOn(t)) return false;  // the Disco totem owns the trigger while you dance
+    if(dragonRiding(t)) return false;  // the guns are stowed — the breath is the only attack
     return t >= V.readyAt && t >= V.nextShot && !V.reloadAt && magOf(V.w)[V.w === LAUNCH_W ? 0 : V.w] > 0;
   }
   // Disco: a dancing player cannot shoot. The taker never carries the clock.
@@ -4519,8 +5867,9 @@ function makeGame(host, opts){
       // swing / pull so the first frames feel right.
       var gd = FS.dirOf(V.yaw*180/Math.PI, clamp(V.pitch*180/Math.PI, -PITCH_MAX, PITCH_MAX));
       if(V.mode === "mp"){
+        // p is centidegrees (the judge does pitch/100 into dir_of) — same as the rifle path
         var gmsg = {w: GRAPPLE_W, ox: Math.round(e[0]*100), oy: Math.round(e[1]*100), oz: Math.round(e[2]*100),
-                    r: Math.round(((V.yaw*180/Math.PI % 360) + 360) % 360*100), p: Math.round(V.pitch*180/Math.PI),
+                    r: Math.round(((V.yaw*180/Math.PI % 360) + 360) % 360*100), p: Math.round(V.pitch*18000/Math.PI),
                     q: myClock(), ip: 0, e: V.life};
         if(V.k !== null){ gmsg.k = V.k; gmsg.kq = V.kq; }
         if(MP) MP.send("strike", "fire", gmsg);
@@ -4533,13 +5882,19 @@ function makeGame(host, opts){
       // lob a real missile that flies and blasts — the server flies it in mp, we do solo
       var ld = FS.dirOf(V.yaw*180/Math.PI, V.pitch*180/Math.PI);
       if(V.mode === "mp"){
+        // p is centidegrees (the judge does pitch/100 into dir_of) — a bare-degrees p
+        // sent every rocket flat into the floor, which is why the launcher "did nothing"
         var lmsg = {w: LAUNCH_W, ox: Math.round(e[0]*100), oy: Math.round(e[1]*100), oz: Math.round(e[2]*100),
-                    r: Math.round(((V.yaw*180/Math.PI % 360) + 360) % 360*100), p: Math.round(V.pitch*180/Math.PI),
+                    r: Math.round(((V.yaw*180/Math.PI % 360) + 360) % 360*100), p: Math.round(V.pitch*18000/Math.PI),
                     q: myClock(), ip: 0, e: V.life};
         if(V.k !== null){ lmsg.k = V.k; lmsg.kq = V.kq; }
         if(MP) MP.send("strike", "fire", lmsg);
+        // Predict the rocket the way solo does, so the shot is never silent: the server's
+        // "r" rows adopt this mesh (see the snap handler) and the judge still owns damage.
+        spawnMissile(t, e, ld);
+        if(R3 && R3.kick) R3.kick();
         if(magOf(V.w)[0] <= 0) startReload(t);
-        return;   // the "r" snapshot rows draw the rocket
+        return;
       }
       spawnMissile(t, e, ld);
       if(R3 && R3.kick) R3.kick();
@@ -4592,15 +5947,38 @@ function makeGame(host, opts){
         return;
       }
     }
+    // Wave G destructibles: a turret or barrel in the way eats the bullet (and only it)
+    var wgHit = wavegRay(e, d, end);
+    if(wgHit){
+      end = wgHit.t;
+      if(V.mode === "mp"){
+        var wgmsg = {w: V.w, ox: Math.round(e[0]*100), oy: Math.round(e[1]*100), oz: Math.round(e[2]*100),
+                     r: Math.round(((yawD % 360) + 360) % 360*100), p: Math.round(pitD*100), q: myClock(), ip: 0, e: V.life};
+        if(V.k !== null){ wgmsg.k = V.k; wgmsg.kq = V.kq; }
+        if(MP) MP.send("strike", "fire", wgmsg);
+      } else {
+        wavegHit(wgHit, wp.damage, {uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, t);
+      }
+      addTracer(myMuzzle(), [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], V.w, t, true);
+      if(magOf(V.w)[V.w === LAUNCH_W ? 0 : V.w] <= 0) startReload(t);
+      return;
+    }
     if(V.mode === "bots"){
       if(V.protUntil) V.protUntil = 0; // firing drops your own spawn cover (strike.py:772)
-      if(V.warden){
-        var Wb = V.warden, boxesW = wardenBoxes(Wb), volW = wardenHitIndex(boxesW, e, d, end);
-        if(volW >= 0){
-          var hW = FS.rayBox(e, d, boxesW[volW]);
-          if(hW != null && hW < end) end = hW;
-          wardenHit(Wb, volW, wp.damage, t);
-        }
+      // The nearer body takes the bullet: a summon standing in front of the boss
+      // eats it, one behind the boss does not. Gunfire always hurts a dragon, and
+      // the Warden is always a valid target while it lives.
+      var dhB = dragonScanHit(e, d, end);
+      var Wb = V.warden, boxesW = Wb ? wardenBoxes(Wb) : null, volW = Wb ? wardenHitIndex(boxesW, e, d, end) : -1;
+      var tW = -1;
+      if(Wb && volW >= 0){ tW = FS.rayBox(e, d, boxesW[volW]); if(tW == null) tW = -1; }
+      if(dhB && (tW < 0 || dhB.t < tW)){
+        end = dhB.t; dragonHurt(dhB.dragon, wp.damage, t, "gunfire");
+        addTracer(e, [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], V.w, t, false);
+        return;
+      }
+      if(Wb){
+        if(volW >= 0){ if(tW >= 0 && tW < end) end = tW; wardenHit(Wb, volW, wp.damage, t); }
         addTracer(e, [e[0] + d[0]*end, e[1] + d[1]*end, e[2] + d[2]*end], V.w, t, false);
         if(R3 && R3.kick) R3.kick();
         return;
@@ -4674,8 +6052,7 @@ function makeGame(host, opts){
           }
           tv.hp -= dmg;
           V.hitAt = t; if(th) V.headAt = t;
-          V.dmgNums.push({x: tv.x, y: tv.y + (th ? 1.75 : 1.2), z: tv.z, n: dmg, head: th, at: t, o: null});
-          if(V.dmgNums.length > 12) V.dmgNums.shift();
+          pushDmgNum(tv.x, tv.y + (th ? 1.75 : 1.2), tv.z, dmg, th, t);
           if(tv.hp <= 0 && !tv.dead) endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, tv, t, th);
           else say((th ? "Headshot" : "Hit")+" — "+tv.name+" ("+Math.max(0, tv.hp|0)+" hp)");
         }
@@ -4719,10 +6096,19 @@ function makeGame(host, opts){
     }
     var playing = V.phase === "round" || V.phase === "warmup";
     pauseBox.classList.toggle("hidden", !(playing && !locked && !focused));
+    // Solo/bots freeze the sim when the mouse is free. MP must not: the Arena judge
+    // keeps running for everyone, so a local freeze would leave you standing still
+    // under fire. The pause card is only a click-to-aim hint there (grabLock on click).
+    // Any click on the stage re-grabs the mouse (canvas pointerdown → grabLock), so
+    // an Esc-dropped lock is one click back in — same as solo.
     V.paused = (V.mode === "practice" || V.mode === "bots") && ((playing && !locked && !focused) || !!V.hqPaused);
     if(IN && IN.pressed("help")){ var s = ssave(); s.keysHidden = !s.keysHidden; api.persist(); renderKeys(); }
     if(IN && IN.pressed("score")){ V.board = !V.board; renderBoard(); }
     if(IN && IN.pressed("items")){ V.guide = !V.guide; renderGuide(); }
+    // G: mount / dismount the nearest idle dragon. Practice and bots fly in
+    // warmup too, so the saddle is open there; MP still waits for the round (the judge mounts then).
+    if(IN && IN.pressed("interact") && !V.dead && !V.watch && !V.paused &&
+       (V.phase === "round" || (V.mode === "practice" || V.mode === "bots"))) dragonTryMount(t);
     if(V.phase === "warmup"){
       var left = Math.ceil(V.goAt - t);
       if(left > 0 && left <= 5 && center.textContent !== String(left)){ flashCenter(String(left)); say(String(left)); }
@@ -4810,7 +6196,9 @@ function makeGame(host, opts){
     V.slideRoll = V.slideK*0.05;
     if(V.phase !== "idle" && V.phase !== "done" && !V.dead){
       // v4: a drop owns the body's descent — glide left/right at DROP_DRIFT and sink gently,
-      // no FS.move gravity/sprint/jump. Touching down (or the window closing) lands you.
+      // no FS.move gravity/sprint/jump. Touching down (or the canopy window closing)
+      // lands you. The window is DROP_TIME + DROP_LAND_GRACE so a glide that never
+      // touched down (a floor gap) still times out and becomes a normal fall.
       var dropping = !!(dropOK() && V.dropUntil && t < V.dropUntil && !V.me.g);
       // the wings totem flies on its own tallies up: takeoff is automatic the moment you
       // take the totem, cruising is WASD drift at WING_DRIFT with no rise/sink input, and
@@ -4820,7 +6208,7 @@ function makeGame(host, opts){
       // midair working your way back down from the cruise altitude.
       var flying = !!((winged || (V.wingsUntil && t >= V.wingsUntil && !V.me.g)) && !dropping);
       if(flying){
-        var floor = FS.topUnder(MAP, V.me.x, V.me.z, V.me.y); if(floor == null) floor = 0;
+        var floor = FS.deckUnder(MAP, V.me.x, V.me.z); if(floor == null) floor = 0;
         // rise automatically toward WING_TOP while the window runs; glide back down to the
         // floor when it's over. drift horizontally with WASD the whole time.
         var fy = winged ? Math.min(V.me.y + FS.WING_RISE*dt, FS.WING_TOP)
@@ -4850,7 +6238,7 @@ function makeGame(host, opts){
         acc = 0;
       }
       if(dropping){
-        var floor = FS.topUnder(MAP, V.me.x, V.me.z, V.me.y);
+        var floor = FS.deckUnder(MAP, V.me.x, V.me.z);
         if(floor == null) floor = -1e9;   // a gap under the canopy: keep sinking into the void clock
         V.me.y = Math.max(floor, V.me.y - FS.DROP_SINK*dt);
         if(V.me.y <= floor && floor > -1e8){ V.me.g = true; V.dropUntil = 0; V.protUntil = t + 1.5; }
@@ -4859,8 +6247,43 @@ function makeGame(host, opts){
           V.me.z += (wz * FS.DROP_DRIFT)*dt;
         }
         acc = 0;
-      } else if(V.dropUntil && t >= V.dropUntil){ V.dropUntil = 0; }
-      if(!dropping && !flying && !swinging){
+      } else if(V.dropUntil && t >= V.dropUntil){
+        // canopy never touched down (floor gap): abandon the glide and start cover now
+        V.dropUntil = 0; V.protUntil = t + 1.5;
+      }
+      // Hurricane vortex: the column takes the body — lifted off the deck and spun
+      // around the core with no way to walk out. It owns the body like a glide or a
+      // drone swing does (no FS.move, no gravity) until the grip window ends. The
+      // grip is held a beat after the body leaves the column, so the spin does not
+      // staccato as the column walks. Twin: in_wind_catch in strike.rs.
+      var gripH = (V.me.vortex && t < (V.me.vortex.until || 0)) ? V.me.vortex : null;
+      var colH = null;
+      if(!meShielded(t) && !dragonRiding(t) && !dropping && !flying && !swinging){
+        (V.disasters || []).forEach(function(D){
+          if(colH || D.kind !== "hurricane" || !disLive(t, D)) return;
+          var c = disWindCol(D, t);
+          if(!c) return;
+          if(gripH || Math.hypot(V.me.x - c[0], V.me.z - c[1]) < DD_WIND_R) colH = c;
+        });
+      }
+      var swirling = !!colH;   // colH is only set when gripped or inside the column
+      if(swirling){
+        if(!gripH){
+          // start the orbit where the body already stands — no teleport onto the ring
+          var phH = Math.atan2(V.me.z - colH[1], V.me.x - colH[0]);
+          V.me.vortex = {until: t + DD_WIND_CATCH, col: [colH[0], colH[1]], phase: phH,
+                         rad: Math.max(0.35, Math.hypot(V.me.x - colH[0], V.me.z - colH[1]))};
+          gripH = V.me.vortex;
+          say("Caught in the wind column");
+        }
+        gripH.until = Math.max(gripH.until|0, t + DD_WIND_CATCH);
+        gripH.col = [colH[0], colH[1]];
+        inWindCatch(V.me, gripH, t, colH, dt, DD_WIND_SPIN, DD_WIND_LIFT);
+        V.slowUntil = Math.max(V.slowUntil|0, t + DD_WIND_SLOW);   // loose footing
+        V.yaw += DD_WIND_SPIN * dt;   // …and you spin with it
+        acc = 0;
+      } else if(V.me.vortex){ V.me.vortex = null; }
+      if(!dropping && !flying && !swinging && !swirling){
         acc += dt;
         // the drag must bite at once: scaling only the wish leaves a drained 8.1 m/s sprint
         // coasting at ~walk speed for half a second. Clamp velocity to the crawl cap directly.
@@ -4883,21 +6306,6 @@ function makeGame(host, opts){
         // stacks the same way: the slowest wins.
         var slowNow = !!(V.slowUntil && t < V.slowUntil);
         var topMult = zeroNow ? 0.55 : (slowNow ? DD_SLOW_MULT : 1);
-        // Hurricane: a wind column shoves anyone it reaches (both teams, bots too).
-        // Several hurricanes can be live at once — each one's column pushes.
-        (V.disasters || []).forEach(function(D){
-          if(D.kind !== "hurricane" || !disLive(t, D) || meShielded(t)) return;
-          var colH = disWindCol(D, t);
-          if(!colH) return;
-          var ddxH = V.me.x - colH[0], ddzH = V.me.z - colH[1], ddH = Math.hypot(ddxH, ddzH);
-          if(ddH < DD_WIND_R){
-            var lnH = Math.max(0.05, ddH);
-            var shoveH = DD_WIND_PUSH * (1 - ddH / DD_WIND_R) * dt;
-            V.me.x += (ddxH / lnH) * shoveH;
-            V.me.z += (ddzH / lnH) * shoveH;
-            V.slowUntil = Math.max(V.slowUntil|0, t + DD_WIND_SLOW);   // loose footing
-          }
-        });
         var jMult = leaping ? FS.LEAP_MULT : ((V.wallrunUntil && t < V.wallrunUntil) ? 1.35 : 1);
         // Banana Panic: a slipped body can't steer. The slide holds at BANANA_SLIDE and
         // the whole body spins at BANANA_SPIN until the window ends. Twin: slip_until
@@ -4934,7 +6342,8 @@ function makeGame(host, opts){
         // bounds. Nothing can kill you out here (and you can't shoot yourself), so the
         // clock is the only way home: VOID_SECS later you parachute back in. Solo the
         // client is the judge; MP the Arena runs the same clock and emits the spawn.
-        if(FS.inVoid(MAP, V.me.x, V.me.y, V.me.z)){
+        // A dragon rider is exempt — the sky is open and the mount is the way home.
+        if(FS.inVoid(MAP, V.me.x, V.me.y, V.me.z) && !dragonRiding(t)){
           if(!V.voidAt){ V.voidAt = t; say("Out of bounds — back in "+FS.VOID_SECS+"s"); }
           else if(t - V.voidAt >= FS.VOID_SECS && V.mode !== "mp"){
             V.voidAt = 0;
@@ -4968,8 +6377,11 @@ function makeGame(host, opts){
       var wh = IN.wheel(); if(wh){ switchTo((V.w + (wh > 0 ? 1 : weaponCount() - 1)) % weaponCount(), t); }
       if(IN.pressed("reload")) startReload(t);
       var trig = (IN.mouse[0] && locked) || IN.down("shoot") || IN.down("trig");
-      var want = (W().auto ? trig : trig && !V.trigWas)
-        && !(V.w === LAUNCH_W && (V.missiles.length > 0 || (V.mode === "mp" && t < V.nextLaunchAt)));  // one rocket in the air at a time
+      // a mounted rider breathes instead of firing — the gun stays holstered
+      var ridingNow = dragonRiding(t);
+      if(ridingNow && trig && !V.dead) dragonBreathe(dt, t);
+      var want = (W().auto ? trig : trig && !V.trigWas) && !ridingNow
+        && !(V.w === LAUNCH_W && (myRocketUp() || (V.mode === "mp" && t < V.nextLaunchAt)));  // one rocket in the air at a time
       if(V.w === LAUNCH_W && want && canShoot(t)) V.nextLaunchAt = t + 0.9;   // covers the launch gap before the snapshot carries it
       V.trigWas = trig;
       if(want && canShoot(t)) fire(t);
@@ -4985,6 +6397,7 @@ function makeGame(host, opts){
     }
     V.kick = Math.max(0, V.kick - dt*8);
     missilesStep(t, dt);   // solo: flies them; mp: only renders the server's "r" rows
+    dragonTick(dt, t);     // the Warden's dragons: mount, breathe, roam, out-of-bounds
     // pickups (offline: refilled locally; online the server decides)
     if((V.mode === "practice" || V.mode === "bots") && V.phase === "round") MAP.pickups.forEach(function(pk, i){
       if(!V.items[i]) return;
@@ -5059,13 +6472,21 @@ function makeGame(host, opts){
     }
     others().forEach(function(P){ sampleSnaps(P, t, dt); });
     if(!V.watch) sendPos(t);
+    if(V.dead && V.mode === "mp"){
+      // Watchdog: the judge's own row says you are alive — take that as the spawn.
+      // (onSnap clears this too; this catches a lost/late "spawn" so a latched
+      // V.dead can never park you in respawn for good.) flag bit 1 == dead.
+      var myP = V.players[myId()];
+      if(myP && !myP.dead){ V.dead = false; V.hp = 100; V.hpAcc = 0; V.killCam = null; center.classList.add("hidden"); }
+    }
     if(V.dead && (V.mode === "mp" || V.mode === "bots")){
       if(V.killCam && (!V.killCam.ref || V.killCam.ref.gone || V.killCam.ref.dead)) V.killCam = null;
       var rl = Math.max(0, Math.ceil(V.deadAt + RESPAWN - t)); var txt = rl > 0 ? "Respawning in "+rl : "Respawning…";
       if(V.killCam && V.killCam.name) txt = V.killCam.name+"'s view — "+txt;
       if(center.textContent !== txt){ center.textContent = txt; center.classList.remove("hidden"); center.dataset.until = ""; } }
-    // a free-fall past the map is not a death — it's a 10s void clock, then a parachute back
-    if(!V.dead && V.mode !== "mp" && V.voidAt && V.phase === "round"){
+    // a free-fall past the map is not a death — it's a 10s void clock, then a parachute back.
+    // A dragon rider has no clock at all: they fly anywhere.
+    if(!V.dead && V.mode !== "mp" && V.voidAt && V.phase === "round" && !dragonRiding(t)){
       var vl = Math.max(0, Math.ceil(V.voidAt + FS.VOID_SECS - t));
       var vtxt = vl > 0 ? "Out of bounds — back in "+vl+"s" : "Pulling you back…";
       if(center.textContent !== vtxt){ center.textContent = vtxt; center.classList.remove("hidden"); center.dataset.until = ""; }
@@ -5220,7 +6641,9 @@ function makeGame(host, opts){
     // Floor Is Lava: standing on a dangerous patch too long launches you up + burns.
     if(V.lavaZones && V.lavaZones.length && V.lavaUntil && t < V.lavaUntil){
       var inLava = function(P, isMe){
-        if(!P || P.dead || P.gone) return;
+        if(!P) return;
+        if(isMe){ if(V.dead) return; }        // your flags are on V, not on V.me
+        else if(P.dead || P.gone) return;
         if(!soloW && !isMe) return;
         var B = bodyOf(P); if(!B) return;
         if((B.y||0) > 1.5){ B.lavaHold = 0; return; } // higher ground saves you
@@ -5237,11 +6660,18 @@ function makeGame(host, opts){
           B.y = (B.y || 0) + 0.1;
           // HP / death belong to the judge: locally only solo/bots pay them
           if(soloW){
-            P.hp = (P.hp|0) - FS.LAVA_DMG;
-            if(isMe) say("The lava launched you!");
-            if(P.hp <= 0 && !P.dead){
-              if(isMe){ P.dead = true; P.deadAt = t; }
-              else endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, P, t, false);
+            if(isMe){
+              // your HP lives on V (P is V.me's physics body) and the real
+              // death site is endBotLife — writing P.dead skips deaths++/feed.
+              V.hp = Math.max(0, (V.hp|0) - FS.LAVA_DMG);
+              V.hurtAt = t;
+              say("The lava launched you!");
+              if(V.hp <= 0 && !V.dead) endBotLife(null, null, t, false, "lava");
+            } else {
+              P.hp = (P.hp|0) - FS.LAVA_DMG;
+              if(P.hp <= 0 && !P.dead){
+                endBotLife({uid: myId(), kills: V.kills, team: V.team, w: V.w, name: "You"}, P, t, false);
+              }
             }
           } else if(isMe){
             say("The lava launched you!");
@@ -5292,6 +6722,11 @@ function makeGame(host, opts){
       }
     });
     if(R3 && R3.moveGeese) R3.moveGeese(V.geese);
+    // Wave G meshes: turrets track, barrels sit, lasers pulse, pads breathe
+    if(R3 && R3.moveTurret && V.turrets) V.turrets.forEach(function(TU){ R3.moveTurret(TU, t); });
+    if(R3 && R3.moveBarrel && V.barrels) V.barrels.forEach(function(BO){ R3.moveBarrel(BO); });
+    if(R3 && R3.moveLasers && V.lasers) R3.moveLasers(V.lasers);
+    if(R3 && R3.movePads && V.pads) R3.movePads(V.pads);
     // Black Hole: sucks everything toward its centre. HOLE_REACH covers the whole
     // arena (the help promises "everything and everyone"), and the pull bites harder
     // the closer you are — Twin: the HOLE_REACH block in strike.rs tick().
@@ -5314,6 +6749,136 @@ function makeGame(host, opts){
       others().forEach(pullHole);
     });
     if(R3 && R3.moveBlackHoles) R3.moveBlackHoles(V.blackholes);
+    // ---- Wave G: turrets / barrels / laser grid / jump pads ----
+    // Turrets: drop in, then track and shoot the nearest enemy in range.
+    V.turrets = (V.turrets || []).filter(function(TU){ return TU && TU.hp > 0 && TU.until && t < TU.until; });
+    V.turrets.forEach(function(TU){
+      if(R3 && R3.moveTurret) R3.moveTurret(TU, t);
+      if(t < (TU.next || 0)) return;
+      TU.next = t + FS.TURRET_GAP;
+      var tBest = null, tBestB = null, tIsDrone = false, tDist = FS.TURRET_RANGE;
+      var lookT = function(P){
+        if(!P || P.dead || P.gone) return;
+        // a turret never shoots a team-mate — yours covers you, theirs hunts you.
+        // In solo/bots you are the only totem taker, so your own turrets are on
+        // your side and V.me is deliberately not a candidate.
+        if(P.team === TU.team) return;
+        var B = bodyOf(P); if(!B) return;
+        var td = Math.hypot(B.x - TU.x, B.z - TU.z);
+        if(td <= tDist){ tDist = td; tBest = P; tBestB = B; tIsDrone = false; }
+      };
+      others().forEach(lookT);
+      // Target range: no bots live here, so the flying drones are the stand-in
+      // enemies. Without this a practice turret has nobody to shoot and the
+      // totem reads as dead.
+      if(V.mode === "practice" && V.drones && V.drones.length){
+        for(var tdi = 0; tdi < V.drones.length; tdi++){
+          var TD = V.drones[tdi];
+          if(!TD || (TD.downUntil|0) > t) continue;
+          var dc = dronePos(TD, t - (V.startAt || 0));
+          if(!dc) continue;
+          var dd = Math.hypot(dc[0] - TU.x, dc[2] - TU.z);
+          if(dd < tDist){ tDist = dd; tBest = TD; tBestB = {x: dc[0], y: dc[1], z: dc[2]}; tIsDrone = true; }
+        }
+      }
+      if(!tBestB) return;
+      TU.yaw = Math.atan2(tBestB.x - TU.x, tBestB.z - TU.z);
+      if(R3 && R3.turretShot) R3.turretShot(TU, tBestB, t);
+      // a visible streak so the shot is seeable even when the muzzle flash is
+      // behind you (Calm / reduced-motion keep the same geometry, just drawn)
+      addTracer([TU.x, holeGroundY(TU.x, TU.z) + (TU.y||0) + 0.7, TU.z],
+                [tBestB.x, (tBestB.y||0) + 1.1, tBestB.z], 0, t, false);
+      // HP / death belong to the judge: locally only solo/bots pay them. The
+      // flash and the tracer above are the client's own, in both modes.
+      if(!soloW) return;
+      if(tIsDrone){
+        // a target-range drone: knock it down for a moment and bank the score
+        tBest.downUntil = t + 1.5; V.score = (V.score|0) + 1; V.hitAt = t;
+        pushDmgNum(tBestB.x, (tBestB.y||0) + 1.1, tBestB.z, FS.TURRET_DMG, false, t);
+      } else {
+        tBest.hp = (tBest.hp|0) - FS.TURRET_DMG;
+        pushDmgNum(tBestB.x, (tBestB.y||0) + 1.1, tBestB.z, FS.TURRET_DMG, false, t);
+        if(tBest.hp <= 0 && !tBest.dead){
+          endBotLife(null, tBest, t, false, "turret");
+        }
+      }
+    });
+    // Barrels: they fall out of the sky and land. Once landed they wait for a bullet
+    // (or another barrel's blast) — see barrelBlast().
+    (V.barrels || []).forEach(function(BO){
+      if(!BO || BO.landed) return;
+      BO.vy = (BO.vy || 0) - 28 * dt;
+      BO.y = (BO.y || 0) + BO.vy * dt;
+      if(BO.y <= 0){ BO.y = 0; BO.vy = 0; BO.landed = 1; if(R3 && R3.moveBarrel) R3.moveBarrel(BO); }
+      else if(R3 && R3.moveBarrel) R3.moveBarrel(BO);
+    });
+    // Laser Grid: a thick tripwire. Walk into it and you die; jump clean over it
+    // (height ABOVE THE DECK >= LASER_CLEAR) or walk beside it and you live.
+    V.lasers = (V.lasers || []).filter(function(LZ){ return LZ && LZ.until && t < LZ.until; });
+    if(V.lasers.length){
+      var zapL = function(P, isMe){
+        if(!P) return;
+        // V.me is a physics body — .dead/.gone are never written on it. YOUR
+        // flags live on V (endBotLife sets V.dead), so the isMe arm has to look
+        // there or the beam re-kills every tick and rewrites V.deadAt.
+        if(isMe){ if(V.dead) return; }
+        else if(P.dead || P.gone) return;
+        if(!soloW && !isMe) return;
+        var B = bodyOf(P); if(!B) return;
+        // the beam is planted ON the deck under you (holeGroundY), so the clear check is
+        // height ABOVE that deck — an absolute y would treat a walker on the dockyard's
+        // raised centre (top 3.5) as "already jumped clean over" and let them through.
+        if(((B.y || 0) - holeGroundY(B.x, B.z)) >= FS.LASER_CLEAR) return;
+        for(var lgi = 0; lgi < V.lasers.length; lgi++){
+          var LG = V.lasers[lgi];
+          var d2 = FS.segDist2(B.x, B.z, LG.ax, LG.az, LG.bx, LG.bz);
+          if(d2 > FS.LASER_HALF * FS.LASER_HALF) continue;
+          if(soloW){
+            if(isMe){
+              // endBotLife is the local-player death site (deaths++, V.dead, feed, totem
+              // clear) — writing P.dead onto V.me's physics body skips all of it.
+              endBotLife(null, null, t, false, "laser");
+              if(V.dead) say("The laser grid cut you down — jump the beams");
+            } else {
+              endBotLife(null, P, t, false, "laser");
+            }
+          } else if(isMe){
+            say("The laser grid cut you down — jump the beams");
+          }
+          return;
+        }
+      };
+      zapL(V.me, true);
+      others().forEach(function(P){ zapL(P, false); });
+      if(R3 && R3.moveLasers) R3.moveLasers(V.lasers);
+    }
+    // Jump Pads: step on one and it throws you sky-high. Anyone can use them.
+    V.pads = (V.pads || []).filter(function(PD){ return PD && PD.until && t < PD.until; });
+    if(V.pads.length){
+      var hopP = function(P, isMe){
+        if(!P) return;
+        if(isMe){ if(V.dead) return; }        // your flags are on V, not on V.me
+        else if(P.dead || P.gone) return;
+        if(!soloW && !isMe) return;
+        var B = bodyOf(P); if(!B) return;
+        if(((B.y || 0) - holeGroundY(B.x, B.z)) > 0.35) return;
+        if(B.padCool && t < B.padCool) return;
+        for(var pdi = 0; pdi < V.pads.length; pdi++){
+          var PD2 = V.pads[pdi];
+          if(Math.hypot(B.x - PD2.x, B.z - PD2.z) > FS.PAD_R) continue;
+          B.vy = FS.PAD_LAUNCH;
+          B.y = (B.y || 0) + 0.12;
+          B.padCool = t + FS.PAD_COOL;
+          PD2.pulse = t;
+          if(R3 && R3.padHop) R3.padHop(PD2, t);
+          if(isMe) say("Jump Pad — you're airborne");
+          return;
+        }
+      };
+      hopP(V.me, true);
+      others().forEach(function(P){ hopP(P, false); });
+      if(R3 && R3.movePads) R3.movePads(V.pads);
+    }
     // Weapon Roulette: every 2 s, everyone's weapon switches. In MP the judge re-rolls
     // p.w and the snapshot brings it back (see the FLAG_ROULETTE block) — rolling it
     // here too would put the two on different dice.
@@ -5450,6 +7015,18 @@ function makeGame(host, opts){
               else if(Mk.dis === "meteorshower") P.blindUntil = Math.max(P.blindUntil|0, t + DD_METEOR_BLIND);
               else if(Mk.dis === "earthquake") P.slowUntil = Math.max(P.slowUntil|0, t + DD_QUAKE_SLOW);
             });
+            // a disaster bites a dragon at the SAME rate as a fighter — the
+            // weather itself can bring one down (twin: the mark loop in strike.rs).
+            // A mark with no `dis` is a Warden slam, and the Warden never hurts
+            // a dragon, so an empty-cause mark never reaches the roster.
+            if(!Mk.dis) { D.marks.splice(dmI, 1); continue; }
+            (V.dragons || []).forEach(function(Dr){
+              if(!Dr || Dr.dead) return;
+              var ddD = Math.hypot((Dr.x||0) - Mk.x, (Dr.z||0) - Mk.z);
+              if(ddD > Mk.r) return;
+              if(Mk.oh && hasRoof(Dr.x, (Dr.y||0) + 1.8, Dr.z)) return;
+              dragonHurt(Dr, FS.markDamage(ddD, Mk.r, Mk.dmg|0), t, Mk.dis || dis || "dragon-disaster");
+            });
             D.marks.splice(dmI, 1);
           }
         }
@@ -5482,6 +7059,14 @@ function makeGame(host, opts){
             P.blindUntil = Math.max(P.blindUntil|0, t + DD_SHOCK_BLIND);   // the blast knocks the wind out of you
             if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
           });
+          (V.dragons || []).forEach(function(Dr){
+            if(!Dr || Dr.dead) return;
+            if(D.hit && D.hit["drg" + Dr.id]) return;
+            var ddDr = Math.hypot((Dr.x||0) - oxS, (Dr.z||0) - ozS);
+            if(Math.abs(ddDr - D.ring) > 1.6) return;
+            if(D.hit) D.hit["drg" + Dr.id] = 1;
+            dragonHurt(Dr, DD_SHOCK_DMG, t, dis || "dragon-disaster");
+          });
         }
         // Toxic Fog / Sinkhole: standing zones that pulse once a second
         if((dis === "toxicfog" || dis === "sinkhole") && t >= dHitAt){
@@ -5496,6 +7081,11 @@ function makeGame(host, opts){
               if(Pc.dead || Pc.gone || botShielded(Pc, t) || (Pc.protUntil && t < Pc.protUntil)) return;
               Pc.hp -= DD_TOXIC_CHIP_DMG;
               if(Pc.hp <= 0 && !Pc.dead) endBotLife(null, Pc, t, false, dis);
+            });
+            // the green gas chips the dragons too — same rate as a fighter
+            (V.dragons || []).forEach(function(Dr){
+              if(!Dr || Dr.dead) return;
+              dragonHurt(Dr, DD_TOXIC_CHIP_DMG, t, dis || "dragon-disaster");
             });
             // sticky clouds frozen at disStart — the same centres R.disaster paints
             var zonesT = (D.zones && D.zones.length)
@@ -5514,6 +7104,11 @@ function makeGame(host, opts){
                 P.hp -= DD_TOXIC_DMG;
                 P.slowUntil = Math.max(P.slowUntil|0, t + DD_TOXIC_SLOW);
                 if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
+              });
+              (V.dragons || []).forEach(function(Dr){
+                if(!Dr || Dr.dead) return;
+                if(Math.hypot((Dr.x||0) - zspot[0], (Dr.z||0) - zspot[1]) > DD_TOXIC_R) return;
+                dragonHurt(Dr, DD_TOXIC_DMG, t, dis || "dragon-disaster");
               });
             }
           } else {
@@ -5547,6 +7142,11 @@ function makeGame(host, opts){
                 if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
               }
             });
+            (V.dragons || []).forEach(function(Dr){
+              if(!Dr || Dr.dead) return;
+              var ddDr = Math.hypot((Dr.x||0) - sspot[0], (Dr.z||0) - sspot[1]);
+              if(ddDr < DD_SINK_R) dragonHurt(Dr, DD_SINK_DMG, t, dis || "dragon-disaster");
+            });
           }
         }
         // Sandstorm / Absolute Zero / EMP / Hurricane: every disaster has a visual AND
@@ -5565,6 +7165,11 @@ function makeGame(host, opts){
             if(P.dead || P.gone || botShielded(P, t) || (P.protUntil && t < P.protUntil)) return;
             P.hp -= chipD;
             if(P.hp <= 0 && !P.dead) endBotLife(null, P, t, false, dis);
+          });
+          // exposure chips the dragons too — same rate as a fighter
+          (V.dragons || []).forEach(function(Dr){
+            if(!Dr || Dr.dead) return;
+            dragonHurt(Dr, chipD, t, dis || "dragon-disaster");
           });
         }
       }
@@ -5661,17 +7266,21 @@ function makeGame(host, opts){
       radarAt = t;
       try {
         var S = radarCv.width, half = S/2, mx = V.me.x, mz = V.me.z, span = 48;
+        // one style resolve per paint, not per blip: getComputedStyle forces layout,
+        // and this block used to call it ~10 times at 4 Hz
+        var rcs = getComputedStyle(root);
+        var gcv = function(n, fb){ var v = rcs.getPropertyValue(n); return v || fb; };
         radarCtx.clearRect(0, 0, S, S);
-        radarCtx.fillStyle = getComputedStyle(root).getPropertyValue("--panel") || "#333";
+        radarCtx.fillStyle = gcv("--panel") || "#333";
         radarCtx.globalAlpha = 0.72; radarCtx.fillRect(0, 0, S, S); radarCtx.globalAlpha = 1;
-        radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--line") || "#666";
+        radarCtx.strokeStyle = gcv("--line") || "#666";
         radarCtx.strokeRect(0.5, 0.5, S - 1, S - 1);
         var toXY = function(x, z){ return [half + ((x - mx)/span)*half, half + ((z - mz)/span)*half]; };
         // my facing as a wedge
         radarCtx.save();
         radarCtx.translate(half, half);
         radarCtx.rotate(V.yaw);
-        radarCtx.fillStyle = getComputedStyle(root).getPropertyValue("--brand") || "#fc0";
+        radarCtx.fillStyle = gcv("--brand") || "#fc0";
         radarCtx.beginPath();
         radarCtx.moveTo(0, -10); radarCtx.lineTo(5, 4); radarCtx.lineTo(-5, 4);
         radarCtx.closePath(); radarCtx.fill();
@@ -5683,14 +7292,14 @@ function makeGame(host, opts){
             var xy = toXY(Mk.x, Mk.z);
             radarCtx.beginPath();
             radarCtx.arc(xy[0], xy[1], Math.max(2, (Mk.r/span)*half), 0, 6.2832);
-            radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--need") || "crimson";
+            radarCtx.strokeStyle = gcv("--need") || "crimson";
             radarCtx.lineWidth = 2; radarCtx.stroke(); radarCtx.lineWidth = 1;
           });
           if(D.kind === "shockring"){
             var xy2 = toXY((MAP.bounds[0]+MAP.bounds[3])/2, (MAP.bounds[2]+MAP.bounds[5])/2);
             radarCtx.beginPath();
             radarCtx.arc(xy2[0], xy2[1], Math.max(1, ((D.ring||0)/span)*half), 0, 6.2832);
-            radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--gold") || "goldenrod";
+            radarCtx.strokeStyle = gcv("--gold") || "goldenrod";
             radarCtx.lineWidth = 2; radarCtx.stroke(); radarCtx.lineWidth = 1;
           }
         });
@@ -5708,12 +7317,12 @@ function makeGame(host, opts){
           // enemy jammer: their team is a blank on my radar, and I plant decoy dots
           if(foe && theyJam) return;
           radarCtx.fillStyle = foe
-            ? (getComputedStyle(root).getPropertyValue("--need") || "#f44")
-            : (getComputedStyle(root).getPropertyValue("--good") || "#4a4");
+            ? (gcv("--need") || "#f44")
+            : (gcv("--good") || "#4a4");
           radarCtx.beginPath(); radarCtx.arc(xy[0], xy[1], 3, 0, 6.283); radarCtx.fill();
           // Hunter's Mark: a painted enemy gets a gold ring so "they can't hide" is true
           if(foe && hunterMarked(P, t)){
-            radarCtx.strokeStyle = getComputedStyle(root).getPropertyValue("--gold") || "goldenrod";
+            radarCtx.strokeStyle = gcv("--gold") || "goldenrod";
             radarCtx.lineWidth = 2;
             radarCtx.beginPath(); radarCtx.arc(xy[0], xy[1], 6, 0, 6.283); radarCtx.stroke();
             radarCtx.lineWidth = 1;
@@ -5724,7 +7333,7 @@ function makeGame(host, opts){
           for(var fi = 0; fi < 2; fi++){
             var fx = mx + Math.sin(t*0.7 + fi*3)*18, fz = mz + Math.cos(t*0.5 + fi*2)*18;
             var fxy = toXY(fx, fz);
-            radarCtx.fillStyle = getComputedStyle(root).getPropertyValue("--need") || "#f44";
+            radarCtx.fillStyle = gcv("--need") || "#f44";
             radarCtx.globalAlpha = 0.5;
             radarCtx.beginPath(); radarCtx.arc(fxy[0], fxy[1], 3, 0, 6.283); radarCtx.fill();
             radarCtx.globalAlpha = 1;
@@ -5733,6 +7342,36 @@ function makeGame(host, opts){
       } catch(e){ /* a blocked canvas is fine — the rest of the HUD still works */ }
     }
     var wp = W(), hp = V.mode === "practice" ? 100 : clamp(V.hp, 0, 100); // bots mode uses V.hp too (damage taken)
+    // the Commons-style mount pill: G Ride when an idle dragon is in reach, else
+    // G dismount + click to breathe while you are in the saddle. Twin: hqpets showPrompt.
+    (function(){
+      if(V.phase !== "round" && !(V.mode === "practice" || V.mode === "bots")){ dragonPrompt(""); return; }
+      if(V.dead || V.watch){ dragonPrompt(""); return; }
+      var ride = myDragon(t);
+      if(ride){
+        // a mount that is drawing breath cannot spray: say so, with a bar that fills
+        // toward ready (the same read as the gun reloading). A full tank is the plain
+        // prompt with no bar.
+        var inh = (ride.rechargeAt && t < ride.rechargeAt) ? clamp(1 - (ride.rechargeAt - t) / DRAGON_INHALE_SECS, 0, 1) : 0;
+        if(inh > 0){
+          var secs = Math.max(1, Math.ceil(ride.rechargeAt - t));
+          dragonPrompt("G  dismount · inhaling…", inh, " " + secs + "s");
+        } else if(!(ride.breathLeft > 0)){
+          // tank dry and the inhale has not started yet (the frame you let go of it)
+          dragonPrompt("G  dismount · click to draw breath", 0.02);
+        } else {
+          dragonPrompt("G  dismount · click to breathe", 0);
+        }
+        return;
+      }
+      var best = null, bestD = DRAGON_PROMPT_R;
+      (V.dragons || []).forEach(function(D){
+        if(!D || D.dead || D.rider) return;
+        var d = Math.hypot(V.me.x - D.x, V.me.z - D.z);
+        if(d < bestD){ bestD = d; best = D; }
+      });
+      dragonPrompt(best ? ("G  Ride " + (best.tier || "dragon")) : "");
+    })();
     hpBar.style.width = hp+"%"; hpBox.classList.toggle("low", hp <= 30);
     var ht = String(hp); if(hpNum.textContent !== ht) hpNum.textContent = ht;
     var at = V.reloadAt ? "…" : String(magOf(V.w)[V.w === LAUNCH_W ? 0 : V.w]); at += " / "+resOf(V.w)[V.w === LAUNCH_W ? 0 : V.w];
@@ -5810,7 +7449,7 @@ function makeGame(host, opts){
     if(shMe){
       var shLeft = V.mode === "mp"
         ? 1   // the server's window: the flag rides the snapshot, no local clock to drain
-        : clamp((V.shieldTotemUntil > t ? (V.shieldTotemUntil - t)/TOTEMS.shield.dur : (V.dropUntil - t)/FS.DROP_TIME), 0, 1);
+        : clamp((V.shieldTotemUntil > t ? (V.shieldTotemUntil - t)/TOTEMS.shield.dur : (V.dropUntil - t)/(FS.DROP_TIME + FS.DROP_LAND_GRACE)), 0, 1);
       shBar.style.width = Math.round(shLeft*100)+"%";
     }
     if(V.feed.length && t - V.feed[V.feed.length - 1].at > FEED_TTL){ V.feed = V.feed.filter(function(f){ return t - f.at <= FEED_TTL; }); renderFeed(); }
@@ -5852,7 +7491,8 @@ function makeGame(host, opts){
     push("fate", V.fateUntil);
     push("radarjam", V.jamUntil);
     // disco: the taker has no personal clock — show it while anyone else is dancing
-    if(others().some(function(P){ return P && P.danceUntil && t < P.danceUntil; })){
+    // (The Warden counts: the whole arena is on the floor, boss included.)
+    if(wardenDanceOn(null, t) || others().some(function(P){ return P && P.danceUntil && t < P.danceUntil; })){
       out.push({k: "disco", n: TOTEMS.disco.n, hue: TOTEMS.disco.hue, left: -1, note: "they dance"});
     }
     // arena-wide world totems (everyone suffers — show them so the stack reads)
@@ -5864,6 +7504,10 @@ function makeGame(host, opts){
     // goose / black hole: LISTS — several can run at once and each one stacks a chip
     (V.geese || []).forEach(function(G){ if(G && G.until) push("goose", G.until); });
     (V.blackholes || []).forEach(function(H){ if(H && H.until) push("blackhole", H.until); });
+    // Wave G windows (one chip per live set, like the geese / holes)
+    push("turret", V.turretUntil);
+    push("laser", V.laserUntil);
+    push("jumppad", V.padUntil);
     // counted charges still in the pocket
     var chg = function(k, n){ if((n|0) > 0 && TOTEMS[k]) out.push({k: k, n: TOTEMS[k].n, hue: TOTEMS[k].hue, left: -2, note: (n|0) + " left"}); };
     chg("chain", V.chainLeft); chg("blink", V.blinkLeft); chg("ghost", V.ghostLeft);
@@ -5903,15 +7547,29 @@ function makeGame(host, opts){
   // how someone died: never "?" and never a bare "Disaster"
   function envKiller(dis){
     dis = dis ? String(dis) : "";
+    // "dragon:<cause>" — the mount fell and took its rider with it. onEvent
+    // rebuilds this as "<rider>'s dragon" / "Your dragon" when it knows the rider.
+    if(dis.indexOf("dragon:") === 0) return "A dragon";
     if(dis === "warden-slam" || dis === "warden-laser" || dis === "warden-grip" || dis === "warden") return "The Warden";
+    if(dis === "dragon") return "A dragon";
     return "The map";
   }
   function envLabel(dis){
     dis = dis ? String(dis) : "";
+    // "dragon:<cause>" names what brought the mount down (a disaster, gunfire,
+    // out of bounds …) so the feed can say "fell to <cause>".
+    if(dis.indexOf("dragon:") === 0){
+      var inner = dis.slice(7);
+      if(inner === "dragon-oob" || inner === "oob") return "out of bounds";
+      if(inner === "gunfire" || inner === "bullet" || inner === "blast") return "gunfire";
+      return envLabel(inner) || "a disaster";
+    }
     if(dis === "warden-slam") return "arm slam";
     if(dis === "warden-laser") return "laser eyes";
     if(dis === "warden-grip") return "gravity grip";
     if(dis === "warden") return "The Warden";
+    if(dis === "dragon") return "bite";          // a roaming mount ate you
+    if(dis === "dragon-oob") return "out of bounds";
     if(TOTEMS[dis] && TOTEMS[dis].n) return TOTEMS[dis].n;
     if(ENV_NAMES[dis]) return ENV_NAMES[dis];
     return dis.charAt(0).toUpperCase() + dis.slice(1);
@@ -5926,6 +7584,16 @@ function makeGame(host, opts){
         var it = api.mk("b", null, f.item);
         it.style.color = f.hue; li.appendChild(it); feedBox.appendChild(li);
         li.style.borderLeft = "3px solid "+f.hue;
+        return;
+      }
+      // a "dragon:<cause>" death is the mount falling and taking its rider with it —
+      // say that as a sentence instead of three bare words ("Your dragon gunfire You")
+      if(f.dis && String(f.dis).indexOf("dragon:") === 0){
+        li.appendChild(api.mk("b", null, f.k));
+        li.appendChild(api.mk("span", "vg-fps-w", " fell to " + envLabel(f.dis) + " · "));
+        li.appendChild(api.mk("b", null, f.v));
+        feedBox.appendChild(li);
+        li.style.borderLeft = "3px solid #888";
         return;
       }
       li.appendChild(api.mk("b", null, f.k));
@@ -6058,8 +7726,8 @@ function makeGame(host, opts){
     wrap.insertBefore(canvas, wrap.firstChild);
     if(IN) IN.destroy();
     IN = HQV.input ? HQV.input.create(wrap, {look: true, wheel: true, sensitivity: V.sens, buttons: BUTTONS}) : null;
-    canvas.addEventListener("pointerdown", function(){ canvas.focus(); });
-    pauseBox.addEventListener("click", function(){ if(canvas){ canvas.focus(); if(IN) IN.lock(); } });
+    canvas.addEventListener("pointerdown", function(){ grabLock(); });
+    pauseBox.addEventListener("click", function(){ grabLock(); });
     resize();
     if(!V.map && hasWebGL2()){
       R2 = make2d(null);
@@ -6387,6 +8055,39 @@ function makeGame(host, opts){
         g.lineTo(G.x + Math.sin((G.yaw||0) - 0.35) * 0.55, G.z + Math.cos((G.yaw||0) - 0.35) * 0.55);
         g.lineTo(G.x + Math.sin((G.yaw||0) + 0.35) * 0.55, G.z + Math.cos((G.yaw||0) + 0.35) * 0.55);
         g.closePath(); g.fill();
+      });
+      // Wave G: turrets as a triangle facing yaw, barrels as an X ring, lasers as
+      // red segments, pads as a green chevron ring.
+      (V.turrets || []).forEach(function(TU){
+        if(!TU || TU.hp <= 0) return;
+        g.fillStyle = TEAMS[TU.team|0].c;
+        g.beginPath();
+        g.moveTo(TU.x + Math.sin(TU.yaw||0) * 0.85, TU.z + Math.cos(TU.yaw||0) * 0.85);
+        g.lineTo(TU.x + Math.sin((TU.yaw||0) + 2.5) * 0.7, TU.z + Math.cos((TU.yaw||0) + 2.5) * 0.7);
+        g.lineTo(TU.x + Math.sin((TU.yaw||0) - 2.5) * 0.7, TU.z + Math.cos((TU.yaw||0) - 2.5) * 0.7);
+        g.closePath(); g.fill();
+      });
+      (V.barrels || []).forEach(function(BO){
+        if(!BO || BO.hp <= 0) return;
+        g.fillStyle = TOTEMS.barrel.hue;
+        g.beginPath(); g.arc(BO.x, BO.z, 0.7, 0, Math.PI*2); g.fill();
+        g.strokeStyle = T.ink; g.lineWidth = 0.12;
+        g.beginPath(); g.moveTo(BO.x - 0.4, BO.z - 0.4); g.lineTo(BO.x + 0.4, BO.z + 0.4);
+        g.moveTo(BO.x + 0.4, BO.z - 0.4); g.lineTo(BO.x - 0.4, BO.z + 0.4); g.stroke();
+      });
+      (V.lasers || []).forEach(function(LZ){
+        if(!LZ || (LZ.until && t >= LZ.until)) return;
+        g.strokeStyle = TOTEMS.laser.hue; g.lineWidth = 0.28; g.globalAlpha = 0.85;
+        g.beginPath(); g.moveTo(LZ.ax, LZ.az); g.lineTo(LZ.bx, LZ.bz); g.stroke();
+        g.globalAlpha = 1; g.lineWidth = 1;
+      });
+      (V.pads || []).forEach(function(PD){
+        if(!PD || (PD.until && t >= PD.until)) return;
+        g.strokeStyle = TOTEMS.jumppad.hue; g.lineWidth = 0.22;
+        g.beginPath(); g.arc(PD.x, PD.z, FS.PAD_R, 0, Math.PI*2); g.stroke();
+        g.beginPath();
+        g.moveTo(PD.x, PD.z - 0.9); g.lineTo(PD.x + 0.7, PD.z + 0.4); g.lineTo(PD.x - 0.7, PD.z + 0.4);
+        g.closePath(); g.stroke();
       });
       if(V.mode === "practice") V.drones.forEach(function(D){ if(D.downUntil > t) return; var c = dronePos(D, (V.phase === "round" ? t - V.startAt : 0)); g.fillStyle = T.need; g.fillRect(c[0] - 0.45, c[2] - 0.45, 0.9, 0.9); });
       (V.mdrones || []).forEach(function(D){ var c = matchDronePos(D, t); g.fillStyle = T.need; g.fillRect(c[0] - 0.5, c[2] - 0.5, 1.0, 1.0); });
@@ -6868,6 +8569,43 @@ function makeGame(host, opts){
       m.cur = n;
     }
     function removePlayer(P){ if(P && P.mesh){ scene.remove(P.mesh.g); P.mesh.mixer.stopAllAction(); P.mesh = null; } }
+    // ---- your own body in the saddle ----
+    // R.render only draws others(); that is right for first-person and wrong for the
+    // dragon chase camera, which is third-person and used to show an empty saddle. A
+    // self-body is therefore built from the same kit as any other fighter and shown
+    // ONLY while you ride — first-person would otherwise put your own face in the lens.
+    var meBody = null;
+    function ensureMeBody(){
+      // the character you picked lives in ssave().ch (the menu writes it there)
+      var sv = (typeof ssave === "function") ? ssave() : null;
+      var ch = clamp((sv && sv.ch|0) || 0, 0, CHARS.length - 1), team = V.team|0;
+      if(meBody && meBody.mesh && (meBody.ch !== ch || meBody.team !== team)){ removePlayer(meBody); meBody = null; }
+      if(meBody && meBody.mesh) return meBody;
+      dropMeBody();   // clear any half-built stand-in (the GLTF may not have been ready)
+      // a stand-in with just the fields addPlayer reads — no name tag (you know who you
+      // are) and no team ring (it would clip the saddle)
+      meBody = {ch: ch, team: team, bot: false, name: "You", x: 0, y: 0, z: 0, yaw: 0, w: 0,
+                cos: window.HQ_MYCOS || null};
+      addPlayer(meBody);
+      if(meBody.mesh && meBody.mesh.tag){ meBody.mesh.g.remove(meBody.mesh.tag); meBody.mesh.tag = null; }
+      if(meBody.mesh && meBody.mesh.ring) meBody.mesh.ring.visible = false;
+      return meBody;
+    }
+    function dropMeBody(){ if(meBody){ removePlayer(meBody); meBody = null; } }
+    // a saddle pose, written AFTER mixer.update so idle does not snap the limbs back.
+    // The Kenney rig's rest is a T-pose stand; on a mount the legs fold forward at the
+    // hip and the arms come in to hold on. Calm / reduced-motion hold the same still
+    // pose (it is a position, not an animation).
+    function poseSit(m){
+      if(!m || !m.bones) return;
+      if(m.bones.legL) m.bones.legL.rotation.x = -1.15;
+      if(m.bones.legR) m.bones.legR.rotation.x = -1.15;
+      if(m.bones.torso) m.bones.torso.rotation.x = -0.18;
+      if(m.bones.armL) m.bones.armL.rotation.x = -0.55;
+      if(m.bones.armR) m.bones.armR.rotation.x = -0.55;
+      if(m.bones.armL) m.bones.armL.rotation.z = -0.28;
+      if(m.bones.armR) m.bones.armR.rotation.z = 0.28;
+    }
     var trMat = [new THREE.LineBasicMaterial({color: 0xffe08a, transparent: true}), new THREE.LineBasicMaterial({color: 0xff9a5a, transparent: true})];
     var tracers = [], puffs = [];
     var hitMat = hitTex ? new THREE.SpriteMaterial({map: hitTex, transparent: true, depthWrite: false}) : null;
@@ -6889,8 +8627,14 @@ function makeGame(host, opts){
       (lavaMeshes || []).forEach(function(g){ scene.remove(g); }); lavaMeshes = [];
       (gooseMeshes || []).forEach(function(g){ scene.remove(g); }); gooseMeshes = [];
       (holeMeshes || []).forEach(function(g){ scene.remove(g); }); holeMeshes = [];
-      (V.dmgNums || []).forEach(function(D){ if(D.o){ dyn.remove(D.o); D.o.material.map.dispose(); D.o.material.dispose(); D.o = null; } }); V.dmgNums = [];
+      (turretMeshes || []).forEach(function(g){ scene.remove(g); }); turretMeshes = [];
+      (barrelMeshes || []).forEach(function(g){ scene.remove(g); }); barrelMeshes = [];
+      (laserMeshes || []).forEach(function(g){ scene.remove(g); }); laserMeshes = [];
+      (padMeshes || []).forEach(function(g){ scene.remove(g); }); padMeshes = [];
+      (dragonMeshes || []).forEach(function(g){ scene.remove(g); }); dragonMeshes = [];
+      killDmgNums();
       if(wardenGroup){ dyn.remove(wardenGroup); wardenGroup = null; wardenParts = null; }
+      dropMeBody();
       V.order.forEach(function(u){ removePlayer(V.players[u]); }); }
     var wardenGroup = null, wardenParts = null, wardenLaser = null, wardenRings = [], wardenDust = [];
     function wardenDustTex(){
@@ -6908,16 +8652,16 @@ function makeGame(host, opts){
     }
     function wardenDustBurst(pts, t0){
       if(!pts || !pts.length) return;
-      var tex = wardenDustTex(), pi, i;
+      var tex = wardenDustTex(), pi, i, gy = wardenGY();
       for(pi = 0; pi < pts.length; pi++){
         var p = pts[pi];
         for(i = 0; i < 14; i++){
           var ja = (i / 14) * Math.PI * 2 + (pi * 0.4);
           var sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent: true, depthWrite: false, opacity: 0.7, fog: false}));
-          sp.position.set(p.x, 0.25, p.z);
+          sp.position.set(p.x, gy + 0.25, p.z);
           sp.scale.setScalar(1.2 + (i % 4) * 0.3);
           dyn.add(sp);
-          wardenDust.push({o: sp, at: t0, x: p.x, z: p.z,
+          wardenDust.push({o: sp, at: t0, x: p.x, y: gy + 0.25, z: p.z,
             vx: Math.cos(ja) * (6 + (i % 3) * 2), vz: Math.sin(ja) * (6 + (i % 3) * 2),
             s0: 1.2 + (i % 4) * 0.3});
         }
@@ -6930,7 +8674,7 @@ function makeGame(host, opts){
         if(!quiet){
           D.o.position.x = D.x + D.vx * (da * 0.7);
           D.o.position.z = D.z + D.vz * (da * 0.7);
-          D.o.position.y = 0.25 + da * 1.5;
+          D.o.position.y = (D.y != null ? D.y : 0.25) + da * 1.5;
         }
         D.o.scale.setScalar(D.s0 * (1 + da * 2.2));
         if(D.o.material) D.o.material.opacity = 0.7 * (1 - da);
@@ -6949,12 +8693,31 @@ function makeGame(host, opts){
       if(!W) return;
       // Giant carved totem-golem: waist-to-head only (no legs), fused to a rubble skirt.
       // Silhouette follows the hit volumes (waist / chest / head / two heavy arms).
+      // Scare pass: ram horns, fangs, spikes along the shoulders and spine, glowing
+      // rune slashes on the chest, and a cracked, asymmetrical face.
       var g = new THREE.Group();
       var stone = 0x3a4150, iron = 0x252b36, trim = 0xc9a227, glow = 0xff2a3a, dark = 0x1a1f28;
+      var bone = 0x8a7a5c, char = 0x12151c;
       function part(w, h, d, x, y, z, c, e){
         var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wmat(c, e));
         m.position.set(x || 0, y || 0, z || 0);
         return m;
+      }
+      // a tapered horn: a stack of shrinking boxes, curving up and out
+      function horn(side){
+        var hg = new THREE.Group();
+        var segs = 5;
+        for(var hi = 0; hi < segs; hi++){
+          var k = hi / (segs - 1);
+          var hw = 1.45 - k * 1.05, hh = 1.5 - k * 0.75, hd = 1.45 - k * 1.05;
+          var hb = part(hw, hh, hd, side * (0.2 + k * 3.3), k * 4.6 + 0.5, -k * 2.2, bone, 0x000000);
+          hg.add(hb);
+        }
+        return hg;
+      }
+      // a fang: short pointed box under the jaw line
+      function fang(x, y, z, s){
+        return part(0.55 * s, 1.5 * s, 0.55 * s, x, y, z, bone, 0x110800);
       }
       var skirt = part(18.6, 2.4, 12.0, 0, 1.2, 0, iron);
       var skirt2 = part(15.0, 1.8, 9.6, 0, 3.0, 0.3, stone);
@@ -6970,7 +8733,43 @@ function makeGame(host, opts){
       var crest = part(1.65, 1.8, 4.5, 0, 16.8, 0, trim, 0x221100);
       var eyeL = part(1.2, 0.72, 0.54, -1.5, 14.55, 3.3, glow, 0x440000);
       var eyeR = part(1.2, 0.72, 0.54, 1.5, 14.55, 3.3, glow, 0x440000);
-      // heavy arms: shoulder + elbow so the slam is a hinge from elbow to fist
+      // horns: two ram curves sweeping up and back from the temples
+      var hornL = horn(-1), hornR = horn(1);
+      hornL.position.set(-2.6, 16.2, -0.4); hornL.rotation.set(0, 0.35, 0.42);
+      hornR.position.set(2.6, 16.2, -0.4); hornR.rotation.set(0, -0.35, -0.42);
+      // fangs: a ragged row under the brow, the two canines longest
+      var fangs = [];
+      [[-1.9, 13.2, 3.15, 1.25], [1.9, 13.2, 3.15, 1.25], [-0.85, 13.35, 3.25, 0.95],
+       [0.85, 13.35, 3.25, 0.95], [-2.55, 13.5, 2.7, 0.7], [2.55, 13.5, 2.7, 0.7]].forEach(function(f){
+        fangs.push(fang(f[0], f[1], f[2], f[3]));
+      });
+      // shoulder + spine spikes: a jagged ridge so the silhouette reads as hostile
+      var spikes = [];
+      [[-9.6, 13.6, -1.2, 1.6], [9.6, 13.6, -1.2, 1.6], [-10.4, 11.9, -0.4, 1.2], [10.4, 11.9, -0.4, 1.2],
+       [0, 16.4, -2.6, 1.5], [0, 14.8, -3.1, 1.3], [0, 13.1, -3.4, 1.1],
+       [-5.8, 12.6, -3.2, 1.15], [5.8, 12.6, -3.2, 1.15]].forEach(function(s){
+        var sp = part(s[3], s[3] * 2.2, s[3] * 0.85, s[0], s[1], s[2], bone, 0x0a0600);
+        sp.rotation.x = -0.45;
+        spikes.push(sp);
+      });
+      // glowing rune slashes across the chest plate
+      var runes = [];
+      [[-3.4, 10.4, 0.35, 2.6, 0.16, 0.12], [-1.2, 9.1, 0.35, 2.2, 0.16, -0.22],
+       [1.6, 10.8, 0.35, 1.9, 0.16, 0.18], [3.1, 9.3, 0.35, 2.4, 0.16, -0.12],
+       [-2.2, 7.9, 0.35, 1.5, 0.14, 0.3], [2.4, 8.1, 0.35, 1.7, 0.14, -0.28]].forEach(function(r){
+        var rn = part(r[3], r[4], r[5], r[0], r[1], 5.15, glow, 0x551100);
+        rn.rotation.z = r[2] * 2.2;
+        runes.push(rn);
+      });
+      // cheek plates: one cracked / asymmetric so the face is not a clean mask
+      var cheekL = part(1.35, 3.1, 1.5, -3.05, 13.9, 1.5, char, 0x000000);
+      var cheekR = part(1.15, 2.6, 1.25, 3.15, 13.6, 1.6, char, 0x000000);
+      var crackL = part(0.28, 2.2, 0.3, -2.15, 15.2, 3.28, dark, 0x000000);
+      crackL.rotation.z = 0.5;
+      // heavy arms: shoulder + elbow so the slam is a hinge from elbow to fist.
+      // The forearm is short on purpose: the fist must REST on the deck (local y=0),
+      // never punch through it. (The old chain hung 6 m under the floor and read as
+      // "legs under the map".)
       function heavyArm(side){
         var piv = new THREE.Group();
         piv.position.set(side * WARDEN_ARM_X, 11.7, 0);
@@ -6979,9 +8778,9 @@ function makeGame(host, opts){
         var elbow = new THREE.Group();
         elbow.position.set(0, -8.1, 0);
         var hinge = part(3.6, 1.8, 3.9, 0, 0, 0, trim, 0x221100);
-        var fore = part(3.6, 6.6, 3.9, 0, -3.6, 0.4, stone);
-        var fist = part(4.8, 3.6, 5.1, 0, -7.5, 0.7, iron);
-        var knuckle = part(3.9, 1.35, 4.2, 0, -9.1, 1.1, trim, 0x221100);
+        var fore = part(3.6, 2.4, 3.9, 0, -1.5, 0.4, stone);
+        var fist = part(4.8, 1.8, 5.1, 0, -2.55, 0.7, iron);
+        var knuckle = part(3.9, 0.9, 4.2, 0, -3.15, 1.1, trim, 0x221100);
         elbow.add(hinge); elbow.add(fore); elbow.add(fist); elbow.add(knuckle);
         piv.add(delt); piv.add(upper); piv.add(elbow);
         return {piv: piv, elbow: elbow};
@@ -6990,12 +8789,33 @@ function makeGame(host, opts){
       g.add(skirt); g.add(skirt2); g.add(waist); g.add(chest); g.add(plate); g.add(sigil);
       g.add(paulL); g.add(paulR); g.add(head); g.add(brow); g.add(jawM); g.add(crest);
       g.add(eyeL); g.add(eyeR); g.add(armL.piv); g.add(armR.piv);
+      g.add(hornL); g.add(hornR); g.add(cheekL); g.add(cheekR); g.add(crackL);
+      fangs.forEach(function(f){ g.add(f); });
+      spikes.forEach(function(sp){ g.add(sp); });
+      runes.forEach(function(rn){ g.add(rn); });
+      // Disco: a mirror ball over the crest while the boss grooves (decorative only)
+      var wBall = new THREE.Group();
+      var wOrb = new THREE.Mesh(new THREE.SphereGeometry(2.2, 12, 10),
+        wmat(0xc0c0c0, 0x221100));
+      wBall.add(wOrb);
+      for(var wbi = 0; wbi < 8; wbi++){
+        var wChip = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55),
+          new THREE.MeshBasicMaterial({color: (wbi % 2) ? 0xff2d95 : 0xbfeef7, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false}));
+        var wba = (wbi / 8) * Math.PI * 2;
+        wChip.position.set(Math.cos(wba) * 2.2, ((wbi % 3) - 1) * 0.45, Math.sin(wba) * 2.2);
+        wChip.lookAt(0, 0, 0);
+        wBall.add(wChip);
+      }
+      wBall.position.set(0, 20.2, 0);
+      wBall.visible = false;
+      g.add(wBall);
       g.traverse(function(n){ if(n.isMesh){ n.castShadow = !V.low; n.frustumCulled = false; } });
-      g.position.set(W.x, 0, W.z);
+      // plant ON the deck at (x, z) — never y=0, which buries him in the raised centre
+      g.position.set(W.x, wardenGY(W), W.z);
       g.scale.setScalar(1);
       dyn.add(g);
       wardenGroup = g;
-      wardenParts = {armL: armL, armR: armR, eyeL: eyeL, eyeR: eyeR, head: head, chest: chest, sigil: sigil, jaw: jawM, group: g};
+      wardenParts = {armL: armL, armR: armR, eyeL: eyeL, eyeR: eyeR, head: head, chest: chest, sigil: sigil, jaw: jawM, group: g, discoBall: wBall};
     }
     function wardenClear(){
       if(wardenGroup){ dyn.remove(wardenGroup); wardenGroup = null; wardenParts = null; }
@@ -7010,13 +8830,21 @@ function makeGame(host, opts){
       if(t == null) t = now();
       var quiet = calm();
       wardenGroup.position.x = W.x; wardenGroup.position.z = W.z;
+      var gy = wardenGY(W);
       wardenGroup.rotation.y = W.yaw || 0;
       // rise out of the ground over 0.8s (deterministic ease)
       var born = (W.born != null) ? W.born : t;
       var u = clamp((t - born) / 0.8, 0, 1);
       var pop = u * u * (3 - 2 * u);
       wardenGroup.scale.setScalar(Math.max(0.02, pop));
-      wardenGroup.position.y = quiet ? 0 : Math.sin(t * 1.3) * 0.08;
+      wardenGroup.position.y = gy + (quiet ? 0 : Math.sin(t * 1.3) * 0.08);
+      // Disco: the boss grooves for the window — arms pump alternately, head wobbles,
+      // the mirror ball spins overhead, and every attack is held (see wardenTick).
+      var dancing = wardenDanceOn(W, t);
+      if(wardenParts.discoBall){
+        wardenParts.discoBall.visible = dancing;
+        if(dancing && !quiet) wardenParts.discoBall.rotation.y = t * 1.8;
+      }
       // arms: idle sway → telegraph lift → bend-down slam; a disabled arm hangs limp
       var lift = 0, slamK = 0, slamAt = wardenParts.slamAt || 0;
       if(W.slabArm > 0 && t < W.slabArm){
@@ -7028,13 +8856,26 @@ function makeGame(host, opts){
       }
       // torso hinge: rear back on the wind-up, then bend down into the slam
       var bend = 0;
-      if(W.slabArm > 0 && t < W.slabArm) bend = -0.16 * (lift / 1.35);
-      else if(slamAt > 0 && t >= slamAt && t < slamAt + 0.45) bend = Math.sin(((t - slamAt) / 0.45) * Math.PI) * 0.42;
-      wardenGroup.rotation.x = quiet ? (bend * 0.5) : bend;
-      if(!quiet){
+      if(dancing){
+        // disco groove: torso twists gently side to side
+        bend = 0;
+        wardenGroup.rotation.x = 0;
+        if(!quiet) wardenGroup.rotation.y = (W.yaw || 0) + Math.sin(t * 2.4) * 0.14;
+      } else {
+        if(W.slabArm > 0 && t < W.slabArm) bend = -0.16 * (lift / 1.35);
+        else if(slamAt > 0 && t >= slamAt && t < slamAt + 0.45) bend = Math.sin(((t - slamAt) / 0.45) * Math.PI) * 0.42;
+        wardenGroup.rotation.x = quiet ? (bend * 0.5) : bend;
+      }
+      if(!quiet && !dancing){
         wardenParts.head.rotation.y = Math.sin(t * 0.7) * 0.06;
+        wardenParts.head.rotation.z = 0;
         wardenParts.sigil.rotation.z = Math.sin(t * 2.1) * 0.1;
         wardenParts.jaw.rotation.x = 0.04 + Math.sin(t * 1.6) * 0.04;
+      } else if(!quiet && dancing){
+        // disco: head wobble + jaw bounce
+        wardenParts.head.rotation.y = Math.sin(t * 2.6) * 0.28;
+        wardenParts.head.rotation.z = Math.sin(t * 3.2) * 0.18;
+        wardenParts.jaw.rotation.x = 0.08 + Math.abs(Math.sin(t * 3.0)) * 0.16;
       }
       // Exposed Core: the sigil is the chest core — it glows / sparks while open
       if(wardenParts.sigil && wardenParts.sigil.material){
@@ -7067,6 +8908,19 @@ function makeGame(host, opts){
           piv.position.y = 11.7;
           piv.position.z = 0;
           if(elbow){ elbow.rotation.x = -0.35; elbow.rotation.y = 0; elbow.rotation.z = 0; }
+          return;
+        }
+        // Disco: the arms pump overhead alternately (same groove as the fighters)
+        if(dancing){
+          var dp = (t * 5.2) + (side > 0 ? Math.PI : 0);
+          var dsw = quiet ? 0.5 : Math.max(0, Math.sin(dp));
+          piv.rotation.x = -0.35 - dsw * 2.05;
+          piv.rotation.y = 0;
+          piv.rotation.z = side * 0.28;
+          piv.position.x = side * WARDEN_ARM_X;
+          piv.position.y = 11.7;
+          piv.position.z = 0;
+          if(elbow){ elbow.rotation.x = -0.55; elbow.rotation.y = 0; elbow.rotation.z = side * 0.12; }
           return;
         }
         var use = 0;
@@ -7141,7 +8995,7 @@ function makeGame(host, opts){
           dyn.add(wardenLaser);
         }
         var yaw = W.laserYaw || 0;
-        var eyeY = WARDEN_SEE_HEAD;
+        var eyeY = wardenGY(W) + WARDEN_SEE_HEAD;
         // stay on the map: the beam stops at the arena edge, never off into the void
         var runLen = mapLaserRun(W.x, W.z, yaw);
         // ground laser: slant from the eyes down to the floor along laserYaw
@@ -7168,7 +9022,7 @@ function makeGame(host, opts){
       pts.forEach(function(px){
         var rg = new THREE.Mesh(new THREE.RingGeometry(WARDEN_SLAB_R - 0.25, WARDEN_SLAB_R, 36).rotateX(-Math.PI/2),
           new THREE.MeshBasicMaterial({color: 0xff3344, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false}));
-        rg.position.set(px, 0.08, W.z);
+        rg.position.set(px, wardenGY(W) + 0.08, W.z);
         dyn.add(rg);
         wardenRings.push({o: rg, at: now(), dur: WARDEN_SLAB_ARM + 0.2});
       });
@@ -7182,19 +9036,33 @@ function makeGame(host, opts){
       pts.forEach(function(p){
         var rg = new THREE.Mesh(new THREE.RingGeometry(WARDEN_SLAB_R_HIT - 0.35, WARDEN_SLAB_R_HIT, 40).rotateX(-Math.PI/2),
           new THREE.MeshBasicMaterial({color: 0xff3344, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, fog: false}));
-        rg.position.set(p.x, 0.1, p.z);
+        rg.position.set(p.x, wardenGY(W) + 0.1, p.z);
         dyn.add(rg);
         wardenRings.push({o: rg, at: t0, dur: 0.4});
         // wider shock ring — the blast that blows people away
         var rg2 = new THREE.Mesh(new THREE.RingGeometry(WARDEN_SLAB_KNOCK - 0.3, WARDEN_SLAB_KNOCK, 40).rotateX(-Math.PI/2),
           new THREE.MeshBasicMaterial({color: 0xffaa66, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false}));
-        rg2.position.set(p.x, 0.08, p.z);
+        rg2.position.set(p.x, wardenGY(W) + 0.08, p.z);
         dyn.add(rg2);
         wardenRings.push({o: rg2, at: t0, dur: 0.55});
       });
       wardenDustBurst(pts, t0);
     }
     var R = {};
+    // Keep-by-id: drop only the meshes whose id is not in `live`. The MP snapshot runs
+    // 20×/s and used to clear-and-repaint every world list on each one — fresh THREE
+    // geometry + materials per object per tick, an unbounded GC storm that stalled the
+    // frame (and with it, the one-frame fire edge and the position send). Diff instead.
+    function retain(meshes, live){
+      var keep = {}, i, g, out = [];
+      for(i = 0; i < (live || []).length; i++){ if(live[i] && live[i].id != null) keep[live[i].id] = 1; }
+      for(i = 0; i < (meshes || []).length; i++){
+        g = meshes[i];
+        if(g && g.userData && keep[g.userData.id] != null){ out.push(g); continue; }
+        if(g) scene.remove(g);
+      }
+      return out;
+    }
     /* launcher visuals: the flying rocket and its blast, both correlations of the missiles list */
     var rockets = [], booms = [];
     var flameTex = (function(){
@@ -7244,13 +9112,14 @@ function makeGame(host, opts){
     }
     R.buildMap = buildMap; R.removePlayer = removePlayer; R.tracer = tracer; R.clearDynamic = clearDynamic;
     R.wardenRise = wardenRise; R.wardenSync = wardenSync; R.wardenClear = wardenClear;
+    R.addDragon = R.addDragon; R.moveDragons = R.moveDragons; R.clearDragons = R.clearDragons;
     R.wardenSlamArm = wardenSlamArm; R.wardenSlam = wardenSlam;
     R.wardenShock = function(t){
       var W = V.warden; if(!W) return;
       var t0 = t || now();
       var rg = new THREE.Mesh(new THREE.RingGeometry(2.0, 2.4, 40).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: 0xffcc66, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false}));
-      rg.position.set(W.x, 0.1, W.z);
+      rg.position.set(W.x, wardenGY(W) + 0.1, W.z);
       dyn.add(rg);
       wardenRings.push({o: rg, at: t0, dur: 0.7, grow: WARDEN_CK1_PUSH});
     };
@@ -7259,7 +9128,7 @@ function makeGame(host, opts){
       var t0 = t || now();
       var rg = new THREE.Mesh(new THREE.RingGeometry(WARDEN_GRIP_R - 0.5, WARDEN_GRIP_R, 48).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: 0x9b6bff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false}));
-      rg.position.set(W.x, 0.08, W.z);
+      rg.position.set(W.x, wardenGY(W) + 0.08, W.z);
       dyn.add(rg);
       wardenRings.push({o: rg, at: t0, dur: WARDEN_GRIP_HOLD});
     };
@@ -7341,6 +9210,19 @@ function makeGame(host, opts){
     // the window ends.
     var beaconGroups = [], bubbleGroups = [], mineMeshes = [], meteorMarks = [];
     R.addBeacon = function(bc){
+      if(!bc) return;
+      // idempotent by id: the MP snapshot hands over a fresh object every tick,
+      // so re-link the existing mesh instead of rebuilding it
+      if(!bc.mesh && bc.id != null){
+        for(var bci = 0; bci < beaconGroups.length; bci++){
+          if(beaconGroups[bci].userData.id === bc.id){ bc.mesh = beaconGroups[bci]; break; }
+        }
+      }
+      if(bc.mesh){
+        bc.mesh.position.set(bc.x||0, 0, bc.z||0);
+        bc.mesh.userData.until = bc.until || 0;
+        return;
+      }
       var c = bc.kind === "king" ? 0xffd43b : 0x63e6be;
       var gp = new THREE.Group();
       gp.add(beacon(c));
@@ -7349,13 +9231,28 @@ function makeGame(host, opts){
         new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false, fog: false})));
       gp.position.set(bc.x||0, 0, bc.z||0);
       gp.userData.until = bc.until || 0;
+      gp.userData.id = bc.id;
       scene.add(gp); beaconGroups.push(gp); bc.mesh = gp;
+    };
+    R.removeBeacon = function(bc){
+      if(bc && bc.mesh){ scene.remove(bc.mesh); bc.mesh = null; }
     };
     R.clearBeacons = function(){
       (beaconGroups || []).forEach(function(g){ scene.remove(g); });
       beaconGroups = [];
     };
     R.addBubble = function(bb){
+      if(!bb) return;
+      if(!bb.mesh && bb.id != null){
+        for(var bbi = 0; bbi < bubbleGroups.length; bbi++){
+          if(bubbleGroups[bbi].userData.id === bb.id){ bb.mesh = bubbleGroups[bbi]; break; }
+        }
+      }
+      if(bb.mesh){
+        bb.mesh.position.set(bb.x||0, bb.y||0.9, bb.z||0);
+        bb.mesh.userData.until = bb.until || 0;
+        return;
+      }
       var c = 0x63e6be;
       var r = (+bb.r || 4);
       var gp = new THREE.Group();
@@ -7365,14 +9262,28 @@ function makeGame(host, opts){
         new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.18, wireframe: true, depthWrite: false, fog: false})));
       gp.position.set(bb.x||0, bb.y||0.9, bb.z||0);
       gp.userData.until = bb.until || 0;
+      gp.userData.id = bb.id;
       scene.add(gp); bubbleGroups.push(gp); bb.mesh = gp;
+    };
+    R.removeBubble = function(bb){
+      if(bb && bb.mesh){ scene.remove(bb.mesh); bb.mesh = null; }
     };
     R.clearBubbles = function(){
       (bubbleGroups || []).forEach(function(g){ scene.remove(g); });
       bubbleGroups = [];
     };
     R.addMine = function(mn){
-      if(!mn || mn.mesh) return;
+      if(!mn) return;
+      // idempotent by id: the MP snapshot hands over a fresh object every tick
+      if(!mn.mesh && mn.id != null){
+        for(var mni = 0; mni < mineMeshes.length; mni++){
+          if(mineMeshes[mni].userData.id === mn.id){ mn.mesh = mineMeshes[mni]; break; }
+        }
+      }
+      if(mn.mesh){
+        mn.mesh.position.set(mn.x||0, 0.08, mn.z||0);
+        return;
+      }
       var c = 0xff6b6b;
       var gp = new THREE.Group();
       gp.add(new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.12, 12),
@@ -7380,6 +9291,7 @@ function makeGame(host, opts){
       gp.add(new THREE.Mesh(new THREE.RingGeometry(0.5, 0.85, 16).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: c, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false, fog: false})));
       gp.position.set(mn.x||0, 0.08, mn.z||0);
+      gp.userData.id = mn.id;
       scene.add(gp); mineMeshes.push(gp); mn.mesh = gp;
     };
     R.clearMines = function(){
@@ -7390,7 +9302,17 @@ function makeGame(host, opts){
       if(mn && mn.mesh){ scene.remove(mn.mesh); mn.mesh = null; }
     };
     R.addMeteorMark = function(mm){
-      if(!mm || mm.mesh) return;
+      if(!mm) return;
+      if(!mm.mesh && mm.id != null){
+        for(var mmi2 = 0; mmi2 < meteorMarks.length; mmi2++){
+          if(meteorMarks[mmi2].userData.id === mm.id){ mm.mesh = meteorMarks[mmi2]; break; }
+        }
+      }
+      if(mm.mesh){
+        mm.mesh.position.set(mm.x||0, 0.1, mm.z||0);
+        mm.mesh.userData.hitAt = mm.hitAt || 0;
+        return;
+      }
       var c = 0xff8a3b;
       var gp = new THREE.Group();
       gp.add(new THREE.Mesh(new THREE.RingGeometry(1.2, 2.4, 28).rotateX(-Math.PI/2),
@@ -7399,6 +9321,7 @@ function makeGame(host, opts){
         new THREE.MeshBasicMaterial({color: 0xffd43b, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false})));
       gp.position.set(mm.x||0, 0.1, mm.z||0);
       gp.userData.hitAt = mm.hitAt || 0;
+      gp.userData.id = mm.id;
       scene.add(gp); meteorMarks.push(gp); mm.mesh = gp;
     };
     R.clearMeteorMarks = function(){
@@ -7411,7 +9334,18 @@ function makeGame(host, opts){
     // ---- Wave F: joke world totems (Banana peels / Lava patches / Goose / Black Hole) ----
     var bananaMeshes = [], lavaMeshes = [], gooseMeshes = [], holeMeshes = [];
     R.addBanana = function(bp){
-      if(!bp || bp.mesh) return;
+      if(!bp) return;
+      // idempotent by id: the MP snapshot hands over a fresh object every tick,
+      // and these used to re-add on every one (a mesh leak per row per second)
+      if(!bp.mesh && bp.id != null){
+        for(var bni = 0; bni < bananaMeshes.length; bni++){
+          if(bananaMeshes[bni].userData.id === bp.id){ bp.mesh = bananaMeshes[bni]; break; }
+        }
+      }
+      if(bp.mesh){
+        bp.mesh.position.set(bp.x||0, 0.06, bp.z||0);
+        return;
+      }
       var gp = new THREE.Group();
       // a curved yellow peel on the deck — a low disc with a crescent cut is enough to read
       gp.add(new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.05, 12),
@@ -7421,6 +9355,7 @@ function makeGame(host, opts){
       crescent.rotation.x = -Math.PI / 2;
       gp.add(crescent);
       gp.position.set(bp.x||0, 0.06, bp.z||0);
+      gp.userData.id = bp.id;
       scene.add(gp); bananaMeshes.push(gp); bp.mesh = gp;
     };
     R.removeBanana = function(bp){
@@ -7431,7 +9366,16 @@ function makeGame(host, opts){
       bananaMeshes = [];
     };
     R.addLavaZone = function(lz){
-      if(!lz || lz.mesh) return;
+      if(!lz) return;
+      if(!lz.mesh && lz.id != null){
+        for(var lzi = 0; lzi < lavaMeshes.length; lzi++){
+          if(lavaMeshes[lzi].userData.id === lz.id){ lz.mesh = lavaMeshes[lzi]; break; }
+        }
+      }
+      if(lz.mesh){
+        lz.mesh.position.set(lz.x||0, 0.07, lz.z||0);
+        return;
+      }
       var c = 0xff6b6b;
       var gp = new THREE.Group();
       // a glowing lava disc on the deck
@@ -7440,6 +9384,7 @@ function makeGame(host, opts){
       gp.add(new THREE.Mesh(new THREE.RingGeometry((lz.r || FS.LAVA_R) * 0.7, lz.r || FS.LAVA_R, 18).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: 0xff9a5a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false, fog: false})));
       gp.position.set(lz.x||0, 0.07, lz.z||0);
+      gp.userData.id = lz.id;
       scene.add(gp); lavaMeshes.push(gp); lz.mesh = gp;
     };
     R.removeLavaZone = function(lz){
@@ -7585,17 +9530,506 @@ function makeGame(host, opts){
       (gooseMeshes || []).forEach(function(gp){ scene.remove(gp); });
       gooseMeshes = [];
     };
-    // the deck height at a point: the top of the highest box under it (0 if none).
-    // FS.topUnder probes a full player body, so a probe at deck level never sees a
-    // platform — this scans the boxes directly and takes the top.
-    function holeGroundY(x, z){
-      var top = 0;
-      for(var i = 0; i < MAP.boxes.length; i++){
-        var b = MAP.boxes[i];
-        if(x > b[0] - 0.6 && x < b[3] + 0.6 && z > b[2] - 0.6 && z < b[5] + 0.6 && b[4] > top) top = b[4];
-      }
-      return top;
+    // ---- The Warden's dragons: the SAME drake build as your Commons pet ----
+    // games/hqpets.js wyvernModel (HQV.hqPets.model): merged ellipsoid body, capsule
+    // limbs, procedural veined membrane wings, elemental hide shaders. Tier → species.
+    // Lazy-loaded the way ui/app/40-pets.js does; if the module is unavailable the
+    // original drift-wyrm box primitives stand in so the match still runs.
+    var dragonMeshes = [];
+    var DRAGON_PET = {
+      fire: "firedragon", crystal: "crystaldragon", storm: "stormdragon",
+      ice: "icedragon", shadow: "shadowdragon", golden: "golddragon"
+    };
+    // what each tier's mouth pours (the Commons ride map, games/hqpetride.js BREATH).
+    // storm zaps as well as sparks; golden glitters; shadow wisps.
+    var DRAGON_BREATH_FX = {
+      fire: "fire", crystal: "sparkle", storm: "storm",
+      ice: "ice", shadow: "wisp", golden: "glitter"
+    };
+    // battle scale: a little under the Commons mount so the beasts read as threats,
+    // not vehicles, in an 80 m arena. > 2 keeps the pet pose on its slow ridden-mount
+    // wing beats; the saddle still sits above the rider's feet (DRAGON_SEAT).
+    var DRAGON_ART_S = 2.6;
+    var dragonPetWait = false;
+    function dragonPets(){ return (window.HQV && window.HQV.hqPets) || null; }
+    function dragonPetsWant(){
+      if(dragonPets() || dragonPetWait) return;
+      if(typeof document === "undefined" || !document.createElement) return;
+      dragonPetWait = true;
+      var sc = document.createElement("script");
+      sc.src = "/games/hqpets.js"; sc.async = true;
+      sc.onload = function(){ dragonPetWait = false; };
+      sc.onerror = function(){ dragonPetWait = false; };
+      (document.head || document.documentElement).appendChild(sc);
     }
+    // breath particles (the Commons `hqPets.Fx` pool). Lazy: one additive points
+    // cloud shared by every dragon, stepped each frame from moveDragons and torn
+    // down with the scene. Under Calm the spray still opens the jaw but pours
+    // nothing — same rule as the city (games/hqpetride.js breathOf).
+    var dragonFx = null, dragonFxDead = false;
+    function dragonFxPool(){
+      if(dragonFx || dragonFxDead) return dragonFx;
+      var P = dragonPets();
+      if(!P || !P.Fx) return null;
+      try { dragonFx = P.Fx(THREE, scene); } catch(e){ dragonFxDead = true; return null; }
+      return dragonFx;
+    }
+    // A rider-sized plume, not a wisp: the Commons pool paints 0.13 u sprites at
+    // 4 a tick, which reads as a pilot light from the saddle. Strike's own pool is
+    // scaled up and pours a fat, long cone of additive fire sprites along the
+    // breath axis (DRAGON_BREATH_LEN) plus a heavy particle spray from the mouth.
+    // Calm still opens the jaw and pours nothing.
+    function dragonBreathFx(D, at, dts, quiet){
+      var F = dragonFxPool();
+      if(!F || quiet) return;
+      if(!dragonBreathOn(D, at)) return;
+      var fx = DRAGON_BREATH_FX[(D && D.tier) || "fire"] || "fire";
+      // mouth: the posed pet's jaw when we have it, else the head cube
+      var hx, hy, hz;
+      var Mo = D.mesh && D.mesh.userData && D.mesh.userData.Pm;
+      if(Mo && Mo.mouthP && Mo.P && Mo.P.localToWorld){
+        try {
+          Mo.g.updateMatrixWorld(true);
+          if(!Mo.mw) Mo.mw = Mo.mouthP.clone();
+          Mo.P.localToWorld(Mo.mw.copy(Mo.mouthP));
+          hx = Mo.mw.x; hy = Mo.mw.y; hz = Mo.mw.z;
+        } catch(e){ hx = null; }
+      }
+      if(hx == null){
+        var hd = dragonHead(D);
+        hx = hd[0]; hy = hd[1]; hz = hd[2];
+      }
+      // pet-space forward is (sin, cos) — the same vector dragonHead / the cone use
+      var fyaw = D.yaw || 0, f0 = Math.sin(fyaw), f1 = Math.cos(fyaw);
+      // keep one shared flame-sprite pool for every dragon: a fat additive core that
+      // stretches down the cone, so the jet reads as fire from the 3rd-person seat
+      dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
+      // ~30 Hz emit — dense enough that the jet is continuous, not a dotted line
+      D.fxAcc = (D.fxAcc || 0) + (dts || 0.016);
+      if(D.fxAcc < 1/30) return;
+      D.fxAcc = 0;
+      // the Commons sprays at speed+16; a battle jet is hotter and heavier
+      var spd = (D.vF || 0) + 22;
+      var lift = (D.vy || 0) - (D.pitch || 0) * 6;
+      if(fx === "storm"){
+        F.emit("sparkle", hx, hy, hz, 8, f0, f1, spd, 2.8, 0.85, lift);
+        F.emit("sparkle", hx + f0 * 2.2, hy - 0.2, hz + f1 * 2.2, 6, f0, f1, spd * 0.85, 3.4, 0.75, lift * 0.7);
+        if(F.zap && (Math.floor(at * 9) % 2) === 0) F.zap(hx + f0 * 3.2, hy - 0.6, hz + f1 * 3.2);
+      } else if(fx === "fire"){
+        F.emit("fire", hx + f0 * 0.5, hy, hz + f1 * 0.5, 12, f0, f1, spd, 3.6, 1.05, lift);
+        F.emit("ember", hx + f0 * 2.4, hy - 0.15, hz + f1 * 2.4, 8, f0, f1, spd * 0.88, 4.2, 1.15, lift * 0.75);
+        F.emit("fire", hx + f0 * 5.5, hy - 0.35, hz + f1 * 5.5, 6, f0, f1, spd * 0.72, 5.0, 1.25, lift * 0.5);
+      } else if(fx === "ice"){
+        F.emit("ice", hx + f0 * 0.5, hy, hz + f1 * 0.5, 10, f0, f1, spd * 0.95, 3.2, 1.0, lift);
+        F.emit("snow", hx + f0 * 2.6, hy - 0.15, hz + f1 * 2.6, 8, f0, f1, spd * 0.82, 3.8, 1.2, lift * 0.7);
+      } else {
+        F.emit(fx, hx + f0 * 0.5, hy, hz + f1 * 0.5, 8, f0, f1, spd * 0.85, 3.0, 1.05, lift);
+        F.emit(fx, hx + f0 * 3.0, hy - 0.2, hz + f1 * 3.0, 6, f0, f1, spd * 0.7, 3.8, 1.15, lift * 0.6);
+      }
+    }
+    // additive fire sprites down the jet. One lazy pool of dragon-only sprites
+    // (not the Commons Fx points) so the core of the flame is big and bright from
+    // the saddle — the same flameTex idiom as the launcher's rocket plume.
+    var dragonFlames = null;
+    function dragonFlamePool(){
+      if(dragonFlames) return dragonFlames;
+      try {
+        var N = 18, list = [];
+        for(var i = 0; i < N; i++){
+          var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: flameTex, transparent: true, depthWrite: false, opacity: 0,
+            blending: THREE.AdditiveBlending, depthTest: true
+          }));
+          sp.visible = false;
+          sp.renderOrder = 12;
+          sp.userData = {life: 0, max: 1, sx: 1, sy: 1};
+          scene.add(sp);
+          list.push(sp);
+        }
+        dragonFlames = {list: list, next: 0};
+      } catch(e){ dragonFlames = {list: [], next: 0}; }
+      return dragonFlames;
+    }
+    function dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet){
+      var P = dragonFlamePool();
+      if(!P || !P.list || !P.list.length) return;
+      var acc = (D.flAcc || 0) + (dts || 0.016);
+      // 20 Hz spawn: a continuous jet of overlapping puffs, not a dotted line
+      if(acc < 1/20){ D.flAcc = acc; return; }
+      D.flAcc = 0;
+      var hue = fx === "ice" ? 0.35 : (fx === "shadow" || fx === "wisp") ? 0.72 : 0.08;
+      // three puffs a tick, staggered down the cone, each a big additive fireball
+      for(var k = 0; k < 3; k++){
+        var sp = P.list[P.next]; P.next = (P.next + 1) % P.list.length;
+        if(!sp) return;
+        var r1 = Math.sin((P.next + 1) * 12.9898 + k * 78.233) * 43758.5453;
+        r1 -= Math.floor(r1);
+        var along = 0.8 + k * 2.6 + r1 * 1.4;
+        var side = (r1 - 0.5) * (0.7 + along * 0.22);
+        var px = hx + f0 * along + f1 * side;
+        var pz = hz + f1 * along - f0 * side;
+        var py = hy - 0.15 + (r1 - 0.5) * 0.7 + ((D.vy || 0) - (D.pitch || 0) * 6) * along * 0.02;
+        sp.position.set(px, py, pz);
+        // the core is fat at the mouth and blooms as it goes out
+        var grow = 1.15 + along * 0.22 + r1 * 0.55;
+        sp.scale.set(grow * 1.55, grow * 1.15, 1);
+        sp.material.opacity = 0.95 - k * 0.12;
+        sp.material.color.setHSL(hue, 0.85, 0.58);
+        sp.visible = true;
+        sp.userData.life = 0.22 + k * 0.05;
+        sp.userData.max = sp.userData.life;
+        sp.userData.sx = grow * 1.55;
+        sp.userData.sy = grow * 1.15;
+      }
+    }
+    function dragonFlamesStep(dt, quiet){
+      if(!dragonFlames || !dragonFlames.list) return;
+      for(var i = 0; i < dragonFlames.list.length; i++){
+        var sp = dragonFlames.list[i];
+        if(!sp || !sp.visible) continue;
+        sp.userData.life = (sp.userData.life || 0) - (dt || 0.016);
+        if(sp.userData.life <= 0){ sp.visible = false; sp.material.opacity = 0; continue; }
+        if(quiet){ sp.visible = false; sp.material.opacity = 0; continue; }
+        var f = sp.userData.life / (sp.userData.max || 1);
+        sp.material.opacity = 0.95 * f;
+        // bloom as it cools so the jet widens like a real plume
+        var g = 1 + (1 - f) * 0.85;
+        sp.scale.set((sp.userData.sx || 1) * g, (sp.userData.sy || 1) * g, 1);
+      }
+    }
+    function dragonFlamesDispose(){
+      if(!dragonFlames || !dragonFlames.list) return;
+      dragonFlames.list.forEach(function(sp){
+        if(!sp) return;
+        if(sp.parent) sp.parent.remove(sp);
+        if(sp.material) sp.material.dispose();
+      });
+      dragonFlames = null;
+    }
+    function dragonPetBuild(D){
+      var P = dragonPets();
+      if(!P || !P.model) return null;
+      var sp = DRAGON_PET[D && D.tier] || "firedragon";
+      var Mo = null;
+      try { Mo = P.model(THREE, {species: sp, variant: 0, acc: 0, stage: 2}); } catch(e){ Mo = null; }
+      if(!Mo || !Mo.g) return null;
+      Mo.g.scale.setScalar(DRAGON_ART_S);
+      var gp = new THREE.Group();
+      gp.add(Mo.g);
+      // a soft ground shadow so the beast sits ON the deck (the pet build has none)
+      var sh = new THREE.Mesh(new THREE.CircleGeometry(1.7, 18).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0x111111, transparent: true, opacity: 0.22, depthWrite: false, fog: false}));
+      sh.position.y = 0.03;
+      gp.add(sh);
+      gp.userData.Pm = Mo;
+      gp.userData.pet = 1;
+      return gp;
+    }
+    // the dragon's own health bar: a canvas sprite above the beast, redrawn only when
+    // the hp fraction moves. Same pattern as the player `tag()` / `dmgSprite()` plates —
+    // canvas art, so the fills match those two (dmgSprite already paints raw hex).
+    var DRAGON_HP_BAR_Y = 3.4, DRAGON_HP_BAR_W = 3.2;
+    function dragonHpPlate(hp, max){
+      var c = document.createElement("canvas"), g = c.getContext("2d");
+      c.width = 256; c.height = 48;
+      var pct = Math.max(0, Math.min(1, (hp|0) / Math.max(1, max|0)));
+      // plate
+      g.fillStyle = "rgba(16,18,24,0.78)";
+      g.beginPath();
+      if(g.roundRect) g.roundRect(8, 10, 240, 28, 12); else g.rect(8, 10, 240, 28);
+      g.fill();
+      // fill: gold when healthy, amber when hurt, red when low
+      g.fillStyle = pct > 0.5 ? "#e0b325" : (pct > 0.25 ? "#ff922b" : "#e0574a");
+      g.fillRect(16, 18, Math.round(224 * pct), 12);
+      // rim + a thin white top edge so the bar reads against the hide
+      g.strokeStyle = "rgba(255,255,255,0.32)"; g.lineWidth = 2;
+      g.strokeRect(16, 18, 224, 12);
+      g.fillStyle = "rgba(255,255,255,0.18)"; g.fillRect(16, 18, Math.round(224 * pct), 2);
+      var tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace;
+      return tx;
+    }
+    function dragonHpBar(){
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: dragonHpPlate(1, 1), depthTest: true, transparent: true}));
+      sp.scale.set(DRAGON_HP_BAR_W, DRAGON_HP_BAR_W * 48 / 256, 1);
+      sp.position.set(0, DRAGON_HP_BAR_Y, 0);
+      sp.renderOrder = 11;
+      sp.userData.hp = -1;
+      return sp;
+    }
+    function dragonHpBarSet(sp, hp, max){
+      if(!sp) return;
+      var m = Math.max(1, max|0), h = Math.max(0, Math.min(m, hp|0));
+      if(sp.userData.hp === h && sp.userData.max === m) return;
+      sp.userData.hp = h; sp.userData.max = m;
+      var old = sp.material.map;
+      sp.material.map = dragonHpPlate(h, m);
+      if(old && old.dispose) old.dispose();
+      sp.material.needsUpdate = true;
+      sp.visible = h > 0;
+    }
+    // A world-space "G  Ride <tier>" plate above every idle dragon. The Commons-style
+    // HUD pill only appears within DRAGON_MOUNT_R, so a new player walking the deck
+    // never sees it — this plate rides the beast itself and says how to mount from
+    // any angle. Same canvas-sprite idiom as tag() / dragonHpPlate().
+    var DRAGON_MOUNT_PLATE_Y = 4.1, DRAGON_MOUNT_PLATE_W = 3.6;
+    function dragonMountPlate(tier){
+      var c = document.createElement("canvas"), g = c.getContext("2d");
+      c.width = 256; c.height = 64;
+      var word = "  Ride " + (tier || "dragon");
+      g.font = "800 28px sans-serif"; g.textAlign = "left"; g.textBaseline = "middle";
+      var gw = g.measureText("G").width, ww = g.measureText(word).width;
+      var total = gw + ww, x0 = 128 - total/2;
+      var w = Math.min(240, total + 36);
+      g.fillStyle = "rgba(16,18,24,0.82)";
+      g.beginPath();
+      if(g.roundRect) g.roundRect(128 - w/2, 8, w, 48, 16); else g.rect(128 - w/2, 8, w, 48);
+      g.fill();
+      // gold "G" + cream words — the same fill as tag() / dmgSprite() so it reads
+      // as a game bind, not body text
+      g.fillStyle = "#e0b325";
+      g.fillText("G", x0, 33);
+      g.fillStyle = "#ffe9c9";
+      g.fillText(word, x0 + gw, 33);
+      var tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace;
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({map: tx, depthTest: false, transparent: true}));
+      sp.scale.set(DRAGON_MOUNT_PLATE_W, DRAGON_MOUNT_PLATE_W * 64 / 256, 1);
+      sp.position.set(0, DRAGON_MOUNT_PLATE_Y, 0);
+      sp.renderOrder = 14;
+      return sp;
+    }
+    function dragonMountPlateSet(dp, show, tier){
+      if(!dp) return;
+      if(!dp.userData.mountPlate){
+        dp.userData.mountPlate = dragonMountPlate(tier);
+        dp.add(dp.userData.mountPlate);
+      }
+      dp.userData.mountPlate.visible = !!show;
+    }
+    var DRAGON_PAL = {
+      fire:    {body: 0xc2412d, belly: 0xffb347, glow: 0xff6b1a, wing: 0x8b2e1c, eye: 0xffd27a},
+      crystal: {body: 0x7b5cff, belly: 0xc9b6ff, glow: 0xa78bfa, wing: 0x4c3d99, eye: 0xe9d5ff},
+      storm:   {body: 0x4a6274, belly: 0x9bb6c9, glow: 0x5ac8fa, wing: 0x2c3a46, eye: 0xb7e6ff},
+      ice:     {body: 0x6ec6e8, belly: 0xd9f2ff, glow: 0x7fd4ff, wing: 0x3a7d99, eye: 0xe6f7ff},
+      shadow:  {body: 0x2a2438, belly: 0x4a3d63, glow: 0x8b6cff, wing: 0x181222, eye: 0xc9b6ff},
+      golden:  {body: 0xd4a017, belly: 0xffe29a, glow: 0xffc857, wing: 0x8a6a10, eye: 0xfff2c2}
+    };
+    function dragonMat(c, e){
+      return new THREE.MeshLambertMaterial({color: c, emissive: e || 0x000000});
+    }
+    // the stand-in: original drift-wyrm box primitives, used only while /games/hqpets.js
+    // is still loading (or if it never loads). The live path is dragonPetBuild.
+    function buildDragon(D){
+      var gp = new THREE.Group();
+      var pal = DRAGON_PAL[D && D.tier] || DRAGON_PAL.fire;
+      var mBody = dragonMat(pal.body, pal.glow);
+      var mBelly = dragonMat(pal.belly);
+      var mWing = dragonMat(pal.wing, pal.glow);
+      var mHorn = dragonMat(0xd8d0c0);
+      var mEye = new THREE.MeshBasicMaterial({color: pal.eye, fog: false});
+      // body: three tapering segments along +z (facing forward)
+      function seg(w, h, d, z, y, c, e){
+        var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), c || mBody);
+        m.position.set(0, y != null ? y : 1.4, z);
+        gp.add(m); return m;
+      }
+      seg(2.2, 1.6, 2.4, 0, 1.4);        // chest
+      seg(1.8, 1.35, 2.0, -2.0, 1.35);   // mid
+      seg(1.3, 1.0, 1.8, -3.6, 1.3);     // rump
+      // tail: three shrinking blocks
+      seg(0.95, 0.75, 1.4, -5.0, 1.3);
+      seg(0.65, 0.5, 1.2, -6.1, 1.35);
+      seg(0.35, 0.3, 0.9, -7.0, 1.4);
+      // belly plate (slightly lighter)
+      var belly = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.35, 5.2), mBelly);
+      belly.position.set(0, 0.75, -1.2); gp.add(belly);
+      // neck + head
+      var neck = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.6), mBody);
+      neck.position.set(0, 2.1, 1.9); neck.rotation.x = -0.45; gp.add(neck);
+      var head = new THREE.Mesh(new THREE.BoxGeometry(1.35, 1.15, 1.7), mBody);
+      head.position.set(0, 2.85, 2.9); gp.add(head);
+      // snout
+      var snout = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.65, 1.1), mBody);
+      snout.position.set(0, 2.6, 3.85); gp.add(snout);
+      // jaw
+      var jaw = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.3, 1.0), mBelly);
+      jaw.position.set(0, 2.2, 3.75); gp.add(jaw); gp.userData.jaw = jaw;
+      // eyes
+      [-1, 1].forEach(function(s){
+        var eye = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.18), mEye);
+        eye.position.set(s * 0.48, 3.05, 3.55); gp.add(eye);
+      });
+      // horns: two swept-back stacks
+      function dragonHorn(side){
+        var g = new THREE.Group();
+        for(var hi = 0; hi < 3; hi++){
+          var hw = 0.34 - hi * 0.09, hd = 0.34 - hi * 0.09;
+          var h = new THREE.Mesh(new THREE.BoxGeometry(hw, 0.42, hd), mHorn);
+          h.position.set(0, hi * 0.38, -hi * 0.22);
+          h.rotation.x = -0.35 - hi * 0.12;
+          g.add(h);
+        }
+        g.position.set(side * 0.42, 3.35, 2.7);
+        g.rotation.z = side * 0.45;
+        gp.add(g);
+      }
+      dragonHorn(-1); dragonHorn(1);
+      // wings: two big planes that flap in moveDragons
+      [-1, 1].forEach(function(s){
+        var w = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.18, 3.4), mWing);
+        w.position.set(s * 2.9, 2.6, -0.6);
+        w.rotation.x = s * 0.28;
+        w.rotation.z = -s * 0.22;
+        gp.add(w);
+        // wing bone ridges
+        for(var bi = 0; bi < 3; bi++){
+          var b = new THREE.Mesh(new THREE.BoxGeometry(2.2 - bi * 0.35, 0.12, 0.22), mHorn);
+          b.position.set(s * 2.9 + s * bi * 0.55, 2.7, -0.6 + bi * 0.75 - 1.1);
+          b.rotation.x = s * 0.28;
+          gp.add(b);
+        }
+        if(s < 0) gp.userData.wL = w; else gp.userData.wR = w;
+      });
+      // legs: four stubby columns with claw tips
+      [[-0.85, 1.15, 0.8], [0.85, 1.15, 0.8], [-0.85, 1.15, -2.8], [0.85, 1.15, -2.8]].forEach(function(L, li){
+        var leg = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.2, 0.55), mBody);
+        leg.position.set(L[0], L[1] - 0.55, L[2]);
+        gp.add(leg);
+        var claw = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 0.85), mHorn);
+        claw.position.set(L[0], 0.1, L[2] + 0.18);
+        gp.add(claw);
+      });
+      // spine spikes: a jagged ridge from neck to tail
+      for(var si = 0; si < 7; si++){
+        var sw = 0.32 - si * 0.03;
+        var sp = new THREE.Mesh(new THREE.BoxGeometry(sw, 0.55 - si * 0.04, sw), mHorn);
+        sp.position.set(0, 2.25 - si * 0.12, 1.9 - si * 1.35);
+        sp.rotation.x = -0.55;
+        gp.add(sp);
+      }
+      // ground shadow so the wyrm sits ON the deck when it is low
+      var sh = new THREE.Mesh(new THREE.CircleGeometry(2.6, 18).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0x111111, transparent: true, opacity: 0.22, depthWrite: false, fog: false}));
+      sh.position.y = 0.03;
+      gp.add(sh);
+      return gp;
+    }
+    R.addDragon = function(D){
+      if(!D || D.id == null) return;
+      if(!D.mesh){
+        for(var di = 0; di < dragonMeshes.length; di++){
+          if(dragonMeshes[di].userData.id === D.id){ D.mesh = dragonMeshes[di]; break; }
+        }
+      }
+      if(D.mesh) return;
+      dragonPetsWant();
+      var dp = dragonPetBuild(D) || buildDragon(D);
+      dp.position.set(D.x||0, D.y||0, D.z||0);
+      dp.rotation.y = D.yaw || 0;
+      dp.userData.id = D.id;
+      dp.userData.tier = D.tier || "fire";
+      dp.userData.hpBar = dragonHpBar();
+      dp.add(dp.userData.hpBar);
+      dragonHpBarSet(dp.userData.hpBar, D.hp != null ? D.hp : DRAGON_HP, D.max || DRAGON_HP);
+      dragonMountPlateSet(dp, !(D.rider || D.dead), D.tier || "fire");
+      scene.add(dp);
+      dragonMeshes.push(dp);
+      D.mesh = dp;
+    };
+    R.moveDragons = function(list){
+      var live = list || [];
+      var keep = {};
+      live.forEach(function(D){ if(D && D.id != null) keep[D.id] = D; });
+      dragonMeshes = dragonMeshes.filter(function(dp){
+        if(keep[dp.userData.id] != null){ return true; }
+        scene.remove(dp);
+        return false;
+      });
+      var at = (typeof now === "function") ? now() : 0;
+      live.forEach(function(D){
+        if(!D) return;
+        if(!D.mesh) R.addDragon(D);
+        var dp = D.mesh;
+        if(!dp) return;
+        // the Commons pet script can arrive after the first summon: swap the stand-in
+        // boxes for the real drake build the moment HQV.hqPets is in
+        if(dp.userData && !dp.userData.pet && dragonPets()){
+          scene.remove(dp);
+          var k2 = dragonMeshes.indexOf(dp); if(k2 >= 0) dragonMeshes.splice(k2, 1);
+          D.mesh = null;
+          R.addDragon(D);
+          dp = D.mesh;
+          if(!dp) return;
+        }
+        dp.position.set(D.x||0, D.y||0, D.z||0);
+        // Commons flight feel: the body noses into the climb / dive and banks into
+        // the turn. The pose already writes body.rotation.x/z from its own pitch and
+        // yaw-rate bank (poseWyvern) — this is the mesh-level lean that sits under it.
+        // wings flap; under Calm / reduced-motion they hold a still spread
+        var quiet = (typeof calm === "function") ? calm() : false;
+        // only a ridden mount carries the flight attitude; a walking body sits level
+        var ridingNow = !!D.rider;
+        var dpPitch = ridingNow ? (D.pitch || 0) : 0, dpRoll = ridingNow ? (D.roll || 0) : 0;
+        dp.rotation.order = "YXZ";
+        dp.rotation.y = D.yaw || 0;
+        dp.rotation.x = quiet ? 0 : -dpPitch;
+        dp.rotation.z = quiet ? 0 : dpRoll;
+        // keep the health bar on the beast
+        dragonHpBarSet(dp.userData.hpBar, D.hp != null ? D.hp : DRAGON_HP, D.max || DRAGON_HP);
+        // the "G  Ride" plate rides every idle dragon (hidden once claimed or dead)
+        dragonMountPlateSet(dp, !D.rider && !D.dead, D.tier || dp.userData.tier || "fire");
+        var Mo = dp.userData && dp.userData.Pm;
+        if(Mo && window.HQV && window.HQV.hqPets && window.HQV.hqPets.pose){
+          // the Commons pet build: pose it the way the city does (breath jaw + wing modes)
+          var P = window.HQV.hqPets;
+          if(!Mo.sm) Mo.sm = {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null};
+          if(!dp.userData.pst) dp.userData.pst = {anim: "stand", ph: 0, yaw: 0, speed: 0};
+          var st = dp.userData.pst, prev = dp.userData.pp || (dp.userData.pp = {x: D.x || 0, z: D.z || 0, y: D.y || 0, t: at});
+          var dts = Math.max(0.001, Math.min(0.1, at - (prev.t || at)));
+          var sp = Math.hypot((D.x || 0) - prev.x, (D.z || 0) - prev.z) / dts;
+          var vy = ((D.y || 0) - prev.y) / dts;
+          prev.x = D.x || 0; prev.y = D.y || 0; prev.z = D.z || 0; prev.t = at;
+          st.yaw = D.yaw || 0;
+          st.speed = sp;
+          st.vy = vy;
+          st.agl = (D.y || 0);
+          var riding = !!D.rider;
+          var gy = holeGroundY(D.x || 0, D.z || 0);
+          var airH = (D.y || 0) - (gy != null ? gy : 0);
+          var flying = riding && airH > 0.8;
+          var moving = sp > 0.35;
+          if(dragonBreathOn(D, at)) st.anim = "breath";
+          else if(flying){
+            st.anim = "fly";
+            // the real flight mode when the rider owns it (climb/dive/hover/glide);
+            // otherwise fall back to the vertical-rate heuristic for a bot's mount
+            st.wing = D.wing || (vy > 1.2 ? "climb" : vy < -5 ? "dive" : sp < 2 ? "hover" : "glide");
+            st.ph = (st.ph || 0) + dts * 3.2;
+          }
+          else if(moving){ st.anim = "walk"; st.wing = null; st.ph = (st.ph || 0) + dts * 2.2; }
+          else { st.anim = "stand"; st.wing = null; }
+          try { P.pose(Mo, st, at, quiet, null); } catch(e){}
+          dragonBreathFx(D, at, dts, quiet);
+          return;
+        }
+        // the box stand-in: flap the planes and open the jaw on a spray
+        var dts2 = 0.016;
+        dragonBreathFx(D, at, dts2, quiet);
+        var flap = quiet ? 0.28 : (0.28 + Math.sin(at * 6 + (D.id|0) * 0.7) * 0.42);
+        if(dp.userData.wL) dp.userData.wL.rotation.x = 0.28 + flap;
+        if(dp.userData.wR) dp.userData.wR.rotation.x = -0.28 - flap;
+        // jaw chatter while breathing (or a little idle pulse)
+        if(dp.userData.jaw){
+          var open = dragonBreathOn(D, at) ? 0.42 : (quiet ? 0 : Math.max(0, Math.sin(at * 3 + (D.id|0)) * 0.12));
+          dp.userData.jaw.rotation.x = open;
+        }
+      });
+    };
+    R.clearDragons = function(){
+      (dragonMeshes || []).forEach(function(dp){ scene.remove(dp); });
+      dragonMeshes = [];
+      dragonFlamesDispose();
+    };
     // ---- Black Hole: the "crazy" one ----
     // A MASSIVE gravity well. The pull throat (FS.HOLE_R) is gameplay and stays 2.2 m,
     // but the ART is several times bigger so it reads as something apocalyptic from
@@ -7764,6 +10198,328 @@ function makeGame(host, opts){
       (holeMeshes || []).forEach(function(gp){ scene.remove(gp); });
       holeMeshes = [];
     };
+    // ---- Wave G: Mini Turrets / Explosive Barrels / Laser Grid / Jump Pads ----
+    // Each is a list of meshes keyed by id (the MP snapshot repaints every tick).
+    // Turret = tripod + rotating head + red eye + muzzle flash. Barrel = red drum
+    // with hazard chevrons and a pulsing cap. Laser = two emitter posts + a thick
+    // additive beam with scrolling dashes. Pad = octagonal plate + up-chevrons +
+    // a glow disc. All still under Calm / prefers-reduced-motion.
+    var turretMeshes = [], barrelMeshes = [], laserMeshes = [], padMeshes = [];
+    function wavegGroundY(x, z){ var g = holeGroundY(x, z); return g != null ? g : 0; }
+    function turretHpBar(){
+      var gp = new THREE.Group();
+      var back = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.12),
+        new THREE.MeshBasicMaterial({color: 0x111111, transparent: true, opacity: 0.75, depthWrite: false, fog: false}));
+      back.position.y = 1.55; gp.add(back);
+      var fill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.08),
+        new THREE.MeshBasicMaterial({color: 0x69db7c, depthWrite: false, fog: false}));
+      fill.position.y = 1.55; fill.position.z = 0.01; gp.add(fill);
+      gp.userData.fill = fill;
+      return gp;
+    }
+    function turretHpBarSet(bar, hp, max){
+      if(!bar || !bar.userData || !bar.userData.fill) return;
+      var k = Math.max(0, Math.min(1, (+hp || 0) / Math.max(1, +max || 1)));
+      bar.userData.fill.scale.x = Math.max(0.001, k);
+      bar.userData.fill.position.x = -0.43 * (1 - k);
+      var col = k > 0.55 ? 0x69db7c : (k > 0.25 ? 0xffd43b : 0xff6b6b);
+      if(bar.userData.fill.material && bar.userData.fill.material.color) bar.userData.fill.material.color.setHex(col);
+    }
+    function buildTurret(TU){
+      var gp = new THREE.Group();
+      var teamC = (TEAMS[(TU && TU.team)|0] && TEAMS[TU.team|0].c) ? TEAMS[TU.team|0].c : "#4dabf7";
+      var col = 0x4dabf7;
+      try { col = parseInt(String(teamC).replace("#", ""), 16) || 0x4dabf7; } catch(e){ col = 0x4dabf7; }
+      // tripod legs
+      for(var li = 0; li < 3; li++){
+        var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.55, 6),
+          mat({color: 0x3a4654, rough: 0.55, metal: 0.5}));
+        var la = li * Math.PI * 2 / 3;
+        leg.position.set(Math.cos(la) * 0.28, 0.27, Math.sin(la) * 0.28);
+        leg.rotation.z = Math.cos(la) * 0.45;
+        leg.rotation.x = -Math.sin(la) * 0.45;
+        gp.add(leg);
+      }
+      // housing
+      var body = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.32, 10),
+        mat({color: 0x2b3542, rough: 0.4, metal: 0.65}));
+      body.position.y = 0.62; gp.add(body);
+      // rotating head
+      var head = new THREE.Group(); head.position.y = 0.86;
+      var skull = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.26, 0.42),
+        mat({color: 0x1c2430, rough: 0.35, metal: 0.7}));
+      head.add(skull);
+      var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.55, 8),
+        mat({color: 0x11151c, rough: 0.3, metal: 0.85}));
+      barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.38); head.add(barrel);
+      // red eye
+      var eye = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8),
+        new THREE.MeshBasicMaterial({color: 0xff2d2d, transparent: true, opacity: 0.95, fog: false}));
+      eye.position.set(0, 0.05, -0.22); head.add(eye);
+      // emissive team ring around the housing
+      var ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.36, 22).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: col, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      ring.position.y = 0.48; gp.add(ring);
+      // muzzle flash sprite (hidden until shot)
+      var flash = new THREE.Sprite(new THREE.SpriteMaterial({map: flameTex, transparent: true, depthWrite: false, opacity: 0, blending: THREE.AdditiveBlending}));
+      flash.position.set(0, 0.02, -0.72); flash.scale.setScalar(0.45); head.add(flash);
+      gp.add(head);
+      var bar = turretHpBar(); gp.add(bar);
+      gp.userData.head = head;
+      gp.userData.eye = eye;
+      gp.userData.flash = flash;
+      gp.userData.ring = ring;
+      gp.userData.hpBar = bar;
+      return gp;
+    }
+    R.addTurret = function(TU){
+      if(!TU || !TU.id) return;
+      if(!TU.mesh){
+        for(var ti = 0; ti < turretMeshes.length; ti++){
+          if(turretMeshes[ti].userData.id === TU.id){ TU.mesh = turretMeshes[ti]; break; }
+        }
+      }
+      if(TU.mesh) return;
+      var gp = buildTurret(TU);
+      gp.position.set(TU.x||0, wavegGroundY(TU.x||0, TU.z||0), TU.z||0);
+      gp.userData.id = TU.id;
+      scene.add(gp); turretMeshes.push(gp); TU.mesh = gp;
+    };
+    R.moveTurret = function(TU, t){
+      if(!TU) return;
+      if(!TU.mesh) R.addTurret(TU);
+      var gp = TU.mesh; if(!gp) return;
+      gp.position.set(TU.x||0, wavegGroundY(TU.x||0, TU.z||0), TU.z||0);
+      if(gp.userData.head) gp.userData.head.rotation.y = TU.yaw || 0;
+      if(gp.userData.hpBar) turretHpBarSet(gp.userData.hpBar, TU.hp, TU.max || FS.TURRET_HP);
+      var quiet = (typeof calm === "function") ? calm() : false;
+      if(gp.userData.eye){
+        var pulse = quiet ? 0.85 : (0.7 + Math.sin((t||0) * 6) * 0.25);
+        gp.userData.eye.material.opacity = pulse;
+      }
+      if(gp.userData.ring){
+        gp.userData.ring.material.opacity = quiet ? 0.45 : (0.4 + Math.sin((t||0) * 3.2) * 0.18);
+      }
+    };
+    R.turretShot = function(TU, target, t){
+      if(!TU || !TU.mesh || !TU.mesh.userData) return;
+      var fl = TU.mesh.userData.flash;
+      if(fl){ fl.material.opacity = 1; fl.scale.setScalar(0.55); }
+    };
+    R.removeTurret = function(TU){
+      if(TU && TU.mesh){ scene.remove(TU.mesh); TU.mesh = null; }
+    };
+    R.clearTurrets = function(){
+      (turretMeshes || []).forEach(function(g){ scene.remove(g); });
+      turretMeshes = [];
+    };
+    function buildBarrel(BO){
+      var gp = new THREE.Group();
+      var drum = new THREE.Mesh(new THREE.CylinderGeometry(FS.BARREL_RAD, FS.BARREL_RAD * 1.05, 1.15, 14),
+        mat({color: 0xc22b2b, rough: 0.45, metal: 0.35}));
+      drum.position.y = 0.58; gp.add(drum);
+      // hazard chevrons
+      var bandC = 0xffd43b;
+      for(var bi = 0; bi < 3; bi++){
+        var band = new THREE.Mesh(new THREE.CylinderGeometry(FS.BARREL_RAD * 1.02, FS.BARREL_RAD * 1.02, 0.12, 14),
+          mat({color: bandC, rough: 0.5, metal: 0.2}));
+        band.position.y = 0.28 + bi * 0.28;
+        gp.add(band);
+      }
+      // cap
+      var cap = new THREE.Mesh(new THREE.CylinderGeometry(FS.BARREL_RAD * 0.55, FS.BARREL_RAD * 0.55, 0.1, 12),
+        mat({color: 0x2a2a2a, rough: 0.4, metal: 0.7}));
+      cap.position.y = 1.2; gp.add(cap);
+      // warning ring on the deck
+      var ring = new THREE.Mesh(new THREE.RingGeometry(FS.BARREL_RAD * 1.15, FS.BARREL_RAD * 1.55, 22).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0xff6b6b, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      ring.position.y = 0.04; gp.add(ring);
+      // hp bar (same language as the turret)
+      var bar = turretHpBar(); bar.position.y = 0.2; gp.add(bar);
+      gp.userData.ring = ring;
+      gp.userData.hpBar = bar;
+      return gp;
+    }
+    R.addBarrel = function(BO){
+      if(!BO || !BO.id) return;
+      if(!BO.mesh){
+        for(var bari = 0; bari < barrelMeshes.length; bari++){
+          if(barrelMeshes[bari].userData.id === BO.id){ BO.mesh = barrelMeshes[bari]; break; }
+        }
+      }
+      if(BO.mesh) return;
+      var gp = buildBarrel(BO);
+      gp.position.set(BO.x||0, wavegGroundY(BO.x||0, BO.z||0) + (BO.y||0), BO.z||0);
+      gp.userData.id = BO.id;
+      scene.add(gp); barrelMeshes.push(gp); BO.mesh = gp;
+    };
+    R.moveBarrel = function(BO){
+      if(!BO) return;
+      if(!BO.mesh) R.addBarrel(BO);
+      var gp = BO.mesh; if(!gp) return;
+      gp.position.set(BO.x||0, wavegGroundY(BO.x||0, BO.z||0) + (BO.y||0), BO.z||0);
+      if(gp.userData.hpBar) turretHpBarSet(gp.userData.hpBar, BO.hp, BO.max || FS.BARREL_HP);
+    };
+    R.removeBarrel = function(BO){
+      if(BO && BO.mesh){ scene.remove(BO.mesh); BO.mesh = null; }
+    };
+    R.clearBarrels = function(){
+      (barrelMeshes || []).forEach(function(g){ scene.remove(g); });
+      barrelMeshes = [];
+    };
+    function buildLaser(LZ){
+      var gp = new THREE.Group();
+      var ax = LZ.ax||0, az = LZ.az||0, bx = LZ.bx||0, bz = LZ.bz||0;
+      var mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      var len = Math.hypot(bx - ax, bz - az) || 1;
+      var yaw = Math.atan2(bx - ax, bz - az);
+      // two emitter posts
+      [[ax, az], [bx, bz]].forEach(function(p){
+        var post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 1.15, 8),
+          mat({color: 0x2a2030, rough: 0.45, metal: 0.55}));
+        post.position.set(p[0], wavegGroundY(p[0], p[1]) + 0.58, p[1]);
+        gp.add(post);
+        var orb = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8),
+          new THREE.MeshBasicMaterial({color: 0xff2d95, transparent: true, opacity: 0.9, fog: false}));
+        orb.position.set(p[0], wavegGroundY(p[0], p[1]) + 1.18, p[1]);
+        gp.add(orb);
+      });
+      // thick additive beam
+      var beam = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, len),
+        new THREE.MeshBasicMaterial({color: 0xff2d95, transparent: true, opacity: 0.85, depthWrite: false, fog: false, blending: THREE.AdditiveBlending}));
+      beam.position.set(mx, wavegGroundY(mx, mz) + (LZ.y || FS.LASER_Y), mz);
+      beam.rotation.y = yaw;
+      gp.add(beam);
+      // outer glow
+      var glow = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, len),
+        new THREE.MeshBasicMaterial({color: 0xff6bb8, transparent: true, opacity: 0.22, depthWrite: false, fog: false, blending: THREE.AdditiveBlending}));
+      glow.position.copy(beam.position);
+      glow.rotation.y = yaw;
+      gp.add(glow);
+      // floor scorch so the tripwire reads on the deck
+      var scorch = new THREE.Mesh(new THREE.PlaneGeometry(0.55, len),
+        new THREE.MeshBasicMaterial({color: 0xff2d95, transparent: true, opacity: 0.18, depthWrite: false, fog: false}));
+      scorch.rotation.x = -Math.PI / 2;
+      scorch.rotation.z = -yaw;
+      scorch.position.set(mx, wavegGroundY(mx, mz) + 0.03, mz);
+      gp.add(scorch);
+      gp.userData.beam = beam;
+      gp.userData.glow = glow;
+      gp.userData.len = len;
+      return gp;
+    }
+    R.addLaser = function(LZ){
+      if(!LZ || !LZ.id) return;
+      if(!LZ.mesh){
+        for(var lgi = 0; lgi < laserMeshes.length; lgi++){
+          if(laserMeshes[lgi].userData.id === LZ.id){ LZ.mesh = laserMeshes[lgi]; break; }
+        }
+      }
+      if(LZ.mesh) return;
+      var gp = buildLaser(LZ);
+      gp.userData.id = LZ.id;
+      scene.add(gp); laserMeshes.push(gp); LZ.mesh = gp;
+    };
+    R.moveLasers = function(list){
+      var live = list || [];
+      var keep = {};
+      live.forEach(function(LZ){ if(LZ && LZ.id) keep[LZ.id] = LZ; });
+      laserMeshes = laserMeshes.filter(function(gp){
+        if(keep[gp.userData.id]){ return true; }
+        scene.remove(gp); return false;
+      });
+      var quiet = (typeof calm === "function") ? calm() : false;
+      var at = (typeof now === "function") ? now() : 0;
+      live.forEach(function(LZ){
+        if(!LZ) return;
+        if(!LZ.mesh) R.addLaser(LZ);
+        var gp = LZ.mesh; if(!gp) return;
+        if(!quiet && gp.userData.beam){
+          var op = 0.7 + Math.sin(at * 8 + (LZ.id ? String(LZ.id).length : 0)) * 0.22;
+          gp.userData.beam.material.opacity = op;
+          if(gp.userData.glow) gp.userData.glow.material.opacity = 0.16 + op * 0.12;
+        }
+      });
+    };
+    R.clearLasers = function(){
+      (laserMeshes || []).forEach(function(g){ scene.remove(g); });
+      laserMeshes = [];
+    };
+    function buildPad(PD){
+      var gp = new THREE.Group();
+      // octagonal plate
+      var plate = new THREE.Mesh(new THREE.CylinderGeometry(FS.PAD_R, FS.PAD_R * 1.08, 0.16, 8),
+        mat({color: 0x1f3d2a, rough: 0.5, metal: 0.35}));
+      plate.position.y = 0.08; gp.add(plate);
+      // chevrons pointing up
+      for(var ci = 0; ci < 3; ci++){
+        var ch = new THREE.Mesh(new THREE.RingGeometry(0.35 + ci * 0.28, 0.48 + ci * 0.28, 3),
+          new THREE.MeshBasicMaterial({color: 0x69db7c, transparent: true, opacity: 0.7 - ci * 0.15, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+        ch.rotation.x = -Math.PI / 2;
+        ch.rotation.z = Math.PI;
+        ch.position.y = 0.18 + ci * 0.02;
+        gp.add(ch);
+      }
+      // glow disc
+      var glow = new THREE.Mesh(new THREE.CircleGeometry(FS.PAD_R * 1.15, 22).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0x69db7c, transparent: true, opacity: 0.28, depthWrite: false, fog: false, blending: THREE.AdditiveBlending}));
+      glow.position.y = 0.04; gp.add(glow);
+      // up-arrow spike
+      var spike = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.55, 6),
+        new THREE.MeshBasicMaterial({color: 0xb2f2bb, transparent: true, opacity: 0.85, fog: false}));
+      spike.position.y = 0.55; gp.add(spike);
+      gp.userData.glow = glow;
+      gp.userData.spike = spike;
+      return gp;
+    }
+    R.addPad = function(PD){
+      if(!PD || !PD.id) return;
+      if(!PD.mesh){
+        for(var pdi = 0; pdi < padMeshes.length; pdi++){
+          if(padMeshes[pdi].userData.id === PD.id){ PD.mesh = padMeshes[pdi]; break; }
+        }
+      }
+      if(PD.mesh) return;
+      var gp = buildPad(PD);
+      gp.position.set(PD.x||0, wavegGroundY(PD.x||0, PD.z||0), PD.z||0);
+      gp.userData.id = PD.id;
+      scene.add(gp); padMeshes.push(gp); PD.mesh = gp;
+    };
+    R.movePads = function(list){
+      var live = list || [];
+      var keep = {};
+      live.forEach(function(PD){ if(PD && PD.id) keep[PD.id] = PD; });
+      padMeshes = padMeshes.filter(function(gp){
+        if(keep[gp.userData.id]){ return true; }
+        scene.remove(gp); return false;
+      });
+      var quiet = (typeof calm === "function") ? calm() : false;
+      var at = (typeof now === "function") ? now() : 0;
+      live.forEach(function(PD){
+        if(!PD) return;
+        if(!PD.mesh) R.addPad(PD);
+        var gp = PD.mesh; if(!gp) return;
+        gp.position.set(PD.x||0, wavegGroundY(PD.x||0, PD.z||0), PD.z||0);
+        if(!quiet && gp.userData.glow){
+          gp.userData.glow.material.opacity = 0.22 + Math.sin(at * 3.4) * 0.12;
+          if(gp.userData.spike) gp.userData.spike.position.y = 0.55 + Math.sin(at * 4.2) * 0.08;
+        }
+      });
+    };
+    R.padHop = function(PD, t){
+      if(!PD || !PD.mesh) return;
+      // a one-shot dust ring so a launch is visible from across the map
+      var gp = PD.mesh;
+      var ring = new THREE.Mesh(new THREE.RingGeometry(FS.PAD_R * 0.4, FS.PAD_R * 1.4, 26).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({color: 0xb2f2bb, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, fog: false}));
+      ring.position.set(gp.position.x, gp.position.y + 0.1, gp.position.z);
+      dyn.add(ring);
+      wardenRings.push({o: ring, at: t || (typeof now === "function" ? now() : 0), dur: 0.55, grow: FS.PAD_R});
+    };
+    R.clearPads = function(){
+      (padMeshes || []).forEach(function(g){ scene.remove(g); });
+      padMeshes = [];
+    };
     // ---- Wave G: visible Rift pair + Shockwave ground ring ----
     // The Rift totem is a STANDING portal, not a purple smear on the deck: a violet ring
     // planted a couple of metres in front of you, its twin somewhere random on the map.
@@ -7794,6 +10550,17 @@ function makeGame(host, opts){
     }
     R.addRift = function(rf){
       if(!rf) return;
+      // idempotent by id: the MP snapshot hands over a fresh object every tick
+      if(!rf.mesh && rf.id != null){
+        for(var rfi = 0; rfi < riftGroups.length; rfi++){
+          if(riftGroups[rfi].userData.id === rf.id){ rf.mesh = riftGroups[rfi]; break; }
+        }
+      }
+      if(rf.mesh){
+        rf.mesh.userData.until = rf.until || 0;
+        rf.mesh.userData.rift = rf;
+        return;
+      }
       var c = TOTEMS.rift.c;
       // two world-positioned openings under one group so dispose is one call
       var a = riftOpening(0, 0, +rf.ya || 0, c), b = riftOpening(0, 0, +rf.yb || 0, c);
@@ -7805,7 +10572,7 @@ function makeGame(host, opts){
       link.position.set(midx, 0.12, midz);
       link.rotation.y = Math.atan2(rf.x2 - rf.x, rf.z2 - rf.z) + Math.PI/2;
       var g2 = new THREE.Group(); g2.add(a); g2.add(b); g2.add(link);
-      g2.userData.until = rf.until || 0; g2.userData.rift = rf;
+      g2.userData.until = rf.until || 0; g2.userData.rift = rf; g2.userData.id = rf.id;
       scene.add(g2); riftGroups.push(g2); rf.mesh = g2;
     };
     R.ring = function(x, y, z, r, dur, t){
@@ -7818,6 +10585,36 @@ function makeGame(host, opts){
     R.clearRifts = function(){
       (riftGroups || []).forEach(function(g){ scene.remove(g); });
       riftGroups = [];
+    };
+    // Drop only the meshes whose id is not in `live`. This is the single choke point
+    // the MP snapshot uses instead of clear-and-repaint: 20×/s, every world list. The
+    // old path threw away every THREE mesh and rebuilt geometry + materials from
+    // scratch each tick (a laser is ~7 of each), which stalled the frame — and a
+    // stalled frame swallows the one-frame fire edge and starves the position send,
+    // so you cannot shoot and the judge never sees you walk over a totem.
+    R.keep = function(kind, live){
+      var arr = kind === "beacons" ? beaconGroups : kind === "bubbles" ? bubbleGroups :
+                kind === "mines" ? mineMeshes : kind === "meteors" ? meteorMarks :
+                kind === "bananas" ? bananaMeshes : kind === "lava" ? lavaMeshes :
+                kind === "geese" ? gooseMeshes : kind === "holes" ? holeMeshes :
+                kind === "turrets" ? turretMeshes : kind === "barrels" ? barrelMeshes :
+                kind === "lasers" ? laserMeshes : kind === "pads" ? padMeshes :
+                kind === "rifts" ? riftGroups : null;
+      if(!arr) return;
+      var kept = retain(arr, live);
+      if(kind === "beacons") beaconGroups = kept;
+      else if(kind === "bubbles") bubbleGroups = kept;
+      else if(kind === "mines") mineMeshes = kept;
+      else if(kind === "meteors") meteorMarks = kept;
+      else if(kind === "bananas") bananaMeshes = kept;
+      else if(kind === "lava") lavaMeshes = kept;
+      else if(kind === "geese") gooseMeshes = kept;
+      else if(kind === "holes") holeMeshes = kept;
+      else if(kind === "turrets") turretMeshes = kept;
+      else if(kind === "barrels") barrelMeshes = kept;
+      else if(kind === "lasers") laserMeshes = kept;
+      else if(kind === "pads") padMeshes = kept;
+      else if(kind === "rifts") riftGroups = kept;
     };
 
     /* ===================== Wave F: Disaster Theatre =====================
@@ -8678,6 +11475,21 @@ function makeGame(host, opts){
       for(var i = tracers.length - 1; i >= 0; i--){ var a = t - tracers[i].at; if(a > 0.09){ dyn.remove(tracers[i].o); tracers[i].o.geometry.dispose(); tracers.splice(i, 1); } else tracers[i].o.material.opacity = 1 - a/0.09; }
       for(var j = puffs.length - 1; j >= 0; j--){ var b = t - puffs[j].at; if(b > 0.25){ dyn.remove(puffs[j].o); puffs.splice(j, 1); } else { puffs[j].o.material.opacity = 1 - b/0.25; if(!quiet) puffs[j].o.scale.setScalar(0.35 + b*1.6); } }
       if(R3.boomsTick) R3.boomsTick(t, quiet);
+      // Wave G: turret muzzle flash decays, HP bars face the camera
+      for(var tmi = (turretMeshes || []).length - 1; tmi >= 0; tmi--){
+        var tg = turretMeshes[tmi];
+        if(!tg.parent){ turretMeshes.splice(tmi, 1); continue; }
+        var tfl = tg.userData && tg.userData.flash;
+        if(tfl && tfl.material && tfl.material.opacity > 0) tfl.material.opacity = Math.max(0, tfl.material.opacity - dt * 6);
+        var thb = tg.userData && tg.userData.hpBar;
+        if(thb) thb.quaternion.copy(camera.quaternion);
+      }
+      for(var bmi = (barrelMeshes || []).length - 1; bmi >= 0; bmi--){
+        var bg = barrelMeshes[bmi];
+        if(!bg.parent){ barrelMeshes.splice(bmi, 1); continue; }
+        var bhb = bg.userData && bg.userData.hpBar;
+        if(bhb) bhb.quaternion.copy(camera.quaternion);
+      }
       if(fxTick) fxTick(dt, t, quiet);
       // damage numbers: one pass, in-place removal, o===null means "spawn this frame"
       for(var dn = V.dmgNums.length - 1; dn >= 0; dn--){
@@ -8700,6 +11512,32 @@ function makeGame(host, opts){
       // wait (same seat the spectate bar uses: behind and above their shoulder, looking where they look)
       var KC = !WP && V.dead && V.killCam && V.killCam.ref && !V.killCam.ref.gone ? V.killCam : null;
       if(KC && (KC.ref.dead || KC.ref.team == null)){ KC = null; }
+      // riding a Warden dragon: a third-person chase (the Commons framing) so the whole beast
+      // reads on screen instead of its hide filling the lens. Stepping off (or dying) drops
+      // straight back to first-person eyes below.
+      var RIDING = !WP && !KC && dragonRiding(t);
+      // your own body: the chase camera is third-person, so the saddle must hold a
+      // rider. Shown only here — first-person would put your own face in the lens,
+      // and a spectate / kill cam is looking at somebody else.
+      if(RIDING){
+        var mb = ensureMeBody();
+        if(mb && mb.mesh){
+          var mm = mb.mesh;
+          mm.g.visible = true;
+          mm.g.position.set(M.x, M.y, M.z);
+          mm.g.rotation.y = Math.PI - V.yaw;
+          setAnim(mm, "idle");
+          if(mm.gun){ for(var mgi = 0; mgi < mm.gun.length; mgi++) mm.gun[mgi].visible = false; }
+          mm.mixer.update(dt);
+          poseSit(mm);
+          if(mm.headBone) mm.headBone.scale.setScalar(headScaleAt(t));
+          if(mm.shield) mm.shield.visible = false;
+          if(mm.discoBall) mm.discoBall.visible = false;
+        }
+      } else if(meBody && meBody.mesh){
+        meBody.mesh.g.visible = false;
+        meBody.mesh.cur = null;   // restart the clip clean next time the saddle shows you
+      }
       if(WP){
         var fwx = Math.sin(WP.yaw), fwz = -Math.cos(WP.yaw);
         camera.position.set(WP.x - fwx*3.6, WP.y + 2.3, WP.z - fwz*3.6);
@@ -8707,11 +11545,20 @@ function makeGame(host, opts){
         M = WP;
       } else if(KC){
         // the reference tracks the live player (MP snapshots / solo botStep keep it moving),
-        // so this is where they are NOW, not where they shot from
-        var kx = Math.sin(KC.ref.yaw || 0), kz = -Math.cos(KC.ref.yaw || 0);
-        camera.position.set(KC.ref.x - kx*3.6, KC.ref.y + 2.3, KC.ref.z - kz*3.6);
+        // so this is where they are NOW, not where they shot from. YOUR look steers the
+        // orbit (not theirs): a frozen chase that ignored mouse input was the "stuck in
+        // look while respawning" feel. Same seat, just aimed by you.
+        var kx = Math.sin(V.yaw || 0), kz = -Math.cos(V.yaw || 0);
+        camera.position.set(KC.ref.x - kx*3.6, KC.ref.y + 2.3 + (V.pitch || 0)*-1.2, KC.ref.z - kz*3.6);
         camera.rotation.order = "YXZ"; camera.lookAt(KC.ref.x + kx*2, KC.ref.y + 1.2, KC.ref.z + kz*2);
         M = KC.ref;
+      } else if(RIDING){
+        // behind and above the saddle, looking where you look (the breath aims down the same
+        // yaw). Seat = the rider's feet, so the offset reads as "over the dragon's shoulders".
+        var rfx = Math.sin(V.yaw), rfz = -Math.cos(V.yaw);
+        camera.position.set(M.x - rfx*DRAGON_CAM_BACK, M.y + DRAGON_CAM_UP, M.z - rfz*DRAGON_CAM_BACK);
+        camera.rotation.order = "YXZ";
+        camera.rotation.set(V.pitch + (V.dead ? -0.3 : 0), -V.yaw, V.dead && !quiet ? 0.35 : 0);
       } else {
         // lean: slide the camera sideways (the same offset your shots come from) and roll it a touch
         var pk = V.peek || 0, plx = Math.cos(V.yaw)*PEEK_SIDE*pk, plz = Math.sin(V.yaw)*PEEK_SIDE*pk;
@@ -8719,7 +11566,7 @@ function makeGame(host, opts){
         camera.rotation.order = "YXZ"; camera.rotation.set(V.pitch + (V.dead ? -0.3 : 0), -V.yaw, V.dead && !quiet ? 0.35 : PEEK_ROLL*pk);
       }
       // slide: a grounded sprint's camera dips then settles (Calm stills it; never while you watch someone)
-      if(!quiet && V.slideK > 0 && !WP && !KC){
+      if(!quiet && V.slideK > 0 && !WP && !KC && !RIDING){
         camera.position.y -= V.slideK*SLIDE_DIP;
         camera.rotation.z += V.slideRoll;
       }
@@ -8732,8 +11579,9 @@ function makeGame(host, opts){
       }
       sun.position.set(M.x + 14, 30, M.z + 10); sun.target.position.set(M.x, 0, M.z);
       // scoped in: ease to this weapon's ADS FOV and slow the bob so the sight picture settles (visual only)
+      // the guns are stowed in the saddle — no ADS zoom (a sniper's 14° would bury the mount)
       V.fov = V.fov || camera.fov;
-      var wantFov = V.ads ? ((ADS[V.w] || {fov: FOV_ADS}).fov) : FOV;
+      var wantFov = (V.ads && !RIDING) ? ((ADS[V.w] || {fov: FOV_ADS}).fov) : FOV;
       V.fov += (wantFov - V.fov)*clamp(dt*10, 0, 1);
       if(Math.abs(camera.fov - V.fov) > 0.01){ camera.fov = V.fov; camera.updateProjectionMatrix(); }
       // the weapon in your hands: bob, recoil, a muzzle flash
@@ -8754,7 +11602,9 @@ function makeGame(host, opts){
       gunHold.position.set(ax + Math.sin(V.bob*2)*bobA, ay, ((V.ads ? (revAds ? -0.52 : -0.8) : az)) + V.kick*(V.w ? 0.06 : 0.03));
       gunHold.rotation.set(V.kick*(V.w ? 0.12 : 0.05) - dip - (reddot ? 0 : 0.18*adsIn), 0, 0);
       var sniper = V.ads && adsCfg.cls === "sniper";
-      gunHold.visible = !V.dead && !sniper;
+      // the guns are stowed in the saddle (canShoot already refuses) — no weapon in hand
+      // while you ride, the same way a spectate or kill cam drops the viewmodel
+      gunHold.visible = !V.dead && !sniper && !RIDING;
       if(flash){ var fa = t - V.flashAt; flash.visible = fa < (quiet ? 0.03 : 0.05) && !V.dead; flash.scale.setScalar((quiet ? 0.07 : 0.13)*(V.w ? 1.3 : 1)); flash.material.opacity = quiet ? 0.5 : 0.95; flash.material.rotation = V.n*1.3; }
       if(muzzle){ muzzle.intensity = (t - V.flashAt) < 0.06 && !V.dead && !quiet ? (V.w ? 26 : 15) : 0; }
       // taking a hit: a small shake (the red vignette itself is the existing .vg-fps-vig overlay)
@@ -8762,15 +11612,21 @@ function makeGame(host, opts){
       if(!quiet && hurtA > 0){ var sh = hurtA*0.05; camera.position.x += Math.sin(t*47)*sh; camera.position.y += Math.sin(t*61)*sh; camera.rotation.z += Math.sin(t*53)*sh*0.4; }
       // the dock breathes: emissive accents pulse gently with the round (off when calm)
       for(var pi = 0; pi < pulseMats.length; pi++){ pulseMats[pi].m.emissiveIntensity = quiet ? pulseMats[pi].max*0.4 : pulseMats[pi].max*(0.55 + 0.45*Math.sin(t*1.4 + pi)); }
+      // breath particles: one shared pool, stepped every frame (the Commons Fx)
+      if(dragonFx && dragonFx.step){ try { dragonFx.step(dt); } catch(e){} }
+      // the fat additive jet: bloom/cool each flame puff along the cone
+      dragonFlamesStep(dt, quiet);
       renderer.clear();
       if(E.listener) E.listener(camera);                               // [sound] the ears: this camera (bots' shots, blasts)
       renderer.render(scene, camera);
       renderer.clearDepth();
-      if(!V.watch && !KC) renderer.render(vScene, vCam);  // no weapon in your hands while you watch — or ride a kill cam
+      if(!V.watch && !KC && !RIDING) renderer.render(vScene, vCam);  // no weapon in your hands while you watch, ride a kill cam — or sit a dragon
     };
     R.dispose = function(){
       cv.removeEventListener("webglcontextlost", lost);
       if(typeof fxStop === "function") fxStop();
+      if(dragonFx && dragonFx.dispose){ try { dragonFx.dispose(); } catch(e){} dragonFx = null; }
+      dragonFlamesDispose();
       clearDynamic(); renderer.dispose();
       try { var ext = renderer.getContext().getExtension("WEBGL_lose_context"); if(ext) ext.loseContext(); } catch(e){}
     };

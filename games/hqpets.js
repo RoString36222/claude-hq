@@ -1344,6 +1344,10 @@ function poseWyvern(Mo, st, t, calm, look){
       if(hov){ pitch = -0.55; legs = "reach"; } else if(mode === "climb"){ pitch = -0.25; if(agl < 0.6 || st.leap) legs = "push"; }
       pitch += F0.lift*0.03*k;                                       // the body pitches up a touch on each downstroke
     }
+    if(a === "breath"){                                          // breathing in the air: the jaw still opens
+      jaw = 0.6; frill = 1;
+      if(at < 0.55){ var ihA = Math.sin(Math.min(1, at/0.55)*PI*0.5); swell = 0.06*ihA*k; jaw = 0.08; hz -= 0.04*ihA*k; hpx -= 0.3*ihA*k; hy += 0.02*ihA*k; }
+    }
     if(st.leap || tof < 0.3) legs = "push";                        // the takeoff leap: legs thrusting down
     if(tof < 0.3) bob -= Math.sin(Math.min(1, tof/0.3)*PI)*0.035*k; // the crouch before the leap
     bob += wg.lift*0.022*k;                                         // lift on the downstroke, sink on the upstroke

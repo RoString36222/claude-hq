@@ -254,7 +254,7 @@ class StrikeBlastsAndRockets(unittest.TestCase):
         cls.o = run(STRIKE)
 
     def test_the_statements_are_there(self):
-        self.assertEqual(self.o["found"], {"booms": 2, "shot": True})     # a missile's blast, the Arena's blast rows, a bot's rocket
+        self.assertEqual(self.o["found"], {"booms": 3, "shot": True})     # a missile's blast, a barrel's blast, a bot's rocket
 
     def test_a_blast_is_heard_where_it_goes_off(self):
         w = self.o["want"]
@@ -290,7 +290,7 @@ class StrikeBlastsAndRockets(unittest.TestCase):
         n = o["noEars"]
         self.assertEqual((n["g"], n["pan"], n["start"]), (1, 0, 0))            # no ears (2D map view): centred, full, at once
         self.assertIsNone(o["muted"])                                          # Game sounds 0 (mute, Calm): nothing
-        self.assertEqual(o["old"], [["boom", None], ["boom", None], ["shot", {"w": 3}]])   # an engine without sfxAt
+        self.assertEqual(o["old"], [["boom", None], ["boom", None], ["boom", None], ["shot", {"w": 3}]])   # an engine without sfxAt
 
 
 @unittest.skipUnless(NODE, "node is not installed")

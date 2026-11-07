@@ -45,7 +45,7 @@ function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
 
 function create(el, opts){
   opts = opts || {};
-  var I = {keys: {}, mouse: {}, pad: null, padDown: {}, was: {}, now: {}, lookX: 0, lookY: 0, locked: false,
+  var I = {keys: {}, mouse: {}, pad: null, padDown: {}, was: {}, now: {}, tap: {}, lookX: 0, lookY: 0, locked: false,
            alive: true, lastPoll: 0, sens: +opts.sensitivity || 1};
   var codes = {}, MAP = {};
   Object.keys(BUTTONS).forEach(function(b){ MAP[b] = BUTTONS[b]; });
@@ -56,17 +56,25 @@ function create(el, opts){
   (opts.extraKeys || []).forEach(function(c){ codes[c] = 1; });
 
   function inside(){ var a = document.activeElement; return !!(a && (a === el || el.contains(a))); }
+  // Latch a down-edge by button name. A long frame (a GC pause, a heavy rebuild) used
+  // to swallow a tap entirely: pressed() is one-frame, so a click that landed while the
+  // frame was stalled read as "already down" on the next poll and vanished. The latch
+  // keeps that tap alive until the next poll consumes it.
+  function tapButtons(pred){
+    Object.keys(MAP).forEach(function(n){ if(pred(MAP[n], n)) I.tap[n] = true; });
+  }
   function kd(e){
     if(!inside() || e.metaKey || e.ctrlKey || e.altKey) return;
     var t = (e.target && e.target.tagName || "").toLowerCase();
     if(t === "input" || t === "textarea" || t === "select") return;
     if(!codes[e.code]) return;
+    if(!I.keys[e.code]) tapButtons(function(b){ return b.keys.indexOf(e.code) >= 0; });
     I.keys[e.code] = true;
     e.preventDefault();
   }
   function ku(e){ if(I.keys[e.code]){ delete I.keys[e.code]; e.preventDefault(); } }
-  function release(){ I.keys = {}; I.mouse = {}; }
-  function md(e){ if(e.button === 0 || e.button === 2){ I.mouse[e.button] = true; if(opts.look && !I.locked) lock(); } }
+  function release(){ I.keys = {}; I.mouse = {}; I.tap = {}; }
+  function md(e){ if(e.button === 0 || e.button === 2){ if(!I.mouse[e.button]) tapButtons(function(b){ return b.mouse === e.button; }); I.mouse[e.button] = true; if(opts.look && !I.locked) lock(); } }
   function mu(e){ delete I.mouse[e.button]; }
   function mm(e){ if(I.locked){ I.lookX += e.movementX || 0; I.lookY += e.movementY || 0; } }
   function wh(e){ if(!opts.wheel || !(I.locked || inside())) return; I.wheelN += e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0; e.preventDefault(); }
@@ -111,7 +119,14 @@ function create(el, opts){
     }
   };
   I.down = function(n){ return !!I.now[n]; };
-  I.pressed = function(n){ return !!I.now[n] && !I.was[n]; };
+  I.pressed = function(n){
+    var tap = !!I.tap[n];
+    if(tap) I.tap[n] = false;
+    // An edge that arrived during a stalled frame is delivered here even if the key is
+    // already up again (a tap faster than one frame). Level-triggered now/was still
+    // catches the normal press, and is never lost by the latch.
+    return tap || (!!I.now[n] && !I.was[n]);
+  };
   // x: left -1 .. right 1; y: back -1 .. forward 1; throttle: forward minus brake, triggers too.
   I.axis = function(n){
     var p = I.pad, ax = p && p.axes ? p.axes : [];

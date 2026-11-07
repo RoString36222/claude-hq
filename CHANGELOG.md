@@ -96,11 +96,237 @@ recent releases.
     scale. Gameplay pull is deliberately NOT scaled — `HOLE_REACH` / `HOLE_R` are untouched, so the well is only
     bigger to look at. Both sit on whatever ground is under them and key by id so they are built once. Calm /
     `prefers-reduced-motion` hold a still frame.
-  - Proven at runtime: `cargo test` 131/131 in `backend/`, `python3 -m unittest discover -s tests` 1931/1931,
-    `node tests/probe_blackhole.js` / `probe_bighead.js` / `probe_disco.js` all green, and
-    `tests/test_strike_sync.py::test_the_six_joke_world_totems_are_wired_on_both_sides` locking the geometry, the
-    windows, the roster, the flags, the body-write rules and the new list shape on both sides. Local only — no new
-    network calls, no new third-party assets.
+  - **The Warden stands on the deck, not under it.** He is summoned at the map-bounds centre and was planted at
+    y = 0 — the dockyard centre is a raised platform (top y = 3.5, the same burial the black hole had), so the skirt
+    and waist sat below the floor and the hanging arms punched 6 m through it and read as "legs under the map". The
+    arm chain is shortened so the fist rests on the deck (local y = 0), and every height on both judges is now
+    measured from `holeGroundY(x, z)` / `ground_y(map, x, z)` — the top of the highest box under the spawn point —
+    instead of y = 0: the hit volumes (`WARDEN_BOX_*`), the LOS probes (`WARDEN_SEE_*`), the laser-eye origin, the
+    damage numbers, the slam / shock / grip rings and the dust. Both sides carry the same helper and the same offset
+    (`W.y` / `Warden.gy`), so the art and the judge stay in agreement.
+  - **The Warden stands on the floor, not floating over it.** The golem's skirt is 18.6 m wide but the dockyard's
+    raised centre is only 8 m across, so planting the mesh at the platform top (y = 3.5) left most of the skirt hanging
+    in mid-air. The plant height is now the lowest ground under the skirt's own footprint (`wardenGroundY` /
+    `warden_ground_y`) — y = 0 on the dockyard — so the whole silhouette sits on the floor and the centre platform
+    simply passes through the skirt, the way a colossal golem standing on the map would.
+  - **A scary Warden.** Original box art only (no third-party characters): two curved ram horns sweeping back from the
+    temples, a ragged fang row under the brow with long canines, jagged bone spikes down the shoulders and spine,
+    glowing rune slashes burned across the chest plate, and an asymmetric cracked cheek plate so the face is not a clean
+    mask.
+  - **The Warden dances to the Disco totem too.** Take the Disco totem while the boss is up and it joins the floor for
+    the same 8 s window: arms pump overhead alternately, the head wobbles, a mirror ball spins over the crest — and
+    every attack is held (no slam, no laser, no grip, no disaster call). A Disco window that is already live when the
+    boss rises is picked up at summon. Twin `Warden.danceUntil` / `Warden.dance_until` + `wardenDanceOn`; the `wd`
+    snapshot row gains a trailing `ms_dance` (absent on an older Arena, so old clients simply never see the groove).
+  - **The Warden summons six elemental drift-wyrms, and you can ride one.** When the boss rises, one dragon of each
+    tier lands on the bounds ring — Fire, Crystal, Storm, Ice, Shadow, Golden. The mount option is discoverable
+    right on the beast: a world-space **"G  Ride fire"** plate floats over every idle dragon (the same canvas-plate
+    idiom as the name tags), and the Commons-style HUD pill lights up from 16 m out while you walk up (**"G  Ride
+    fire"**, or **"G  dismount · click to breathe"** in the saddle). Press **G** to mount (G again dismounts; E stays
+    lean-to-peek). While you are in the saddle your guns are stowed and the breath is the only attack: hold the
+    trigger to spray (30 dps in a widening cone) for 4 s, then the tank is dry and the mount inhales for 4 s before
+    it can breathe again (the pill says **inhaling…** with a bar that fills toward ready, the same read as the
+    gun reloading — and a fresh mount now hands you a FULL tank, so the first click breathes instead of silently
+    starting the inhale) — an SMG hold, then a reload. **The jet is a full plume** — a fat additive fire sprite
+    core down the cone (`dragonFlamePool`, the launcher's `flameTex` idiom) plus a dense element particle spray from
+    the mouth (fire / ice / storm with lightning `zap`s / crystal sparkle / shadow wisps / gold glitter) at 30 Hz,
+    ~3× the Commons pool's density and throw, sized so the rider can see the flame from the third-person seat.
+    **You can see who it is hitting and how hard:** the spray carries a per-victim fractional accumulator
+    (`breathAcc`, twin `breath_acc` in `backend/src/strike.rs`) so a fast frame never rounds the damage to zero and
+    a 20 Hz judge tick pays exactly 30 dps (it used to round 1.5 up to 2 — 40 dps); the jet writes a hit marker and
+    a floating damage number per victim per quarter-second, the total dealt in that window, through the existing
+    `dmgSprite` path — and **only for the jet you are flying**, never every dragon's fight across the arena. Two
+    leaks kept numbers piled up in mid-air with nobody around: `V.dmgNums = []` on match reset ran *before*
+    `clearDynamic()`, so every live sprite was orphaned in the scene and kept rendering at its last opacity, and the
+    overflow `shift()` dropped the entry without pulling its sprite out. Both go through one `killDmgNums` /
+    `pushDmgNum` disposer now. And the `"drg"` snapshot only had tank-left, which the client read as "spraying" for
+    every full tank — it now carries a real `spray_ms` (open-jet window), so a client never paints flame or numbers
+    on an idle mount. An older Arena without `spray_ms` reads as "not spraying". Each dragon shows **its own health bar** above the body. **The Warden cannot hurt a dragon at all** —
+    the laser sweeps, the arm slams and the gravity grip all go right past a summon. **Disasters deal a dragon
+    the same damage they deal a fighter** (1x, no 2x), and **gunfire always hurts a dragon**, even while the
+    Warden lives. **A bot spends no shot on a summon while the boss lives** — its bullet is for the
+    Warden alone, so the summons are never the bots' target mid-fight (you can still shoot one yourself).
+    A player's shot takes **the nearer body**: a summon standing in front of the boss eats the bullet,
+    one behind the boss does not. A dragon still hurts nobody while the boss lives (it only patrols),
+    and no bot claims a mount then. **The kill feed names what fell the mount as a sentence** —
+    `dragon:<cause>` reads back as "Your dragon fell to gunfire · You", never the three bare words
+    "Your dragon gunfire You" and never the old useless "The map · your dragon · You". And a fighter up in a saddle is **not a ground target**:
+    the mount soaks the floor beam, the arm slam and the gravity grip, so none of them delete you out of the saddle.
+    **There is no out-of-bounds on a dragon:** the sky is open, the map edge is not a wall, and the pair is never
+    killed or rubber-banded home for flying off the arena (the void-rescue clock skips a rider). **After the boss falls the roster stays**: an untaken
+    dragon roams the deck and bites anything that comes close (14 damage, 1.4 s between bites), a bot claims an
+    idle mount then, and a ridden dragon stays under its rider (left-click breath, guns still stowed). Only a match
+    teardown clears the roster. Twin `dragonSpawn` / `dragonTick` /
+    `dragonHurt` / `dragonDismiss` in `games/strike.js` and `dragon_tick` / `dragon_hurt` / `dragon_dismiss` in
+    `backend/src/strike.rs`; the snapshot gains a `"drg"` row (`[id, tier, x, y, z, yaw, hp, max, mount_slot,
+    breath_ms, recharge_ms]`, absent on an older Arena). Art is the **same drake build as your Commons pet** —
+    `games/hqpets.js` `wyvernModel` (`HQV.hqPets.model` / `pose`, lazy-loaded the way the Pets panel does), tier →
+    species (firedragon → golddragon), a battle scale just under the city ride so the beasts read as threats in an
+    80 m arena, breath jaw and wing modes; the old box primitives stand in only if that module is unavailable.
+    `poseWyvern` also opens the jaw on an airborne breath (it only did so on the ground). The saddle matches the
+    Commons pet mount: the rider sits on the same seat, facing follows the pet's own +z build, and in multiplayer the judge
+    follows the human rider's `pos` (no rubber-band back onto a frozen mount) while still seating bots itself —
+    riders are exempt from the air ceiling. In the saddle the camera goes to a **third-person chase** — behind and
+    above the mount, tight enough that the beast reads over its own shoulders (7.5 m back / 3 m up, the Commons
+    framing scaled for the battle dragon's bigger art), aimed with your look, the stowed gun and any ADS zoom off
+    the screen — and drops straight back to first-person the moment you step off (or go down, which also drops the
+    saddle). **You are in the saddle**: the chase camera draws your own body on the mount (seated, kit and all),
+    and it stays out of the first-person lens — only the ride camera shows it. **Flight is the Commons model** (`games/hqpetride.js` `subFly`): W/S hold a speed (S down to a hover),
+    Space climbs on big beats, Shift dives and trades height for speed, neither glides (wings spread, sinking 1.1
+    m/s) or — slow — hovers on fast short beats. The body noses up climbing and down diving and **banks into the
+    turn**, and the wings run the real modes: `climb` big beats, `dive` folded back, `glide` spread and still,
+    `hover` short beats (`poseWyvern`). Nothing under Calm, which still opens the jaw and pours no flame. Client art
+    and game feel only. No third-party characters or names. Local only — no new network calls.
+  - **The Hurricane is a real vortex.** The walking wind column used to shove anyone who stepped in it a little
+    way outward and that was the whole disaster. Now the column **takes you**: step inside its 6 m and you are
+    caught, lifted off the deck up to 4.2 m, and spun around the core at 2.6 rad/s on an orbit that settles to
+    3.6 m — no walking, no looking around, no way out. The grip is sticky (1.6 s after you leave the column) so
+    the spin does not staccato as the walking column slides past a body. Bots are caught the same way. Same on
+    both judges (`inWindCatch` in `games/strike.js`, `wind_catch` in `backend/src/strike.rs`, shared
+    `DD_WIND_CATCH_*`), and the referee lets the orbit through — the speed cap opens to sprint while you are
+    gripped and the `MAX_AIR` cheat clock parks (the updraught is not a fall) — so you are not rubber-banded
+    out of the sky. The old radial shove is gone entirely. Wild aim, the 3 hp/s chip and the spiral art are
+    unchanged. Local only — no new network calls.
+  - Proven at runtime: `cargo test` in `backend/`, `python3 -m unittest discover -s tests`,
+    `node tests/probe_dragons.js` / `probe_warden_dance.js` / `probe_warden_ground.js` / `probe_warden_vortex.js` / `probe_blackhole.js` /
+    `probe_bighead.js` / `probe_disco.js` all green, and
+    `tests/test_strike_sync.py::test_the_warden_is_a_mid_match_boss_with_no_pvp` locking the dragon roster, the
+    breath tank, the 1x disaster rule, the Warden-never-hurts-a-dragon rule, the kill-cause feed, the mount key and the
+    roster-stays-after-the-boss rule on both sides.
+    Local only — no new network calls, no new third-party assets.
+  - **Five more totems: the trap-and-gadget set (Wave G).** Mini Turret (10 s), Explosive Barrels (instant),
+    Laser Grid (8 s), Jump Pad (10 s) and Death Lottery (instant). Every number is a `STRIKE-SHARED` twin locked
+    by `tests/test_strike_sync.py::test_the_wave_g_trap_and_gadget_set_is_wired_on_both_sides` and
+    `tests/probe_waveg.js`.
+    - **Mini Turret (10 s).** Three small turrets drop in and track the nearest enemy within 14 m, hitting for 8
+      every 0.7 s. They hold the taker's side and never fire on a team-mate. They have 60 hp of life and anyone —
+      player or bot — can shoot them down; the world object's kill is the map's (`env_kill("turret")`), never a
+      fabricated shooter.
+    - **Explosive Barrels (instant).** Three big barrels crash down from 18 m and land. Shoot one and it goes up
+      at **10x a launcher**: 1200 direct, falling 750 → 250 out to 12 m, and the blast **chains the next barrel
+      inside the radius** with the same credit. The detonator is credited if they are a real fighter, otherwise the
+      map is. The detonate branch now fires before the barrel's hp is zeroed — zeroing it first made the
+      "already spent" guard swallow every shot, so barrels were un-explodable on both sides until this fix.
+    - **Laser Grid (8 s).** Eight tripwires criss-cross the arena. Touch one at deck height and you die instantly;
+      jump clean over it (height **above the deck** `>= 1.15`) or walk beside the beam (outside its 0.32 m half-width)
+      and you live.
+    - **Walk through the lasers and nothing happened.** The beams are planted on the deck under you
+      (`holeGroundY` / `ground_y`), but the first cut tested an **absolute world y**. On the dockyard's raised
+      centre platform (top y = 3.5) a walking player stands at y ≈ 3.5, passes the "y >= LASER_CLEAR, already
+      jumped clean over" gate, and walked straight through every beam. Every Wave G height test is now
+      **ground-relative** — the laser gate, the jump-pad gate, the turret / barrel ray boxes, the barrel blast
+      centre and the barrel landing — on both judges. Your own laser death also now goes through `endBotLife`
+      (the real local-player death site: `deaths++`, `V.dead`, the kill feed, movement totems popped) instead of
+      writing `dead` onto the physics body and skipping all of it. Locked by
+      `tests/probe_waveg.js` (a walker on the raised deck is still zapped) and
+      `tests::the_laser_gate_is_height_above_the_deck_not_world_y`.
+    - **Killed by the laser 5–8 times, so the respawn never finished.** `zapL(V.me, true)` passes the
+      physics body as `P`, and its `if(!P || P.dead || P.gone) return` guard read `V.me.dead` — a flag
+      that is **never written**, because the local player's health and death live on `V` (`endBotLife`
+      sets `V.dead` / `V.deadAt`). So the beam re-killed you every tick, each time rewriting `V.deadAt`
+      and pushing `V.deadAt + RESPAWN` out forever. The `isMe` arms of `zapL`, `hopP`, `inLava` and the
+      barrel `harm` now bail on `V.dead`, and `endBotLife` itself refuses to book a second death for a
+      body already down. `inLava` and the barrel blast used to write `V.dead` inline (skipping `deaths++`,
+      the kill feed and the movement-totem pop) — both go through `endBotLife` now. Locked by
+      `tests/probe_waveg.js` (one contact, one kill).
+    - **Multiplayer left you stuck in respawn, forever.** Three bugs, one symptom. (1) `onSnap`'s row for
+      **you** did `if(f & 1) V.dead = true;` and never cleared it — a one-way latch, while the bot branch
+      right below does clear. (2) Local hit paths (`barrelBlast`, your own rocket's self-blast, dragon
+      breath/bite) still wrote `V.dead` in MP, even though the Arena judge owns every death: no `"spawn"`
+      is ever sent for a death the server never booked, so the latch had nothing to clear it. `endBotLife`
+      is now **display-only** in MP (HP prediction + kill cam only; `"kill"`/`"spawn"` own `V.dead`,
+      `V.deaths` and the clock), and the one inline write is gone. (3) The judge's `kill`/`env_kill` had
+      no re-entry guard, so a laser re-contact or a barrel chain booked a second death and **rewound**
+      `respawn_at`; both now refuse a body that is already down (twin of `endBotLife`'s latch). A watchdog
+      on the judge's own snapshot row clears a latched `V.dead` even if a `"spawn"` were lost. Locked by
+      `tests/probe_waveg.js` (multiplayer plays like solo).
+    - **Every player had to click the screen just to aim.** MP's join path never called `IN.lock()`, and
+      `requestPointerLock` needs a **user gesture** — so the only lock came from the pause card, and any
+      Esc / tab switch dropped it with no way back in. There is one `grabLock()` now (focus + lock),
+      fired on the **"Join the match" click itself** (the gesture), again when the view lands, on
+      `requestView`, and on any click on the arena — so the cursor stays fixed for the whole match,
+      exactly like solo/bots. The pause card is a click-to-aim hint only in MP: the Arena judge keeps
+      running for everyone, so the sim is never frozen locally under it. Locked by the same probe.
+    - **Turrets dropped in and covered nobody.** They were scattered across the whole map by `dropSpot`,
+      so one could land 40 m from any fight and idle out its entire 10 s. Three turrets now drop in a
+      **ring around the taker** (1.8 m, angle from the world counter — never `Math.random`), the Trapmaster
+      pattern, on both judges. In Target range there are no bots, so the turrets now treat the flight drones
+      as their stand-in enemies (knock them down, bank the range score). Every shot draws a tracer to the
+      target in **both** modes — damage and death stay the judge's in MP, but the shot is visible there too.
+      The MP `"tr"` snapshot carries each turret's fire clock forward so a repaint is not a barrage. The
+      team rule is unchanged and load-bearing: a turret never fires on a team-mate, including you.
+    - **Jump Pad (10 s).** Three launch pads on the ground. Step on one and you are thrown up at 22 m/s — a 13 m
+      apex. `PAD_COOL` is 2.5 s, which both re-locks the pad and relaxes the judge's air clock for the whole
+      flight (`pad_let_up`); the first cut was 1.0 s, shorter than the 2.44 s arc, so the judge rejected the landing.
+      The pad gate is height-above-the-deck too, so a pad planted on the raised centre actually fires.
+    - **Death Lottery (instant).** One living **enemy** is picked by the world counter (never `Math.random`) and
+      either heals to full (100) or drops dead on the spot. The taker and their side are never in the pool, and the
+      kill is credited to the taker.
+    - **Art and UI.** Each one has its own generated look in the 3D arena (turret with a rotating barrel and a
+      muzzle flash, a falling barrel, a glowing laser segment with end posts, a chevron pad that pulses on a hop)
+      and a minimap glyph; they ride the additive `"tr"` / `"br"` / `"lg"` / `"pd"` snapshot keys (centimetres,
+      turret yaw in cdeg) with a 0.45 s TTL on the client. Calm / `prefers-reduced-motion` hold the still frame.
+    - **Kill feed.** The four world causes name what fell you: "a mini turret", "an explosive barrel", "the laser
+      grid", "the death lottery". A world object never invents a team-0 shooter (the old fallback scored
+      `V.scores[0]++` and the feed said "The map" / "Barrel").
+    - **Respawn dropped you out of the sky again and again.** A kill booked in the same tick as a
+      respawn used to arrive *after* the `"spawn"` and re-latch `V.dead` on a body that had just come
+      back — so the next life dropped again, forever. The judge now drains its pending event queue
+      **before** the respawn block (a same-tick `"kill"` lands first), and every `"kill"` row carries
+      the victim's life (`"e"`); the client drops a kill whose `e` does not match `V.life`, so a late
+      feed row can never re-latch death. The feed row still lands so the kill still reads on the board.
+    - **The canopy never covered the whole glide.** Spawn cover (`protect`) started at `place()` —
+      when the parachute opened — but the descent at `DROP_SINK = 2.8` outlasted the `DROP_TIME = 3.0`
+      steer window, so the shield expired mid-air and a camper deleted the glider; the next life dropped
+      again. Cover now starts at **touchdown** (`V.protUntil = dropping ? 0 : t + 1.5`, twin of the
+      judge's `place()`), `DROP_SINK` is retuned to **3.8** so `DROP_HEIGHT / DROP_SINK ≈ 2.9 s` lands
+      inside `DROP_TIME`, and the drop shield holds for the whole canopy (steer + sink, with a
+      `DROP_LAND_GRACE = 1.5 s` backstop so a glide that never touched down cannot stay shielded forever).
+    - **Fall out of the map and you fell forever.** The judge's `pos_inner` used to reject a void frame
+      by returning the **stale last legal floor**, never writing the fall into the body — so `in_void()`
+      never saw it and the `VOID_SECS` rescue never ran; the client was snapped back onto the deck,
+      fell off again, and the clock never started on either side. A rejected frame that is really in
+      the void is now **adopted** into the body (and no `"fix"` is sent for one, which would snap you
+      back onto the deck and clear `V.voidAt`), so the rescue clock runs and the parachute comes at
+      10 s. A new life also clears `dragon_rider` and frees the dragon's seat (`dragon_release`) —
+      a ghost saddle left the rescue gate closed forever.
+  - Local only — no new network calls, no new third-party assets, no change to privacy or egress.
+  - Multiplayer felt laggy and unfair: totems sat uncollected while you walked through them, and the camera froze during respawns and falls.
+  - Totems now take the moment you are over them. The judge's pickup test no longer rejects anyone standing more than 1.2 m above a ground drop (the dockyard's raised centre made every totem there unreachable), and pickups are judged every tick instead of only on an accepted position frame — a take no longer waits on the network.
+  - Multiplayer is much lighter on the wire and the CPU: the snapshot omits empty world lists instead of shipping `[]` twenty times a frame at 20 Hz, and a position frame no longer allocates a whole `Player` (hist, rtt ring, nine weapon deques) per human per frame.
+  - Look is yours again. A respawn no longer snaps your yaw and zeroes your pitch; the kill cam steers with your own mouse instead of freezing the camera behind the killer; and pointer lock re-grabs itself when it drops mid-match.
+  - **The launcher fires in multiplayer.** Three stacked faults made it read as "no fire shot at all": the fire message sent pitch in bare degrees while the judge divides by 100, so every rocket flew flat into the floor; the client never predicted a local rocket, so a shot with no server round-trip yet drew nothing; and the weapon roster clamped to three guns whenever the Arena's `games.strike` entry was missing, which made the launcher unselectable. Pitch is centidegrees now (same as the rifle path), a launch draws the rocket at once and the judge's `"r"` row adopts that mesh (one rocket per shot, never a double boom), a missing `games.strike` opens the full roster, and the ammo reply mirrors the launcher's own `V.magX` / `V.resX` so the HUD cannot drift from the server.
+  - **One rocket in the air — yours.** The gate that stops a second launch checked the whole rocket list, so a team-mate's rocket in the snapshot blocked your trigger. An `"r"` row now carries the shooter's slot (index 7) and the gate only looks at your own.
+  - **Multiplayer FPS stops spiking.** The judge's dirty list was a `Vec` scanned linearly on every mark, and `mark_all()` (called from every per-player disaster loop, and every tick while a turret / pad / laser / dragon existed) dirtied every body for one player's change — O(n²) per tick in a disaster. `mark()` is O(1) behind a per-player bit, the disaster loops dirty only the body that moved, and a world list (turret, barrel, pad, dragon, Warden) marks a new `world_dirty` flag instead of every player. The snapshot order is unchanged.
+  - **Multiplayer stops rebuilding the world every frame.** The client's snapshot handler cleared and repainted every world mesh list on every snapshot — rifts, mines, meteor marks, beacons, bubbles, bananas, lava, geese, black holes, turrets, barrels, lasers, pads — which meant fresh Three.js geometry and materials 20 times a second (a laser alone is about seven meshes and seven materials). Solo never ran that path, which is why solo felt fine and MP did not. The snapshot now diffs by id: a world object keeps its mesh across ticks, new ones build once, and ones the judge dropped are removed. The banana and lava arms also leaked a mesh per row per snapshot — they never cleared before re-adding. A frame hitch can no longer swallow a fire click (the input layer latches a down-edge that lands during a stall) or starve the position send, which is what made totems feel uncollectable. The radar also resolves its colours once per paint instead of once per blip. Local only — no new network calls, no new third-party assets, no change to privacy or egress.
+  - Local only — no new network calls, no new third-party assets, no change to privacy or egress. The extra `"r"` column is a roster slot number already on the wire.
+  - **Multiplayer totems take when you walk over them.** Pickup ran only on an accepted position frame and tested
+    the referee's own copy of your body, so a refused frame left that copy frozen and the totem under your boots was
+    "not taken" — then arrived in a bulk once an accepted frame landed again. Every frame now remembers the body you
+    claimed (bounded to one correction's walk, and only for a second, so it cannot be used to take from across the
+    map), a walk-over is a take even when the effect has nobody to target (a mole with no enemy bots used to refuse
+    and leave the totem sitting there), and a take marks you so hp/res reach the snapshot. **Judge-side: not live in
+    MP until the Arena host is redeployed (`ops/release.sh deploy`).**
+  - **Multiplayer no longer loops in the sky after a respawn.** The parachute let-up was measured on the client's
+    clock (a best-case RTT sample that can run ahead of the server), so the canopy ended early, the air guard refused
+    every following frame, and the referee's "fix" placeMe()'d you back — which also cancelled the canopy, so you fell
+    again and the whole thing repeated. The let-up and the air guard now run on the server's clock, and the referee
+    never sends "fix" while a live canopy is still up; the client also steers a mid-glide correction instead of
+    re-placing (a place clears the canopy). **Judge-side: not live in MP until the Arena host is redeployed.**
+  - Local only — no new network calls, no new third-party assets, no change to privacy or egress.
+- **Multiplayer respawns land on the deck, not through it.** The canopy (and the wings glide-down, and every bot's
+    parachute) asked the body-overlap probe for the floor from canopy height, where it cannot see a box at all — and with
+    y/z swapped — so every respawn sank below the map and then came back up. Landing now uses the deck height under the
+    body (`deckUnder` / `deck_under`): XZ only, `null` on a real floor gap so Sandbar's water still drops you into the
+    void clock rather than planting you on a floor that isn't. **Judge-side (the bot half): not live in MP until the Arena
+    host is redeployed (`ops/release.sh deploy`).**
+  - **Multiplayer takes a cluster of totems at once, like solo.** The judge's pickup reach was a circle of 1.1 m while
+    solo's local take is a square of the same half-extent, so a diagonal walk-through left the corner totems standing and
+    they arrived later in bulk. Both pickup bodies (drop slots and map packs) now use solo's square reach, so a walk
+    through a bunch takes every one of them on the same pass. **Judge-side: not live in MP until the Arena host is
+    redeployed.**
+  - Local only — no new network calls, no new third-party assets, no change to privacy or egress.
+- **Multiplayer totems are taken at the body you are actually standing in.** The referee's copy of you freezes on a speed-cap, canopy or rate-limit refusal; the old 4 m leash to that frozen copy threw the walk-over away the moment you got ahead of it, so singles and bunches were left behind. A live walk now owns the take at the position you send, and only a stalled claim is still leashed (anti-teleport). The client also lights the top-left chip the moment a totem is taken, with its time remaining, exactly like solo.
 - **3.38.7 — Strike Zone: drone wreck loot sticks around.**
   - **Shooting a drone down no longer erases the last wreck's totems.** A falling drone scatters three personal totems
     around the wreck. Those used to land in the same recycled totem ring the timed drop clock uses (three slots,

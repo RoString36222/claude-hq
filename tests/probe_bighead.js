@@ -87,8 +87,8 @@ check("bighead is in the JS TOTEMS table", /bighead:\s*\{hue:\s*"#ff8fab"/.test(
 check("bighead is in the Rust TOTEM_KINDS", /"bighead"/.test(rs));
 check("bighead has TOTEM_HELP text", /bighead:\s*"/.test(js));
 check("all three JS rosters carry bighead",
-      (js.match(/"radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"\]/g) || []).length === 3,
-      ((js.match(/"radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette"\]/g) || []).length) + " of 3");
+      (js.match(/"radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"\]/g) || []).length === 3,
+      ((js.match(/"radarjam","bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"\]/g) || []).length) + " of 3");
 check("hitBoxes takes hs in JS", /function hitBoxes\(x, y, z, hs\)/.test(js));
 check("hit_boxes takes hs in Rust", /pub fn hit_boxes\(x: f64, y: f64, z: f64, hs: f64\)/.test(rs));
 check("rayPlayer takes hs in JS", /function rayPlayer\(o, d, x, y, z, maxd, hs\)/.test(js));

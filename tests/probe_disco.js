@@ -69,12 +69,16 @@ function magOf(w){ return w === LAUNCH_W ? V.magX : V.mag; }
 
 var V = mockV();
 var danceOn = bindFn(js, "danceOn", {V: null}, ["t"]);
+// canShoot also gates on the dragon saddle (guns stowed while riding) — bind a
+// stub of the real dragonRiding so the shipped predicate runs as written
+function dragonRiding(t){ return !!(V.dragons || []).some(function(D){
+  return D && D.riderIsMe && !D.dead; }); }
 var canShoot = bindFn(js, "canShoot", {
-  V: null, danceOn: null, magOf: magOf, LAUNCH_W: LAUNCH_W
+  V: null, danceOn: null, magOf: magOf, LAUNCH_W: LAUNCH_W, dragonRiding: dragonRiding
 }, ["t"]);
 // re-bind with the live V / danceOn now that they exist
 danceOn = bindFn(js, "danceOn", {V: V}, ["t"]);
-canShoot = bindFn(js, "canShoot", {V: V, danceOn: danceOn, magOf: magOf, LAUNCH_W: LAUNCH_W}, ["t"]);
+canShoot = bindFn(js, "canShoot", {V: V, danceOn: danceOn, magOf: magOf, LAUNCH_W: LAUNCH_W, dragonRiding: dragonRiding}, ["t"]);
 check("danceOn is a real function in strike.js", typeof danceOn === "function");
 check("canShoot is a real function in strike.js", typeof canShoot === "function");
 
@@ -174,8 +178,8 @@ check("disco is in the JS TOTEMS table", /disco:\s*\{hue:\s*"#ff2d95"/.test(js))
 check("disco is in the Rust TOTEM_KINDS", /"bighead", "disco",/.test(rs));
 check("disco has TOTEM_HELP text", /disco:\s*"For 8s everyone but you breaks into a disco dance/.test(js));
 check("all three JS personal rosters carry disco",
-      (js.match(/"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"\]/g) || []).length === 3,
-      ((js.match(/"bighead","disco","banana","lava","goose","reverse","blackhole","roulette"\]/g) || []).length) + " of 3");
+      (js.match(/"bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"\]/g) || []).length === 3,
+      ((js.match(/"bighead","disco","banana","lava","goose","reverse","blackhole","roulette","turret","barrel","laser","jumppad","lottery"\]/g) || []).length) + " of 3");
 check("the mark kind is its own (a charm drop must not clear a disco mark)",
       /clearMarks\(P, "disco"\)/.test(js) && /clearMarks\(P, "charm"\)/.test(js));
 check("dance pose drives arm / leg / torso bones",

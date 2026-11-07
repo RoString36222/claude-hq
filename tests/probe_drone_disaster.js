@@ -30,10 +30,13 @@ function sliceVar(name){
 var log = [];
 var DISASTERS = ["sandstorm", "meteorshower", "hurricane", "thunder", "earthquake",
                  "shockring", "toxicfog", "absolutezero", "sinkhole", "emp"];
+// mirrors nonDisTotems() in games/strike.js (personal set only — never a disaster)
 var TOTEM_ALL = ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
                  "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
                  "wallrun","secondwind","fakedeath","ghost","cluster","overclock","ricochet","infchamber",
-                 "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam"];
+                 "bodyswap","rally","meteor","chaos","phoenix","pocket","fate","king","radarjam",
+                 "bighead","disco","banana","lava","goose","reverse","blackhole","roulette",
+                 "turret","barrel","laser","jumppad","lottery"];
 var TOTEMS = {};
 TOTEM_ALL.concat(DISASTERS).forEach(function(k){ TOTEMS[k] = {n: k}; });
 
@@ -258,7 +261,7 @@ var T = nowT;
   var ALL = api.nonDisTotems();
   out.D8_roster = {
     n: ALL.length,
-    expect: 45,   // personal roster only — never a disaster kind (37 + bighead + disco + Wave F six)
+    expect: 50,   // personal roster only — never a disaster kind (37 + bighead + disco + Wave F six + Wave G five)
     anyDisaster: ALL.some(function(k){ return DISASTERS.indexOf(k) >= 0; }),
     allInPersonalSet: ALL.every(function(k){ return TOTEM_ALL.indexOf(k) >= 0; })
   };
@@ -280,6 +283,6 @@ need(out.D5_log.namesSandstorm && out.D5_log.namesThunder, "D5 log names them");
 need(out.D6_liveAndScatter.sandstormLive && out.D6_liveAndScatter.empLive, "D6 both live");
 need(out.D6_liveAndScatter.maxScatter === 1.2, "D6 max scatter 1.2");
 need(out.D7_shootDownAdds.oneMore, "D7 shoot-down adds");
-need(out.D8_roster.n === 45 && !out.D8_roster.anyDisaster, "D8 roster clean");
+need(out.D8_roster.n === 50 && !out.D8_roster.anyDisaster && out.D8_roster.allInPersonalSet, "D8 roster clean");
 console.log(ok ? "ALL_OK" : "HAD_FAILURES");
 process.exit(ok ? 0 : 1);

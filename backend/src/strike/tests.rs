@@ -713,6 +713,36 @@ fn a_walk_over_always_takes_even_when_the_totem_has_no_target() {
 }
 
 #[test]
+fn a_fused_pair_ships_the_consumed_half_so_the_gem_is_cleared() {
+    // Totem Fusion: two unclaimed totems merge into one Chaos Core. Clients used to
+    // get only the survivor (`i`/`kind`), so the consumed half stayed painted as a
+    // takeable gem — the judge had already booked it and would never send a "pick",
+    // which is exactly "I go through them and they are left behind".
+    let (mut s, t) = started(2, 2, 0.0);
+    let (a0, a1, _, _) = s.drop_rings();
+    assert!(a1 - a0 >= 2, "the drop ring has room for a pair to fuse");
+    s.kinds[a0] = "wings";
+    s.items[a0] = None;
+    s.spots[a0] = [0.0, 0.0, 0.0];
+    s.kinds[a1 - 1] = "speed";
+    s.items[a1 - 1] = None;
+    s.spots[a1 - 1] = [1.0, 0.0, 0.0];
+    s.fuse_at = Some(t);
+    let evs = s.tick(t + 0.05, true);
+    let fused = evs.iter().find(|(ev, _)| ev == &"fused").map(|(_, d)| d.clone());
+    let Some(d) = fused else { panic!("the pair fused"); };
+    assert_eq!(d["kind"].as_str(), Some("chaos"), "the survivor becomes a Chaos Core");
+    let i = d["i"].as_u64().unwrap() as usize;
+    let j = d["j"].as_u64().unwrap() as usize;
+    assert!(i == a0 || i == a1 - 1, "the survivor is one of the two slots");
+    assert!(j == a0 || j == a1 - 1, "the consumed half is the other one");
+    assert_ne!(i, j, "the two halves are different slots");
+    assert!(s.items[i].is_none(), "the survivor is takeable");
+    assert!(s.items[j].is_some(), "the consumed half is booked — no pick will ever come");
+    assert_eq!(s.kinds[j], "", "the consumed half is no longer a kind");
+}
+
+#[test]
 fn a_canopy_from_the_sky_sees_the_deck_under_it() {
     // The "through the floor" respawn: top_under needs the body to already overlap a
     // box, so a probe from DROP_HEIGHT never matches — floor = None, the whole

@@ -563,5 +563,41 @@ check(rs.indexOf("hypot(*cz - jz) <= CLAIM_R && (*cy - jy).abs() <= CLAIM_R") >=
 check(rs.indexOf("*cy > b[4] + 8.0") >= 0,
       "a claim naming a body outside the arena is never believed");
 
+// Wave O — nothing in MP can strand a gem or blank the chip. A late view / late
+// spawn must never rewind V.life (that made this_life reject every pos and the
+// claim was never written); a taken slot stays gone across a late view; the
+// consumed half of a Fusion clears; no local paint of judge-owned loot in MP.
+console.log("\nWave O — no life rewind, no resurrected gems, no ghost loot in MP");
+check(js.indexOf("if(fresh || wantLife > V.life || view.phase === \"warmup\"){") >= 0,
+      "applyView adopts only a HIGHER life — a stale view cannot rewind V.life");
+check(js.indexOf("if((m.e|0) < V.life) return;") >= 0,
+      "a spawn from a previous life never rewinds V.life");
+check(js.indexOf("if(fresh || (p.e|0) >= V.life) V.dead = !!p.dead;") >= 0,
+      "a stale view cannot latch a live player into death");
+check(js.indexOf("var VIEW_KEEP_SECS = 8;") >= 0
+      && js.indexOf("if(vItems[vi] && V.items[vi] === 0 && V.goneAt && (V.goneAt[vi]|0) && (nowV - V.goneAt[vi]) < VIEW_KEEP_SECS) vItems[vi] = 0;") >= 0,
+      "applyView keeps a take we already booked — a late view cannot repaint the gem");
+check(js.indexOf("V.goneAt = V.goneAt || {}; V.goneAt[m.i|0] = now();") >= 0,
+      "the pick handler stamps V.goneAt so the keep above has something to hold");
+check(js.indexOf("if(m.j != null){") >= 0
+      && js.indexOf("V.items[fj] = 0; if(V.goneAt) V.goneAt[fj] = t;") >= 0,
+      "a fused slot's consumed half (j) is cleared on every client");
+check(rs.indexOf("\"j\": y") >= 0 || rs.indexOf("\"j\": y,") >= 0 || rs.indexOf("\"j\": y}") >= 0
+      || rs.indexOf("json!({\"i\": x, \"kind\": \"chaos\", \"j\": y})") >= 0,
+      "the judge ships the consumed half index on the fused event");
+check(js.split("function wardenLoot(")[1].split("function ")[0].indexOf("if(V.mode === \"mp\") return;") >= 0,
+      "wardenLoot never paints ghost gems in MP — the judge owns those slots");
+check(js.split("function droneShootDown(")[1].split("function ")[0].indexOf("if(!mp){") >= 0,
+      "a drone wreck never drops local loot / disaster in MP — the judge owns them");
+check(js.indexOf("MAP.pickups.forEach(function(pk, i){") >= 0
+      && js.indexOf("V.goneAt = V.goneAt || {}; V.goneAt[i] = now();") >= 0,
+      "MP walk-over hides the gem the instant the body is on it (solo feel)");
+check(js.indexOf("V.bananaUntil = Math.max(V.bananaUntil||0, t + 0.45);") >= 0
+      && js.indexOf("V.lavaUntil = Math.max(V.lavaUntil||0, t + 0.45);") >= 0,
+      "a snapshot TTL never SHORTENS the full clock the pick already set");
+check(js.indexOf("if(knd === \"banana\"){ V.bananaUntil = t + TOTEMS.banana.dur;") >= 0
+      && js.indexOf("if(knd === \"turret\") V.turretUntil = t + TOTEMS.turret.dur;") >= 0,
+      "the MP pick starts the full window (banana/lava/Wave G) so the chip has time left");
+
 console.log(fails ? "\nFAILURES: " + fails : "\nALL PASS");
 process.exit(fails ? 1 : 0);

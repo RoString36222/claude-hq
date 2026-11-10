@@ -8813,7 +8813,12 @@ impl Strike {
                 self.items[x] = None;
                 self.kinds[y] = "";
                 self.items[y] = Some(t + 1e9);
-                self.pending.push(("fused", json!({"i": x, "kind": "chaos"})));
+                // `y` is the half that was consumed into the Chaos Core. Clients used to
+                // get only the survivor (`i`/`kind`), so slot y stayed painted as a
+                // takeable gem forever — the judge had already booked it and would never
+                // send a "pick", which is exactly "I go through them and they are left
+                // behind". `j` is the slot to clear on every client.
+                self.pending.push(("fused", json!({"i": x, "kind": "chaos", "j": y})));
             }
         }
         // gravflip / event low-gravity: stamp body.gm for bot bodies

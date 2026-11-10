@@ -327,6 +327,22 @@ recent releases.
     redeployed.**
   - Local only — no new network calls, no new third-party assets, no change to privacy or egress.
 - **Multiplayer totems are taken at the body you are actually standing in.** The referee's copy of you freezes on a speed-cap, canopy or rate-limit refusal; the old 4 m leash to that frozen copy threw the walk-over away the moment you got ahead of it, so singles and bunches were left behind. A live walk now owns the take at the position you send, and only a stalled claim is still leashed (anti-teleport). The client also lights the top-left chip the moment a totem is taken, with its time remaining, exactly like solo.
+- **Multiplayer totems stop being left behind, and the chip lights up like solo.** Walk-through takes still failed
+  after the claim fix, and the top-left window was often blank. Three leftover-gem holes are closed and the take is
+  now as smooth and as fast as solo:
+  - **No more ghost gems in MP.** A shot-down drone (and the Warden's loot) used to paint one-shot slots locally that
+    the judge never wrote — gems no `"pick"` could ever clear. The judge owns those slots; the client only paints
+    what the judge ships (`"totem"` / `"pack"`). Totem Fusion's consumed half is cleared too (`"fused"` now carries
+    `j`), so a merge cannot leave a phantom gem standing. **Judge-side (`"fused"` `{i, kind, j}`): not live in MP
+    until the Arena host is redeployed (`ops/release.sh deploy`).**
+  - **A late view cannot repaint or rewind.** A `"view"` snapshot built before a take used to paint the gem straight
+    back, and one built before a respawn could rewind `V.life` — after which every `"pos"` failed the this-life gate,
+    the claim was never written, and totems under the boots were never taken. A take we already booked stays won for
+    8 s against a late view, and the life clock only ever moves forward (same on a late `"spawn"`).
+  - **Instant feedback, like solo.** The gem disappears the moment the body is on it, and the top-left chip starts its
+    window right there (Banana / Lava / Reverse / Roulette and the Wave G gadgets included). A snapshot's short
+    keep-alive TTL no longer shortens the real clock, so the chip shows the time that is actually left.
+  - Local only — no new network calls, no new third-party assets, no change to privacy or egress.
 - **3.38.7 — Strike Zone: drone wreck loot sticks around.**
   - **Shooting a drone down no longer erases the last wreck's totems.** A falling drone scatters three personal totems
     around the wreck. Those used to land in the same recycled totem ring the timed drop clock uses (three slots,

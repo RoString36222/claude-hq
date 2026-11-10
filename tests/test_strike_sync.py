@@ -375,6 +375,12 @@ class StrikeSync(unittest.TestCase):
         self.assertIn("droneDetach(D, t);", js)
         self.assertIn("droneTotemDrop(x, z, s, t);", js)
         self.assertIn("disStart(dkind, t);", js)
+        # MP: the judge owns the wreck loot and the disaster — a local drop would
+        # append ghost gems past the rings that no "pick" can ever clear
+        shoot = js.split("function droneShootDown(")[1].split("function ")[0]
+        self.assertIn("var mp = V.mode === \"mp\";", shoot)
+        self.assertIn("if(!mp){", shoot)
+        self.assertNotIn("droneTotemDrop", shoot.split("if(!mp){")[0], "loot must be inside the !mp gate")
         self.assertIn("pub fn drone_down(&mut self, di: usize", rs)
         self.assertIn("fn drone_totem_drop(", rs)
         self.assertIn("fn drone_detach(", rs)

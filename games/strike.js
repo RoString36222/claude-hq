@@ -1282,6 +1282,10 @@ function disKind(seed, salt, n){
 // drop (fresh kind, fresh spot, repetitions allowed) replaces the oldest one, taken or
 // not — so slot indices stay stable all match while the drops themselves never stop.
 var DROP_SLOTS = 3, PACK_SLOTS = 2, PACK_GAP = 8, TOTEM_GAP = 10, TOTEM_FIRST = 8, PACK_FIRST = 6, BASE_PACKS = 7;
+// How long a take we already booked stays won against a late "view" snapshot (applyView).
+// A view is built when it is asked for and can race a "pick"; without this the snapshot
+// repaints the gem the player just walked through. 8s is longer than any RTT + tick.
+var VIEW_KEEP_SECS = 8;
 // Black Hole visual scale — the ART is this many times the 2.2 m pull throat, so the
 // well reads as apocalyptic from anywhere on the map. Gameplay pull is NOT scaled by
 // it. Shared: the 2D map paints the same size the 3D mesh builds.
@@ -2124,7 +2128,7 @@ function makeGame(host, opts){
     V.bananas = []; V.bananaUntil = 0; V.lavaZones = []; V.lavaUntil = 0;
     V.turrets = []; V.turretUntil = 0; V.barrels = []; V.lasers = []; V.laserUntil = 0;
     V.pads = []; V.padUntil = 0;
-    V.taken = {}; V.liveSig = "";
+    V.taken = {}; V.liveSig = ""; V.goneAt = {};
     V.geese = []; V.blackholes = [];
     V.reverseUntil = 0; V.rouletteUntil = 0; V.rouletteNext = 0;
     others().forEach(function(P){ P.charmUntil = 0; P.freezeUntil = 0; P.danceUntil = 0; clearMarks(P); });
@@ -2871,6 +2875,11 @@ function makeGame(host, opts){
   function wardenLoot(ckpt, t){
     // one of each non-disaster totem + one health pack, scattered away from the body
     // (twin of Rust warden_loot: seed = born*0x9E3779B9 + 0x57A71001 + ckpt*64)
+    // MP: the judge owns these slots and ships them as "totem"/"pack" events. Painting
+    // them here would append ghost gems the judge never wrote — leftover totems no
+    // "pick" can ever clear. (Unreachable today: wardenTick/bots/blast are offline-only.
+    // The gate is the contract so a future caller cannot paint ghosts.)
+    if(V.mode === "mp") return;
     ensureDropSlots();
     var ALL = ["mole","freeze","decoy","cloak","shield","wings","leap","speed","teleport",
       "rift","mirror","gravflip","rewind","shock","magnet","chain","trap","mark","blink","bubble",
@@ -4205,6 +4214,7 @@ function makeGame(host, opts){
       V.kinds = V.kinds || []; while(V.kinds.length < idx) V.kinds.push(""); V.kinds[idx] = kind;
       V.cursed = V.cursed || {}; V.cursed[idx] = false;
       V.items = V.items || []; while(V.items.length < idx) V.items.push(0); V.items[idx] = 1;
+      if(V.goneAt) delete V.goneAt[idx];
       if(V.itemBack) delete V.itemBack[idx];
       if(R3){ if(TOTEMS[kind]) R3.addTotem(idx, MAP.pickups[idx]); }
       out.push(idx);
@@ -4220,6 +4230,11 @@ function makeGame(host, opts){
     }
   }
   // the whole shoot-down: wreck + loot + arena event. `pos` is [x,y,z] where it died.
+  // Solo (practice / bots) is the referee: drop the loot and start the disaster here.
+  // MP the judge is: its fire() calls drone_down() and broadcasts the totems + the
+  // disaster. Painting them here too left GHOST gems (appended past the rings at
+  // indices the judge never wrote) that no "pick" could ever clear — the leftover
+  // totems the player kept walking through ("taken very late" / "coming in bulk").
   function droneShootDown(D, pos, t, seed){
     if(!D) return null;
     if(D.downUntil && D.downUntil > t) return null;
@@ -4228,15 +4243,19 @@ function makeGame(host, opts){
     D.deadAt = t;
     D.deadX = x; D.deadZ = z;
     droneDetach(D, t);
-    // 3 non-disaster totems where the drone fell
-    var s = (seed != null) ? (seed >>> 0) : ((((t * 1000) | 0) ^ (D.i|0) * 0x9e3779b9) >>> 0);
-    droneTotemDrop(x, z, s, t);
-    // a random disaster joins the arena (it ADDS to whatever is already running)
-    if(typeof disStart === "function" && DISASTERS && DISASTERS.length){
-      var dkind = DISASTERS[disKind(s, 19, DISASTERS.length)];
-      disStart(dkind, t);
+    var mp = V.mode === "mp";
+    if(!mp){
+      // 3 non-disaster totems where the drone fell
+      var s = (seed != null) ? (seed >>> 0) : ((((t * 1000) | 0) ^ (D.i|0) * 0x9e3779b9) >>> 0);
+      droneTotemDrop(x, z, s, t);
+      // a random disaster joins the arena (it ADDS to whatever is already running)
+      if(typeof disStart === "function" && DISASTERS && DISASTERS.length){
+        var dkind = DISASTERS[disKind(s, 19, DISASTERS.length)];
+        disStart(dkind, t);
+      }
     }
-    say("Drone down — loot dropped and the arena is angry");
+    say(mp ? "Drone down — the judge drops the loot and the arena is angry"
+           : "Drone down — loot dropped and the arena is angry");
     if(R3 && R3.ring) R3.ring(x, 0.15, z, 7, 0.6, t);
     if(R3 && R3.boom) R3.boom(x, 0.3, z, t);
     return D;
@@ -4701,21 +4720,38 @@ function makeGame(host, opts){
         cos: (p.user && p.user.cos) || null});
       if(uid === myId()){
         V.mySlot = p.slot|0; V.team = clamp(p.team|0, 0, 1); V.kills = p.kills|0; V.deaths = p.deaths|0; V.hp = p.hp|0;
-        if(fresh || V.life !== (p.e|0) || view.phase === "warmup"){
+        // A late/stale view can carry an OLDER life (built before the latest respawn).
+        // Rewinding V.life there made this_life() reject every later pos frame, the
+        // claim was never written, and every totem under the player's boots stayed
+        // put ("I go through them and they are left behind"). Adopt a higher e only —
+        // a lower one is already behind the body we are standing in.
+        var wantLife = p.e|0;
+        if(fresh || wantLife > V.life || view.phase === "warmup"){
           // A fresh join adopts the spawn's facing; a mid-match re-place (a view
           // broadcast racing a respawn) keeps the aim you already had — snapping yaw
           // there is what made a drop feel like the camera had been taken away.
           placeMe((+p.x || 0)/100, (+p.y || 0)/100, (+p.z || 0)/100, fresh ? (+p.r || 0)/100 : null);
-          V.life = p.e|0; fullAmmo(); V.w = p.w|0;
+          V.life = wantLife; fullAmmo(); V.w = p.w|0;
         }
-        V.dead = !!p.dead;
+        // Only a view from THIS life may latch death. A stale view that still names
+        // the old life would otherwise park a live player in respawn.
+        if(fresh || (p.e|0) >= V.life) V.dead = !!p.dead;
       } else if(fresh || P.snaps.length === 0){
         P.x = (+p.x || 0)/100; P.y = (+p.y || 0)/100; P.z = (+p.z || 0)/100; P.yaw = (+p.r || 0)*Math.PI/18000;
       }
     });
     V.order.slice().forEach(function(uid){ if(!seen[uid]) drop(uid); });
     ensureDropSlots();   // the server's slot list includes the drop rings; match its layout
-    V.items = Array.isArray(view.items) ? view.items.slice() : MAP.pickups.map(function(){ return 1; });
+    // A full view is a snapshot taken when the server built it. If a "pick" raced it
+    // (rejoin / lobby "back" / a mid-match "view"), that snapshot still lists the slot
+    // as present and would REPAINT the gem we just walked through — the leftover totem
+    // again. Keep slots the client already cleared in the last VIEW_KEEP_SECS.
+    var vItems = Array.isArray(view.items) ? view.items.slice() : MAP.pickups.map(function(){ return 1; });
+    var nowV = now();
+    for(var vi = 0; vi < vItems.length; vi++){
+      if(vItems[vi] && V.items[vi] === 0 && V.goneAt && (V.goneAt[vi]|0) && (nowV - V.goneAt[vi]) < VIEW_KEEP_SECS) vItems[vi] = 0;
+    }
+    V.items = vItems;
     while(V.items.length < MAP.pickups.length) V.items.push(0);
     V.kinds = Array.isArray(view.kinds) ? view.kinds.slice() : [];
     while(V.kinds.length < MAP.pickups.length) V.kinds.push("");
@@ -4836,6 +4872,11 @@ function makeGame(host, opts){
     if(m.ev === "spawn"){
       var S = V.players[m.user];
       if(m.user === myId()){
+        // A spawn from a PREVIOUS life (late/dup socket frame) must not rewind
+        // V.life — this_life() would then reject every later pos, the claim would
+        // never be written, and totems under the boots would never be taken.
+        // place() increments life, so a real spawn is always strictly newer.
+        if((m.e|0) < V.life) return;
         // null yaw: keep the aim you died with (the judge's r is the spawn's facing,
         // not yours). Kill cam releases the instant the spawn lands.
         placeMe((+m.x || 0)/100, (+m.y || 0)/100, (+m.z || 0)/100, null); V.life = m.e|0; V.dead = false; V.hp = 100; V.hpAcc = 0; V.killCam = null;
@@ -4874,6 +4915,9 @@ function makeGame(host, opts){
     }
     if(m.ev === "pick"){
       V.items[m.i|0] = 0;
+      // stamp the take so a later full "view" (built before this pick landed) cannot
+      // repaint the gem we just walked through — see applyView's VIEW_KEEP_SECS keep
+      V.goneAt = V.goneAt || {}; V.goneAt[m.i|0] = now();
       var knd = m.kind || (V.kinds && V.kinds[m.i|0]) || (MAP.pickups[m.i|0] && MAP.pickups[m.i|0].id[0] === "h" ? "health" : "ammo");
       var picker = V.players[m.user], pname = m.user === myId() ? "You" : (picker ? picker.name : "?");
       feedItem(pname, picker ? picker.team : V.team, knd, t);
@@ -4911,15 +4955,22 @@ function makeGame(host, opts){
           if(knd === "fate") V.fateUntil = t + TOTEMS.fate.dur;
           if(knd === "radarjam") V.jamUntil = t + TOTEMS.radarjam.dur;
           if(knd === "bighead") V.bigHeadUntil = t + TOTEMS.bighead.dur;
+          // Wave G windows (the HUD row; the judge owns the objects themselves)
+          if(knd === "turret") V.turretUntil = t + TOTEMS.turret.dur;
+          if(knd === "laser") V.laserUntil = t + TOTEMS.laser.dur;
+          if(knd === "jumppad") V.padUntil = t + TOTEMS.jumppad.dur;
           // Disco: the server judged who dances (everyone else) and the trigger lock
           // rides the snapshot's FLAG_DISCO; this is only the taker's own say.
           if(knd === "disco") say("Disco: everyone but you dances for "+TOTEMS.disco.dur+"s — they can't shoot");
-          if(knd === "banana") say("Banana Panic: peels everywhere for "+TOTEMS.banana.dur+"s");
-          if(knd === "lava") say("Floor Is Lava: the ground burns for "+TOTEMS.lava.dur+"s — get high");
+          // Arena-wide windows: start the FULL clock here (like solo totemApply).
+          // The snapshot's short self-renewing TTL only keeps them alive; it must not
+          // be the clock the HUD reads, or the chip shows 0.5s forever.
+          if(knd === "banana"){ V.bananaUntil = t + TOTEMS.banana.dur; say("Banana Panic: peels everywhere for "+TOTEMS.banana.dur+"s"); }
+          if(knd === "lava"){ V.lavaUntil = t + TOTEMS.lava.dur; say("Floor Is Lava: the ground burns for "+TOTEMS.lava.dur+"s — get high"); }
           if(knd === "goose") say("Goose Attack: a very angry goose for "+TOTEMS.goose.dur+"s");
-          if(knd === "reverse") say("Reverse Controls: WASD is backwards for "+TOTEMS.reverse.dur+"s");
+          if(knd === "reverse"){ V.reverseUntil = t + TOTEMS.reverse.dur; say("Reverse Controls: WASD is backwards for "+TOTEMS.reverse.dur+"s"); }
           if(knd === "blackhole") say("Black Hole: everything gets sucked in for "+TOTEMS.blackhole.dur+"s");
-          if(knd === "roulette") say("Weapon Roulette: everyone's gun re-rolls every 2s for "+TOTEMS.roulette.dur+"s");
+          if(knd === "roulette"){ V.rouletteUntil = t + TOTEMS.roulette.dur; say("Weapon Roulette: everyone's gun re-rolls every 2s for "+TOTEMS.roulette.dur+"s"); }
           if(knd === "rewind") V.secondWind = true;
           if(knd === "secondwind") V.secondWind = true;
           if(knd === "shock"){
@@ -4972,6 +5023,13 @@ function makeGame(host, opts){
         MAP.pickups[fi].kind = fk;
         MAP.pickups[fi].id = fk + "-" + fi;
         if(R3) R3.addTotem(fi, MAP.pickups[fi]);
+      }
+      // the consumed half (j) leaves the map with the merge — never a leftover gem
+      if(m.j != null){
+        var fj = m.j|0;
+        V.items[fj] = 0; if(V.goneAt) V.goneAt[fj] = t;
+        if(V.kinds && fj >= 0 && fj < V.kinds.length) V.kinds[fj] = "";
+        if(MAP.pickups[fj]){ MAP.pickups[fj].kind = ""; MAP.pickups[fj].id = "x-" + fj; }
       }
       say("Totem Fusion: a Chaos Core just formed");
       return;
@@ -5058,7 +5116,7 @@ function makeGame(host, opts){
       V.kinds[ti] = tk;
       V.items = V.items || [];
       while(V.items.length < MAP.pickups.length) V.items.push(0);
-      V.items[ti] = 1; if(V.itemBack) delete V.itemBack[ti];
+      V.items[ti] = 1; if(V.itemBack) delete V.itemBack[ti]; if(V.goneAt) delete V.goneAt[ti];
       if(R3) R3.addTotem(ti, MAP.pickups[ti]);
       return;
     }
@@ -5076,13 +5134,13 @@ function makeGame(host, opts){
       V.kinds[pi] = "";
       V.items = V.items || [];
       while(V.items.length < MAP.pickups.length) V.items.push(0);
-      V.items[pi] = 1; if(V.itemBack) delete V.itemBack[pi];
+      V.items[pi] = 1; if(V.itemBack) delete V.itemBack[pi]; if(V.goneAt) delete V.goneAt[pi];
       if(R3) R3.addPack(pi, MAP.pickups[pi]);
       return;
     }
     if(m.ev === "item"){
       var ii = m.i|0;
-      V.items[ii] = 1;
+      V.items[ii] = 1; if(V.goneAt) delete V.goneAt[ii];
       // a map pack that came back arrives with its new spot (cm / 100)
       if(m.x != null && MAP && MAP.pickups[ii]){
         MAP.pickups[ii].at = [(+m.x || 0)/100, 0, (+m.z || 0)/100];
@@ -5415,7 +5473,9 @@ function makeGame(host, opts){
         V.bananas.forEach(function(bp){ if(R3.addBanana) R3.addBanana(bp); });
         if(R3.keep) R3.keep("bananas", V.bananas);
       }
-      V.bananaUntil = t + 0.45;   // short self-renewing TTL: the rows are the source of truth
+      // short self-renewing TTL keeps the window alive; never SHORTEN a clock the
+      // "pick" already set to the full duration (that made the HUD chip read 0.5s)
+      V.bananaUntil = Math.max(V.bananaUntil||0, t + 0.45);
     } else if(V.bananas && V.bananas.length && V.mode === "mp"){
       if(R3 && R3.clearBananas) R3.clearBananas();
       V.bananas = []; V.bananaUntil = 0;
@@ -5426,7 +5486,7 @@ function makeGame(host, opts){
         V.lavaZones.forEach(function(lz){ if(R3.addLavaZone) R3.addLavaZone(lz); });
         if(R3.keep) R3.keep("lava", V.lavaZones);
       }
-      V.lavaUntil = t + 0.45;
+      V.lavaUntil = Math.max(V.lavaUntil||0, t + 0.45);
     } else if(V.lavaZones && V.lavaZones.length && V.mode === "mp"){
       if(R3 && R3.clearLavaZones) R3.clearLavaZones();
       V.lavaZones = []; V.lavaUntil = 0;
@@ -6431,6 +6491,28 @@ function makeGame(host, opts){
       V.items[i] = 0;
       if(i < BASE_PACKS){ V.itemBack = V.itemBack || {}; V.itemBack[i] = t + 15; }
     });
+    // MP walk-over: hide the gem the instant the body is on it, and light the 3s
+    // "just now" chip the same way solo's take does. The judge still owns the take
+    // (its "pick" is the authority and starts the real effect window / charges), but
+    // waiting a full RTT + tick for the mesh to vanish is what made MP feel late
+    // next to solo. Totems only — a health/ammo pack can be refused (already full),
+    // and a false clear there would make the pack vanish while the judge still has
+    // it. Effect windows stay on the "pick": a contested take (two bodies on the
+    // same square) must not leave a fake clock on the loser.
+    if(V.mode === "mp" && V.phase === "round" && !V.dead){
+      MAP.pickups.forEach(function(pk, i){
+        if(!V.items[i]) return;
+        var knd0 = (V.kinds && V.kinds[i]) || pk.kind || "";
+        if(!TOTEMS[knd0]) return;
+        if(Math.abs(V.me.x - pk.at[0]) > 1.1 || Math.abs(V.me.z - pk.at[2]) > 1.1) return;
+        if(pk.at[1] > 1.5 && Math.abs(V.me.y - pk.at[1]) > 2.2) return;
+        V.items[i] = 0;
+        V.goneAt = V.goneAt || {}; V.goneAt[i] = now();
+        // solo's HUD stamp: the stacked-effect row's 3s flash comes from V.taken;
+        // the real window (if any) starts on the judge's "pick"
+        V.taken = V.taken || {}; V.taken[knd0] = t;
+      });
+    }
     // taken packs come back: practice refills them all, bot matches refill the map's own
     // packs (the drop-ring slots never respawn in place — the drop clocks replace them).
     // Every return re-rolls the spot so camping a pad pays nothing.

@@ -2291,8 +2291,6 @@ function mount(el, api){
     mountOn(b, i);
   }
   // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
-  // TEMP-HQDEV (remove before the PR): a test hook for the realism revamp
-  if(/hqdev/.test(location.search)){ window.__hq3d = {mount: function(i){ return mount(i); }, cur: function(){ return cur; }, avatar: function(){ return avatar; }, view: view, kinds: function(){ return Object.keys(VEHICLES); }, ride: function(kind){ if(ride) return "riding"; var b = {g: new THREE.Group(), x: avatar.x, z: avatar.z, yaw: avatar.yaw, color: "#c0392b", accent: "#222", kind: kind}; mountOn(b, -1); return !!ride; }, ridek: function(){ return ride; }, enter: function(n){ enterWorld(n, null, true); return !!cur; }, desks: function(){ return desks; }, worldName: function(){ return Object.keys(worlds).filter(function(k){ return worlds[k] === cur; })[0]; }, iso: function(keep){ cur.scene.children.forEach(function(c){ if(c !== avatar.g && !c.isLight && (!keep || keep.indexOf(c) < 0)) c.visible = false; }); cur.scene.background = new THREE.Color(0xdde6e0); return cur.scene.children.length; }, THREE: function(){ return THREE; }, look: function(dx, dy, dz, ty, fov){ var c = window.__hqcam || (window.__hqcam = new THREE.PerspectiveCamera(fov || 30, inst.w/inst.h, 0.05, 200)); var g = avatar.g.position, yw = avatar.yaw, cs = Math.cos(yw), sn = Math.sin(yw); c.position.set(g.x + dx*cs + dz*sn, g.y + dy, g.z - dx*sn + dz*cs); c.lookAt(g.x, g.y + (ty == null ? 0.9 : ty), g.z); c.aspect = inst.w/inst.h; c.updateProjectionMatrix(); return [g.x, g.y, g.z]; }, people: function(){ return peers; }}; }
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", base = baseKind(kind), car = base === "car", Vc = VEHICLES[kind].cat, boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
@@ -4843,7 +4841,7 @@ function mount(el, api){
     return y != null && isFinite(y) ? y : null;
   }
   // The camera that draws and picks: the perspective one in every rig mode but Classic.
-  function curCam(){ if(window.__hqcam) return window.__hqcam; return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }   // TEMP-HQDEV
+  function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
   // [sound] where that camera hears from (E.listener's at, with its facing): Classic from what it looks at, the Map from
   // the ground at its centre (its camera is hundreds of metres up, past every world sound's reach), the rest from the
   // camera itself (null)
@@ -6407,7 +6405,6 @@ function mount(el, api){
       var bOn = !!boomMe && !POOL.u && (!ride || ride.kind === "skate");
       boomStep(avatar.ch, bOn, t, bOn);
       gunStep(avatar.ch, GN.out && !ride, true);                       // [3.16] the launcher, on foot
-      if(window.__hqpose) window.__hqpose(avatar.ch, {poseApply: poseApply, railApply: railApply, headApply: headApply, boomStep: boomStep}, t);   // TEMP-HQDEV
     }
     placePeers(dt, t);
     tankFrame(dt);                                                     // [3.16] tanks: the turret, a gunner's aim
@@ -6457,7 +6454,7 @@ function mount(el, api){
       D.pet.children[0].position.y = 0.4 + hop*k;
     });
     streams.forEach(function(s){ s.dots.forEach(function(d, i){ var u = (t*s.speed*k + i/4) % 1; if(s.dir < 0) u = 1 - u; s.curve.getPoint(u, d.position); d.material.opacity = Math.sin(u*PI); }); });
-    renderer.render(scene, window.__hqcam || cam);   // TEMP-HQDEV
+    renderer.render(scene, cam);
   }
 
   /* ---------- lifecycle ---------- */

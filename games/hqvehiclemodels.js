@@ -762,14 +762,14 @@ var FAM = {
   coupe: {sec: "saloon", h: [0.52, 0.61, 0.655, 0.7, 0.68], cab: [0.6, 1.0, 0.3, -0.36], gw: 0.82, tw: 0.6, plan: [0.88, 0.985, 0.9], fo: 0.45, gc: 0.12, seat: 0.24},
   ev:    {sec: "saloon", h: [0.52, 0.6, 0.65, 0.71, 0.69], cab: [0.6, 0.95, 0.3, -0.45], gw: 0.82, tw: 0.6, plan: [0.88, 0.985, 0.9], fo: 0.45, gc: 0.13, seat: 0.27},
   suv:   {sec: "suv", h: [0.53, 0.6, 0.64, 0.66, 0.62], cab: [0.42, 0.82, -0.72, -0.92], gw: 0.85, tw: 0.74, plan: [0.9, 0.99, 0.92], fo: 0.46, gc: 0.2, seat: 0.4},
-  super: {sec: "super", h: [0.28, 0.62, 0.64, 0.74, 0.7], cab: [0.16, 1.05, 0.9, -0.62], gw: 0.72, tw: 0.44, plan: [0.8, 0.9, 0.9], fo: 0.48, gc: 0.1, seat: 0.18, hood: 0.025},
-  hyper: {sec: "super", h: [0.33, 0.62, 0.65, 0.76, 0.73], cab: [0.28, 0.9, 0.72, -0.35], gw: 0.74, tw: 0.48, plan: [0.82, 0.92, 0.9], fo: 0.47, gc: 0.1, seat: 0.2, hood: 0.02}
+  super: {sec: "super", h: [0.28, 0.62, 0.64, 0.74, 0.7], cab: [0.16, 1.05, 0.9, -0.62], gw: 0.72, tw: 0.44, plan: [0.8, 0.9, 0.9], fo: 0.48, gc: 0.09, seat: 0.18, hood: 0.025},
+  hyper: {sec: "super", h: [0.33, 0.62, 0.65, 0.76, 0.73], cab: [0.28, 0.9, 0.72, -0.35], gw: 0.74, tw: 0.48, plan: [0.82, 0.92, 0.9], fo: 0.47, gc: 0.095, seat: 0.2, hood: 0.02}
 };
 // the designed cross-sections ([u, v]: u x / half width, v 0 sill .. 1 top), left side from the sill up to the centre
 var SECS = {
-  saloon: [[0.95, 0.06], [0.985, 0.18], [1.0, 0.42], [0.995, 0.6], [0.985, 0.72], [0.97, 0.745], [0.93, 0.8], [0.86, 0.9], [0.74, 0.955], [0.5, 0.985], [0.24, 0.997], [0.0, 1.0]],
+  saloon: [[0.95, 0.05], [0.985, 0.1], [0.995, 0.16], [1.0, 0.32], [1.0, 0.5], [0.996, 0.66], [0.99, 0.72], [0.982, 0.74], [0.962, 0.75], [0.93, 0.79], [0.87, 0.88], [0.76, 0.945], [0.5, 0.985], [0.24, 0.997], [0.0, 1.0]],
   suv: [[0.95, 0.05], [0.99, 0.2], [1.0, 0.45], [0.998, 0.62], [0.99, 0.74], [0.975, 0.77], [0.93, 0.84], [0.85, 0.92], [0.7, 0.965], [0.4, 0.99], [0.0, 1.0]],
-  super: [[0.93, 0.05], [0.985, 0.18], [1.0, 0.38], [0.99, 0.56], [0.965, 0.68], [0.92, 0.77], [0.84, 0.86], [0.68, 0.935], [0.4, 0.982], [0.0, 1.0]]
+  super: [[0.94, 0.04], [0.985, 0.1], [1.0, 0.26], [1.0, 0.44], [0.99, 0.58], [0.975, 0.66], [0.95, 0.7], [0.9, 0.78], [0.8, 0.88], [0.62, 0.95], [0.32, 0.988], [0.0, 1.0]]
 };
 // each model's cues (an unknown model gets its family's defaults). grille: a BMW kidney style; lamp / tail: the
 // lamp graphics; rim: the wheel design; extras as flags. dh / dcab: offsets on the family's heights and cabin.
@@ -874,7 +874,7 @@ function carShape(T, P, d){
   };
   var station = function(z){
     var w = half(z), yt = top(z), yb = bot(z), past = Math.max(z - (zN - capF), (zT + capR) - z, 0), cl = z > 0 ? capF : capR;
-    var k = past > 0 ? Math.sqrt(Math.max(0.02, 1 - (past/cl)*(past/cl))) : 1, fv = z > 0 ? (P.mid ? 0.18 : 0.82) : 0.45, h = (yt - yb)*(fv + (1 - fv)*k), fw = z > 0 ? (P.mid ? 0.86 : 0.7) : 0.4;
+    var k = past > 0 ? Math.sqrt(Math.max(0.02, 1 - (past/cl)*(past/cl))) : 1, fv = z > 0 ? (P.mid ? 0.18 : 0.82) : 0.78, h = (yt - yb)*(fv + (1 - fv)*k), fw = z > 0 ? (P.mid ? 0.86 : 0.72) : 0.74;   // flat-faced fascias
     w *= fw + (1 - fw)*k;                 // a saloon's fascia stands upright
     return {w: w, yb: yb + (yt - yb - h)*(z > 0 && P.mid ? 0.12 : 0.5), h: h, ay: archY(z), fl: flare(z)};   // a mid-engined nose: a low sharp leading edge
   };
@@ -1355,6 +1355,8 @@ function buildCar(T, entry, st, d, G){
       [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", COL.carbon, rbox(T, 0.012, 0.14, 0.36, 0.005, 1), sx*W*0.43, gy - 0.02, gz2); B.t("gloss").at(body, "trim", COL.black, rbox(T, 0.02, gy - gb, 0.09, 0.006, 1), sx*W*0.2, (gy + gb)/2, gz2 + 0.03); });
     }
     if(P.fins) [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", COL.carbon, prof(T, [[0.3, 0], [-0.5, 0], [-0.55, 0.22], [-0.2, 0.18]], 0.012, 0.004), sx*0.42, S.top(zr) - 0.02, zr - 0.25); });
+    if(P.brand === "bugatti" && !/Veyron/.test(String(entry.model || ""))) B.at(body, "paint", null, prof(T, [[S.zAr + 0.1, 0], [S.zC, 0], [S.zC + 0.2, 0.03], [S.zAr, 0.025]], 0.02, 0.006), 0, S.roof((S.zAr + S.zC)/2) - 0.03, 0);   // the spine
+    if(P.koen) [1, -1].forEach(function(sx){ [0, 1].forEach(function(k2){ B.t("carbon").at(body, "trim", COL.carbon, rbox(T, 0.16, 0.012, 0.1, 0.004, 1), sx*(hw - 0.1), gc + 0.18 + k2*0.09, S.skinZ(sx*(hw - 0.15), gc + 0.18 + k2*0.09, 1) + 0.02, 0, sx*0.3, sx*0.12); }); });   // canards
     if(P.fin) B.at(body, "paint", null, prof(T, [[0.4, 0], [-0.7, 0], [-0.75, 0.16], [0.0, 0.04]], 0.012, 0.004), 0, S.roof(S.zCr) - 0.03, S.zCr - 0.1);
     if(P.scoop) B.t("gloss").at(body, "trim", COL.black, sprof(T, [[0.25, 0], [-0.25, 0], [-0.2, 0.07], [0.15, 0.06]], 0.24, 0.02), 0, S.roof(S.zCr + 0.2) - 0.06, S.zCr + 0.2);
     if(P.periscope) B.t("gloss").at(body, "trim", COL.black, sprof(T, [[0.18, 0], [-0.25, 0], [-0.22, 0.07], [0.12, 0.06]], 0.22, 0.02), 0, S.roof(S.zCr + 0.1) - 0.03, S.zCr + 0.12);

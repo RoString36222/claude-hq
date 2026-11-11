@@ -49,6 +49,7 @@ var TINT = 0.32;                    // how far a near character's material leans
 var TALK_REACH = 3.2;
 var WARM_MS = 0.6;                  // route planning per frame (sim.warm), ms
 var JOG_STRIDE = 2.4, SPRINT_CLIP = 2.0;   // [crowds] metres per jog cycle; the sprint (Run) clip's own pace (m/s)
+var staggerN = 0;                   // [realism perf] the next slot's half-rate phase (alternates, so half the far mixers run each frame)
 var SIT_SINK = 0.42;                // [crowds] a far body sitting: how far it sinks (no sit pose at that distance)
 var DOG_FAR = 80, MAX_DOGS = 48;    // [play-street] dogs (a walker's on its lead, a loose one) drawn within this of the camera, at most
 var DOG_COLS = [0x8a5a2b, 0xf0e6d2, 0x2b2b2b, 0xc89b5a, 0x6b4a2f, 0xdedede, 0xa0522d];
@@ -471,10 +472,10 @@ function create(THREE, parent, sim, opts){
       if(r.anim === "walk" || (r.anim === "jog" && !acts.sprint)) setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP)/WALK_CLIP));
       else if(r.anim === "jog") setAnim(slot.ch, "sprint", Math.max(0.5, (r.speed || SPRINT_CLIP)/SPRINT_CLIP));
       else setAnim(slot.ch, r.anim === "sit" && acts.sit ? "sit" : "idle", 1);
-      // [realism perf] past 25 m a person's clips step every other frame (staggered, the time saved up): at that size
+      // [realism perf] past 25 m a person's clips step every other frame (staggered by slot, whatever the ids are; the time saved up): at that size
       // nobody sees 30 vs 60 poses a second, and 40 near people's mixers halve
       if(slot.ch.mixer){
-        slot.mt = (slot.mt || 0) + dt; slot.fc = (slot.fc == null ? (r.id | 0) : slot.fc) + 1;
+        slot.mt = (slot.mt || 0) + dt; slot.fc = (slot.fc == null ? (staggerN++) : slot.fc) + 1;
         if((r.d2 || 0) < 625 || slot.fc % 2 === 0){ slot.ch.mixer.update(slot.mt); slot.mt = 0; }
       }
     });

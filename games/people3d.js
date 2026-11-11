@@ -165,17 +165,34 @@ function skullBox(THREE, root, head){
 }
 
 // [realism perf] People were never frustum-culled (a skinned mesh's bounds are its bind pose, so they were switched off
-// wholesale): every person drew, and cast, from behind the camera too. A skinned body gets a fixed sphere instead, its
-// bind-pose sphere grown x1.6 (arms out, a stride, a seat's lean all stay inside), and culls like anything else.
+// wholesale): every person drew, and cast, from behind the camera too. A sub-mesh's own bind sphere does not hold its
+// posed limbs (a sprinting shoe or a seated rider's hand swings 20-40 cm past it), so every skinned part of one person
+// gets the same sphere: the whole body's, centred on the bind hips, radius the body's largest bind extent (about 1.7 m;
+// measured over every clip, the wave's raised hand needs 0.9 of it, a stride, a seat's legs out front and IK grips
+// less). Seats move o, never the hips, so the sphere follows the body.
 function cullable(THREE, root){
+  root.updateMatrixWorld(true);
+  var inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), rel = new THREE.Matrix4();
+  var box = new THREE.Box3(), gb = new THREE.Box3(), meshes = [], hips = null;
   root.traverse(function(n){
+    if(n.isBone && !hips && /hips/i.test(n.name)){ hips = n; }
     if(!n.isMesh){ return; }
     n.frustumCulled = true;
-    if(n.isSkinnedMesh){
-      if(!n.geometry.boundingSphere){ n.geometry.computeBoundingSphere(); }
-      var bs = n.geometry.boundingSphere.clone(); bs.radius *= 1.6;
-      n.boundingSphere = bs;
-    }
+    if(!n.isSkinnedMesh){ return; }
+    if(!n.geometry.boundingBox){ n.geometry.computeBoundingBox(); }
+    rel.multiplyMatrices(inv, n.matrixWorld);
+    box.union(gb.copy(n.geometry.boundingBox).applyMatrix4(rel));
+    meshes.push(n);
+  });
+  if(!meshes.length || box.isEmpty()){ return; }
+  var c = hips ? hips.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv) : box.getCenter(new THREE.Vector3());
+  var r = Math.max(box.max.y - box.min.y, box.max.x - box.min.x, box.max.z - box.min.z);
+  var lc = new THREE.Vector3(), sc = new THREE.Vector3();
+  meshes.forEach(function(n){
+    rel.multiplyMatrices(inv, n.matrixWorld);
+    sc.setFromMatrixScale(rel);
+    lc.copy(c).applyMatrix4(rel.invert());
+    n.boundingSphere = new THREE.Sphere(lc.clone(), r / (Math.max(sc.x, sc.y, sc.z) || 1));
   });
 }
 // geometry detail: 1 for your own and the people near you, less for crowds (crowdHead)

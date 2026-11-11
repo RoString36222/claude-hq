@@ -800,6 +800,7 @@ function carSpec(entry, st, d){
     P.tw = 0.5; P.gw = 0.76; P.plan = [P.koen === "jesko" ? 0.7 : 0.82, 0.9, P.koen === "jesko" ? 0.8 : 0.92];
   }
   if(P.mid && !P.grille && !P.grilleL && b !== "lamborghini" && b !== "koenigsegg") P.grilleL = "mouth";
+  if(!P.mid && !P.grille && !P.grilleL){ P.grilleL = "city"; P.lamp = "round"; P.tail = "bar"; P.rim = "y"; P.spokes = 5; }
   return P;
 }
 
@@ -1113,6 +1114,10 @@ function grilleParts(B, body, S, P, yG){
     at("trim", COL.chrome, "chrome", flat(T, hs, 0.04, 0.008), 0, hsy, -0.004);
     at("trim", COL.black, "honey", flat(T, hs.map(function(p){ return [p[0]*0.85, (p[1] - 0.04)*0.85 + 0.04]; }), 0.02), 0, hsy, 0.01);
   }
+  if(P.grilleL === "city" || P.grilleL === "mouth"){                              // an original city car's smile
+    at("trim", COL.black, "honey", flat(T, [[0.34, 0.05], [-0.34, 0.05], [-0.28, -0.06], [0.28, -0.06]], 0.03, 0.006), 0, yG - 0.16, 0.0);
+    at("trim", COL.chrome, "chrome", flat(T, [[0.36, 0.064], [-0.36, 0.064], [-0.36, 0.05], [0.36, 0.05]], 0.012), 0, yG - 0.16, 0.012);
+  }
   if(P.grilleL === "hex"){
     at("trim", COL.black, "honey", flat(T, [[0.42, 0.06], [0.3, -0.12], [-0.3, -0.12], [-0.42, 0.06], [-0.3, 0.1], [0.3, 0.1]], 0.03, 0.005), 0, yG - 0.12, 0.0);
   }
@@ -1321,7 +1326,7 @@ function buildCar(T, entry, st, d, G){
     }
     if(P.fins) [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", COL.carbon, prof(T, [[0.3, 0], [-0.5, 0], [-0.55, 0.22], [-0.2, 0.18]], 0.012, 0.004), sx*0.42, S.top(zr) - 0.02, zr - 0.25); });
     if(P.fin) B.at(body, "paint", null, prof(T, [[0.4, 0], [-0.7, 0], [-0.75, 0.16], [0.0, 0.04]], 0.012, 0.004), 0, S.roof(S.zCr) - 0.03, S.zCr - 0.1);
-    if(P.scoop) B.t("gloss").at(body, "trim", COL.black, sprof(T, [[0.25, 0], [-0.25, 0], [-0.2, 0.09], [0.15, 0.08]], 0.24, 0.02), 0, S.roof(S.zCr + 0.2) - 0.02, S.zCr + 0.2);
+    if(P.scoop) B.t("gloss").at(body, "trim", COL.black, sprof(T, [[0.25, 0], [-0.25, 0], [-0.2, 0.07], [0.15, 0.06]], 0.24, 0.02), 0, S.roof(S.zCr + 0.2) - 0.06, S.zCr + 0.2);
     if(P.periscope) B.t("gloss").at(body, "trim", COL.black, sprof(T, [[0.18, 0], [-0.25, 0], [-0.22, 0.07], [0.12, 0.06]], 0.22, 0.02), 0, S.roof(S.zCr + 0.1) - 0.03, S.zCr + 0.12);
     // the rear calipers (they never steer): on the body
     [1, -1].forEach(function(sx){ carCaliper(B, body, "trim", P.tr[2]*0.0127, twR, sx, P.cal, sx*(hw - 0.02 - twR/2), S.Rr, zr); });
@@ -1467,510 +1472,473 @@ function buildFormula(T, entry, st, d){
   [[-(W/2 - twF/2), zf, "steer-l", -1, twF], [W/2 - twF/2, zf, "steer-r", 1, twF], [-(W/2 - twR/2), zr, null, -1, twR], [W/2 - twR/2, zr, null, 1, twR]].forEach(function(p, i){
     var h = B.node(root, p[2], p[0], R, p[1]);
     wheels.push(f1Wheel(B, h, "wheel-" + i, R, p[4], p[3], trimC));
+    B.lod = 1;                                                                          // [4.0] LOD 1: a drum
+    B.t("rubber").at(wheels[i], "wheel", COL.tyre, new T.CylinderGeometry(R, R, p[4], 14, 1, false), 0, 0, 0, 0, 0, PI/2);
+    B.lod = 0;
   });
+  // [4.0] LOD 1 (far): the tub and nose, the sidepods, both wings, the halo, in a few blocks
+  B.lod = 1;
+  B.at(body, "paint", null, sprof(T, [[L/2 - 0.05, 0.22], [zf, 0.42], [zCk + 0.3, 0.62], [zCk - 0.4, H*0.92], [zr + 0.5, 0.6], [zr - 0.2, 0.42], [zr - 0.1, 0.12], [zf - 0.2, 0.1], [L/2 - 0.1, 0.12]], mw, 0.06, 18));
+  B.at(body, "paint", null, rbox(T, W*0.8 - 2*twR, 0.3, WB*0.42, 0.1, 1), 0, 0.3, zCk - 0.55);
+  B.at(body, "trim", acc, rbox(T, W*0.92, 0.04, 0.32, 0.01, 1), 0, 0.12, L/2 - 0.22);
+  B.at(body, "trim", acc, rbox(T, W*0.5, 0.05, 0.3, 0.01, 1), 0, H*0.85, -L/2 + 0.25);
+  B.at(body, "trim", trimC, rbox(T, W*0.9, 0.02, WB*0.7, 0.01, 1), 0, gc + 0.01, (zf + zr)/2);
+  B.lod = 0;
   finish(T, root);
   return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: -0.02, riderK: riderK, plates: []}};
 }
 
-/* ---------- bikes ---------- */
-// a bike's wheel: a round-profile tyre, the rim's bright lip, cast spokes (wire spokes: an adventure bike's), the
-// discs (front: one or two, the rear's on the right), the rear's sprocket on the left (model-local +x)
-// [3.13] the Tuning shop's rims (design 1-5: five-spoke, Y-spoke, wire, solid disc, ten-spoke; 0 the bike's own) and
-// a size step (sz -1..2: the rim grows inside the tyre; the tyre's outside never changes)
-function bikeWheel(B, p, name, R, tw, rim, discs, x, y, z, wire, sprocket, tape, solid, design, sz){
-  var T = B.T, w = B.node(p, name, x, y, z), tr = tw/2, ri = R - tw*(0.95 - 0.1*(sz | 0)), k = ri/(R - tw*0.95);
-  if(design === 3){ wire = true; solid = false; } else if(design === 4){ solid = true; wire = false; } else if(design){ wire = false; solid = false; }
-  var tyre = new T.TorusGeometry(R - tr, tr, 6, 22); tyre.rotateY(PI/2);
-  B.add(w, "wheel", tyre, COL.tyre);
-  var lip = new T.TorusGeometry(ri, 0.014, 3, 20); lip.rotateY(PI/2);
-  B.add(w, "wheel", lip, rim);
-  [1, -1].forEach(function(s){
-    B.t("rimtape").add(w, "wheel", new T.CircleGeometry(ri, 20), tape || COL.grey, s*tw*0.12, 0, 0, 0, s*PI/2, 0);   // [3.5.6] its rim tape
-    var spk = function(a, wd, dp){ B.box(w, "wheel", rim, wd, R*0.6*k, dp, s*(tw*0.12 + 0.008), Math.cos(a)*R*0.33*k, Math.sin(a)*R*0.33*k, a, 0, 0); };
-    if(solid) B.add(w, "wheel", new T.CircleGeometry(ri, 20), rim, s*(tw*0.12 + 0.006), 0, 0, 0, s*PI/2, 0);   // [3.9] a cruiser's solid disc
-    else if(wire){ for(var kw = 0; kw < 12; kw++){ var a = kw/12*PI*2 + (s > 0 ? 0 : PI/12); B.box(w, "wheel", COL.steel, 0.006, ri - tw*0.05, 0.006, s*tw*0.14, Math.cos(a)*(ri - tw*0.05)/2, Math.sin(a)*(ri - tw*0.05)/2, a, 0, s*0.12); } }
-    else if(design === 1) for(var k1 = 0; k1 < 5; k1++) spk(k1/5*PI*2 + (s > 0 ? 0 : PI/5), 0.012, 0.03);
-    else if(design === 2) for(var k6 = 0; k6 < 3; k6++) [-0.13, 0.13].forEach(function(da){ spk(k6/3*PI*2 + da + (s > 0 ? 0 : PI/3), 0.009, 0.03); });
-    else if(design === 5) for(var k5 = 0; k5 < 10; k5++) spk(k5/10*PI*2 + (s > 0 ? 0 : PI/10), 0.007, 0.025);
-    else for(var k2 = 0; k2 < 3; k2++){ var a2 = k2/3*PI*2 + (s > 0 ? 0 : PI/3); spk(a2, 0.012, 0.04); }
+/* ---------- [4.0] bikes: one parametric generator, each catalogue bike its own layout and cues ----------
+   Ported from the realism prototype's adventure bike (games/proto/bike.js): real wheelbase, tyre sizes, rake, seat
+   and bar heights; smooth side-profile panels (tank, shrouds, fairings, seat, tail) with livery panels laid on them;
+   the frame by type (KTM's orange trellis, aluminium beams, a steel cradle, the boxer's tube frame, a softail); the
+   engine by layout (single, parallel twin, triple, four, V-twin, V4, boxer, a 45-degree V-twin); cast, wire-spoked or
+   solid wheels on round tyres (knobbly on the adventure bikes) with discs and calipers; headers, cans, the chain,
+   lights, mirrors, levers, pegs. No logos. LOD 1 is a few blocks and drum wheels. */
+var BTYRES = {
+  "ktm-390-duke": [[110, 70, 17], [150, 60, 17]], "bmw-g-310-r": [[110, 70, 17], [150, 60, 17]], "ktm-990-duke": [[120, 70, 17], [180, 55, 17]],
+  "bmw-f-900-r": [[120, 70, 17], [180, 55, 17]], "ktm-1390-super-duke-r": [[120, 70, 17], [200, 55, 17]], "bmw-s-1000-r": [[120, 70, 17], [190, 55, 17]],
+  "bmw-g-310-rr": [[110, 70, 17], [150, 60, 17]], "ktm-rc-390": [[110, 70, 17], [150, 60, 17]], "bmw-s-1000-rr": [[120, 70, 17], [200, 55, 17]],
+  "bmw-m-1000-rr": [[120, 70, 17], [200, 55, 17]], "bmw-g-310-gs": [[110, 80, 19], [150, 70, 17]], "ktm-390-adventure": [[100, 90, 19], [130, 80, 17]],
+  "bmw-r-1300-gs": [[120, 70, 19], [170, 60, 17]], "ktm-1390-super-adventure-s": [[120, 70, 19], [170, 60, 17]],
+  "royal-enfield-classic-350": [[100, 90, 19], [120, 80, 18]], "royal-enfield-interceptor-650": [[100, 90, 18], [130, 70, 18]],
+  "harley-davidson-fat-boy-114": [[160, 60, 18], [240, 40, 18]], "kawasaki-ninja-h2": [[120, 70, 17], [200, 55, 17]],
+  "suzuki-hayabusa": [[120, 70, 17], [190, 50, 17]], "ducati-panigale-v4-s": [[120, 70, 17], [200, 60, 17]], "yamaha-r1": [[120, 70, 17], [190, 55, 17]],
+  "triumph-street-triple-765-rs": [[120, 70, 17], [180, 55, 17]], "suzuki-access-125": [[90, 90, 12], [90, 100, 10]]
+};
+// the families: rake (rad), the steering head's height and the seat's (m), the bars (half width, height over the head,
+// back from it), the pegs (height, back from the seat), how much the tank stands over the seat
+var BFAM = {
+  naked: {rake: 0.43, head: 0.93, seat: 0.82, bar: [0.37, 0.1, 0.1], peg: [0.36, -0.02], tank: 0.2},
+  sport: {rake: 0.41, head: 0.86, seat: 0.83, bar: [0.33, -0.03, 0.04], peg: [0.4, -0.12], tank: 0.16},
+  hypersport: {rake: 0.42, head: 0.87, seat: 0.81, bar: [0.34, -0.02, 0.05], peg: [0.39, -0.1], tank: 0.17},
+  adventure: {rake: 0.47, head: 1.04, seat: 0.85, bar: [0.43, 0.16, 0.08], peg: [0.42, 0.0], tank: 0.18},
+  classic: {rake: 0.47, head: 0.9, seat: 0.8, bar: [0.37, 0.2, 0.12], peg: [0.32, 0.06], tank: 0.21},
+  cruiser: {rake: 0.53, head: 0.86, seat: 0.675, bar: [0.47, 0.17, 0.16], peg: [0.3, 0.72], tank: 0.17},
+  scooter: {rake: 0.47, head: 0.98, seat: 0.77, bar: [0.34, 0.08, 0.02], peg: [0.3, 0.3], tank: 0}
+};
+function bikeSpec(entry, st, d){
+  var id = String((entry && entry.id) || ""), m = String((entry && entry.model) || ""), b = st.brand, sp = (entry && entry.spec) || {};
+  var F = BFAM[st.type] || BFAM.naked, ty = st.type, lay = String(sp.layout || ""), cc = +sp.cc || 0;
+  var P = {type: ty, brand: b, id: id, rake: F.rake, head: F.head, seat: F.seat, bar: F.bar.slice(), peg: F.peg.slice(), tank: F.tank,
+           eng: lay === "boxer-twin" || lay === "boxer" ? "boxer" : /v-twin-45/.test(lay) ? "v45" : /v-twin/.test(lay) ? "v2" : /v4/.test(lay) ? "v4" :
+                /inline-4|crossplane/.test(lay) ? "four" : /inline-3/.test(lay) ? "triple" : /twin/.test(lay) ? "twin" : "single",
+           frame: "spar", fCol: COL.alu, rim: "cast", spokes: 5, rimCol: COL.black, lamp: "round", fair: ty === "sport" || ty === "hypersport" ? "full" : ty === "adventure" ? "adv" : "none",
+           ex: "side", cal: COL.gold, livery: null, knobs: ty === "adventure", screen: ty === "adventure" || ty === "sport" || ty === "hypersport", small: cc > 0 && cc <= 400};
+  if(!P.small && cc === 0) P.small = /\b[1-4]\d\d\b/.test(m);
+  if(P.eng === "four" && ty === "hypersport" && b === "kawasaki") P.eng = "four";
+  P.tf = (BTYRES[id] || [[120, 70, 17], [P.small ? 150 : 180, P.small ? 60 : 55, 17]])[0];
+  P.tr = (BTYRES[id] || [[120, 70, 17], [P.small ? 150 : 180, P.small ? 60 : 55, 17]])[1];
+  if(b === "ktm"){ P.frame = "trellis"; P.fCol = COL.ktm; P.rimCol = ty === "adventure" ? COL.black : COL.ktm; P.lamp = ty === "adventure" ? "ktmAdv" : ty === "sport" ? "ktmRc" : "ktmSplit"; P.spokes = 3; P.cal = COL.black; P.livery = [COL.ktm, COL.black];
+    P.ex = /1390 Super Duke/.test(m) ? "stack" : ty === "adventure" ? "sideHigh" : "under"; if(/390 Adventure/.test(m)){ P.rim = "wire"; P.spokes = 36; } }
+  if(b === "bmw"){ P.frame = P.eng === "boxer" ? "boxer" : P.small ? "tube" : "spar"; P.fCol = P.small ? COL.dark : COL.alu; P.lamp = ty === "adventure" ? "gsX" : ty === "sport" ? "bmwRR" : P.small ? "round" : "bmwNaked";
+    P.rimCol = P.small ? COL.black : COL.dark; P.spokes = /M 1000/.test(m) ? 5 : P.small ? 5 : 10; P.cal = COL.bmwBlue; P.livery = [0xf3f3ef, COL.bmwBlue, 0xd3242b];
+    if(ty === "adventure"){ P.rim = "wire"; P.spokes = 40; P.rimCol = COL.alu; P.ex = P.eng === "boxer" ? "gsUp" : "sideHigh"; }
+    if(/M 1000/.test(m)){ P.rim = "carbon"; P.rimCol = COL.carbon; P.wings = true; P.ex = "ti"; }
+    if(/S 1000 RR/.test(m)) P.wings = false; }
+  if(b === "ducati"){ P.frame = "mono"; P.fCol = COL.black; P.lamp = "duc"; P.rimCol = COL.dark; P.spokes = 5; P.cal = COL.red; P.wings = true; P.ex = "belly"; }
+  if(b === "yamaha"){ P.frame = "spar"; P.fCol = COL.dark; P.lamp = "r1"; P.rimCol = COL.black; P.spokes = 5; P.cal = COL.gold; P.ex = "belly"; }
+  if(b === "kawasaki"){ P.frame = "trellis"; P.fCol = COL.kawa; P.lamp = "h2"; P.rimCol = COL.black; P.spokes = 5; P.cal = COL.gold; P.wings = true; P.ex = "h2"; }
+  if(b === "suzuki" && ty === "hypersport"){ P.frame = "spar"; P.fCol = COL.dark; P.lamp = "busa"; P.rimCol = COL.black; P.spokes = 6; P.cal = COL.gold; P.ex = "busa"; P.long = true; }
+  if(b === "triumph"){ P.frame = "spar"; P.fCol = COL.dark; P.lamp = "bug"; P.rimCol = COL.black; P.spokes = 5; P.ex = "under"; }
+  if(ty === "classic"){ P.frame = "cradle"; P.fCol = COL.black; P.lamp = "classic"; P.rim = "wire"; P.spokes = 40; P.rimCol = COL.chrome; P.cal = COL.dark; P.ex = P.eng === "twin" ? "pea2" : "pea"; P.screen = false; }
+  if(ty === "cruiser"){ P.frame = "softail"; P.fCol = COL.black; P.lamp = "cruiser"; P.rim = "solid"; P.rimCol = COL.alu; P.cal = COL.dark; P.ex = "shotgun"; P.screen = false; }
+  return P;
+}
+// a bike's wheel: a round tyre (knobs on an adventure bike), cast spokes / wire spokes / a solid disc, the hub, its
+// discs (sx side list: +1 left, -1 right), a sprocket; LOD 1 a drum and two faces
+function bikeWheel2(B, parent, name, x, y, z, R, tw, P, discs, rear, G, lod){
+  var T = B.T, w = B.node(parent, name, x, y, z), rim = (rear ? P.tr : P.tf)[2]*0.0127 + 0.01*(G.size | 0), rc = G.rimCol != null ? G.rimCol : P.rimCol;
+  var design = G.rim ? ["", "cast", "cast", "cast", "wire", "solid"][G.rim] : P.rim, n = G.rim ? [0, 5, 3, 10, 36, 0][G.rim] : P.spokes;
+  if(lod){
+    B.t("rubber").at(w, "wheel", COL.tyre, new T.CylinderGeometry(R, R, tw, 16, 1, false), 0, 0, 0, 0, 0, PI/2);
+    [1, -1].forEach(function(s){ var f = new T.CircleGeometry(rim, 12); f.rotateY(s*PI/2); B.t("satin").at(w, "wheel", rc, f, s*(tw/2 + 0.002), 0, 0); });
+    return w;
+  }
+  B.t("rubber").at(w, "wheel", COL.tyre, tyreG(T, rim, R - (P.knobs ? 0.008 : 0), tw, 36, 0.15, P.knobs ? 0 : 1, 10), 0, 0, 0);
+  if(P.knobs) for(var row = 0; row < 2; row++) for(var i = 0; i < 30; i++){
+    var a = (i + row*0.5)/30*PI*2, g = rbox(T, tw*0.34, 0.012, 0.03, 0.004, 1);
+    g.translate((row ? -1 : 1)*tw*0.2, R - 0.012, 0); g.rotateX(a); B.t("rubber").at(w, "wheel", COL.tyre, g, 0, 0, 0);
+  }
+  B.t("metal").at(w, "wheel", rc === COL.chrome ? COL.chrome : rc, ringG(T, rim, 0.012, 40, 6), 0, 0, 0);                         // the rim
+  B.t("satin").at(w, "wheel", COL.dark, new T.CylinderGeometry(rim - 0.004, rim - 0.004, tw*0.7, 32, 1, true), 0, 0, 0, 0, 0, PI/2);
+  var hubW = design === "wire" ? tw*0.62 : tw*0.5;
+  B.t("metal").at(w, "wheel", design === "wire" ? COL.alu : rc, discG(T, 0.05, hubW, 16), 0, 0, 0);
+  if(design === "wire"){
+    for(var k = 0; k < n; k++){
+      var ak = k/n*PI*2, sd = k % 2 ? 1 : -1, a2 = ak + sd*0.32;
+      B.t("chrome").at(w, "wheel", COL.steel, rodG(T, [sd*hubW*0.45, Math.cos(ak)*0.048, Math.sin(ak)*0.048], [sd*0.008, Math.cos(a2)*(rim - 0.01), Math.sin(a2)*(rim - 0.01)], 0.0022, 0.0022, 3), 0, 0, 0);
+    }
+  } else if(design === "solid"){
+    [1, -1].forEach(function(s){ var g = new T.CylinderGeometry(rim - 0.005, rim - 0.005, 0.01, 40, 1); g.rotateZ(PI/2); var p = g.attributes.position;
+      for(var q = 0; q < p.count; q++){ var rr = Math.hypot(p.getY(q), p.getZ(q)); p.setX(q, p.getX(q) + s*(0.03*(1 - rr/rim))); } g.computeVertexNormals();
+      B.t("chrome").at(w, "wheel", rc, g, s*tw*0.22, 0, 0); });
+  } else {
+    for(var k2 = 0; k2 < n; k2++){
+      var a3 = k2/n*PI*2, pairs = P.spokes === 3 ? [-0.14, 0.14] : P.spokes === 10 || design === "carbon" ? [0] : [0];
+      pairs.forEach(function(off){
+        var g = rbox(T, 0.016, rim - 0.06, P.spokes === 3 ? 0.022 : 0.03, 0.006, 1), p = g.attributes.position;
+        for(var q = 0; q < p.count; q++){ var t = (p.getY(q) + (rim - 0.06)/2)/(rim - 0.06); p.setZ(q, p.getZ(q)*(1.25 - 0.5*t)); }
+        g.computeVertexNormals(); g.translate(0, 0.05 + (rim - 0.06)/2, 0); g.rotateX(a3 + off);
+        B.t(design === "carbon" ? "carbon" : "metal").at(w, "wheel", rc, g, 0, 0, 0);
+      });
+    }
+  }
+  var cast = design !== "wire";
+  discs.forEach(function(s){
+    var dr = rear ? 0.11 : P.small ? 0.15 : 0.16;
+    var dg = new T.RingGeometry(dr*0.62, dr, 36, 1); dg.rotateY(PI/2); B.t("metal").at(w, "wheel", COL.steel, dg, s*(hubW/2 + 0.012), 0, 0);
+    var dg2 = new T.RingGeometry(dr*0.62, dr, 36, 1); dg2.rotateY(-PI/2); B.t("metal").at(w, "wheel", COL.steel, dg2, s*(hubW/2 + 0.008), 0, 0);
+    B.t("satin").at(w, "wheel", COL.dark, discG(T, dr*0.62, 0.006, 18), s*(hubW/2 + 0.01), 0, 0);
+    for(var j = 0; j < 6; j++){ var aj = j/6*PI*2; B.t("chrome").at(w, "wheel", COL.chrome, discG(T, 0.006, 0.01, 6), s*(hubW/2 + 0.014), Math.cos(aj)*dr*0.66, Math.sin(aj)*dr*0.66); }
   });
-  (discs || []).forEach(function(s){
-    B.add(w, "wheel", new T.CylinderGeometry(R*0.55, R*0.55, 0.008, 16), COL.steel, s*(tr + 0.03), 0, 0, 0, 0, PI/2);
-    B.add(w, "wheel", new T.CylinderGeometry(R*0.3, R*0.3, 0.012, 10), COL.dark, s*(tr + 0.03), 0, 0, 0, 0, PI/2);   // the carrier
-  });
-  if(sprocket) B.add(w, "wheel", new T.CylinderGeometry(R*0.4, R*0.4, 0.012, 16), COL.dark, tr + 0.035, 0, 0, 0, 0, PI/2);
-  B.add(w, "wheel", new T.CylinderGeometry(0.045, 0.045, tw + 0.06, 8), COL.alu, 0, 0, 0, 0, 0, PI/2);
+  if(rear && P.frame !== "boxer"){                                                                       // the sprocket (left)
+    var sg = new T.CylinderGeometry(rim*0.42, rim*0.42, 0.008, 36); sg.rotateZ(PI/2); B.t("metal").at(w, "wheel", COL.dark, sg, hubW/2 + 0.02, 0, 0);
+  }
+  void cast;
   return w;
 }
+
 function buildBike(T, entry, st, d, G){
   G = G || GEO0;
-  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body"), t2 = function(){ return B.t("tone2"); };
-  var S = BIKE[st.type], WB = d.wheelbaseM, sc = d.heightM/DIMS["bike." + st.type].heightM;
-  var Rr = S.Rr, Rf = S.Rf, zr = -WB/2, zf = WB/2, yh = S.head*sc, ys = S.seat*Math.min(1.1, Math.max(0.9, sc));
-  var zh = zf - 0.3, zp = zr + WB*0.42, yp = 0.46, sp = entry.spec || {};
-  var ktm = st.brand === "ktm", bmw = st.brand === "bmw", sport = st.type === "sport" || st.type === "hypersport", adv = st.type === "adventure", naked = st.type === "naked";
-  // [3.9] the new bikes: a classic, a cruiser, a hypersport; and each maker's own cues
-  var hyp = st.type === "hypersport", classic = st.type === "classic", cruiser = st.type === "cruiser", br = st.brand;
-  var duc = br === "ducati", kawa = br === "kawasaki", ren = br === "royalenfield", hd = br === "harleydavidson", tri = br === "triumph", yam = br === "yamaha", suz = br === "suzuki";
-  var fresh = duc || kawa || ren || hd || tri || yam || suz || classic || cruiser || hyp, cyl = Math.max(1, Math.round(+sp.cyl || 0) || 2);
-  // [3.9] the existing makers' models, each its own face: KTM's 390 / 990 / 1390 Duke heads, the RC's single lamp, the
-  // Adventures' vertical split lamps; BMW's round G 310 R lamp, the F 900 R's angular one, the S 1000 R's brows, the
-  // S 1000 RR's asymmetric pair, the G 310 GS's asymmetric lamps (the R 1300 GS keeps its X)
-  var mdl = String(entry.model || ""), d990 = ktm && /990/.test(mdl), sdr = ktm && /1390 Super Duke/.test(mdl), f900 = bmw && /F 900/.test(mdl);
-  var s1kr = bmw && /S 1000 R$/.test(mdl), s1krr = bmw && /S 1000 RR/.test(mdl), m1k = bmw && /M 1000/.test(mdl), g310gs = bmw && /G 310 GS/.test(mdl);
-  var ssa = duc || kawa || sdr, trellis = ktm || kawa, twinShock = classic, old = classic || cruiser;
-  var boxer = sp.layout === "boxer" || (bmw && adv && (+sp.cc || 1300) > 900), small = (+sp.cc || 0) > 0 ? +sp.cc <= 400 : /\b[1-4]\d\d\b/.test(String(entry.model || ""));
-  var frame = ktm ? COL.ktm : kawa ? COL.kawa : bmw ? COL.alu : old || duc || yam ? COL.black : COL.grey, accent = ktm ? COL.ktm : bmw && sport ? COL.bmwBlue : COL.grey;
-  var zs0 = zr + WB*0.5, zs1 = zr + WB*0.12, rtw0 = cruiser ? 0.24 : classic ? 0.13 : sport ? 0.19 : 0.16;
-  // the frame: KTM's orange trellis, a BMW's aluminium beams
-  [1, -1].forEach(function(sx){
-    var x = sx*0.11;
-    if(trellis){
-      B.bar(body, "trim", frame, [x*0.5, yh - 0.04, zh - 0.02], [x, yp + 0.06, zp + 0.02], 0.022, null, true);
-      B.bar(body, "trim", frame, [x*0.5, yh - 0.02, zh - 0.04], [x, ys - 0.06, zs0], 0.022, null, true);
-      B.bar(body, "trim", frame, [x, ys - 0.06, zs0], [x, yp + 0.06, zp + 0.02], 0.018, null, true);
-      B.bar(body, "trim", frame, [x, yh - 0.2, zh - 0.2], [x, ys - 0.06, zs0 + 0.12], 0.016, null, true);
-      // [3.5.6] the trellis's triangulation: two more tubes between the rails
-      var m1 = [x*0.75, (yh - 0.04 + yp + 0.06)/2, (zh - 0.02 + zp + 0.02)/2], m2 = [x*0.8, (yh - 0.02 + ys - 0.06)/2, (zh - 0.04 + zs0)/2];
-      B.bar(body, "trim", frame, m1, m2, 0.014, null, true);
-      B.bar(body, "trim", frame, m1, [x, ys - 0.06, zs0], 0.014, null, true);
-    } else if(old){                                                                                    // [3.9] a steel cradle
-      B.bar(body, "trim", frame, [x*0.3, yh - 0.06, zh - 0.02], [x*0.8, 0.24, zh - 0.14], 0.02, null, true);
-      B.bar(body, "trim", frame, [x*0.8, 0.24, zh - 0.14], [x, 0.24, zp], 0.02, null, true);
-      B.bar(body, "trim", frame, [x*0.3, yh - 0.02, zh - 0.04], [x*0.7, ys - 0.08, zs0], 0.02, null, true);
-    } else B.bar(body, "trim", frame, [x*0.6, yh - 0.04, zh - 0.02], [x, yp + 0.08, zp + 0.04], 0.07, 0.12);
-    // the swingarm (a Ducati's and the H2's single-sided, on the left)
-    if(!ssa || sx > 0) B.bar(body, "trim", ktm ? COL.black : bmw || ssa ? COL.alu : old ? COL.black : COL.grey, [x*(ssa ? 1.2 : 1), yp, zp], [x*(ssa ? 1.3 : 1.05), Rr, zr], ssa ? 0.06 : 0.04, ssa ? 0.11 : 0.07);
-    B.bar(body, "trim", COL.dark, [x*0.9, ys - 0.08, zs0 - 0.02], [x*0.6, ys - 0.06, zr + 0.12], 0.03, 0.04);     // the subframe
-  });
-  // the shock: its body, the spring round it (by brand), a piggyback reservoir
-  var sa = [0, yp + 0.04, zp - 0.02], sb = [0, ys - 0.1, zs0 - 0.05], sl = function(f){ return [sa[0] + (sb[0] - sa[0])*f, sa[1] + (sb[1] - sa[1])*f, sa[2] + (sb[2] - sa[2])*f]; };
-  if(twinShock) [1, -1].forEach(function(sx){                                                         // [3.9] a classic's twin shocks
-    var ta = [sx*0.15, Rr + 0.05, zr + 0.06], tb = [sx*0.14, ys - 0.07, zr + WB*0.24];
-    B.bar(body, "trim", COL.dark, ta, tb, 0.016, null, true);
-    B.spring(body, "trim", COL.chrome, [ta[0], ta[1] + 0.06, ta[2] + 0.02], [tb[0], tb[1] - 0.04, tb[2] - 0.02], 0.032, 0.006, 4);
-  });
-  else if(!cruiser){
-    B.bar(body, "trim", COL.dark, sa, sb, 0.022, null, true);
-    B.spring(body, "trim", ktm ? COL.ktm : kawa ? COL.kawa : sport ? COL.gold : bmw ? 0xd8dde3 : 0xc8302c, sl(0.18), sl(0.78), 0.04, 0.007, 6);
-    B.bar(body, "trim", COL.gold, sl(0.85), [0.06, sb[1] - 0.02, sb[2] - 0.02], 0.022, null, true);
-  }
-  // [3.5.6] the swingarm's pivot bolt, the chain adjusters and axle nuts at its back, the chain slider
-  B.add(body, "trim", new T.CylinderGeometry(0.025, 0.025, 0.28, 8), COL.alu, 0, yp, zp, 0, 0, PI/2);
-  [1, -1].forEach(function(sx){
-    B.box(body, "trim", COL.alu, 0.014, 0.034, 0.07, sx*0.145, Rr, zr + 0.05);
-    B.add(body, "trim", new T.CylinderGeometry(0.022, 0.022, 0.016, 6), COL.chrome, sx*0.153, Rr, zr, 0, 0, PI/2);
-  });
-  B.box(body, "trim", COL.black, 0.02, 0.02, 0.2, 0.115, yp + (Rr - yp)*0.25 + 0.035, zp - 0.25*(zp - zr), Math.atan2(yp - Rr, zp - zr), 0, 0);
-  // the engine: a single, a twin or a four; a boxer's cylinders stand out either side
-  var ew = small ? 0.26 : sport ? 0.4 : 0.34, ez = zr + WB*0.6, eh = small ? 0.34 : 0.4;
-  if(cruiser){
-    // [3.9] the 45-degree V-twin: a crankcase, two finned barrels in a V with chrome rocker boxes, the round air cleaner
-    ew = 0.26; eh = 0.22; ez = zr + WB*0.62;
-    B.box(body, "trim", COL.dark, ew, eh, 0.5, 0, 0.27 + eh/2, ez);
-    [0.4, -0.4].forEach(function(a, i){
-      var bz = ez + (i ? -0.1 : 0.1), c0 = [0, 0.47, bz], dz = Math.sin(a), dy = Math.cos(a);
-      B.box(body, "trim", COL.alu, 0.17, 0.3, 0.17, 0, c0[1] + dy*0.15, bz + dz*0.15, a, 0, 0);
-      for(var f = 0; f < 4; f++) B.box(body, "trim", COL.grey, 0.21, 0.012, 0.21, 0, c0[1] + dy*(0.06 + f*0.06), bz + dz*(0.06 + f*0.06), a, 0, 0);
-      B.box(body, "trim", COL.chrome, 0.19, 0.07, 0.19, 0, c0[1] + dy*0.33, bz + dz*0.33, a, 0, 0);
-    });
-    B.add(body, "trim", new T.CylinderGeometry(0.13, 0.13, 0.06, 16), COL.chrome, -0.16, 0.66, ez, 0, 0, PI/2);
-    B.add(body, "trim", new T.CylinderGeometry(0.15, 0.15, 0.04, 16), COL.chrome, 0.15, 0.36, ez + 0.08, 0, 0, PI/2);   // the primary cover
-  } else {
-    if(old){ ew = cyl > 1 ? 0.32 : 0.22; eh = 0.32; }
-    B.box(body, "trim", old ? COL.alu : COL.grey, ew, eh, 0.42, 0, 0.32 + eh/2, ez);
-    B.box(body, "trim", old ? COL.alu : COL.dark, ew*0.85, 0.2, 0.22, 0, 0.32 + eh + 0.06, ez + 0.08, old ? -0.12 : -0.35, 0, 0);
-  }
-  if(boxer) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.alu, 0.22, 0.16, 0.2, sx*0.3, 0.52, ez + 0.12); B.box(body, "trim", COL.black, 0.06, 0.18, 0.22, sx*0.42, 0.52, ez + 0.12); });
-  // the exhaust (right side, -x)
-  // [3.5.6] the system: a header per cylinder (a boxer's from its heads) curling down under the engine to a
-  // collector, a link pipe to the end can (sport: short and high on the side; adventure: big and high; naked: low,
-  // under the belly), its end cap, mouth and clamp
-  var ca, cb, cr, cans = [], shiny = old ? COL.chrome : COL.steel;
-  // [3.9] by maker: a Panigale's two short cans stacked under the seat, the Hayabusa's pair, a classic's peashooters
-  // (one on the single, two on the twin), the Fat Boy's staggered shotgun pair; the R1 and the Triumph's short belly box
-  if(duc) cans = [[[-0.15, 0.5, zr + WB*0.36], [-0.16, 0.6, zr + WB*0.14], 0.045], [[-0.15, 0.4, zr + WB*0.36], [-0.16, 0.5, zr + WB*0.16], 0.04]];
-  else if(suz) cans = [1, -1].map(function(sx){ return [[sx*0.17, 0.42, zr + WB*0.38], [sx*0.19, 0.56, zr - 0.02], 0.06]; });
-  else if(ren) cans = (cyl > 1 ? [-1, 1] : [-1]).map(function(sx){ return [[sx*0.15, 0.3, zr + WB*0.5], [sx*0.17, 0.39, zr - 0.1], 0.042]; });
-  else if(hd) cans = [[[-0.21, 0.28, zr + WB*0.62], [-0.23, 0.3, zr - 0.08], 0.05], [[-0.21, 0.42, zr + WB*0.48], [-0.23, 0.44, zr + 0.02], 0.05]];
-  else if(sport && !yam) cans = [[[-0.17, 0.46, zr + WB*0.3], [-0.19, 0.58, zr + WB*0.12], 0.055]];
-  else if(adv) cans = [[[-0.21, 0.58, zr + WB*0.26], [-0.23, 0.7, zr + WB*0.04], 0.065]];
-  // [3.13] the Tuning shop's exhausts instead: a fat slip-on can, a pair tucked under the tail, a long titanium end can
-  var canCol = shiny;
-  if(G.ex === 1) cans = [[[-0.2, 0.48, zr + WB*0.34], [-0.22, 0.6, zr + WB*0.1], 0.064]];
-  else if(G.ex === 2) cans = [1, -1].map(function(sx){ return [[sx*0.08, ys - 0.17, zr + WB*0.2], [sx*0.08, ys - 0.1, zr - 0.06], 0.045]; });
-  else if(G.ex === 3){ cans = [[[-0.19, 0.44, zr + WB*0.44], [-0.22, 0.68, zr - 0.06], 0.05]]; canCol = COL.ti; }
-  var can = function(a, b, r){
-    B.bar(body, "trim", canCol, a, b, r, null, true);
-    var cd = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], cn = Math.hypot(cd[0], cd[1], cd[2]), cu = cd.map(function(v){ return v/cn; });
-    var cp = function(f){ return [a[0] + cd[0]*f, a[1] + cd[1]*f, a[2] + cd[2]*f]; };
-    B.bar(body, "trim", old ? COL.chrome : sport ? COL.dark : COL.black, cp(0.86), [b[0] + cu[0]*0.02, b[1] + cu[1]*0.02, b[2] + cu[2]*0.02], r + 0.006, null, true);   // the end cap
-    B.bar(body, "trim", 0x050505, b, [b[0] + cu[0]*0.025, b[1] + cu[1]*0.025, b[2] + cu[2]*0.025], r*0.45, null, true);                   // the mouth
-    B.bar(body, "trim", COL.dark, cp(0.04), cp(0.12), r + 0.004, null, true);                                                             // the clamp
-  };
-  cans.forEach(function(c){ can(c[0], c[1], c[2]); });
-  if(cans.length){ ca = cans[0][0]; cb = cans[0][1]; cr = cans[0][2]; }
-  else {
-    var nl = small ? 0.3 : 0.4, nz = zr + WB*0.45;
-    B.box(body, "trim", ktm ? COL.black : COL.steel, 0.12, 0.13, nl, -0.16, 0.36, nz);
-    [0.03, -0.03].forEach(function(dx){ B.add(body, "trim", new T.CylinderGeometry(0.022, 0.022, 0.03, 8), COL.dark, -0.16 + dx, 0.34, nz - nl/2 - 0.01, PI/2, 0, 0); });   // twin outlets
-    ca = [-0.13, 0.36, nz + nl/2 - 0.02];
-  }
-  var col0 = [-0.1, 0.26, ez - 0.15], nh = boxer ? 2 : fresh ? Math.min(4, cyl) : small ? 1 : sport ? 4 : 2;
-  if(hd && !G.ex){                                                                                     // the shotgun headers, one per barrel
-    B.pipe(body, "trim", COL.chrome, [[-0.06, 0.68, ez + 0.3], [-0.16, 0.5, ez + 0.36], [-0.21, 0.3, ez + 0.2], cans[0][0]], 0.028);
-    B.pipe(body, "trim", COL.chrome, [[-0.06, 0.7, ez - 0.28], [-0.17, 0.56, ez - 0.2], cans[1][0]], 0.028);
-  } else {
-    for(var hi = 0; hi < nh; hi++){
-      var hx = boxer ? (hi ? -1 : 1)*0.36 : -ew/2 + ew*(hi + 0.5)/nh, hy = boxer ? 0.48 : 0.32 + eh*0.8;
-      B.pipe(body, "trim", shiny, [[hx, hy, boxer ? ez + 0.18 : ez + 0.2], [hx*0.95, 0.33, ez + 0.24], [hx*0.5 - 0.03, 0.25, ez + 0.06], col0], 0.018);
+  if(st.type === "scooter") return buildScooter(T, entry, st, d, G);
+  var P = bikeSpec(entry, st, d), S = BIKE[st.type] || BIKE.naked, B = new Builder(T), root = new T.Group(), body = B.node(root, "body");
+  var t2 = function(){ return G.two ? B.t("tone2") : B; };
+  var WB = d.wheelbaseM, L = d.lengthM, W = d.widthM, H = d.heightM, ty = P.type;
+  var Rf = tyreR(P.tf), Rr = tyreR(P.tr), twF = P.tf[0]/1000, twR = P.tr[0]/1000, zf = WB/2, zr = -WB/2;
+  var adv = ty === "adventure", sport = ty === "sport" || ty === "hypersport", classic = ty === "classic", cruiser = ty === "cruiser", naked = ty === "naked";
+  var k = Math.max(0.85, Math.min(1.12, H/(DIMS["bike." + ty] || DIMS["bike.naked"]).heightM));
+  // the key points: the steering head (top clamp), the fork's line to the axle, the swingarm pivot, the seat
+  var yH = P.head*k, zH = zf - (yH - Rf)*Math.tan(P.rake) - 0.02, ys = P.seat*(0.6 + 0.4*k);
+  var yP = Rr + (cruiser ? 0.06 : 0.14), zP = zr + (cruiser ? 0.62 : sport ? 0.6 : 0.58)*WB/1.45;
+  var zS = zP + (cruiser ? -0.06 : sport ? -0.08 : 0.0), zBack = zf + Rf + 0.03 - L;   // the seat (rider's hips) and the tail's end
+  var fa = function(t){ return [0, yH + (Rf - yH)*t, zH + (zf - zH)*t]; };                                // a point down the fork
+  var zTank0 = zH - 0.06, zTank1 = zS + 0.12, yTank = ys + P.tank*k;
+  var yEng = Rr + 0.1, liv = P.livery, plateP = null;
+  [0, 1].forEach(function(lod){
+    B.lod = lod;
+    if(lod){                                                                                               // far: a few blocks
+      B.at(body, "paint", null, sprof(T, [[zTank0, yH - 0.02], [zS, yTank], [zS - 0.05, ys + 0.02], [zBack + 0.1, ys + 0.12], [zBack + 0.08, ys + 0.02], [zS - 0.1, ys - 0.1], [zTank0 - 0.02, yH - 0.25]], 0.26, 0.04, 16));
+      B.at(body, "trim", COL.dark, rbox(T, 0.3, 0.32, 0.5, 0.06, 1), 0, yEng + 0.12, (zP + zH)/2 - 0.05);
+      B.at(body, "trim", COL.black, rodG(T, [0, yP, zP], [0, Rr, zr], 0.04, 0.03, 6));
+      if(P.fair === "full" || P.fair === "adv") B.at(body, "paint", null, sprof(T, [[zH + 0.3, yH - 0.05], [zH + 0.05, yH + 0.15], [zH - 0.05, yH - 0.1], [zH + 0.1, yEng + 0.05], [zH + 0.25, yEng + 0.1]], 0.4, 0.05, 12));
+      B.at(body, "tail", COL.red, rbox(T, 0.12, 0.04, 0.02, 0.01, 1), 0, ys + 0.08, zBack + 0.08);
+      return;
     }
-    B.pipe(body, "trim", shiny, [col0, [-0.14, 0.3, col0[2] - 0.08], ca], 0.03);                         // the link pipe
-    for(var ci = 1; ci < cans.length; ci++) B.pipe(body, "trim", shiny, [col0, [cans[ci][0][0]*0.6, 0.27, col0[2] - 0.04], cans[ci][0]], 0.028);
-  }
-  // the tank and the shrouds (paint), the seat, the tail
-  var tw = cruiser ? 0.42 : classic ? 0.34 : naked ? 0.36 : sport ? 0.34 : 0.44, tTop = ys + (adv ? 0.14 : 0.12);
-  if(old){
-    // [3.9] a teardrop tank (fat at the front, tapering to the seat) along the backbone; a cruiser's chrome console
-    var tl = cruiser ? 0.62 : 0.5, th = cruiser ? 0.25 : 0.22, tk = new T.SphereGeometry(0.5, 12, 7), tp = tk.attributes.position;
-    for(var ti = 0; ti < tp.count; ti++){ var tz = tp.getZ(ti); tp.setX(ti, tp.getX(ti)*(0.72 + 0.4*(tz + 0.5))); tp.setY(ti, tp.getY(ti)*(0.85 + 0.3*(tz + 0.5))); }
-    tk.computeVertexNormals(); tk.scale(tw, th, tl);
-    var tky = cruiser ? ys + 0.22 : ys + 0.1, tkz = cruiser ? (zh + zs0)/2 - 0.02 : (zh + zs0)/2 + 0.04;
-    B.add(body, "paint", tk, null, 0, tky, tkz, cruiser ? 0.06 : 0.1, 0, 0);
-    tTop = tky + th*0.5;
-    if(G.two === 2) t2().box(body, "paint", null, 0.06, 0.012, tl*0.7, 0, tTop + 0.002, tkz, cruiser ? 0.06 : 0.1, 0, 0);   // [3.13] a tank stripe
-    if(cruiser) B.box(body, "trim", COL.chrome, 0.08, 0.02, tl*0.6, 0, tTop - 0.005, tkz - 0.04, 0.06, 0, 0);
-    [1, -1].forEach(function(sx){ B.t("badge").add(body, "trim", new T.CircleGeometry(0.035, 12), 0xffffff, sx*(tw/2 - 0.01), tky, tkz + 0.06, 0, sx*PI/2, 0); });   // a generic round tank badge
-    if(classic) [1, -1].forEach(function(sx){ B.t("knee").box(body, "trim", 0xffffff, 0.012, 0.1, 0.14, sx*(tw/2 - 0.03), tky - 0.02, tkz - 0.12, 0, 0, -sx*0.1); });   // knee pads
-    if(classic) [1, -1].forEach(function(sx){ if(G.two === 3) t2(); B.box(body, "paint", null, 0.04, 0.16, 0.22, sx*0.13, ys - 0.14, zs0 - 0.12); });   // the side boxes
-  } else {
-    B.side(body, "paint", null, [[zh - 0.04, yh - 0.1], [zh - 0.06, yh + 0.03], [zs0 + 0.1, tTop, zh - 0.25, tTop + 0.03], [zs0, ys - 0.02],
-                                 [zs0 + 0.08, ys - 0.14], [zh - 0.16, yh - 0.24]], tw, 0.03, 4);
-    if(G.two === 2){                                                                                   // [3.13] a stripe over the tank's top line
-      var tq0 = [zs0 + 0.1, tTop], tqc = [zh - 0.25, tTop + 0.03], tq1 = [zh - 0.06, yh + 0.03], qp = function(u){ return [(1 - u)*(1 - u)*tq0[0] + 2*u*(1 - u)*tqc[0] + u*u*tq1[0], (1 - u)*(1 - u)*tq0[1] + 2*u*(1 - u)*tqc[1] + u*u*tq1[1]]; };
-      for(var qi = 0; qi < 3; qi++){ var qa = qp(0.08 + qi*0.28), qb = qp(0.08 + (qi + 1)*0.28); t2().bar(body, "paint", null, [0, qa[1] + 0.007, qa[0]], [0, qb[1] + 0.007, qb[0]], 0.07, 0.01); }
+    // ---- the frame ----
+    var fc = P.fCol;
+    if(P.frame === "trellis"){
+      [1, -1].forEach(function(sx){
+        var A = [sx*0.07, yH - 0.02, zH - 0.02], Bt = [sx*0.13, yEng + 0.22, zH - 0.32], Cc = [sx*0.13, yP + 0.06, zP + 0.04], Dd = [sx*0.12, yH - 0.18, zH - 0.04], E = [sx*0.12, ys - 0.05, zS + 0.12];
+        [[A, Bt], [Bt, Cc], [A, E], [Dd, Bt], [E, Cc], [Bt, E], [E, [sx*0.08, ys + 0.02, zBack + 0.35]], [Cc, [sx*0.08, ys - 0.02, zBack + 0.35]]].forEach(function(s2){ B.t("satin").at(body, "trim", fc, rodG(T, s2[0], s2[1], 0.012, 0.012, 6)); });
+      });
+    } else if(P.frame === "spar" || P.frame === "mono"){
+      [1, -1].forEach(function(sx){
+        B.t("metal").at(body, "trim", fc, tubeG(T, [[sx*0.06, yH - 0.04, zH - 0.02], [sx*0.15, yEng + 0.3, zH - 0.3], [sx*0.15, yP + 0.12, zP + 0.12], [sx*0.12, yP - 0.02, zP]], P.frame === "mono" ? 0.03 : 0.036, 14, 8));
+        B.t("satin").at(body, "trim", COL.dark, tubeG(T, [[sx*0.12, yP + 0.1, zP + 0.02], [sx*0.09, ys - 0.02, zS - 0.2], [sx*0.06, ys + 0.04, zBack + 0.3]], 0.012, 10, 6));
+      });
+    } else if(P.frame === "tube" || P.frame === "cradle" || P.frame === "softail" || P.frame === "boxer"){
+      [1, -1].forEach(function(sx){
+        B.t("satin").at(body, "trim", fc, tubeG(T, [[sx*0.04, yH - 0.03, zH - 0.02], [sx*0.11, yTank - 0.12, zH - 0.3], [sx*0.12, ys - 0.06, zS + 0.1], [sx*0.12, yP + 0.06, zP + 0.02]], 0.017, 14, 8));
+        if(P.frame !== "boxer") B.t("satin").at(body, "trim", fc, tubeG(T, [[sx*0.03, yH - 0.1, zH - 0.04], [sx*0.1, yEng - 0.05, zH - 0.06], [sx*0.11, yEng - 0.16, zH - 0.3], [sx*0.11, yEng - 0.15, zP + 0.1], [sx*0.12, yP, zP]], 0.016, 16, 8));
+        B.t("satin").at(body, "trim", fc, tubeG(T, [[sx*0.12, ys - 0.06, zS + 0.05], [sx*0.1, ys - 0.02, zS - 0.3], [sx*0.08, ys, zBack + (cruiser ? 0.2 : 0.3)]], 0.012, 10, 6));
+      });
     }
-    [1, -1].forEach(function(sx){ B.t("knee").box(body, "trim", 0xffffff, 0.012, 0.12, 0.17, sx*(tw/2 + 0.004), ys + 0.0, zs0 + 0.2, 0, 0, -sx*0.06); });   // [3.5.6] knee pads
-  }
-  if(naked || adv) [1, -1].forEach(function(sx){ if(G.two === 3) t2(); B.box(body, "paint", null, 0.03, 0.2, 0.32, sx*(tw/2 + 0.02), yh - 0.2, zh - 0.18, 0.25, 0, -sx*0.18); });
-  if(ktm && naked) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.02, 0.06, 0.26, sx*(tw/2 + 0.04), yh - 0.1, zh - 0.18, 0.25, 0, -sx*0.18); });
-  var tip = sport ? [zr - (suz ? 0.2 : 0.12), ys + 0.18] : adv ? [zr - 0.06, ys + 0.06] : [zr - 0.04, ys + 0.1];
-  // a fender (paint) round a wheel: an open band, from angle a0 to a1 (0 = ahead, PI/2 = over the top)
-  var fender = function(node, Rw, wdt, a0, a1, y, z){ return B.add(node, "paint", new T.CylinderGeometry(Rw + 0.05, Rw + 0.05, wdt, 12, 1, true, a0, a1 - a0), null, 0, y, z, 0, 0, PI/2); };
-  if(classic && cyl < 2){
-    // [3.9] the Classic's sprung solo saddle (two springs under its nose... and tail) and a separate pillion pad
-    B.t("stitch").box(body, "trim", COL.brown, 0.27, 0.06, 0.3, 0, ys + 0.02, zs0 - 0.16, -0.06, 0, 0);
-    [1, -1].forEach(function(sx){ B.spring(body, "trim", COL.chrome, [sx*0.08, ys - 0.1, zs0 - 0.3], [sx*0.08, ys - 0.01, zs0 - 0.28], 0.025, 0.005, 4); });
-    B.t("stitch").box(body, "trim", COL.brown, 0.22, 0.05, 0.2, 0, ys - 0.01, zs1 + 0.02);
-  } else if(cruiser){
-    B.side(body, "trim", COL.black, [[zs0 + 0.06, ys - 0.03], [zs0 + 0.08, ys + 0.06], [zs0 - 0.12, ys + 0.0], [zs0 - 0.34, ys + 0.03], [zs1 + 0.04, ys + 0.13], [zs1, ys - 0.03]], 0.38, 0.02, 2);
-  } else B.side(body, "trim", COL.black, [[zs0 + 0.02, ys - 0.03], [zs0 + 0.04, ys + (classic ? 0.05 : 0.03)], [zs1, ys + (sport ? 0.08 : classic ? 0.05 : 0.04)], [zs1 - 0.02, ys - 0.03]], sport ? 0.26 : 0.3, 0.015, 2);
-  var py = ys - 0.2, pz = zr - 0.12;
-  if(old){
-    // a deep rear fender over the wheel (the tail), a round tail lamp and the plate on its back
-    if(G.two === 3) t2();                                                                            // [3.13] a livery: the rear fender
-    fender(body, cruiser ? Rr - 0.02 : Rr, rtw0 + 0.08, PI*0.3, PI*(cruiser ? 0.98 : 1.02), Rr, zr);
-    var ta = PI*(cruiser ? 0.74 : 0.82), tly = Rr + Math.sin(ta)*(Rr + 0.06), tlz = zr + Math.cos(ta)*(Rr + 0.06);
-    B.add(body, "tail", new T.CylinderGeometry(0.045, 0.045, 0.03, 12), COL.red, 0, tly + 0.04, tlz - 0.02, PI/2, 0, 0);
-    tip = [tlz, tly + 0.1]; py = tly - 0.1; pz = tlz - 0.03;
-  } else {
-    if(G.two === 3) t2();                                                                            // [3.13] a livery: the tail unit
-    B.side(body, "paint", null, [[zs1 + 0.02, ys - 0.04], [zs1, ys + (sport ? 0.1 : 0.05)], tip, [tip[0] + 0.06, tip[1] - 0.12], [zs1 - 0.05, ys - 0.14]], sport ? 0.2 : 0.18, 0.02, 2);
-    B.t("ledbar").box(body, "tail", COL.red, 0.1, 0.035, 0.02, 0, tip[1] - 0.06, tip[0] + 0.02);         // [3.5.6] an LED bar
-  }
-  if(adv) B.box(body, "trim", COL.black, 0.32, 0.03, 0.34, 0, ys + 0.09, zr + 0.02);                         // the luggage rack
-  B.t("plate").box(body, "trim", 0xffffff, 0.18, 0.12, 0.012, 0, py, pz, 0.4, 0, 0);                         // the plate
-  // [3.5.6] its hanger: two struts up to the tail tidy, the plate light over it
-  if(!old) [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.07, ys - 0.15, zr - 0.1], [sx*0.05, ys - 0.12, zr - 0.02], 0.008, null, true); });
-  B.box(body, "light", COL.head, 0.05, 0.012, 0.02, 0, ys - 0.13, zr - 0.1);
-  [1, -1].forEach(function(sx){ B.box(body, "light", COL.amber, 0.04, 0.025, 0.04, sx*0.12, ys - 0.12, zr - 0.1); });
-  if(!old) B.add(body, "trim", (function(){ var g = new T.TorusGeometry(Rr + 0.04, 0.025, 3, 10, PI*0.45); g.rotateZ(PI*0.3); g.rotateY(PI/2); return g; })(), COL.black, 0, Rr, zr);   // the hugger
-  // the pegs (a classic's under the hips; a cruiser's forward controls: floorboards ahead of the engine)
-  var fz = sport ? zr + WB*0.3 : cruiser ? zr + WB*0.86 : classic ? zr + WB*0.45 : zr + WB*0.4, fy = sport ? 0.44 : cruiser ? 0.34 : classic ? 0.32 : 0.36;
-  if(cruiser) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.13, 0.025, 0.3, sx*0.25, fy - 0.03, fz); B.box(body, "trim", COL.chrome, 0.015, 0.03, 0.3, sx*0.315, fy - 0.025, fz); });
-  else [1, -1].forEach(function(sx){ B.box(body, "trim", COL.steel, 0.1, 0.025, 0.04, sx*0.2, fy, fz); });
-  // [3.5.6] the foot controls: the gear lever and its linkage (left), the brake pedal, its master cylinder and the hose
-  // back to the rear caliper (right); the heel guards
-  B.bar(body, "trim", COL.alu, [0.17, fy - 0.01, fz - 0.02], [0.19, fy + 0.03, fz + 0.18], 0.008, 0.014);
-  B.box(body, "trim", COL.black, 0.05, 0.016, 0.016, 0.2, fy + 0.035, fz + 0.18);
-  B.bar(body, "trim", COL.steel, [0.17, fy + 0.0, fz + 0.06], [0.15, fy + 0.11, fz + 0.08], 0.006, null, true);
-  B.bar(body, "trim", COL.alu, [-0.17, fy - 0.01, fz - 0.02], [-0.19, fy - 0.03, fz + 0.18], 0.008, 0.014);
-  B.box(body, "trim", COL.black, 0.05, 0.016, 0.02, -0.2, fy - 0.03, fz + 0.18);
-  B.add(body, "trim", new T.CylinderGeometry(0.014, 0.014, 0.07, 8), COL.dark, -0.16, fy + 0.08, fz - 0.04);
-  B.pipe(body, "trim", COL.black, [[-0.16, fy + 0.12, fz - 0.04], [-0.14, yp + 0.02, zp - 0.12], [-(rtw0/2 + 0.05), Rr + 0.02, zr + 0.2], [-(rtw0/2 + 0.05), Rr + Rr*0.4, zr - Rr*0.15]], 0.006);
-  [1, -1].forEach(function(sx){ B.box(body, "trim", COL.alu, 0.008, 0.11, 0.12, sx*0.185, fy + 0.07, fz - 0.03, 0.2, 0, 0); });
-  var fx0 = cruiser ? 0.25 : 0.2;
-  anchor(T, root, "a-foot-l", fx0, fy + 0.02, fz); anchor(T, root, "a-foot-r", -fx0, fy + 0.02, fz);
-  anchor(T, root, "a-seat", 0, ys + 0.02, zr + WB*(sport ? 0.3 : classic ? 0.37 : cruiser ? 0.31 : 0.33));
-  // the front, frame-mounted: a sport bike's fairing and screen; an adventure bike's beak, fairing, screen, X light
-  if(sport){
-    // the fairing: a pointed nose out over the front wheel, the upper round the steering head, the lower down to the belly pan
-    // ([3.9] the Hayabusa's longer, rounder nose and fuller flanks)
-    if(suz) B.side(body, "paint", null, [[zf + 0.1, yh - 0.18], [zh + 0.12, yh + 0.08, zf + 0.06, yh + 0.02], [zh - 0.22, yh - 0.0], [zr + WB*0.5, 0.56],
-                                         [zr + WB*0.58, 0.26], [zh - 0.04, 0.3], [zh + 0.16, yh - 0.44], [zf + 0.06, yh - 0.34, zf + 0.12, yh - 0.26]], 0.46, 0.08, 5);
-    else B.side(body, "paint", null, [[zf + 0.02, yh - 0.14], [zh + 0.14, yh + 0.07], [zh - 0.2, yh - 0.02], [zr + WB*0.52, 0.52],
-                                 [zr + WB*0.6, 0.27], [zh - 0.02, 0.32], [zh + 0.14, yh - 0.42], [zf - 0.04, yh - 0.3]], 0.42, 0.07, 3);
-    B.side(body, "glass", null, [[zh + 0.15, yh + 0.06], [zh - 0.08, yh + 0.2], [zh - 0.12, yh + 0.15], [zh + 0.06, yh + 0.04]], 0.28, 0.005, 1);
-    var zn = suz ? zf + 0.06 : zf;
-    [1, -1].forEach(function(sx){
-      if(duc){                                                                                        // [3.9] a Panigale's DRL slashes over dark intakes, its biplane winglets
-        B.box(body, "light", COL.drl, 0.1, 0.014, 0.012, sx*0.085, yh - 0.13, zf - 0.01, 0, sx*0.35, -sx*0.32);
-        B.t("honey").box(body, "trim", 0xffffff, 0.07, 0.05, 0.02, sx*0.07, yh - 0.2, zf - 0.03, 0, sx*0.35, 0);
-        [0, 0.06].forEach(function(dy){ B.box(body, "trim", COL.dark, 0.1, 0.012, 0.16, sx*0.25, yh - 0.12 - dy, zh - 0.02, 0, 0, -sx*0.25); });
-      } else if(yam){                                                                                 // the R1's slim DRL slits high on the nose
-        B.box(body, "light", COL.drl, 0.09, 0.012, 0.012, sx*0.1, yh - 0.12, zf - 0.02, 0, sx*0.4, -sx*0.3);
-      } else if(kawa){                                                                                // the H2's brow, its chrome-mirror flanks and carbon wings
-        B.box(body, "light", COL.drl, 0.08, 0.01, 0.01, sx*0.07, yh - 0.15, zf - 0.01, 0, sx*0.35, -sx*0.2);
-        B.box(body, "trim", COL.chrome, 0.012, 0.16, 0.42, sx*0.215, yh - 0.32, zh - 0.08, 0.3, 0, -sx*0.12);
-        B.box(body, "trim", COL.dark, 0.09, 0.012, 0.13, sx*0.23, yh - 0.08, zh - 0.0, 0, 0, -sx*0.3);
-      } else if(suz){                                                                                 // the Hayabusa's position lamps, ram-air mouths, chrome strake
-        B.box(body, "light", COL.drl, 0.05, 0.012, 0.012, sx*0.07, yh - 0.12, zn - 0.03, 0, sx*0.4, 0);
-        B.t("honey").box(body, "trim", 0xffffff, 0.05, 0.06, 0.02, sx*0.075, yh - 0.25, zn - 0.04, 0, sx*0.35, 0);
-        B.box(body, "trim", COL.chrome, 0.012, 0.025, 0.5, sx*0.235, yh - 0.36, zh - 0.12, 0.12, 0, 0);
-      } else if(ktm){                                                                                 // [3.9] the RC: DRL slashes either side of one lamp
-        B.box(body, "light", COL.drl, 0.08, 0.012, 0.012, sx*0.08, yh - 0.15, zf - 0.01, 0, sx*0.35, -sx*0.45);
-      } else if(s1krr){                                                                               // the S 1000 RR's asymmetric pair: round left, wide right
-        if(sx > 0) B.t("bikehead").add(body, "light", new T.CircleGeometry(0.04, 12), COL.head, 0.075, yh - 0.17, zf + 0.004, 0, 0.35, 0);
-        else B.t("head").box(body, "light", COL.head, 0.11, 0.04, 0.03, -0.08, yh - 0.17, zf, 0, -0.35, 0);
-        B.box(body, "light", COL.drl, 0.06, 0.008, 0.01, sx*0.09, yh - 0.13, zf - 0.01, 0, sx*0.35, -sx*0.25);
+    // ---- the engine ----
+    var eng = P.eng, zE = (zP + zH)/2 - 0.04, ec = P.type === "cruiser" || classic ? COL.chrome : COL.grey, ePat = cruiser || classic ? "chrome" : "satin";
+    var crank = function(w, h, dd, y, z){ B.t("satin").at(body, "trim", COL.dark, rbox(T, w, h, dd, 0.05, 2), 0, y, z); };
+    var fins = function(x, y, z, r, n, tilt, wid){ for(var f = 0; f < n; f++) B.t("satin").at(body, "trim", COL.dark, rbox(T, wid || r*2, 0.006, r*2, 0.004, 1), x, y + f*0.022, z, tilt || 0); };
+    if(eng === "boxer"){
+      crank(0.3, 0.28, 0.4, yEng + 0.12, zE + 0.02);
+      [1, -1].forEach(function(sx){
+        B.t("satin").at(body, "trim", COL.grey, discG(T, 0.08, 0.2, 18), sx*0.25, yEng + 0.16, zE + 0.12);
+        for(var f = 0; f < 5; f++) B.t("satin").at(body, "trim", COL.dark, discG(T, 0.094, 0.008, 18), sx*(0.18 + f*0.028), yEng + 0.16, zE + 0.12);
+        B.t("metal").at(body, "trim", COL.alu, rbox(T, 0.09, 0.18, 0.22, 0.04, 2), sx*0.39, yEng + 0.17, zE + 0.12);
+      });
+      B.t("metal").at(body, "trim", COL.alu, sprof(T, [[zH + 0.08, yEng - 0.06], [zH - 0.05, yEng - 0.16], [zP - 0.05, yEng - 0.18], [zP - 0.12, yEng - 0.12], [zP, yEng - 0.13], [zH - 0.05, yEng - 0.11]], 0.3, 0.01, 16));   // skid plate
+    } else if(eng === "v45"){
+      crank(0.24, 0.26, 0.5, yEng + 0.08, zE);
+      [[0.12, 0.42], [-0.12, -0.42]].forEach(function(c){
+        var g = new T.CylinderGeometry(0.075, 0.08, 0.3, 18); g.rotateX(c[1]); B.t("chrome").at(body, "trim", COL.chrome, g, 0, yEng + 0.3, zE + c[0]);
+        for(var f = 0; f < 8; f++){ var fg = new T.CylinderGeometry(0.11, 0.11, 0.007, 18); fg.translate(0, -0.1 + f*0.03, 0); fg.rotateX(c[1]); B.t("satin").at(body, "trim", COL.dark, fg, 0, yEng + 0.3, zE + c[0]); }
+        var hg = rbox(T, 0.2, 0.08, 0.2, 0.03, 2); hg.rotateX(c[1]); B.t("chrome").at(body, "trim", COL.chrome, hg, 0, yEng + 0.3 + Math.cos(c[1])*0.17, zE + c[0] + Math.sin(c[1])*0.17);
+      });
+      B.t("chrome").at(body, "trim", COL.chrome, discG(T, 0.11, 0.06, 24), -0.17, yEng + 0.38, zE + 0.02);                    // the air cleaner (right)
+      B.t("chrome").at(body, "trim", COL.chrome, discG(T, 0.13, 0.03, 24), 0.16, yEng + 0.06, zE - 0.05);                       // the primary cover (left)
+    } else {
+      var nc = eng === "single" ? 1 : eng === "twin" || eng === "v2" ? 2 : eng === "triple" ? 3 : 4, cw = 0.1 + nc*0.07;
+      crank(Math.max(0.24, cw), 0.24, 0.46, yEng + 0.06, zE - 0.03);
+      if(eng === "v2" || eng === "v4"){
+        [[0.12, 0.55], [-0.08, -0.4]].forEach(function(c){ var g = rbox(T, cw, 0.28, 0.16, 0.04, 2); g.rotateX(c[1]); B.t(ePat).at(body, "trim", ec, g, 0, yEng + 0.26, zE + c[0]); });
       } else {
-        B.t("head").box(body, "light", COL.head, 0.09, 0.035, 0.03, sx*0.08, yh - 0.17, zf - 0.0, 0, sx*0.35, 0);
-        B.box(body, "light", COL.drl, 0.07, 0.008, 0.01, sx*0.09, yh - 0.145, zf - 0.01, 0, sx*0.35, -sx*0.25);   // [3.5.6] the DRL brow
+        var cg = rbox(T, cw, 0.26, 0.2, 0.035, 2); cg.rotateX(0.35); B.t(ePat).at(body, "trim", ec, cg, 0, yEng + 0.26, zE + 0.1);
+        B.t("satin").at(body, "trim", COL.dark, rbox(T, cw + 0.01, 0.06, 0.2, 0.025, 1), 0, yEng + 0.4, zE + 0.15, 0.35);
+        if(classic) fins(0, yEng + 0.16, zE + 0.08, 0.1, 7, 0.35, cw + 0.08);
       }
-      B.box(body, "trim", COL.black, 0.07, 0.04, 0.05, sx*(d.widthM/2 - 0.035), yh + 0.04, zh + 0.06);         // mirrors
+      [1, -1].forEach(function(sx){ B.t("metal").at(body, "trim", classic ? COL.alu : COL.grey, discG(T, 0.085, 0.03, 20), sx*(Math.max(0.12, cw/2) + 0.01), yEng + 0.05, zE - 0.08); });
+      if(!classic && !cruiser){                                                                              // the radiator
+        B.t("radfin").at(body, "trim", COL.dark, rbox(T, Math.min(0.28, Math.max(0.22, cw)), 0.26, 0.04, 0.01, 1), 0, yEng + 0.3, zH - 0.14, -0.25);
+      }
+    }
+    // ---- the swingarm, the shock, the chain ----
+    if(eng === "boxer" || P.ssa){
+      B.t("metal").at(body, "trim", COL.alu, tubeG(T, [[-0.12, yP, zP], [-0.13, (yP + Rr)/2 + 0.02, (zP + zr)/2], [-0.12, Rr, zr]], 0.04, 12, 10));
+    } else [1, -1].forEach(function(sx){
+      B.t(cruiser || classic ? "satin" : "metal").at(body, "trim", cruiser || classic ? COL.black : COL.alu, tubeG(T, [[sx*0.1, yP, zP], [sx*0.11, (yP + Rr)/2, (zP + zr)/2], [sx*(twR/2 + 0.03), Rr, zr]], cruiser ? 0.025 : 0.03, 10, 8));
     });
-    if(yam){                                                                                          // the M1 face: a big dark mouth, the projector inside it
-      B.t("honey").box(body, "trim", 0xffffff, 0.15, 0.09, 0.02, 0, yh - 0.22, zf - 0.02, -0.2, 0, 0);
-      B.t("bikehead").add(body, "light", new T.CircleGeometry(0.03, 12), COL.head, 0, yh - 0.22, zf + 0.0);
+    if(classic) [1, -1].forEach(function(sx){ B.t("chrome").at(body, "trim", COL.chrome, rodG(T, [sx*0.11, Rr + 0.02, zr + 0.03], [sx*0.1, ys - 0.06, zr + 0.18], 0.018, 0.018, 8)); B.spring(body, "trim", COL.chrome, [sx*0.1, Rr + 0.06, zr + 0.05], [sx*0.1, ys - 0.1, zr + 0.17], 0.026, 0.005, 9); });
+    else if(!cruiser){ B.t("satin").at(body, "trim", COL.black, rodG(T, [0, yP - 0.02, zP - 0.12], [0, ys - 0.08, zP + 0.05], 0.022)); B.spring(body, "trim", eng === "boxer" ? COL.gold : P.brand === "ktm" ? COL.ktm : COL.gold, [0, yP + 0.03, zP - 0.1], [0, ys - 0.14, zP + 0.03], 0.034, 0.006, 7); }
+    if(eng !== "boxer"){
+      var cx = twR/2 + 0.035;
+      [[yP + 0.04, Rr + (P.tr[2]*0.0127)*0.42], [yP - 0.04, Rr - (P.tr[2]*0.0127)*0.42]].forEach(function(c){ B.t("satin").at(body, "trim", COL.dark, rodG(T, [cx, c[0], zP + 0.04], [cx, c[1], zr], 0.006, 0.006, 4)); });
     }
-    if(kawa){
-      B.t("head").box(body, "light", COL.head, 0.09, 0.04, 0.02, 0, yh - 0.2, zf - 0.005);                     // one central lamp
-      B.bar(body, "trim", COL.black, [0.16, yh - 0.24, zf - 0.08], [0.17, 0.62, ez + 0.12], 0.05, null, true);  // the ram-air duct on the left
+    // ---- the bodywork: tank, shrouds or fairing, seat, tail ----
+    var tank = taperX(sprof(T, [[zTank0 + 0.02, yH - 0.04], [zTank0 - 0.1, yTank + 0.02], [zS + 0.18, yTank], [zTank1 - 0.02, ys + 0.06], [zTank1 - 0.04, ys - 0.06], [zH - 0.3, yTank - 0.22], [zTank0, yH - 0.18]], cruiser ? 0.4 : classic ? 0.34 : 0.4, 0.06, 24), zTank0 - 0.1, zTank1, 1, cruiser ? 0.75 : 0.55);
+    if(classic || cruiser) bulgeX(tank, function(y, z){ return 0.12*Math.max(0, 1 - Math.abs(z - (zTank0 + zTank1)/2)/0.3); });
+    if(G.two === 1) t2();
+    B.at(body, "paint", null, tank);
+    if(G.two === 2) t2().at(body, "paint", null, taperX(sprof(T, [[zTank0 - 0.1, yTank + 0.025], [zS + 0.18, yTank + 0.006], [zS + 0.18, yTank - 0.006], [zTank0 - 0.1, yTank + 0.01]], 0.08, 0.003, 8), zTank0, zTank1, 1, 0.8));
+    var seatCol = cruiser ? 0x2b1f18 : COL.black;
+    if(naked || adv){
+      var shroud = function(){ return sprof(T, [[zH + 0.04, yH - 0.08], [zH - 0.1, yH + 0.0], [zH - 0.34, yTank - 0.08], [zH - 0.36, yEng + 0.26], [zH - 0.16, yEng + 0.18], [zH + 0.06, yEng + 0.3]], 0.04, 0.012, 20); };
+      if(G.two === 3) t2(); B.pair(body, "paint", null, shroud, adv ? 0.19 : 0.16, 0, 0, 0, 0.1, 0);
+      if(liv){                                                                                           // livery panels on the shrouds
+        B.pair(body, "trim", liv[1], function(){ return prof(T, [[zH + 0.0, yH - 0.08], [zH - 0.14, yH - 0.04], [zH - 0.22, yEng + 0.3], [zH - 0.02, yEng + 0.28]], 0.004, 0); }, adv ? 0.214 : 0.184, 0, 0, 0, 0.1, 0);
+        if(liv[2]) B.pair(body, "trim", liv[2], function(){ return prof(T, [[zH - 0.22, yEng + 0.3], [zH - 0.3, yEng + 0.3], [zH - 0.24, yEng + 0.23], [zH - 0.14, yEng + 0.22]], 0.004, 0); }, adv ? 0.214 : 0.184, 0, 0, 0, 0.1, 0);
+      }
     }
-    if(suz) B.t("head").box(body, "light", COL.head, 0.07, 0.13, 0.02, 0, yh - 0.2, zn - 0.005);           // the stacked vertical headlight
-    if(ktm) B.t("head").box(body, "light", COL.head, 0.08, 0.06, 0.02, 0, yh - 0.19, zf - 0.005);         // the RC's one lamp
-    if(bmw) B.box(body, "trim", COL.bmwBlue, 0.02, 0.06, 0.5, 0.29, yh - 0.25, zh - 0.1, 0.4, 0, 0);
-  }
-  if(adv){
-    B.side(body, "paint", null, [[zf + 0.16, Rf*2 + 0.06], [zf + 0.2, Rf*2 + 0.1], [zh + 0.12, yh - 0.06], [zh + 0.02, yh - 0.16]], 0.16, 0.02, 2);
-    B.box(body, "paint", null, 0.38, 0.3, 0.22, 0, yh + 0.04, zh + 0.18);
-    B.side(body, "glass", null, [[zh + 0.26, yh + 0.16], [zh + 0.07, yh + 0.42], [zh + 0.01, yh + 0.4], [zh + 0.18, yh + 0.14]], 0.36, 0.005, 1);
-    if(ktm) [1, -1].forEach(function(sx){                                                             // [3.9] a KTM's vertical split lamps
-      B.t("head").box(body, "light", COL.head, 0.05, 0.17, 0.006, sx*0.045, yh + 0.03, zh + 0.293);
-      B.box(body, "light", COL.drl, 0.014, 0.19, 0.006, sx*0.1, yh + 0.04, zh + 0.296, 0, 0, sx*0.15);
+    if(P.fair === "full"){
+      var nz = zf - 0.05 + (P.long ? 0.08 : 0), ny = yH - 0.02;
+      var side = function(){ return sprof(T, [[nz + 0.02, ny + 0.0], [zH - 0.02, yH + 0.07], [zH - 0.28, yTank - 0.1], [zH - 0.42, yEng + 0.18], [zH - 0.34, yEng - 0.02], [zH - 0.08, yEng - 0.04], [nz - 0.04, ny - 0.13]], 0.03, 0.012, 24); };
+      if(G.two === 3) t2(); B.pair(body, "paint", null, side, 0.155, 0, 0, 0, 0.08, 0);
+      B.at(body, "paint", null, taperX(sprof(T, [[nz + 0.05, ny + 0.0], [zH + 0.0, yH + 0.1], [zH - 0.1, yH + 0.02], [zH + 0.0, ny - 0.16], [nz, ny - 0.1]], 0.3, 0.04, 20), nz, zH - 0.1, 0.55, 1));   // the nose
+      B.at(body, "paint", null, sprof(T, [[zH - 0.1, yEng - 0.02], [zP + 0.1, yEng - 0.1], [zP + 0.05, yEng - 0.16], [zH - 0.05, yEng - 0.16]], 0.26, 0.04, 14));   // the belly pan
+      if(liv) B.pair(body, "trim", liv[1], function(){ return prof(T, [[zH - 0.1, yH - 0.04], [zH - 0.32, yTank - 0.1], [zH - 0.36, yEng + 0.12], [zH - 0.2, yEng + 0.06]], 0.004, 0); }, 0.198, 0, 0, 0, 0.06, 0);
+      if(P.wings || P.brand === "ducati") B.pair(body, "trim", COL.carbon, function(){ return aeroGeo(T, 0.16, 0.12, 0.08, 0.05, 4); }, 0.22, ny - 0.08, zH + 0.05, 0, 0, -0.15);
+      B.at(body, "glass", null, sprof(T, [[nz - 0.04, ny + 0.06], [zH + 0.02, yH + 0.2], [zH - 0.04, yH + 0.17], [zH + 0.06, yH + 0.06]], 0.26, 0.006, 12));   // the screen
+    }
+    if(P.fair === "adv"){
+      // the GS's front mask over the lamp and its beak, or KTM's tall nose; the tall screen
+      var my = yH + 0.0;
+      B.at(body, "paint", null, sprof(T, [[zH + 0.24, my + 0.2], [zH + 0.1, my + 0.22], [zH + 0.0, my + 0.08], [zH + 0.04, my - 0.1], [zH + 0.2, my - 0.14], [zH + 0.3, my + 0.0]], 0.3, 0.04, 20));
+      B.at(body, P.brand === "bmw" ? "trim" : "paint", P.brand === "bmw" ? (liv ? liv[2] : COL.red) : null, sprof(T, [[zH + 0.38, my - 0.14], [zH + 0.2, my - 0.12], [zH + 0.1, my - 0.2], [zH + 0.26, my - 0.26], [zH + 0.46, my - 0.24]], 0.16, 0.025, 14));   // the beak
+      B.at(body, "glass", null, sprof(T, [[zH + 0.2, my + 0.2], [zH + 0.24, my + 0.23], [zH + 0.12, H - 0.005], [zH + 0.06, H - 0.01], [zH + 0.12, my + 0.3]], 0.36, 0.006, 14));
+      B.t("plastic").at(body, "trim", COL.black, rbox(T, 0.2, 0.13, 0.04, 0.012, 1), 0, my + 0.24, zH + 0.06, -0.6);
+      B.t("screen").at(body, "light", 0xffffff, rbox(T, 0.17, 0.1, 0.006, 0.004, 1), 0, my + 0.245, zH + 0.04, -0.6);
+      // the rack behind the pillion, crash bars
+      [1, -1].forEach(function(sx){ B.t("metal").at(body, "trim", COL.alu, tubeG(T, [[sx*0.1, ys + 0.12, zBack + 0.38], [sx*0.1, ys + 0.13, zBack + 0.18], [sx*0.06, ys + 0.12, zBack + 0.1]], 0.009, 10, 6)); });
+      B.t("metal").at(body, "trim", COL.alu, rbox(T, 0.2, 0.012, 0.2, 0.005, 1), 0, ys + 0.125, zBack + 0.2);
+      [1, -1].forEach(function(sx){ B.t("satin").at(body, "trim", COL.black, tubeG(T, [[sx*0.1, yTank - 0.1, zH - 0.12], [sx*0.3, yEng + 0.25, zH - 0.08], [sx*0.32, yEng + 0.05, zE], [sx*0.12, yEng - 0.08, zE - 0.1]], 0.013, 14, 6)); });
+    }
+    if(P.fair === "none" && (naked || P.brand === "triumph") && !classic && !cruiser){
+      B.t("plastic").at(body, "trim", COL.black, sprof(T, [[zH - 0.12, yEng + 0.0], [zP + 0.14, yEng - 0.08], [zP + 0.1, yEng - 0.14], [zH - 0.08, yEng - 0.1]], 0.22, 0.03, 12));   // a belly pan
+    }
+    // the seat, the tail unit, the rear fender
+    var sb = cruiser ? 0.36 : classic ? 0.3 : sport ? 0.26 : 0.3;
+    var seatPts = sport ? [[zTank1, ys + 0.03], [zS - 0.18, ys - 0.01], [zS - 0.3, ys + 0.03], [zS - 0.32, ys - 0.03], [zTank1 + 0.02, ys - 0.06]]
+                : cruiser ? [[zTank1, ys + 0.05], [zS - 0.04, ys - 0.02], [zS - 0.22, ys + 0.06], [zS - 0.42, ys + 0.03], [zS - 0.4, ys - 0.06], [zTank1, ys - 0.06]]
+                : [[zTank1, ys + 0.04], [zS - 0.1, ys - 0.0], [zS - 0.3, ys + 0.02], [zS - 0.42, ys + 0.08], [zBack + 0.36, ys + 0.1], [zBack + 0.34, ys + 0.03], [zS - 0.3, ys - 0.06], [zTank1, ys - 0.06]];
+    B.t("stitch").at(body, "trim", seatCol, sprof(T, seatPts, sb, 0.045, 24));
+    if(sport){
+      if(G.two === 3) t2();
+      B.at(body, "paint", null, taperX(sprof(T, [[zS - 0.12, ys - 0.02], [zS - 0.34, ys + 0.05], [zBack + 0.1, ys + 0.14], [zBack + 0.05, ys + 0.11], [zBack + 0.3, ys - 0.03], [zS - 0.1, ys - 0.1]], 0.22, 0.025, 18), zS - 0.1, zBack, 1, 0.35));
+      B.t("stitch").at(body, "trim", seatCol, sprof(T, [[zS - 0.36, ys + 0.07], [zBack + 0.24, ys + 0.13], [zBack + 0.22, ys + 0.1], [zS - 0.34, ys + 0.04]], 0.16, 0.02, 10));
+    } else if(!cruiser){
+      if(G.two === 3) t2();
+      B.at(body, "paint", null, taperX(sprof(T, [[zS - 0.3, ys - 0.02], [zBack + 0.36, ys + 0.06], [zBack + 0.1, ys + 0.08], [zBack + 0.16, ys - 0.02], [zS - 0.3, ys - 0.1]], 0.22, 0.025, 14), zS - 0.3, zBack, 1, 0.6));
+    }
+    if(classic || cruiser){                                                                               // the deep rear fender
+      var fg = new T.TorusGeometry(Rr + 0.04, 0.02, 6, 30, PI*0.62); fg.rotateY(PI/2); fg.scale(1, 1, 1);
+      var fw = rbox(T, twR + 0.06, 0.004, 0.004, 0.001, 1); void fw;
+      var fen = new T.CylinderGeometry(Rr + 0.05, Rr + 0.05, twR + 0.06, 28, 1, true, PI*0.12, PI*0.9); fen.rotateZ(PI/2);
+      B.at(body, "paint", null, fen, 0, Rr, zr);
+    }
+    // the hugger over the rear tyre
+    if(!classic && !cruiser) B.t("plastic").at(body, "trim", COL.black, (function(){ var g = new T.CylinderGeometry(Rr + 0.03, Rr + 0.03, twR + 0.03, 20, 1, true, PI*0.2, PI*0.5); g.rotateZ(PI/2); return g; })(), 0, Rr, zr);
+    // ---- the exhaust ----
+    var exC = G.ex === 3 ? COL.ti : P.ex === "ti" ? COL.ti : cruiser || classic ? COL.chrome : COL.steel, ex = G.ex ? ["", "side", "under2", "endcan"][G.ex] : P.ex;
+    var hdr = function(x0, toPts){ B.t("chrome").at(body, "trim", exC, tubeG(T, [[x0, yEng + 0.3, zE + 0.22], [x0*1.2, yEng + 0.0, zE + 0.24]].concat(toPts), 0.022, 18, 8)); };
+    var nh = eng === "four" || eng === "v4" ? 4 : eng === "triple" ? 3 : eng === "single" ? 1 : 2, hx = function(i){ return nh === 1 ? 0 : (i/(nh - 1) - 0.5)*0.16; };
+    if(eng !== "boxer" && eng !== "v45") for(var hI = 0; hI < nh; hI++) hdr(hx(hI), [[hx(hI)*0.4, yEng - 0.12, zE + 0.02], [-0.04, yEng - 0.14, zP + 0.08]]);
+    var can = function(a, b2, r, col){ B.t("chrome").at(body, "trim", col || exC, rodG(T, a, b2, r*0.9, r, 14)); var ec2 = rodG(T, b2, [b2[0] + (b2[0] - a[0])*0.04, b2[1] + (b2[1] - a[1])*0.04, b2[2] + (b2[2] - a[2])*0.04], r*0.6, r*0.6, 10); B.t("rubber").at(body, "trim", COL.black, ec2); };
+    if(ex === "gsUp"){ B.t("chrome").at(body, "trim", exC, tubeG(T, [[0.36, yEng + 0.12, zE + 0.2], [0.2, yEng - 0.02, zE + 0.28], [0, yEng - 0.08, zE + 0.1], [-0.12, yEng - 0.06, zP + 0.05]], 0.024, 20, 8)); B.t("chrome").at(body, "trim", exC, tubeG(T, [[-0.36, yEng + 0.12, zE + 0.2], [-0.22, yEng - 0.04, zE + 0.26], [-0.12, yEng - 0.06, zP + 0.05]], 0.024, 16, 8));
+      B.t("chrome").at(body, "trim", exC, tubeG(T, [[-0.12, yEng - 0.06, zP + 0.05], [-0.17, yEng + 0.04, zP - 0.2], [-0.2, ys - 0.24, zP - 0.36]], 0.03, 12, 8)); can([-0.2, ys - 0.22, zP - 0.32], [-0.21, ys - 0.06, zr - 0.02], 0.07); }
+    else if(ex === "stack"){ can([-0.17, yP + 0.0, zP - 0.04], [-0.19, yP + 0.08, zr + 0.25], 0.05); can([-0.17, yP - 0.1, zP - 0.04], [-0.19, yP - 0.04, zr + 0.28], 0.05); }
+    else if(ex === "under" || ex === "belly" || ex === "under2"){ B.t("satin").at(body, "trim", COL.dark, rbox(T, 0.24, 0.12, 0.3, 0.04, 1), -0.02, yEng - 0.12, zP + 0.18); can([-0.12, yEng - 0.12, zP + 0.04], [-0.16, yEng - 0.06, zP - 0.16], 0.045); }
+    else if(ex === "h2"){ can([-0.17, yP - 0.02, zP - 0.02], [-0.21, yP + 0.14, zr + 0.06], 0.075); }
+    else if(ex === "busa"){ [1, -1].forEach(function(sx){ can([sx*0.16, yP - 0.06, zP - 0.02], [sx*0.18, yP + 0.08, zr - 0.04], 0.06); }); }
+    else if(ex === "pea" || ex === "pea2"){ (ex === "pea2" ? [1, -1] : [-1]).forEach(function(sx){ B.t("chrome").at(body, "trim", COL.chrome, tubeG(T, [[sx*0.06, yEng + 0.3, zE + 0.2], [sx*0.14, yEng + 0.02, zE + 0.26], [sx*0.17, yEng - 0.06, zE - 0.05], [sx*0.17, yEng - 0.04, zP - 0.1]], 0.022, 18, 8)); can([sx*0.17, yEng - 0.04, zP - 0.1], [sx*0.19, yEng + 0.05, zr - 0.12], 0.04, COL.chrome); }); }
+    else if(ex === "shotgun"){ [[0.04, 0.12], [-0.06, 0.0]].forEach(function(c){ B.t("chrome").at(body, "trim", COL.chrome, tubeG(T, [[-0.08, yEng + 0.36, zE + c[0] + 0.1], [-0.18, yEng + 0.2 + c[1]*0.2, zE + c[0] + 0.05], [-0.2, yEng + c[1]*0.4 - 0.02, zE - 0.1], [-0.2, yEng + c[1]*0.4 - 0.02, zP - 0.1]], 0.026, 18, 8)); can([-0.2, yEng + c[1]*0.4 - 0.02, zP - 0.1], [-0.2, yEng + c[1]*0.4 + 0.04, zr - 0.2], 0.042, COL.chrome); }); }
+    else if(ex === "endcan"){ can([-0.15, yP + 0.02, zP - 0.04], [-0.2, ys - 0.1, zr - 0.02], 0.055, COL.ti); }
+    else if(ex === "ti"){ can([-0.16, yP - 0.04, zP - 0.04], [-0.19, yP + 0.08, zr + 0.2], 0.055, COL.ti); }
+    else if(ex === "sideHigh"){ can([-0.16, yP + 0.0, zP - 0.04], [-0.2, ys - 0.12, zr + 0.1], 0.06); }
+    else can([-0.15, yP - 0.04, zP - 0.02], [-0.18, yP + 0.04, zr + 0.22], 0.055);
+    // ---- the tail light, plate, indicators ----
+    var tz = sport ? zBack + 0.1 : zBack + 0.18, tyy = sport ? ys + 0.16 : ys + (cruiser ? -0.02 : 0.06);
+    B.t("ledbar").at(body, "tail", COL.red, rbox(T, 0.12, 0.035, 0.03, 0.012, 1), 0, tyy, tz);
+    var py = cruiser || classic ? Rr + 0.24 : ys - 0.12, pz = cruiser || classic ? zr - Rr - 0.04 : zBack + 0.08;
+    B.t("plastic").at(body, "trim", COL.black, rodG(T, [0, ys - 0.02, tz + 0.04], [0, py + 0.04, pz + 0.02], 0.012, 0.012, 6));
+    B.t("plate").at(body, "trim", 0xffffff, rbox(T, 0.18, 0.12, 0.008, 0.003, 1), 0, py, pz, 0.4, PI, 0);
+    [1, -1].forEach(function(sx){ B.at(body, "light", COL.amber, rbox(T, 0.035, 0.022, 0.05, 0.01, 1), sx*0.1, py + 0.07, pz + 0.04); });
+    plateP = [0, py, pz];
+    // ---- foot controls, pegs, stand ----
+    var pegY = P.peg[0], pegZ = zS - 0.04 + (cruiser ? P.peg[1] : P.peg[1]);
+    [1, -1].forEach(function(sx){
+      if(cruiser) B.t("rubber").at(body, "trim", COL.black, rbox(T, 0.12, 0.025, 0.24, 0.01, 1), sx*0.24, pegY - 0.02, pegZ);
+      else { B.t("metal").at(body, "trim", COL.alu, rbox(T, 0.08, 0.025, 0.04, 0.01, 1), sx*0.2, pegY, pegZ); B.t("metal").at(body, "trim", COL.alu, rbox(T, 0.03, 0.12, 0.06, 0.01, 1), sx*0.15, pegY + 0.05, pegZ - 0.02); }
     });
-    else if(g310gs){                                                                                  // the G 310 GS: an asymmetric pair
-      B.t("bikehead").add(body, "light", new T.CircleGeometry(0.06, 14), COL.head, 0.07, yh + 0.04, zh + 0.296);
-      var ov = new T.CircleGeometry(0.06, 14); ov.scale(1.3, 0.75, 1); B.t("bikehead").add(body, "light", ov, COL.head, -0.07, yh + 0.03, zh + 0.296);
-    } else {
-      [0.6, -0.6].forEach(function(r){ B.box(body, "light", COL.drl, 0.03, 0.2, 0.02, 0, yh + 0.04, zh + 0.3, 0, 0, r); });
-      B.t("bikehead").box(body, "light", COL.head, 0.17, 0.15, 0.004, 0, yh + 0.04, zh + 0.293);            // [3.5.6] the projector behind the X
-    }
-    [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.18, 0.62, ez + 0.3], [sx*0.36, 0.42, ez + 0.08], 0.02, null, true); });   // crash bars
-  }
-  // detail: the chain and its guard, the rear caliper, the radiator, the clutch cover and the head's fins, the tank's
-  // stripe and cap, pillion pegs, a skid plate (adventure), winglets (an M superbike), the tail tidy
-  var rtw = rtw0, cx = cruiser ? 0.16 : 0.12, fsz = zp + 0.08, fsy = yp - 0.02, rs = Rr*0.4;
-  B.bar(body, "trim", COL.dark, [cx, fsy + 0.045, fsz], [cx, Rr + rs, zr], 0.012, 0.02);                    // the chain, top run
-  B.bar(body, "trim", COL.dark, [cx, fsy - 0.045, fsz], [cx, Rr - rs, zr], 0.012, 0.02);                    // and bottom
-  B.add(body, "trim", new T.CylinderGeometry(0.05, 0.05, 0.02, 10), COL.dark, cx, fsy, fsz, 0, 0, PI/2);     // the front sprocket
-  B.bar(body, "trim", COL.black, [cx + 0.01, fsy + 0.09, fsz - 0.05], [cx + 0.01, Rr + rs + 0.05, zr + 0.2], 0.008, 0.05);   // the guard
-  B.box(body, "trim", COL.gold, 0.04, 0.09, 0.07, -(rtw/2 + 0.05), Rr + Rr*0.45, zr - Rr*0.2, 0.5, 0, 0);   // the rear caliper
-  if(!boxer && !old){
-    B.box(body, "trim", COL.dark, ew + 0.12, small ? 0.26 : 0.34, 0.05, 0, 0.32 + eh*0.65, ez + 0.3, -0.25, 0, 0);   // the radiator
-    B.t("radfin").box(body, "trim", 0xffffff, ew + 0.06, small ? 0.2 : 0.28, 0.01, 0, 0.32 + eh*0.65, ez + 0.33, -0.25, 0, 0);
-  }
-  B.add(body, "trim", new T.CylinderGeometry(0.12, 0.12, 0.03, 14), ktm ? COL.ktm : COL.alu, ew/2 + 0.015, 0.42, ez - 0.02, 0, 0, PI/2);   // the clutch cover
-  if(!cruiser) for(var fi = 0; fi < (classic ? 6 : 3); fi++) B.box(body, "trim", classic ? COL.grey : COL.alu, ew*(classic ? 1.15 : 0.9), 0.012, classic ? 0.3 : 0.25, 0, 0.32 + eh + (classic ? 0.12 : -0.02) - fi*0.045, ez + 0.06);   // the head's fins (a classic's air-cooled barrel)
-  if(!old) B.bar(body, "trim", ktm ? COL.ktm : bmw ? (sport ? 0xd02030 : COL.bmwBlue) : duc ? COL.alu : kawa ? COL.kawa : 0xf0f0f0, [0, yh + 0.045, zh - 0.1], [0, tTop + 0.012, zs0 + 0.16], 0.07, 0.012);   // the stripe
-  B.add(body, "trim", new T.CylinderGeometry(0.04, 0.04, 0.02, 10), COL.alu, 0.07, (yh + tTop)/2 + 0.04, (zh + zs0)/2 + 0.02);   // the filler cap
-  [1, -1].forEach(function(sx){ B.box(body, "trim", COL.steel, 0.08, 0.02, 0.035, sx*0.19, fy + 0.12, zr + WB*0.18); });          // pillion pegs
-  if(adv){
-    B.box(body, "trim", COL.alu, ew + 0.1, 0.03, 0.5, 0, 0.27, ez + 0.02, -0.06, 0, 0);                     // the skid plate
-    [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.black, [sx*0.17, ys - 0.08, zr + 0.25], [sx*0.19, ys - 0.24, zr - 0.05], 0.016, null, true); });   // the rack's rails
-  }
-  if(m1k || s1krr) [1, -1].forEach(function(sx){ B.box(body, "trim", COL.dark, m1k ? 0.09 : 0.07, 0.012, m1k ? 0.16 : 0.12, sx*0.24, yh - 0.12, zh - 0.02, 0, 0, -sx*0.3); });   // winglets (the M's bigger)
-  if(m1k) [0.3, 0.35].forEach(function(x, i){ B.box(body, "trim", i ? COL.bmwBlue : 0xd02030, 0.02, 0.03, 0.5, x - 0.06, yh - 0.31 - i*0.035, zh - 0.1, 0.4, 0, 0); });   // the M stripes
-  if(!old) B.bar(body, "trim", COL.black, [0, tip[1] - 0.09, tip[0] + 0.04], [0, ys - 0.2, zr - 0.08], 0.05, 0.012);   // the tail tidy
-  // the steering: fork, front wheel, mudguard, bars (clip-ons on a sport bike), a naked bike's headlight
-  var steer = B.node(root, "steer", 0, yh, zh);
-  var fx = [zf - zh, Rf - yh], forkCol = ktm ? COL.ktm : sport ? COL.gold : old ? COL.chrome : COL.steel;
-  [1, -1].forEach(function(sx){ B.bar(steer, "trim", forkCol, [sx*0.085, 0.02, 0.02], [sx*0.085, fx[1] + 0.05, fx[0] - 0.01], 0.028, null, true); });
-  B.box(steer, "trim", COL.dark, 0.24, 0.05, 0.1, 0, 0.0, 0.0);
-  if(old) fender(steer, Rf, (cruiser ? 0.16 : 0.1) + 0.06, cruiser ? PI*0.2 : PI*0.05, PI*0.78, fx[1], fx[0]);   // [3.9] a classic's deep front fender
-  else B.add(steer, "trim", (function(){ var g = new T.TorusGeometry(Rf + 0.035, 0.03, 3, 10, PI*0.4); g.rotateZ(PI*0.32); g.rotateY(PI/2); return g; })(), adv ? COL.black : COL.dark, 0, fx[1], fx[0]);
-  var grips, by0 = 0;
-  if(sport){
-    var cw = fresh ? Math.max(0.26, d.widthM/2 - 0.09) : 0.3;
-    [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.black, [sx*0.1, 0.0, -0.02], [sx*cw, 0.0, -0.1], 0.016, null, true); });
-    grips = [cw, 0.0, -0.1]; by0 = 0.04;
-  } else {
-    // ([3.9] a classic's bars up and back; a cruiser's wide pull-back bars on risers)
-    var bw = Math.max(0.3, d.widthM/2 - 0.012), by = adv ? 0.2 : old ? 0.16 : 0.13, bz = adv ? -0.22 : cruiser ? -0.3 : classic ? -0.14 : -0.17; by0 = by;
-    if(cruiser){
-      B.pipe(steer, "trim", COL.chrome, [[bw, by, bz], [0.14, by + 0.03, -0.07], [-0.14, by + 0.03, -0.07], [-bw, by, bz]], 0.015);
-      [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.chrome, [sx*0.05, 0.03, 0], [sx*0.06, by + 0.03, -0.07], 0.016, null, true); });
-    } else {
-      B.bar(steer, "trim", old ? COL.chrome : COL.black, [bw, by, bz], [-bw, by, bz], 0.014, null, true);
-      B.bar(steer, "trim", COL.dark, [0, 0.02, 0], [0, by, bz], 0.02, null, true);
-    }
-    if(adv) [1, -1].forEach(function(sx){ B.box(steer, "paint", null, 0.08, 0.06, 0.12, sx*(bw - 0.02), by + 0.02, bz + 0.08); });
-    [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.black, [sx*(bw - 0.12), by, bz], [sx*(bw - 0.06), by + 0.13, bz - 0.04], 0.008, null, true); B.box(steer, "trim", COL.black, 0.09, 0.05, 0.02, sx*(bw - 0.05), by + 0.15, bz - 0.04); });
-    grips = [bw - 0.04, by, bz];
-  }
-  if(old){
-    // [3.9] a round headlamp in a chrome bucket and ring (the Classic's under its nacelle, with two pilot lamps); the
-    // Fat Boy's bigger one between chrome fork shrouds
-    var hr = cruiser ? 0.11 : 0.085, hz = cruiser ? 0.2 : 0.16, hy = cruiser ? -0.1 : -0.07;
-    B.add(steer, "trim", new T.CylinderGeometry(hr, hr*0.85, 0.12, 14), COL.chrome, 0, hy, hz - 0.05, PI/2, 0, 0);
-    var ring = new T.TorusGeometry(hr, 0.012, 3, 16); B.add(steer, "trim", ring, COL.chrome, 0, hy, hz + 0.012);
-    B.t("bikehead").add(steer, "light", new T.CircleGeometry(hr - 0.008, 16), COL.head, 0, hy, hz + 0.014);
-    if(ren && cyl < 2){
-      B.box(steer, "paint", null, 0.2, 0.06, 0.16, 0, hy + hr + 0.01, hz - 0.08, -0.15, 0, 0);
-      [1, -1].forEach(function(sx){ B.add(steer, "light", new T.CylinderGeometry(0.022, 0.022, 0.03, 10), COL.head, sx*0.12, hy - 0.02, hz - 0.04, PI/2, 0, 0); });
-    }
-    if(cruiser) [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.chrome, [sx*0.1, 0.0, 0.0], [sx*0.1, fx[1]*0.45, fx[0]*0.45 + 0.01], 0.055, null, true); });
-  }
-  if(naked){
-    B.box(steer, "trim", COL.black, 0.16, 0.18, 0.1, 0, -0.06, 0.12);
-    if(tri){                                                                                           // [3.9] the Triumph's bug eyes
-      [1, -1].forEach(function(sx){ var e = new T.CylinderGeometry(0.06, 0.06, 0.03, 14); e.rotateX(PI/2); e.scale(1, 1.3, 1);
-        B.add(steer, "trim", e, COL.black, sx*0.065, -0.06, 0.15); var f = new T.CircleGeometry(0.05, 14); f.scale(1, 1.3, 1);
-        B.t("bikehead").add(steer, "light", f, COL.head, sx*0.065, -0.06, 0.167); });
-      B.box(steer, "paint", null, 0.2, 0.08, 0.03, 0, 0.06, 0.12, -0.5, 0, 0);                              // the fly screen
-    } else if(d990){                                                                                  // [3.9] the 990: two thin vertical DRLs over a wide lamp
-      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.drl, 0.018, 0.13, 0.02, sx*0.055, -0.03, 0.175, 0, 0, sx*0.12); });
-      B.t("head").box(steer, "light", COL.head, 0.09, 0.05, 0.02, 0, -0.11, 0.17);
-    } else if(sdr){                                                                                   // the 1390: a split lamp clasped by DRL pincers
-      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.head, 0.04, 0.12, 0.02, sx*0.032, -0.06, 0.175);
-        B.box(steer, "light", COL.drl, 0.016, 0.09, 0.02, sx*0.08, -0.01, 0.17, 0, 0, sx*0.6); B.box(steer, "light", COL.drl, 0.016, 0.09, 0.02, sx*0.08, -0.11, 0.17, 0, 0, -sx*0.6); });
-    } else if(ktm){ [1, -1].forEach(function(sx){ B.box(steer, "light", COL.head, 0.045, 0.15, 0.02, sx*0.04, -0.06, 0.175); B.box(steer, "light", COL.drl, 0.02, 0.1, 0.02, sx*0.085, -0.03, 0.17, 0, 0, sx*0.5); }); }
-    else if(f900){                                                                                    // an angular lamp under a V of DRL
-      B.t("head").box(steer, "light", COL.head, 0.13, 0.07, 0.02, 0, -0.07, 0.175);
-      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.drl, 0.08, 0.014, 0.02, sx*0.04, -0.02, 0.178, 0, 0, -sx*0.3); });
-    } else if(s1kr){                                                                                  // a wide, narrow lamp under two brows
-      B.t("head").box(steer, "light", COL.head, 0.15, 0.045, 0.02, 0, -0.08, 0.175);
-      [1, -1].forEach(function(sx){ B.box(steer, "light", COL.drl, 0.07, 0.012, 0.02, sx*0.045, -0.035, 0.178, 0, 0, sx*0.25); });
-    } else B.t("bikehead").add(steer, "light", new T.CylinderGeometry(0.075, 0.075, 0.02, 16), COL.head, 0, -0.05, 0.18, PI/2, 0, 0);
-  }
-  // the fork's lower legs and axle clamps, the front calipers, the top clamp, grips, levers and their reservoirs, the dash
-  [1, -1].forEach(function(sx){
-    var lo = [sx*0.085, fx[1] + 0.04, fx[0] - 0.01], hi = [sx*0.085, fx[1]*0.45, fx[0]*0.45 + 0.01];
-    B.bar(steer, "trim", sport || ktm ? COL.dark : classic ? COL.black : COL.steel, lo, hi, classic ? 0.042 : 0.036, null, true);   // ([3.9] a classic's gaiters)
-    if(!small || sx < 0) B.box(steer, "trim", COL.gold, 0.035, 0.11, 0.06, sx*0.085, fx[1] + Rf*0.4, fx[0] - Rf*0.4, -0.6, 0, 0);
-    B.add(steer, "trim", new T.CylinderGeometry(0.03, 0.03, 0.05, 8), COL.black, sx*(grips[0] + 0.035), grips[1], grips[2], 0, 0, PI/2);   // a grip
-    B.bar(steer, "trim", COL.alu, [sx*(grips[0] - 0.07), grips[1] + 0.01, grips[2] + 0.04], [sx*(grips[0] + 0.03), grips[1], grips[2] + 0.07], 0.008, 0.012);   // a lever
-    B.box(steer, "trim", COL.dark, 0.04, 0.035, 0.035, sx*(grips[0] - 0.09), grips[1] + 0.03, grips[2] + 0.01);   // its reservoir
+    B.t("metal").at(body, "trim", COL.alu, rodG(T, [0.17, pegY, pegZ + 0.02], [0.18, pegY + 0.03, pegZ + 0.2], 0.007, 0.007, 5));
+    B.t("metal").at(body, "trim", COL.alu, rodG(T, [-0.17, pegY - 0.01, pegZ + 0.02], [-0.18, pegY - 0.02, pegZ + 0.2], 0.008, 0.008, 5));
+    B.t("satin").at(body, "trim", COL.black, rodG(T, [0.14, yP - 0.08, zP + 0.02], [0.18, yP - 0.13, zP - 0.3], 0.012, 0.01, 6));   // the side stand, folded
+    // rear caliper
+    B.t("satin").at(body, "trim", P.cal, rbox(T, 0.035, 0.07, 0.06, 0.012, 1), -(twR/2 + 0.02), Rr + 0.09, zr - 0.07);
+    anchor(T, root, "a-foot-l", 0.2, pegY + 0.02, pegZ); anchor(T, root, "a-foot-r", -0.2, pegY + 0.02, pegZ);
+    anchor(T, root, "a-seat", 0, ys + 0.02, zS);
   });
-  B.box(steer, "trim", COL.alu, 0.22, 0.025, 0.08, 0, 0.04, -0.02);                                           // the top clamp
-  // [3.5.6] the fork caps and their adjusters, bar-end weights, the front brake hose(s) down to the calipers, the
-  // clutch and throttle cables back to the headstock
-  [1, -1].forEach(function(sx){
-    B.add(steer, "trim", new T.CylinderGeometry(0.03, 0.03, 0.024, 10), sport ? COL.gold : ktm ? COL.ktm : COL.alu, sx*0.085, 0.064, 0.0);
-    B.add(steer, "trim", new T.CylinderGeometry(0.011, 0.011, 0.016, 6), COL.gold, sx*0.085, 0.082, 0.0);
-    B.add(steer, "trim", new T.CylinderGeometry(0.022, 0.022, 0.014, 8), sport ? COL.alu : COL.dark, sx*(grips[0] + 0.066), grips[1], grips[2], 0, 0, PI/2);
-    if(sx < 0 || !small) B.pipe(steer, "trim", COL.black, [[sx*0.03, 0.0, 0.07], [sx*0.11, fx[1]*0.5, fx[0]*0.5 + 0.035], [sx*0.1, fx[1] + Rf*0.4 + 0.07, fx[0] - Rf*0.4 + 0.02]], 0.006);
+  // ---- the steering: fork, front wheel, mudguard, bars, lamp, dash ----
+  B.lod = 0;
+  // the steering turns about a vertical axis through the front axle (the raked axis meets the ground near the tyre's
+  // contact patch); its parts hang from an inner node at the steering head
+  var steerO = B.node(root, "steer", 0, yH, zf), steer = B.node(steerO, null, 0, 0, zH - zf), fz = zf - zH, fy = Rf - yH, fx = twF/2 + 0.045;
+  var fT = function(t){ return [fy*t, fz*t]; };
+  [0, 1].forEach(function(lod){
+    B.lod = lod;
+    if(lod){ [1, -1].forEach(function(sx){ B.at(steer, "trim", COL.dark, rodG(T, [sx*fx, 0, 0], [sx*fx, fy, fz], 0.03, 0.03, 6)); });
+      B.at(steer, "trim", COL.black, rodG(T, [P.bar[0], P.bar[1], -P.bar[2]], [-P.bar[0], P.bar[1], -P.bar[2]], 0.02, 0.02, 5));
+      B.at(steer, "light", COL.head, discG(T, 0.07, 0.02, 10), 0, -0.05, 0.14); return; }
+    var usd = !(classic || cruiser), lo = fT(0.5);
+    [1, -1].forEach(function(sx){
+      B.t(usd ? "metal" : "chrome").at(steer, "trim", usd ? (P.brand === "ktm" ? COL.ktm : COL.gold) : COL.chrome, rodG(T, [sx*fx, 0.04, 0], [sx*fx, lo[0], lo[1]], usd ? 0.03 : 0.022, usd ? 0.03 : 0.022, 12));
+      B.t(usd ? "chrome" : "chrome").at(steer, "trim", usd ? COL.chrome : COL.chrome, rodG(T, [sx*fx, lo[0], lo[1]], [sx*fx, fy + 0.03, fz], usd ? 0.022 : 0.028, usd ? 0.022 : 0.028, 12));
+      B.t("satin").at(steer, "trim", COL.dark, rbox(T, 0.03, 0.06, 0.06, 0.01, 1), sx*fx, fy + 0.02, fz);
+      if(!(P.small && sx < 0) && !classic || sx > 0) B.t("satin").at(steer, "trim", P.cal, rbox(T, 0.035, 0.1, 0.06, 0.012, 1), sx*(fx - 0.02), fy + 0.1, fz - 0.1, 0.4);
+    });
+    B.t("satin").at(steer, "trim", COL.black, rbox(T, 2*fx + 0.06, 0.04, 0.09, 0.015, 1), 0, 0.0, -0.01);
+    B.t("satin").at(steer, "trim", COL.black, rbox(T, 2*fx + 0.06, 0.035, 0.08, 0.015, 1), 0, -0.14, 0.06);
+    // the mudguard
+    var mg = new T.CylinderGeometry(Rf + 0.025, Rf + 0.025, twF + (classic || cruiser ? 0.05 : 0.02), 22, 1, true, -PI*0.05, classic || cruiser ? PI*0.75 : PI*0.5); mg.rotateZ(PI/2); mg.rotateX(-0.25);
+    B.at(steer, adv && P.brand === "bmw" ? "paint" : classic || cruiser ? "paint" : "trim", classic || cruiser || adv && P.brand === "bmw" ? null : COL.black, mg, 0, fy, fz);
+    // the bars, grips, levers, mirrors, hand guards
+    var bw = P.bar[0], by = P.bar[1], bz = -P.bar[2];
+    if(sport) [1, -1].forEach(function(sx){ B.t("satin").at(steer, "trim", COL.black, rodG(T, [sx*0.08, by, bz + 0.03], [sx*(bw - 0.05), by + 0.01, bz - 0.04], 0.012, 0.012, 8)); });
+    else B.t("satin").at(steer, "trim", classic || cruiser ? COL.chrome : COL.black, tubeG(T, [[bw - 0.04, by + (cruiser ? 0.04 : 0.02), bz - (cruiser ? 0.12 : 0.03)], [bw*0.6, by, bz], [0.1, by - 0.03, bz + 0.03], [0, by - 0.035, bz + 0.03], [-0.1, by - 0.03, bz + 0.03], [-bw*0.6, by, bz], [-(bw - 0.04), by + (cruiser ? 0.04 : 0.02), bz - (cruiser ? 0.12 : 0.03)]], 0.012, 24, 8));
+    var gz = bz - (cruiser ? 0.13 : sport ? 0.05 : 0.04), gy = by + (cruiser ? 0.04 : 0.02);
+    [1, -1].forEach(function(sx){
+      B.t("rubber").at(steer, "trim", COL.black, rodG(T, [sx*(bw - 0.09), gy, gz + 0.015], [sx*(bw + 0.02), gy + 0.005, gz - 0.01], 0.018, 0.018, 10));
+      B.t("metal").at(steer, "trim", COL.alu, rodG(T, [sx*(bw - 0.12), gy + 0.01, gz + 0.05], [sx*(bw - 0.0), gy, gz + 0.06], 0.006, 0.005, 5));
+      if(adv) B.t("plastic").at(steer, "trim", liv ? liv[0] : COL.black, sprof(T, [[0.07, 0.03], [0.0, 0.06], [-0.07, 0.01], [-0.03, -0.04], [0.06, -0.03]], 0.12, 0.012, 10), sx*(bw - 0.01), gy + 0.01, gz + 0.03, 0, sx*0.35, 0);
+      // mirrors: stalk up to H at the top (sport: on the fairing)
+      var mx = sx*(Math.min(W/2 - 0.07, bw + 0.02)), mTop = H - yH - 0.005, mh = sport ? 0.06 : 0.07;
+      var base = sport ? [sx*0.18, mTop - 0.14, 0.18] : [sx*(bw - 0.14), gy + 0.02, gz + 0.04];
+      if(!(adv && false)) B.t("satin").at(steer, "trim", COL.black, rodG(T, base, [mx*0.92, mTop - mh, gz + (sport ? 0.2 : 0.02)], 0.007, 0.006, 5));
+      B.t(classic || cruiser ? "chrome" : "gloss").at(steer, "trim", classic || cruiser ? COL.chrome : COL.black, classic || cruiser ? (function(){ var g = discG(T, 0.05, 0.02, 14); g.rotateY(PI/2); return g; })() : rbox(T, 0.12, mh, 0.03, 0.012, 1), mx, mTop - mh/2, gz + (sport ? 0.2 : 0.02), 0, sx*0.15, sx*0.1);
+      if(cruiser || classic) void 0;
+    });
+    anchor(T, steer, "a-grip-l", bw - 0.02, gy, gz); anchor(T, steer, "a-grip-r", -(bw - 0.02), gy, gz);
+    // the headlight and dash (on the bars on a naked bike, a classic, a cruiser)
+    if(P.fair === "none"){
+      var lz = 0.1 + (cruiser ? 0.06 : 0), ly = -0.08;
+      if(P.lamp === "ktmSplit"){ B.at(steer, "paint", null, sprof(T, [[lz + 0.08, ly + 0.12], [lz - 0.04, ly + 0.14], [lz - 0.06, ly - 0.14], [lz + 0.06, ly - 0.12]], 0.2, 0.03, 12)); [1, -1].forEach(function(sx){ B.at(steer, "light", COL.drl, rbox(T, 0.015, 0.2, 0.02, 0.006, 1), sx*0.035, ly, lz + 0.075, 0.1); }); B.t("bikehead").at(steer, "light", 0xffffff, rbox(T, 0.05, 0.05, 0.01, 0.01, 1), 0, ly - 0.02, lz + 0.08); }
+      else if(P.lamp === "bug"){ [1, -1].forEach(function(sx){ B.t("gloss").at(steer, "trim", COL.black, rbox(T, 0.1, 0.13, 0.08, 0.04, 2), sx*0.06, ly, lz); B.t("bikehead").at(steer, "light", 0xffffff, discG(T, 0.042, 0.01, 18).rotateY(PI/2), sx*0.06, ly, lz + 0.045); }); }
+      else if(P.lamp === "bmwNaked"){ B.at(steer, "paint", null, sprof(T, [[lz + 0.06, ly + 0.12], [lz - 0.06, ly + 0.14], [lz - 0.06, ly - 0.12], [lz + 0.07, ly - 0.1]], 0.24, 0.03, 12)); B.t("bikehead").at(steer, "light", 0xffffff, rbox(T, 0.18, 0.09, 0.01, 0.03, 1), 0, ly, lz + 0.075); }
+      else { var r0 = cruiser ? 0.1 : classic ? 0.09 : 0.08; B.t(classic || cruiser ? "chrome" : "gloss").at(steer, "trim", classic || cruiser ? COL.chrome : COL.black, discG(T, r0 + 0.01, 0.12, 20, r0*0.7).rotateY(PI/2), 0, ly, lz); B.t("bikehead").at(steer, "light", 0xffffff, discG(T, r0, 0.01, 20).rotateY(PI/2), 0, ly, lz + 0.065); }
+      B.t("plastic").at(steer, "trim", COL.black, rbox(T, 0.14, 0.09, 0.03, 0.01, 1), 0, by + 0.02, bz + 0.07, -0.6); B.t("screen").at(steer, "light", 0xffffff, rbox(T, 0.12, 0.07, 0.004, 0.003, 1), 0, by + 0.022, bz + 0.055, -0.6);
+      [1, -1].forEach(function(sx){ B.at(steer, "light", COL.amber, rbox(T, 0.03, 0.02, 0.05, 0.01, 1), sx*0.16, ly + 0.02, lz - 0.02); });
+    }
   });
-  B.pipe(steer, "trim", COL.black, [[-(grips[0] - 0.09), grips[1] + 0.03, grips[2] + 0.01], [-0.06, 0.03, 0.07], [sport || small ? -0.03 : 0.03, 0.0, 0.07]], 0.006);   // the brake line to its splitter
-  B.pipe(steer, "trim", COL.black, [[grips[0] - 0.09, grips[1] + 0.0, grips[2] + 0.02], [0.08, 0.0, 0.05], [0.05, -0.12, -0.04]], 0.006);   // the clutch cable
-  B.pipe(steer, "trim", COL.black, [[-(grips[0] - 0.02), grips[1] - 0.02, grips[2] + 0.02], [-0.08, -0.01, 0.04], [-0.04, -0.12, -0.04]], 0.005);   // the throttle
-  B.box(steer, "trim", COL.black, 0.14, 0.09, 0.03, 0, sport ? 0.06 : by0 + 0.06, sport ? 0.02 : -0.04, -0.6, 0, 0);   // the dash
-  B.box(steer, "light", 0x9fd8ff, 0.11, 0.06, 0.004, 0, sport ? 0.065 : by0 + 0.065, sport ? 0.005 : -0.055, -0.6, 0, 0);
-  anchor(T, steer, "a-grip-l", grips[0], grips[1], grips[2]); anchor(T, steer, "a-grip-r", -grips[0], grips[1], grips[2]);
-  var rim = G.rimCol != null ? G.rimCol : ktm && naked ? COL.ktm : bmw && sport ? COL.bmwBlue : adv || cruiser ? COL.alu : classic ? COL.chrome : yam ? COL.grey : COL.black;
-  var wire = adv && (ktm || !small) || classic;
-  var tape = rim === COL.black ? (ktm ? COL.ktm : bmw ? COL.bmwBlue : 0xf0f0f0) : rim === COL.ktm ? 0xf4f4f4 : COL.black;
-  if(wire) tape = COL.black;
-  bikeWheel(B, root, "wheel-0", Rr, rtw, rim, [-1], 0, Rr, zr, wire, true, tape, cruiser, G.rim, G.size);
-  bikeWheel(B, steer, "wheel-1", Rf, cruiser ? 0.16 : classic ? 0.1 : 0.12, rim, small || (classic && cyl < 2) ? [-1] : [1, -1], 0, fx[1], fx[0], wire, false, tape, cruiser, G.rim, G.size);
+  // the lamps of a faired bike (on the body) and the adventure bike's
+  B.lod = 0;
+  if(P.fair === "full"){
+    var nz2 = zf + 0.03 + (P.long ? 0.08 : 0), ny2 = yH - 0.05;
+    if(P.lamp === "busa"){ B.t("bikehead").at(body, "light", 0xffffff, rbox(T, 0.09, 0.07, 0.02, 0.02, 1), 0, ny2 + 0.02, nz2 + 0.01, -0.5); B.t("bikehead").at(body, "light", 0xffffff, rbox(T, 0.09, 0.07, 0.02, 0.02, 1), 0, ny2 - 0.08, nz2 + 0.04, -0.3); }
+    else if(P.lamp === "h2"){ B.t("bikehead").at(body, "light", 0xffffff, rbox(T, 0.1, 0.04, 0.02, 0.015, 1), 0, ny2 + 0.02, nz2 + 0.01, -0.6); B.t("honey").at(body, "trim", COL.black, rbox(T, 0.12, 0.08, 0.02, 0.02, 1), 0, ny2 - 0.09, nz2 + 0.02, -0.2); }
+    else [1, -1].forEach(function(sx){ B.at(body, "light", P.lamp === "duc" ? COL.drl : COL.head, rbox(T, 0.08, P.lamp === "duc" ? 0.016 : 0.035, 0.02, 0.008, 1), sx*0.07, ny2, nz2 - 0.02, -0.5, sx*0.4, -sx*0.15); });
+  }
+  if(P.fair === "adv"){
+    var my2 = yH, lzz = zH + 0.33;
+    B.t("gloss").at(body, "trim", COL.black, rbox(T, 0.2, 0.17, 0.04, 0.03, 1), 0, my2 + 0.05, lzz - 0.02, -0.3);
+    if(P.lamp === "gsX") [0.55, -0.55].forEach(function(a){ B.at(body, "light", COL.head, rbox(T, 0.16, 0.02, 0.02, 0.008, 1), 0, my2 + 0.05, lzz, -0.3, 0, a); });
+    else [0.03, -0.06].forEach(function(dy){ B.at(body, "light", COL.head, rbox(T, 0.12, 0.05, 0.02, 0.015, 1), 0, my2 + 0.07 + dy, lzz, -0.3); });
+  }
+  B.lod = 0;
+  var tub = bikeWheel2;
+  tub(B, root, "wheel-0", 0, Rr, zr, Rr, twR, P, [-1], true, G, 0);
+  tub(B, steer, "wheel-1", 0, fy, fz, Rf, twF, P, P.small || classic ? [-1] : [1, -1], false, G, 0);
+  B.lod = 1;
+  tub(B, root.getObjectByName("wheel-0"), null, 0, 0, 0, Rr, twR, P, [], true, G, 1);
+  tub(B, steer.getObjectByName("wheel-1"), null, 0, 0, 0, Rf, twF, P, [], false, G, 1);
+  B.lod = 0;
   finish(T, root);
-  // [3.13] where a custom plate goes: over the atlas plate's back face (tilted with it)
-  var pn = [0, Math.sin(0.4), -Math.cos(0.4)];
+  var pp = plateP || [0, 0.6, zr - 0.3], pn = [0, Math.sin(0.4), -Math.cos(0.4)];
   return {g: root, meta: {kind: "bike", R: Rr, radii: [Rr, Rf], lean: S.lean, riderK: null,
-                          plates: [{p: [pn[0]*0.0075, py + pn[1]*0.0075, pz + pn[2]*0.0075], ry: PI, rx: 0.4, w: 0.17, h: 0.11}]}};
+                          plates: [{p: [pp[0] + pn[0]*0.0045, pp[1] + pn[1]*0.0045, pp[2] + pn[2]*0.0045], ry: PI, rx: 0.4, w: 0.17, h: 0.11}]}};
 }
 
-// [3.14.1] a step-through scooter: a leg shield and apron in front, a flat floorboard, the body under a long seat
-// over the engine-and-swingarm unit (left) and the silencer (right), a handlebar cover carrying the lamp and the
-// clocks, a grab rail; seats for three (the rider, then two behind: a-seat-1, a-seat-2)
+// [3.14.1] a step-through scooter (the Access 125): the leg shield and apron, a flat floorboard, the body under a long
+// seat over the engine-and-swingarm unit (left) and the silencer (right), a bar cover with the lamp, a grab rail;
+// seats for three (the rider, then a-seat-1, a-seat-2)
 function buildScooter(T, entry, st, d, G){
   G = G || GEO0;
-  var B = new Builder(T), root = new T.Group(), body = B.node(root, "body"), t2 = function(){ return B.t("tone2"); };
-  var S = BIKE.scooter, WB = d.wheelbaseM, sc = d.heightM/DIMS["bike.scooter"].heightM, L = d.lengthM, W = d.widthM;
-  var Rr = S.Rr, Rf = S.Rf, zr = -WB/2, zf = WB/2, yh = S.head*sc, ys = S.seat*Math.min(1.1, Math.max(0.9, sc));
-  var zh = zf - 0.16, yf = 0.3, zfl0 = zf - 0.3, zfl1 = zr + WB*0.5, zt = -L/2 + 0.05, bw = Math.min(0.42, W*0.62);
-  // the leg shield and the front apron (a wedge from the front fender's top up to the bar cover)
-  B.side(body, "paint", null, [[zf - 0.22, yf - 0.04], [zf - 0.02, yf + 0.12], [zf + 0.04, yh - 0.3, zf + 0.06, yf + 0.4], [zh + 0.02, yh - 0.1],
-                               [zh - 0.08, yh - 0.12], [zfl0 + 0.02, yf + 0.3, zfl0 + 0.04, yh - 0.4], [zfl0, yf]], 0.34, 0.02);
-  t2().box(body, "paint", null, 0.36, 0.04, 0.12, 0, yh - 0.42, zf + 0.0, -1.2, 0, 0);                         // the apron's crease
-  B.box(body, "trim", COL.dark, 0.3, 0.42, 0.02, 0, yf + 0.3, zfl0 - 0.02, 0.12, 0, 0);                          // the inner shield, its hook
-  B.box(body, "trim", COL.black, 0.05, 0.04, 0.03, 0, yf + 0.5, zfl0 - 0.04);
-  [1, -1].forEach(function(sx){                                                                                    // the apron's indicators
-    B.box(body, "light", COL.amber, 0.06, 0.03, 0.03, sx*0.13, yh - 0.36, zf + 0.02, -0.5, sx*0.4, 0);
+  var P = bikeSpec(entry, st, d), S = BIKE.scooter, B = new Builder(T), root = new T.Group(), body = B.node(root, "body");
+  var WB = d.wheelbaseM, L = d.lengthM, H = d.heightM, zf = WB/2, zr = -WB/2, Rf = tyreR(P.tf), Rr = tyreR(P.tr), twF = P.tf[0]/1000, twR = P.tr[0]/1000;
+  var yH = 0.98*(H/1.16), zH = zf - (yH - Rf)*Math.tan(P.rake) - 0.02, ys = 0.77, zBack = zf + Rf + 0.05 - L, yF = 0.3;
+  var t2 = function(){ return G.two ? B.t("tone2") : B; }, plateP = null;
+  [0, 1].forEach(function(lod){
+    B.lod = lod;
+    if(lod){ B.at(body, "paint", null, sprof(T, [[zH + 0.1, yH - 0.1], [zH - 0.05, yH], [zf - 0.5, yF], [zr + 0.4, yF], [zBack + 0.05, ys], [zBack + 0.1, ys - 0.25], [zr + 0.2, Rr + 0.08], [zf - 0.2, 0.2], [zH + 0.15, yF]], 0.36, 0.06, 18)); return; }
+    // the leg shield and apron (a smooth panel up to the bar), the floorboard, the body under the seat
+    B.at(body, "paint", null, sprof(T, [[zH + 0.12, yH - 0.08], [zH - 0.02, yH - 0.02], [zH - 0.12, yF + 0.12], [zf - 0.42, yF + 0.02], [zf - 0.3, 0.22], [zH + 0.16, yF + 0.04]], 0.42, 0.06, 22));
+    B.t("plastic").at(body, "trim", COL.black, rbox(T, 0.32, 0.03, 0.48, 0.012, 1), 0, yF, (zf - 0.42 + zr + 0.45)/2 + 0.05);
+    if(G.two === 3) t2();
+    B.at(body, "paint", null, taperX(sprof(T, [[zr + 0.48, yF], [zr + 0.36, ys - 0.06], [zBack + 0.06, ys + 0.02], [zBack + 0.02, ys - 0.1], [zr + 0.05, Rr + 0.14], [zr + 0.25, Rr + 0.06]], 0.36, 0.06, 22), zr + 0.4, zBack, 1, 0.7));
+    B.t("stitch").at(body, "trim", 0x2a2b2f, sprof(T, [[zr + 0.42, ys - 0.02], [zr + 0.2, ys + 0.04], [zBack + 0.15, ys + 0.1], [zBack + 0.12, ys + 0.03], [zr + 0.42, ys - 0.08]], 0.32, 0.05, 16));
+    B.t("chrome").at(body, "trim", COL.chrome, tubeG(T, [[0.15, ys + 0.03, zr + 0.0], [0.15, ys + 0.1, zBack + 0.18], [0, ys + 0.12, zBack + 0.08], [-0.15, ys + 0.1, zBack + 0.18], [-0.15, ys + 0.03, zr + 0.0]], 0.012, 20, 6));
+    // the engine unit and swingarm (left), the silencer (right), the shock
+    B.t("satin").at(body, "trim", COL.grey, rbox(T, 0.12, 0.16, 0.5, 0.05, 2), 0.1, Rr + 0.05, zr + 0.24);
+    B.t("chrome").at(body, "trim", COL.steel, rodG(T, [-0.12, Rr + 0.02, zr + 0.3], [-0.14, Rr + 0.1, zr - 0.12], 0.05, 0.055, 14));
+    B.spring(body, "trim", COL.gold, [0.12, Rr + 0.05, zr - 0.02], [0.12, ys - 0.12, zr + 0.06], 0.026, 0.005, 7);
+    B.t("ledbar").at(body, "tail", COL.red, rbox(T, 0.16, 0.05, 0.03, 0.015, 1), 0, ys - 0.06, zBack + 0.03);
+    var py = ys - 0.2, pz = zBack + 0.06; plateP = [0, py, pz];
+    B.t("plate").at(body, "trim", 0xffffff, rbox(T, 0.17, 0.1, 0.008, 0.003, 1), 0, py, pz, 0.4, PI, 0);
+    [1, -1].forEach(function(sx){ B.at(body, "light", COL.amber, rbox(T, 0.04, 0.025, 0.05, 0.01, 1), sx*0.13, ys - 0.07, zBack + 0.06); });
+    B.t("plastic").at(body, "trim", COL.black, (function(){ var g = new T.CylinderGeometry(Rr + 0.03, Rr + 0.03, twR + 0.03, 18, 1, true, PI*0.05, PI*0.5); g.rotateZ(PI/2); return g; })(), 0, Rr, zr);
+    anchor(T, root, "a-foot-l", 0.11, yF + 0.03, zf - 0.55); anchor(T, root, "a-foot-r", -0.11, yF + 0.03, zf - 0.55);
+    anchor(T, root, "a-seat", 0, ys + 0.06, zr + 0.3);
+    anchor(T, root, "a-seat-1", 0, ys + 0.08, zr + 0.0);
+    anchor(T, root, "a-seat-2", 0, ys + 0.1, zr - 0.25);
   });
-  B.t("bikehead").plate(body, "light", COL.head, 0.12, 0.07, 0.02, 0.02, 0, yh - 0.28, zf + 0.06, 0);           // the apron lamp
-  // the floorboard, its rubber mat, the frame under it
-  B.box(body, "trim", COL.dark, 0.34, 0.05, zfl0 - zfl1, 0, yf - 0.02, (zfl0 + zfl1)/2);
-  B.box(body, "trim", COL.black, 0.3, 0.012, zfl0 - zfl1 - 0.06, 0, yf + 0.01, (zfl0 + zfl1)/2);
-  [1, -1].forEach(function(sx){ B.box(body, "paint", null, 0.03, 0.1, zfl0 - zfl1 + 0.04, sx*0.18, yf - 0.06, (zfl0 + zfl1)/2); });
-  // the body: from the floor's end up under the seat and back over the rear wheel to the tail
-  var bodyPts = [[zfl1 + 0.02, yf - 0.06], [zfl1, ys - 0.12, zfl1 + 0.02, ys - 0.24], [zr + 0.05, ys - 0.03], [zt + 0.06, ys - 0.06, zt - 0.02, ys - 0.03],
-                 [zt, ys - 0.2], [zr - 0.02, Rr + 0.2, zr - 0.12, Rr + 0.18], [zr + 0.22, Rr + 0.14], [zr + 0.3, yf - 0.08]];
-  B.side(body, "paint", null, bodyPts, bw, 0.03, 6, 2);
-  if(G.two === 2 || G.two === 3) t2().box(body, "paint", null, bw + 0.01, 0.025, 0.4, 0, ys - 0.14, zr + 0.18, 0.05, 0, 0);   // a side stripe
-  B.box(body, "trim", COL.chrome, bw + 0.012, 0.02, 0.22, 0, ys - 0.2, zfl1 - 0.12, -0.25, 0, 0);               // the side garnish
-  // the seat: long and flat, a step for the pillion
-  B.side(body, "trim", COL.black, [[zfl1 - 0.02, ys - 0.02], [zfl1 + 0.02, ys + 0.06, zfl1, ys + 0.05], [zr + 0.05, ys + 0.07], [zr - 0.02, ys + 0.1],
-                                   [zt + 0.1, ys + 0.09, zt + 0.06, ys + 0.1], [zt + 0.08, ys - 0.01]], bw - 0.04, 0.025, 5, 2);
-  B.box(body, "trim", COL.dark, bw - 0.02, 0.012, L*0.42, 0, ys + 0.0, (zfl1 + zt)/2 + 0.06);                   // its piping
-  // the grab rail round the seat's back, the tail lamp and indicators, the plate on its hanger
-  [1, -1].forEach(function(sx){ B.bar(body, "trim", COL.alu, [sx*(bw/2 - 0.01), ys + 0.02, zr + 0.06], [sx*(bw/2 - 0.03), ys + 0.04, zt + 0.08], 0.016, null, true); });
-  B.bar(body, "trim", COL.alu, [bw/2 - 0.03, ys + 0.04, zt + 0.08], [-(bw/2 - 0.03), ys + 0.04, zt + 0.08], 0.016, null, true);
-  B.box(body, "tail", COL.red, 0.2, 0.06, 0.03, 0, ys - 0.12, zt - 0.01, 0.3, 0, 0);
-  [1, -1].forEach(function(sx){ B.box(body, "light", COL.amber, 0.05, 0.03, 0.02, sx*0.14, ys - 0.13, zt + 0.0, 0.3, 0, 0); });
-  var py = Rr + 0.24, pz = zt + 0.02;
-  B.box(body, "trim", COL.black, 0.16, 0.2, 0.02, 0, py + 0.05, pz + 0.04, 0.4, 0, 0);
-  B.t("plate").box(body, "trim", 0xf2f2f2, 0.16, 0.1, 0.006, 0, py, pz, 0.4, PI, 0);
-  // the rear mudguard; the engine-and-swingarm unit and its belt cover (left), the silencer and its guard (right), the shock
-  B.add(body, "trim", new T.CylinderGeometry(Rr + 0.04, Rr + 0.04, 0.14, 10, 1, true, PI*0.15, PI*0.65), COL.black, 0, Rr, zr, 0, 0, PI/2);
-  B.side(body, "trim", COL.grey, [[zr + 0.38, 0.32], [zr + 0.36, 0.14], [zr - 0.02, Rr - 0.06], [zr - 0.06, Rr + 0.06], [zr + 0.1, Rr + 0.14], [zr + 0.38, 0.34]], 0.08, 0.01);
-  B.box(body, "trim", COL.dark, 0.012, 0.16, 0.42, 0.09, Rr + 0.03, zr + 0.17, -0.12, 0, 0);
-  B.box(body, "trim", COL.black, 0.14, 0.14, 0.16, 0, 0.26, zr + 0.42);
-  B.bar(body, "trim", COL.dark, [-0.14, 0.2, zr + 0.25], [-0.17, Rr + 0.02, zr - 0.18], 0.06, 0.09);
-  B.add(body, "trim", new T.CylinderGeometry(0.05, 0.045, 0.3, 10), COL.steel, -0.17, Rr + 0.03, zr - 0.08, PI/2 - 0.12, 0, 0);
-  B.box(body, "trim", COL.black, 0.02, 0.06, 0.22, -0.22, Rr + 0.08, zr - 0.06, -0.12, 0, 0);
-  B.bar(body, "trim", COL.dark, [0.1, Rr + 0.02, zr - 0.02], [0.1, ys - 0.12, zr + 0.1], 0.02, null, true);
-  B.spring(body, "trim", COL.alu, [0.1, Rr + 0.06, zr - 0.01], [0.1, ys - 0.16, zr + 0.09], 0.03, 0.006, 5);
-  B.box(body, "trim", COL.dark, 0.05, 0.03, 0.18, 0, 0.14, zfl1 + 0.05);                                       // the centre stand, folded
-  // the pillion's footrests (folded out), behind the floorboard
-  [1, -1].forEach(function(sx){ B.box(body, "trim", COL.black, 0.07, 0.02, 0.06, sx*(bw/2 + 0.04), yf + 0.02, zr + 0.36); });
-  anchor(T, root, "a-foot-l", 0.11, yf + 0.03, zfl0 - 0.12); anchor(T, root, "a-foot-r", -0.11, yf + 0.03, zfl0 - 0.12);
-  anchor(T, root, "a-seat", 0, ys + 0.06, zfl1 - 0.05);
-  anchor(T, root, "a-seat-1", 0, ys + 0.08, zfl1 - 0.37);
-  anchor(T, root, "a-seat-2", 0, ys + 0.1, zfl1 - 0.66);
-  // the steering: one fork leg each side under a full front fender, the bar cover (the clocks in it), bars, mirrors
-  var steer = B.node(root, "steer", 0, yh, zh);
-  var fx = [zf - zh, Rf - yh];
-  [1, -1].forEach(function(sx){ B.bar(steer, "trim", COL.dark, [sx*0.07, -0.22, 0.0], [sx*0.07, fx[1] + 0.04, fx[0] - 0.01], 0.026, null, true); });
-  B.add(steer, "paint", new T.CylinderGeometry(Rf + 0.04, Rf + 0.04, 0.13, 12, 1, true, PI*0.05, PI*0.75), null, 0, fx[1], fx[0], 0, 0, PI/2);
-  B.side(steer, "paint", null, [[0.12, -0.02], [0.14, 0.06, 0.15, 0.03], [0.06, 0.12], [-0.12, 0.11], [-0.16, 0.04, -0.17, 0.08], [-0.1, -0.03]], 0.48, 0.02, 4, 2);
-  B.box(steer, "trim", COL.black, 0.2, 0.02, 0.12, 0, 0.118, -0.04, 0.25, 0, 0);
-  B.box(steer, "light", 0x9fd8ff, 0.14, 0.008, 0.08, 0, 0.122, -0.04, 0.25, 0, 0);                               // the clocks
-  var grips = [0.33, 0.04, -0.06];
-  [1, -1].forEach(function(sx){
-    B.add(steer, "trim", new T.CylinderGeometry(0.026, 0.026, 0.11, 8), COL.black, sx*(grips[0] - 0.02), grips[1], grips[2], 0, 0, PI/2);
-    B.bar(steer, "trim", COL.alu, [sx*0.22, grips[1] + 0.01, grips[2] + 0.04], [sx*(grips[0] + 0.02), grips[1], grips[2] + 0.06], 0.007, 0.012);
-    B.bar(steer, "trim", COL.black, [sx*0.18, 0.1, -0.02], [sx*0.25, 0.13, -0.04], 0.008, null, true);   // the mirrors
-    B.box(steer, "trim", COL.black, 0.11, 0.06, 0.02, sx*0.28, 0.15, -0.04, 0, sx*0.2, 0);
+  B.lod = 0;
+  var steerO = B.node(root, "steer", 0, yH, zf), steer = B.node(steerO, null, 0, 0, zH - zf), fz = zf - zH, fy = Rf - yH;
+  [0, 1].forEach(function(lod){
+    B.lod = lod;
+    if(lod){ B.at(steer, "trim", COL.black, rodG(T, [0.3, 0.08, -0.02], [-0.3, 0.08, -0.02], 0.02, 0.02, 5)); return; }
+    B.t("satin").at(steer, "trim", COL.dark, rodG(T, [0, 0, 0], [0, fy + 0.1, fz - 0.02], 0.03, 0.035, 10));
+    [1, -1].forEach(function(sx){ B.t("satin").at(steer, "trim", COL.dark, rodG(T, [sx*0.06, fy + 0.18, fz - 0.03], [sx*0.06, fy, fz], 0.02, 0.02, 8)); });
+    var mg = new T.CylinderGeometry(Rf + 0.03, Rf + 0.03, twF + 0.04, 18, 1, true, -PI*0.05, PI*0.55); mg.rotateZ(PI/2);
+    B.at(steer, "paint", null, mg, 0, fy, fz);
+    B.at(steer, "paint", null, sprof(T, [[0.16, 0.0], [0.02, 0.12], [-0.12, 0.1], [-0.1, -0.02], [0.08, -0.06]], 0.44, 0.04, 14));   // the bar cover
+    B.t("bikehead").at(steer, "light", 0xffffff, rbox(T, 0.16, 0.07, 0.02, 0.02, 1), 0, 0.0, 0.16, -0.2);
+    B.t("screen").at(steer, "light", 0xffffff, rbox(T, 0.12, 0.06, 0.004, 0.004, 1), 0, 0.105, -0.06, -0.8);
+    [1, -1].forEach(function(sx){
+      B.t("rubber").at(steer, "trim", COL.black, rodG(T, [sx*0.22, 0.08, -0.02], [sx*0.33, 0.085, -0.04], 0.018, 0.018, 10));
+      B.t("metal").at(steer, "trim", COL.alu, rodG(T, [sx*0.2, 0.09, 0.02], [sx*0.32, 0.09, 0.03], 0.006, 0.005, 5));
+      B.t("satin").at(steer, "trim", COL.black, rodG(T, [sx*0.2, 0.1, -0.02], [sx*0.26, Math.min(0.33, H - yH - 0.035) - 0.02, -0.04], 0.006, 0.006, 5));
+      B.t("gloss").at(steer, "trim", COL.black, rbox(T, 0.1, 0.06, 0.025, 0.012, 1), sx*0.27, Math.min(0.33, H - yH - 0.035), -0.04);
+      B.at(steer, "light", COL.amber, rbox(T, 0.04, 0.02, 0.04, 0.008, 1), sx*0.19, -0.02, 0.1);
+    });
+    anchor(T, steer, "a-grip-l", 0.3, 0.085, -0.03); anchor(T, steer, "a-grip-r", -0.3, 0.085, -0.03);
   });
-  anchor(T, steer, "a-grip-l", grips[0], grips[1], grips[2]); anchor(T, steer, "a-grip-r", -grips[0], grips[1], grips[2]);
-  var rim = G.rimCol != null ? G.rimCol : COL.grey;
-  bikeWheel(B, root, "wheel-0", Rr, 0.1, rim, [], 0, Rr, zr, false, false, COL.black, false, G.rim || 0, G.size);
-  bikeWheel(B, steer, "wheel-1", Rf, 0.09, rim, [1], 0, fx[1], fx[0], false, false, COL.black, false, G.rim || 0, G.size);
+  B.lod = 0;
+  bikeWheel2(B, root, "wheel-0", 0, Rr, zr, Rr, twR, P, [], true, G, 0);
+  bikeWheel2(B, steer, "wheel-1", 0, fy, fz, Rf, twF, P, [1], false, G, 0);
+  B.lod = 1;
+  bikeWheel2(B, root.getObjectByName("wheel-0"), null, 0, 0, 0, Rr, twR, P, [], true, G, 1);
+  bikeWheel2(B, steer.getObjectByName("wheel-1"), null, 0, 0, 0, Rf, twF, P, [], false, G, 1);
+  B.lod = 0;
   finish(T, root);
-  var pn = [0, Math.sin(0.4), -Math.cos(0.4)];
+  var pn = [0, Math.sin(0.4), -Math.cos(0.4)], pp = plateP;
   return {g: root, meta: {kind: "bike", R: Rr, radii: [Rr, Rf], lean: S.lean, riderK: null, seats: 3,
-                          plates: [{p: [pn[0]*0.0075, py + pn[1]*0.0075, pz + pn[2]*0.0075], ry: PI, rx: 0.4, w: 0.16, h: 0.1}]}};
+                          plates: [{p: [pp[0] + pn[0]*0.0045, pp[1] + pn[1]*0.0045, pp[2] + pn[2]*0.0045], ry: PI, rx: 0.4, w: 0.16, h: 0.1}]}};
 }
 
 /* ---------- materials, the cache, the rig ---------- */
@@ -1999,7 +1967,7 @@ function blueprint(T, entry, G){
   G = G || GEO0;
   var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : ""), BP = store(T).bp;
   if(BP[key]) return BP[key];
-  var bp = st.kind === "bike" ? (st.type === "scooter" ? buildScooter(T, entry, st, d, G) : buildBike(T, entry, st, d, G))
+  var bp = st.kind === "bike" ? buildBike(T, entry, st, d, G)
     : st.type === "formula" ? buildFormula(T, entry, st, d) : buildCar(T, entry, st, d, G);
   return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
 }
@@ -2299,6 +2267,7 @@ function isInside(n, root){ for(var p = n; p; p = p.parent) if(p === root) retur
    exhaust tips, as one small extra group (two meshes: the wing in the paint, the tips in chrome). Rim designs and the
    plate's text (passed to c.car / c.moto) are the build's. */
 function tuneStarter(T, rig, t, kind){
+  if(rig && rig.g && !rig.M && rig.entry && rig.meshes) return retune(T, rig, t);     // [4.0] a starter built here
   if(!rig || !rig.g || !rig.M) return rig;
   t = t || {};
   var M = rig.M, col = hexNum(t.color), c2 = hexNum(t.color2);
@@ -2343,6 +2312,19 @@ function tuneStarter(T, rig, t, kind){
 }
 
 // [4.0] lod 1: the far set
+// [4.0] a built rig to a new tune, in place (its group and fields, so whoever holds it sees the change): the materials
+// live when the geometry is the same, else rebuilt and swapped in (the plate's HQ name kept unless the tune names one)
+function retune(T, rig, t){
+  t = Object.assign({}, t || {});
+  if(!plateClean(t.plate) && rig.tune && plateClean(rig.tune.plate)) t.plate = rig.tune.plate;
+  if(rig.setTune && rig.setTune(t)) return rig;
+  var n = build(T, rig.entry, rig.baseHex != null ? rig.baseHex : rig.paint.color.getHex(), {tune: t}), g = rig.g;
+  while(g.children.length) g.remove(g.children[0]);
+  while(n.g.children.length) g.add(n.g.children[0]);
+  Object.keys(n).forEach(function(k){ if(k !== "g") rig[k] = n[k]; });
+  g.userData.rig = rig;
+  return rig;
+}
 function triangles(rig, lod){ var t = 0; ((lod ? rig.lodMeshes : rig.meshes) || []).forEach(function(m){ var g = m.geometry; t += (g.index ? g.index.count : g.attributes.position.count)/3; }); return Math.round(t); }
 function drawCalls(rig, lod){ return ((lod ? rig.lodMeshes : rig.meshes) || []).length; }
 function clearCache(T){ var BP = store(T).bp; Object.keys(BP).forEach(function(k){ BP[k].bp.g.traverse(function(o){ if(o.isMesh) o.geometry.dispose(); }); delete BP[k]; }); }

@@ -43,6 +43,10 @@ if(q.get("id")){ const ids = q.get("id").split(","); list = list.filter(v => ids
 if(q.get("kind")){ const k = q.get("kind"); list = list.filter(v => String(v.class).startsWith(k + ".")); }
 if(q.get("match")){ const m = new RegExp(q.get("match"), "i"); list = list.filter(v => m.test(v.id)); }
 if(!starter){ list = list.filter(v => v.slot !== "starter"); }
+else {   // the starters as games/hq3d.js builds them (STARTER_E there)
+  list = [{id: "starter-city-hatch", "class": "car.hatch.starter", brand: "", model: "City hatchback", door: "hinged", paints: [{hex: "#2f7fd6"}], dims: {lengthM: 3.6, widthM: 1.7, heightM: 1.55, wheelbaseM: 2.4}},
+          {id: "starter-street-bike", "class": "bike.naked.starter", brand: "", model: "Street bike", door: "none", paints: [{hex: "#d64545"}], spec: {cc: 250, cyl: 1, layout: "single"}, dims: {lengthM: 2.0, widthM: 0.8, heightM: 1.08, wheelbaseM: 1.36}}];
+}
 const lod = +q.get("lod") || 0;
 const views = {f34: [0.75, 0.16], r34: [-2.4, 0.18], side: [Math.PI / 2, 0.03], front: [0, 0.06], rear: [Math.PI, 0.08], top: [Math.PI / 2, 1.2], fl: [2.35, 0.2], low: [0.6, 0.02]};
 const [az0, el0] = views[q.get("view") || "f34"] || views.f34;

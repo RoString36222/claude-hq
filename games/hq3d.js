@@ -667,7 +667,25 @@ function mount(el, api){
     });
     return g;
   }
+  // [4.0] the starters at the catalogue's standard: an original city hatchback and street bike (no maker, no marks) built
+  // by games/hqvehiclemodels.js from these entries (their real-world sizes; drawn at its SCALE), with its LOD, doors and
+  // tune; the plate carries the HQ's name, an accent paints a pair of stripes. The old primitive models stay as the
+  // fallback while that script has not loaded.
+  var STARTER_E = {
+    car: {id: "starter-city-hatch", "class": "car.hatch.starter", brand: "", model: "City hatchback", door: "hinged",
+          dims: {lengthM: 3.6, widthM: 1.7, heightM: 1.55, wheelbaseM: 2.4}},
+    moto: {id: "starter-street-bike", "class": "bike.naked.starter", brand: "", model: "Street bike", door: "none",
+           spec: {cc: 250, cyl: 1, layout: "single"}, dims: {lengthM: 2.0, widthM: 0.8, heightM: 1.08, wheelbaseM: 1.36}}
+  };
+  function starterRig(kind, color, accent, plate){
+    var VM = HQV.hqVehicleModels; if(!VM || !VM.build) return null;
+    var t = {}; if(plate) t.plate = plate;
+    var ac = accent == null ? null : new THREE.Color(accent).getHexString();
+    if(ac && kind === "car"){ t.two_tone = "stripe"; t.color2 = "#" + ac; }
+    try { var R = VM.build(THREE, STARTER_E[kind], color, {tune: t}); R.starter = kind; return R; } catch(e){ return null; }
+  }
   function carModel(body, accent, plate){
+    var SR = starterRig("car", carPaint(body), accent, plate); if(SR) return SR;
     var V = vehicle("car", carPaint(body), accent, plate);
     return {g: V.g, wheels: [0, 1, 2, 3].map(function(i){ return V.get("wheel-" + i); }), steer: [V.get("steer-l"), V.get("steer-r")], spin: V.get("spin"),
             R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake, lights: V.lights, M: V.M};   // M: [3.13] its materials, for a tune
@@ -765,6 +783,7 @@ function mount(el, api){
     return g;
   }
   function motoModel(color, c2, plate){
+    var SR = starterRig("moto", color, c2, plate); if(SR) return SR;
     var V = vehicle("moto", color, c2, plate);
     return {g: V.g, wheels: [V.get("wheel-0"), V.get("wheel-1")], steer: V.get("steer"), R: MOTO_WR*MOTO_S,
             seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake, lights: V.lights, M: V.M};   // M: [3.13] its materials, for a tune

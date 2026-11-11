@@ -244,76 +244,204 @@ function measureU(T, ch, skins, body, sk, bi){
           ua: limb("UpperArm", 0.03, 0.97, 0.05), la: limb("LowerArm", 0.03, 0.97, 0.045), hand: rbox(hand, 0.01, 0.99) || [P.WristL.x, P.WristL.y - 0.03, P.WristL.z - 0.05, P.WristL.x + 0.2, P.WristL.y + 0.03, P.WristL.z + 0.06],
           ul: limb("UpperLeg", 0.03, 0.97, 0.08), ll: limb("LowerLeg", 0.03, 0.97, 0.06), foot: limb("Foot", 0.01, 0.99, 0.06), legLen: ch && ch.legLen};
 }
-// the uni pieces: as specK's, plus q[14] the frame they are written in (the head's: the Head bone's space) when not bind space
+// the uni pieces (specK's layout, plus q[14] the frame they are written in when not bind space: the helmet's is the Head
+// bone's, round the toy head; q[15] "visor" on the faceplate's pieces, which hinge shut last in the suit-up). Six
+// silhouettes from one kit: layered plates with bevels (a crisp rounded box, ["r", w, h, d, sx, sy, edge]) and curved
+// plates that hug the head and chest (["c", rx, ry, rz, phi0, dphi, th0, dth]: a patch of an ellipsoid), lames stacked on
+// the shoulders and the belly, joint covers at the shoulders, elbows and knees, glow seams in the glow colour, and per
+// frame its helmet face (eyes, a visor slit, a visor band, a porthole under a dome), its core and what rides its back.
+var STYLE = {
+  sentinel: {k: 1, face: "eyes", core: "ring", back: "jets", pa: 2, crest: "ridge", seams: 1},
+  strider:  {k: 0.86, face: "eyes", core: "tri", back: "fin", pa: 1, crest: "fin", seams: 1, fins: 1},
+  bulwark:  {k: 1.26, face: "slit", core: "vents", back: "stacks", pa: 3, crest: "brow", seams: 0, fists: 1},
+  abyss:    {k: 1.08, face: "port", core: "port", back: "tanks", pa: 2, crest: "none", seams: 0, weights: 1},
+  stratos:  {k: 0.94, face: "band", core: "ring", back: "wings", pa: 1, crest: "twin", seams: 1},
+  flux:     {k: 0.97, face: "eyes", core: "orb", back: "orb", pa: 2, crest: "none", seams: 2, smooth: 1}
+};
 function specU(F, M){
-  var b = Math.min(F.b, 1.3), has = function(k){ return F.x.indexOf(k) >= 0; }, fist = has("fists") ? 1.35 : 1, P = [], K = KIND, J = M.P, t = 0.02*b;
-  function p(bone, shape, key, x, y, z, rx, ry, rz, sx, sy, sz, grp, kind, fr){ P.push([bone, shape, key, x, y, z, rx || 0, ry || 0, rz || 0, sx || 1, sy || 1, sz || 1, grp | 0, kind | 0, fr || null]); }
-  // the helmet, in the head bone's space round the toy head (c, rx, ry, rz): a skull-shaped shell a little over the hair,
-  // a faceplate standing proud of it, slanted eye slits, a crest and an ear disc each side; a gorget closes the neck
-  var H = M.head, c = H.c, rx = H.rx, ry = H.ry, rz = H.rz, e = 1.1, hf = M.hb;
-  p("Head", ["k", rx*e, ry*e, rz*e, 22, 16], "A", c.x, c.y + ry*0.02, c.z, 0, 0, 0, 1, 1, 1, 7, K.helmet, hf);
-  p("Head", ["s", 1, 20, 14], "B", c.x, c.y - ry*0.3, c.z + rz*0.66, -0.06, 0, 0, rx*0.88, ry*0.74, rz*0.5, 8, K.face, hf);
-  p("Head", ["r", rx*1.12, ry*0.22, rz*0.4, 10, 5], "D", c.x, c.y - ry*0.04, c.z + rz*0.86, 0, 0, 0, 1, 1, 1, 8, 0, hf);                 // the dark band the eyes sit in
-  p("Head", ["r", rx*0.34, ry*0.05, rz*0.5, 6, 4], "B", c.x, c.y - ry*0.74, c.z + rz*0.82, 0, 0, 0, 1, 1, 1, 8, K.plain, hf);             // the jaw line
+  var Y = STYLE[F.id] || STYLE.sentinel, b = Math.min(F.b, 1.3), sk = Y.k, P = [], K = KIND, J = M.P, t = 0.02*b, ed = Y.smooth ? 0.42 : 0.26;
+  var fist = Y.fists ? 1.35 : 1;
+  function p(bone, shape, key, x, y, z, rx, ry, rz, sx, sy, sz, grp, kind, fr, fl){ P.push([bone, shape, key, x, y, z, rx || 0, ry || 0, rz || 0, sx || 1, sy || 1, sz || 1, grp | 0, kind | 0, fr || null, fl || null]); }
+  // a bevelled plate; a curved patch (angles centred: phi round from the side, +Z front at PI/2; th down from the top)
+  function R(bone, w, h, d, key, x, y, z, rx, ry, rz, grp, kind, sx, sy, e, fr, fl){ p(bone, ["r", w, h, d, sx || 8, sy || 6, e || ed], key, x, y, z, rx, ry, rz, 1, 1, 1, grp, kind, fr, fl); }
+  function C(bone, ax, ay, az, pc, pw, tc, tw, key, x, y, z, grp, kind, fr, fl, ws, hs, rx, ry, rz){
+    p(bone, ["c", ax, ay, az, pc - pw/2, pw, tc - tw/2, tw, ws || 12, hs || 8], key, x, y, z, rx, ry, rz, 1, 1, 1, grp, kind, fr, fl); }
+  var H0 = PI/2;
+  /* --- the helmet, in the head bone's space round the toy head --- */
+  var H = M.head, c = H.c, rx = H.rx, ry = H.ry, rz = H.rz, e = 1.1, hf = M.hb, V = "visor";
+  // the shell, open at the face (the faceplate covers the window, a little larger all round): your own face shows
+  // through it while the suit goes on, until the faceplate slides shut
+  var WW = 1.5, W0 = 1.2, W1 = 2.24;
+  C("Head", rx*e, ry*e, rz*e, H0 + PI, 2*PI - WW, H0, PI, "A", c.x, c.y + ry*0.02, c.z, 7, K.helmet, hf, null, 20, 18);
+  C("Head", rx*e, ry*e, rz*e, H0, WW + 0.02, W0/2, W0, "A", c.x, c.y + ry*0.02, c.z, 7, K.helmet, hf, null, 6, 7);
+  C("Head", rx*e, ry*e, rz*e, H0, WW + 0.02, (W1 + PI)/2, PI - W1, "A", c.x, c.y + ry*0.02, c.z, 7, K.helmet, hf, null, 6, 5);
+  // the back plate and the cheek guards, layered over the shell
+  C("Head", rx*1.16, ry*1.14, rz*1.16, -H0, 2.2, 1.35, 1.3, "B", c.x, c.y, c.z, 7, K.helmet, hf, null, 12, 8);
+  [-1, 1].forEach(function(s){ C("Head", rx*1.15, ry*1.13, rz*1.15, H0 - s*0.95, 0.75, 1.95, 0.85, "A", c.x, c.y, c.z, 7, K.helmet, hf, null, 6, 6); });
+  // the faceplate (hinged: it swings shut last) and its face
+  var fp = Y.face, fk = fp === "slit" ? "A" : "B";
+  C("Head", rx*1.17, ry*1.15, rz*1.19, H0, 1.75, 1.72, 1.28, fk, c.x, c.y, c.z, 9, K.face, hf, V, 16, 10);
+  C("Head", rx*1.2, ry*1.12, rz*1.21, H0, 1.35, 1.12, 0.22, "B", c.x, c.y, c.z, 9, K.helmet, hf, V, 12, 3);              // the brow
+  if(fp === "eyes"){
+    C("Head", rx*1.205, ry*1.16, rz*1.225, H0, 1.3, 1.6, 0.26, "D", c.x, c.y, c.z, 9, 0, hf, V, 12, 3);                  // the band the eyes sit in
+    [-1, 1].forEach(function(s){ C("Head", rx*1.215, ry*1.17, rz*1.24, H0 - s*0.37, 0.44, 1.6, 0.085, "G", c.x, c.y, c.z, 9, 0, hf, V, 6, 2, 0, 0, s*0.16); });
+  } else if(fp === "slit"){
+    C("Head", rx*1.21, ry*1.17, rz*1.23, H0, 1.4, 1.58, 0.07, "G", c.x, c.y, c.z, 9, 0, hf, V, 12, 2);
+    [-1, 1].forEach(function(s){ for(var v = 0; v < 3; v++) C("Head", rx*1.205, ry*1.16, rz*1.225, H0 - s*0.5, 0.32, 1.95 + v*0.13, 0.05, "D", c.x, c.y, c.z, 9, 0, hf, V, 4, 1); });
+  } else if(fp === "band"){
+    C("Head", rx*1.21, ry*1.17, rz*1.23, H0, 2.3, 1.58, 0.3, "D", c.x, c.y, c.z, 9, 0, hf, V, 16, 3);
+    C("Head", rx*1.22, ry*1.18, rz*1.24, H0, 2.1, 1.58, 0.1, "G", c.x, c.y, c.z, 9, 0, hf, V, 16, 2);
+  } else {                                                                                                                 // a porthole
+    p("Head", ["t", rx*0.42, rx*0.07, 16], "B", c.x, c.y - ry*0.05, c.z + rz*1.17, 0, 0, 0, 1, 1, 1, 9, K.plain, hf, V);
+    p("Head", ["y", rx*0.4, rx*0.4, rz*0.04, 16], "L", c.x, c.y - ry*0.05, c.z + rz*1.16, PI/2, 0, 0, 1, 1, 1, 9, 0, hf, V);
+    [-1, 1].forEach(function(s){ p("Head", ["s", rx*0.06, 6, 4], "G", c.x + s*rx*0.16, c.y - ry*0.02, c.z + rz*1.12, 0, 0, 0, 1, 1, 1, 9, 0, hf, V); });
+  }
+  if(fp !== "port") C("Head", rx*1.19, ry*1.15, rz*1.2, H0, 0.5, 2.38, 0.4, "D", c.x, c.y, c.z, 9, 0, hf, V, 4, 3);   // the chin vent
+  // the ears: a disc and its glow ring
   [-1, 1].forEach(function(s){
-    p("Head", ["r", rx*0.4, ry*0.12, rz*0.08, 6, 4], "G", c.x + s*rx*0.36, c.y - ry*0.04, c.z + rz*1.1, 0.05, s*0.42, s*0.16, 1, 1, 1, 8, 0, hf);
-    p("Head", ["y", ry*0.3, ry*0.3, rx*0.16, 12], "B", c.x + s*rx*e*0.98, c.y - ry*0.08, c.z - rz*0.04, 0, 0, PI/2, 1, 1, 1, 7, K.plain, hf);
-    p("Head", ["t", ry*0.22, ry*0.035, 12], "G", c.x + s*rx*(e*0.98 + 0.08), c.y - ry*0.08, c.z - rz*0.04, 0, PI/2, 0, 1, 1, 1, 7, 0, hf);
+    p("Head", ["y", ry*0.3, ry*0.32, rx*0.16, 14], "B", c.x + s*rx*e*0.99, c.y - ry*0.08, c.z - rz*0.04, 0, 0, PI/2, 1, 1, 1, 7, K.plain, hf);
+    p("Head", ["t", ry*0.2, ry*0.035, 14], "G", c.x + s*rx*(e*0.99 + 0.085), c.y - ry*0.08, c.z - rz*0.04, 0, PI/2, 0, 1, 1, 1, 7, 0, hf);
   });
-  p("Head", ["k", rx*0.2, ry*e*1.035, rz*e*1.02, 10, 16], "B", c.x, c.y + ry*0.02, c.z - rz*0.02, 0, 0, 0, 1, 1, 1, 8, K.helmet, hf);  // the crest ridge
-  if(has("dome")) p("Head", ["s", 1, 16, 12], "L", c.x, c.y + ry*0.05, c.z + rz*0.05, 0, 0, 0, rx*1.42, ry*1.42, rz*1.42, 8, 0, hf);
-  p("Neck", ["y", 0.068*b, 0.078*b, 0.15, 12], "D", 0, J.Neck.y + 0.03, J.Neck.z + 0.01, 0, 0, 0, 1, 1, 1, 7);
-  // the trunk: a cuirass over the chest with its plate and core, the ribs, a flexible dark abdomen under four plates, the belt
-  var C = M.chest, R = M.ribs, Ab = M.abs, Pv = M.pelvis, cr = has("core") ? 0.055 : 0.036;
-  var ch0 = C.y0 - 0.02, ch1 = C.y1 + 0.02, chy = (ch0 + ch1)/2, chz = (C.z0 + C.z1)/2, cf = C.z1 + t;
-  p("Chest", ["r", 2*C.hw + 2*t, ch1 - ch0, C.z1 - C.z0 + 2*t, 14, 9], "A", 0, chy, chz, 0, 0, 0, 1, 1, 1, 3, K.cuirass);
-  p("Chest", ["r", 2*C.hw*0.78, (ch1 - ch0)*0.62, 0.05, 10, 6], "B", 0, chy + 0.01, cf - 0.012, 0, 0, 0, 1, 1, 1, 3, K.chest);
-  p("Chest", ["y", cr, cr, 0.03, 14], "G", 0, chy + 0.01, cf + 0.01, PI/2, 0, 0, 1, 1, 1, 3);
-  p("Chest", ["t", cr*1.3, cr*0.2, 14], "B", 0, chy + 0.01, cf + 0.024, 0, 0, 0, 1, 1, 1, 3);
-  p("Chest", ["t", cr*1.7, cr*0.08, 14], "G", 0, chy + 0.01, cf + 0.018, 0, 0, 0, 1, 1, 1, 3);
-  p("Torso", ["r", 2*R.hw + 1.6*t, R.y1 - R.y0 + 0.03, R.z1 - R.z0 + 1.6*t, 12, 7], "A", 0, (R.y0 + R.y1)/2, (R.z0 + R.z1)/2, 0, 0, 0, 1, 1, 1, 3, K.cuirass);
-  p("Abdomen", ["r", 2*Ab.hw + t, Ab.y1 - Ab.y0 + 0.02, Ab.z1 - Ab.z0 + t, 10, 6], "D", 0, (Ab.y0 + Ab.y1)/2, (Ab.z0 + Ab.z1)/2, 0, 0, 0, 1, 1, 1, 2);
-  [-1, 1].forEach(function(s){ [0.28, 0.72].forEach(function(f){
-    p("Abdomen", ["r", Ab.hw*0.62, (Ab.y1 - Ab.y0)*0.4, 0.035, 6, 4], "A", s*Ab.hw*0.36, Ab.y0 + (Ab.y1 - Ab.y0)*f, Ab.z1 + t*0.5, -0.1, 0, 0, 1, 1, 1, 2, K.plain);
-  }); });
-  p("Hips", ["r", 2*Pv.hw + 2*t, 0.075, Pv.z1 - Pv.z0 + 2*t, 12, 5], "B", 0, Pv.y1 - 0.04, (Pv.z0 + Pv.z1)/2, 0, 0, 0, 1, 1, 1, 2, K.plain);
-  p("Hips", ["y", 0.022, 0.022, 0.012, 10], "G", 0, Pv.y1 - 0.04, Pv.z1 + 2*t - 0.004, PI/2, 0, 0, 1, 1, 1, 2);
-  p("Hips", ["r", Pv.hw*0.9, (Pv.y1 - Pv.y0)*0.75, 0.04, 6, 5], "A", 0, Pv.y0 + (Pv.y1 - Pv.y0)*0.32, Pv.z1 + t*0.4, -0.12, 0, 0, 1, 1, 1, 2, K.plain);
-  if(has("pack")) p("Chest", ["r", 2*C.hw*0.72, (ch1 - ch0)*0.95, 0.1*b, 10, 6], "D", 0, chy - 0.02, C.z0 - 0.045*b, 0, 0, 0, 1, 1, 1, 6, K.pack);
-  // the limbs, the left built and the right mirrored (x -> -x)
+  if(Y.crest === "ridge") p("Head", ["k", rx*0.2, ry*e*1.04, rz*e*1.03, 10, 16], "B", c.x, c.y + ry*0.02, c.z - rz*0.02, 0, 0, 0, 1, 1, 1, 8, K.helmet, hf);
+  else if(Y.crest === "fin") R("Head", rx*0.08, ry*0.5, rz*1.3, "B", c.x, c.y + ry*1.12, c.z - rz*0.45, -0.35, 0, 0, 8, K.plain, 6, 5, 0.3, hf);
+  else if(Y.crest === "brow") C("Head", rx*1.24, ry*1.2, rz*1.24, H0, 2.4, 0.95, 0.35, "B", c.x, c.y, c.z, 8, K.helmet, hf, null, 14, 3);
+  else if(Y.crest === "twin") [-1, 1].forEach(function(s){ p("Head", ["y", rx*0.025, rx*0.04, ry*0.7, 6], "B", c.x + s*rx*0.75, c.y + ry*1.0, c.z - rz*0.55, -0.5, 0, -s*0.25, 1, 1, 1, 8, K.plain, hf);
+    p("Head", ["s", rx*0.05, 6, 4], "G", c.x + s*rx*0.84, c.y + ry*1.3, c.z - rz*0.72, 0, 0, 0, 1, 1, 1, 8, 0, hf); });
+  if(fp === "port") p("Head", ["s", 1, 18, 14], "L", c.x, c.y + ry*0.05, c.z + rz*0.05, 0, 0, 0, rx*1.42, ry*1.42, rz*1.42, 9, 0, hf);
+  // the gorget and the collar ring
+  p("Neck", ["y", 0.07*sk, 0.08*sk, 0.15, 14], "D", 0, J.Neck.y + 0.03, J.Neck.z + 0.01, 0, 0, 0, 1, 1, 1, 7);
+  p("Chest", ["t", 0.085*sk, 0.016, 14], "B", 0, J.Neck.y - 0.02, J.Neck.z + 0.005, PI/2, 0, 0, 1, 1, 1, 3);
+  /* --- the trunk --- */
+  var Cb = M.chest, Rb = M.ribs, Ab = M.abs, Pv = M.pelvis, hw = Cb.hw*Math.max(0.94, sk);
+  var ch0 = Cb.y0 - 0.02, ch1 = Cb.y1 + 0.02, chh = ch1 - ch0, chy = (ch0 + ch1)/2, chz = (Cb.z0 + Cb.z1)/2, chd = (Cb.z1 - Cb.z0)/2 + t, cf = Cb.z1 + t;
+  R("Chest", 2*hw + 2*t, chh, 2*chd, "A", 0, chy, chz, 0, 0, 0, 3, K.cuirass, 14, 9, ed);
+  // the chest plates: two curved pectoral plates over the cuirass, the trapezius guards each side
+  [-1, 1].forEach(function(s){
+    C("Chest", hw + 3*t, chh*0.62, chd + 1.4*t, H0 - s*0.42, 0.95, 1.38, 1.05, "A", 0, chy + chh*0.04, chz, 3, K.chest, null, null, 10, 8);
+    R("Chest", hw*0.62, 0.05, chd*1.3, "B", s*hw*0.5, ch1 - 0.005, chz - 0.01, 0, 0, -s*0.32, 3, K.plain, 7, 4);
+  });
+  // the core
+  var cy0 = chy + chh*0.04, cr = (Y.core === "orb" ? 0.06 : 0.04)*Math.max(0.9, sk);
+  if(Y.core === "vents"){
+    R("Chest", hw*0.95, chh*0.42, 0.04, "D", 0, cy0, cf + 0.004, 0, 0, 0, 3, 0, 6, 4, 0.2);
+    for(var v = 0; v < 3; v++) R("Chest", hw*0.78, 0.016, 0.02, "G", 0, cy0 - chh*0.13 + v*chh*0.13, cf + 0.024, 0, 0, 0, 3, 0, 4, 2, 0.3);
+    p("Chest", ["t", hw*0.52, 0.012, 4], "B", 0, cy0, cf + 0.03, 0, 0, PI/4, 1.15, 0.55, 1, 3, K.plain);
+  } else if(Y.core === "orb"){
+    p("Chest", ["s", cr, 16, 12], "G", 0, cy0, cf + 0.012, 0, 0, 0, 1, 1, 0.7, 3);
+    [1.25, 1.55, 1.9].forEach(function(k, i){ p("Chest", ["t", cr*k, cr*(0.12 - i*0.03), 18], i === 1 ? "G" : "B", 0, cy0, cf + 0.01 + i*0.004, 0, 0, 0, 1, 1, 1, 3); });
+  } else if(Y.core === "port"){
+    p("Chest", ["t", cr*1.5, cr*0.35, 18], "B", 0, cy0, cf + 0.02, 0, 0, 0, 1, 1, 1, 3);
+    p("Chest", ["y", cr*1.35, cr*1.35, 0.02, 18], "G", 0, cy0, cf + 0.012, PI/2, 0, 0, 1, 1, 1, 3);
+    for(var rv = 0; rv < 8; rv++){ var ra = rv*PI/4; p("Chest", ["s", cr*0.12, 5, 4], "B", Math.cos(ra)*cr*1.5, cy0 + Math.sin(ra)*cr*1.5, cf + 0.034, 0, 0, 0, 1, 1, 1, 3); }
+  } else {
+    var tri = Y.core === "tri" ? 3 : 18;
+    p("Chest", ["y", cr*1.05, cr*1.05, 0.03, tri], "G", 0, cy0, cf + 0.01, PI/2, tri === 3 ? PI/2 : 0, 0, 1, 1, 1, 3);
+    p("Chest", ["t", cr*1.32, cr*0.2, tri === 3 ? 3 : 18], "B", 0, cy0, cf + 0.026, 0, 0, tri === 3 ? -PI/2 : 0, 1, 1, 1, 3);
+    p("Chest", ["t", cr*1.75, cr*0.07, 18], "G", 0, cy0, cf + 0.02, 0, 0, 0, 1, 1, 1, 3);
+  }
+  // the ribs: the side plates and two lames each side
+  R("Torso", 2*Rb.hw*Math.max(0.94, sk) + 1.6*t, Rb.y1 - Rb.y0 + 0.03, Rb.z1 - Rb.z0 + 1.6*t, "A", 0, (Rb.y0 + Rb.y1)/2, (Rb.z0 + Rb.z1)/2, 0, 0, 0, 3, K.cuirass, 12, 7, ed);
+  [-1, 1].forEach(function(s){ for(var l = 0; l < 2; l++)
+    R("Torso", 0.035, (Rb.y1 - Rb.y0)*0.4, (Rb.z1 - Rb.z0)*0.75, "B", s*(Rb.hw*Math.max(0.94, sk) + t*1.2), Rb.y0 + (Rb.y1 - Rb.y0)*(0.28 + l*0.42), (Rb.z0 + Rb.z1)/2, 0.12, 0, s*0.1, 3, K.plain, 5, 4); });
+  // the belly: a dark flexible core under three rows of lames
+  R("Abdomen", 2*Ab.hw + t, Ab.y1 - Ab.y0 + 0.02, Ab.z1 - Ab.z0 + t, "D", 0, (Ab.y0 + Ab.y1)/2, (Ab.z0 + Ab.z1)/2, 0, 0, 0, 2, 0, 10, 6);
+  [-1, 1].forEach(function(s){ for(var r3 = 0; r3 < 3; r3++)
+    R("Abdomen", Ab.hw*0.6*sk, (Ab.y1 - Ab.y0)*0.3, 0.035, "A", s*Ab.hw*0.36, Ab.y0 + (Ab.y1 - Ab.y0)*(0.18 + r3*0.32), Ab.z1 + t*0.5 - r3*0.004, -0.12, s*0.12, 0, 2, K.plain, 6, 4); });
+  if(Y.seams) R("Abdomen", 0.008, (Ab.y1 - Ab.y0)*0.9, 0.012, "G", 0, (Ab.y0 + Ab.y1)/2, Ab.z1 + t, 0, 0, 0, 2, 0, 3, 3, 0.3);
+  // the belt, its glowing buckle, the codpiece; the back plate and its spine ridge
+  R("Hips", 2*Pv.hw*Math.max(0.94, sk) + 2*t, 0.075, Pv.z1 - Pv.z0 + 2*t, "B", 0, Pv.y1 - 0.04, (Pv.z0 + Pv.z1)/2, 0, 0, 0, 2, K.plain, 12, 5);
+  p("Hips", ["y", 0.024, 0.024, 0.012, Y.core === "tri" ? 3 : 12], "G", 0, Pv.y1 - 0.04, Pv.z1 + 2*t - 0.004, PI/2, 0, 0, 1, 1, 1, 2);
+  R("Hips", Pv.hw*0.9, (Pv.y1 - Pv.y0)*0.75, 0.04, "A", 0, Pv.y0 + (Pv.y1 - Pv.y0)*0.32, Pv.z1 + t*0.4, -0.12, 0, 0, 2, K.plain, 6, 5);
+  C("Chest", hw + 2.6*t, chh*0.62, chd + 1.2*t, -H0, 1.7, 1.5, 1.1, "A", 0, chy, chz, 6, K.cuirass, null, null, 10, 8);
+  R("Chest", 0.05, chh*0.9, 0.04, "B", 0, chy - 0.02, Cb.z0 - 1.3*t, 0, 0, 0, 6, K.plain, 4, 6);
+  /* --- what rides the back --- */
+  var bz = Cb.z0 - 1.5*t, bk = Y.back;
+  if(bk === "jets" || bk === "stacks"){
+    var big = bk === "stacks";
+    R("Chest", hw*(big ? 1.5 : 1.2), chh*(big ? 1.05 : 0.85), 0.1*b, "D", 0, chy - 0.01, bz - 0.05*b, 0, 0, 0, 6, K.pack, 10, 7);
+    [-1, 1].forEach(function(s){
+      if(big){ p("Chest", ["y", 0.04, 0.05, chh*0.7, 12], "B", s*hw*0.45, ch1 + 0.02, bz - 0.06*b, 0, 0, 0, 1, 1, 1, 6, K.plain);
+               p("Chest", ["t", 0.042, 0.008, 12], "G", s*hw*0.45, ch1 + chh*0.35 + 0.02, bz - 0.06*b, PI/2, 0, 0, 1, 1, 1, 6); }
+      else { p("Chest", ["y", 0.04, 0.03, 0.09, 12], "B", s*hw*0.32, chy - chh*0.45, bz - 0.06*b, 0, 0, 0, 1, 1, 1, 6, K.plain);
+             p("Chest", ["t", 0.03, 0.007, 12], "G", s*hw*0.32, chy - chh*0.45 - 0.045, bz - 0.06*b, PI/2, 0, 0, 1, 1, 1, 6); }
+    });
+  } else if(bk === "tanks"){
+    [-1, 1].forEach(function(s){
+      p("Chest", ["y", 0.05, 0.05, chh*1.1, 14], "B", s*hw*0.42, chy - 0.02, bz - 0.06, 0, 0, 0, 1, 1, 1, 6, K.plain);
+      p("Chest", ["s", 0.05, 12, 6], "B", s*hw*0.42, chy - 0.02 + chh*0.55, bz - 0.06, 0, 0, 0, 1, 0.6, 1, 6, K.plain);
+      p("Chest", ["t", 0.052, 0.008, 14], "G", s*hw*0.42, chy - 0.02 - chh*0.3, bz - 0.06, PI/2, 0, 0, 1, 1, 1, 6);
+      p("Chest", ["t", 0.11, 0.014, 10, PI*0.8], "D", s*hw*0.3, ch1 + 0.02, bz - 0.0, 0, s*PI/2, PI*0.1, 1, 1, 1, 6);      // the hose to the helmet
+    });
+  } else if(bk === "wings"){
+    R("Chest", hw*0.7, chh*0.9, 0.08, "D", 0, chy, bz - 0.04, 0, 0, 0, 6, K.pack, 8, 6);
+    [-1, 1].forEach(function(s){
+      R("Chest", 0.5, 0.018, 0.17, "B", s*(hw*0.3 + 0.24), chy + 0.08, bz - 0.06, 0.1, -s*0.25, s*0.42, 6, K.plain, 8, 2, 0.2);
+      R("Chest", 0.36, 0.014, 0.12, "A", s*(hw*0.3 + 0.18), chy - 0.03, bz - 0.07, 0.1, -s*0.35, s*0.62, 6, K.plain, 8, 2, 0.2);
+      R("Chest", 0.42, 0.008, 0.012, "G", s*(hw*0.3 + 0.25), chy + 0.08, bz - 0.06 + 0.085, 0.1, -s*0.25, s*0.42, 6, 0, 4, 2, 0.3);
+    });
+  } else if(bk === "fin"){
+    R("Chest", 0.022, chh*0.8, 0.14, "B", 0, chy + 0.02, bz - 0.06, -0.25, 0, 0, 6, K.plain, 4, 6, 0.2);
+  } else {
+    p("Chest", ["s", 0.05, 14, 10], "G", 0, chy, bz - 0.02, 0, 0, 0, 1, 1, 0.6, 6);
+    p("Chest", ["t", 0.065, 0.012, 16], "B", 0, chy, bz - 0.02, 0, 0, 0, 1, 1, 1, 6);
+  }
+  /* --- the limbs: the left built, the right mirrored (x -> -x) --- */
   var UA = M.ua, LA = M.la, HB = M.hand, UL = M.ul, LL = M.ll, FT = M.foot;
-  var uay = (UA[1] + UA[4])/2, uaz = (UA[2] + UA[5])/2, lay = (LA[1] + LA[4])/2, laz = (LA[2] + LA[5])/2;
-  var knx = J.Index2L ? J.Index2L.x : HB[0] + (HB[3] - HB[0])*0.45, hz = (HB[2] + HB[5])/2, hy = (HB[1] + HB[4])/2;
-  var ulx = (UL[0] + UL[3])/2, ulz = (UL[2] + UL[5])/2, llx = (LL[0] + LL[3])/2, llz = (LL[2] + LL[5])/2, fx = (FT[0] + FT[3])/2;
-  var yK = J.LowerLegL.y, yHip = J.UpperLegL.y;
+  var uay = (UA[1] + UA[4])/2, uaz = (UA[2] + UA[5])/2, uah = UA[4] - UA[1], uad = UA[5] - UA[2], lay = (LA[1] + LA[4])/2, laz = (LA[2] + LA[5])/2, lah = LA[4] - LA[1], lad = LA[5] - LA[2];
+  var knx = J.Index2L ? J.Index2L.x : HB[0] + (HB[3] - HB[0])*0.45, hz = (HB[2] + HB[5])/2;
+  var ulx = (UL[0] + UL[3])/2, ulz = (UL[2] + UL[5])/2, ulw = UL[3] - UL[0], uld = UL[5] - UL[2], llx = (LL[0] + LL[3])/2, llz = (LL[2] + LL[5])/2, llw = LL[3] - LL[0], lld = LL[5] - LL[2];
+  var fx = (FT[0] + FT[3])/2, fw = FT[3] - FT[0], fl = FT[5] - FT[2], fz = (FT[2] + FT[5])/2, yK = J.LowerLegL.y, yHip = J.UpperLegL.y;
   [1, -1].forEach(function(s){
     var n = s > 0 ? "L" : "R";
-    // shoulder pauldron and the upper arm's plate
-    p("UpperArm" + n, ["r", 0.15*b, 0.1*b, UA[5] - UA[2] + 0.07*b, 9, 6], "B", s*(UA[0] + 0.07), UA[4] + 0.008, uaz, 0, 0, -s*0.32, 1, 1, 1, 4, K.shoulder);
-    p("UpperArm" + n, ["r", (UA[3] - UA[0])*0.62, UA[4] - UA[1] + t, UA[5] - UA[2] + t, 8, 6], "A", s*(UA[0] + (UA[3] - UA[0])*0.6), uay, uaz, 0, 0, 0, 1, 1, 1, 4, K.plain);
-    p("LowerArm" + n, ["s", 0.04*b, 8, 6], "D", s*(LA[0] + 0.005), lay, laz - 0.012, 0, 0, 0, 1, 1, 1, 4);
-    // the forearm gauntlet, its cuff glow, the back of the hand, knuckle plates and the palm's repulsor
-    p("LowerArm" + n, ["r", (LA[3] - LA[0])*0.8, (LA[4] - LA[1] + 1.3*t)*fist, (LA[5] - LA[2] + 1.3*t)*fist, 9, 6], "A", s*(LA[0] + (LA[3] - LA[0])*0.56), lay, laz, 0, 0, 0, 1, 1, 1, 5, K.gauntlet);
-    p("LowerArm" + n, ["b", 0.008, (LA[4] - LA[1])*0.8*fist, 0.012], "G", s*(LA[3] - 0.02), lay, LA[5] + 0.6*t*fist, 0, 0, 0, 1, 1, 1, 5);
-    p("Wrist" + n, ["r", (knx - HB[0])*1.05*fist, 0.026*fist, (HB[5] - HB[2])*0.82*fist, 7, 4], "A", s*(HB[0] + (knx - HB[0])*0.5), HB[4] + 0.004, hz - 0.01, 0, 0, 0, 1, 1, 1, 5, K.plain);
-    ["Index", "Middle", "Ring", "Pinky"].forEach(function(d){
-      var a = J[d + "2" + n], z = J[d + "3" + n]; if(!a || !z) return;
-      var len = Math.abs(z.x - a.x) + 0.012, mx = (Math.abs(a.x) + Math.abs(z.x))/2;
-      p(d + "2" + n, ["r", len, 0.014, 0.024, 5, 3], "B", s*mx, Math.max(a.y, z.y) + 0.016, (a.z + z.z)/2, 0, 0, 0, 1, 1, 1, 5, K.plain);
-    });
-    if(J["Thumb2" + n]) p("Thumb2" + n, ["r", 0.03, 0.018, 0.026, 5, 3], "B", s*Math.abs(J["Thumb2" + n].x), J["Thumb2" + n].y + 0.006, J["Thumb2" + n].z + 0.01, 0, s*0.6, 0, 1, 1, 1, 5, K.plain);
-    p("Wrist" + n, ["y", 0.024*fist, 0.024*fist, 0.008, 12], "G", s*(HB[0] + (knx - HB[0])*0.55), HB[1] - 0.002, hz, 0, 0, 0, 1, 1, 1, 5);
-    // thigh, knee cop, shin, the boot (its top on the shin, the boot and sole on the foot), the sole's jet ring
-    p("UpperLeg" + n, ["r", (UL[3] - UL[0])*0.92 + t, (yHip - yK)*0.56, (UL[5] - UL[2])*0.82 + t, 9, 6], "A", s*ulx, yK + (yHip - yK)*0.45, ulz + (UL[5] - UL[2])*0.06, 0, 0, 0, 1, 1, 1, 1, K.plain);
-    p("LowerLeg" + n, ["r", (LL[3] - LL[0])*0.75, 0.1, 0.05, 7, 5], "B", s*llx, yK - 0.005, LL[5] + 0.012, 0.25, 0, 0, 1, 1, 1, 1, K.plain);
-    p("LowerLeg" + n, ["r", LL[3] - LL[0] + t, (yK - 0.18)*0.82, LL[5] - LL[2] + t, 9, 6], "A", s*llx, 0.18 + (yK - 0.18)*0.45, llz + 0.004, 0, 0, 0, 1, 1, 1, 1, K.shin);
-    p("LowerLeg" + n, ["r", LL[3] - LL[0] + 1.8*t, 0.14, LL[5] - LL[2] + 1.8*t, 9, 5], "B", s*llx, 0.13, llz, 0, 0, 0, 1, 1, 1, 0, K.boot);
-    p("Foot" + n, ["r", FT[3] - FT[0] + 1.6*t, FT[4] - FT[1] + 0.03, FT[5] - FT[2] + 1.4*t, 9, 6], "B", s*fx, (FT[1] + FT[4])/2 + 0.012, (FT[2] + FT[5])/2 + 0.004, 0, 0, 0, 1, 1, 1, 0, K.boot);
-    p("Foot" + n, ["r", FT[3] - FT[0] + 1.2*t, 0.03, FT[5] - FT[2] + 0.8*t, 8, 3], "D", s*fx, FT[1] + 0.012, (FT[2] + FT[5])/2 + 0.004, 0, 0, 0, 1, 1, 1, 0);
-    p("Foot" + n, ["t", 0.03, 0.006, 12], "G", s*fx, FT[1] - 0.006, FT[2] + (FT[5] - FT[2])*0.32, PI/2, 0, 0, 1, 1, 1, 0);
-    if(has("fins")) p("LowerLeg" + n, ["b", 0.014, (yK - 0.2)*0.7, 0.09], "B", s*(LL[3] + 0.02), 0.2 + (yK - 0.2)*0.45, llz - 0.03, -0.25, 0, 0, 1, 1, 1, 1);
-    if(has("wings")) p("Chest", ["b", 0.42, 0.016, 0.16], "B", s*(C.hw*0.4 + 0.2), chy + 0.06, C.z0 - 0.05, 0, -s*0.15, s*0.3, 1, 1, 1, 6);
-    if(has("tanks")) p("Chest", ["y", 0.045, 0.045, (ch1 - ch0)*1.05, 12], "B", s*C.hw*0.42, chy - 0.03, C.z0 - 0.05, 0, 0, 0, 1, 1, 1, 6);
+    // the shoulder: a ball joint under the pauldron's lames, stacked down the arm
+    p("UpperArm" + n, ["s", uah*0.62, 10, 8], "D", s*(UA[0] + 0.03), uay, uaz, 0, 0, 0, 1, 1, 1, 4);
+    for(var l = 0; l < Y.pa; l++){
+      var pk = 1 - l*0.16, big = Y.pa === 3 ? 1.45 : Y.pa === 1 ? 0.85 : 1;
+      R("UpperArm" + n, 0.16*big*pk*sk, 0.07*big, (uad + 0.08)*big*pk, l % 2 ? "B" : "A", s*(UA[0] + 0.06 + l*0.045*big), UA[4] + 0.03*big - l*0.03*big, uaz, 0, 0, -s*(0.34 + l*0.12), 4, K.shoulder, 9, 6);
+    }
+    // the upper arm's band, its seam; the elbow's cop
+    R("UpperArm" + n, (UA[3] - UA[0])*0.5, uah*sk + t, uad*sk + t, "A", s*(UA[0] + (UA[3] - UA[0])*0.66), uay, uaz, 0, 0, 0, 4, K.plain, 8, 6);
+    if(Y.seams) R("UpperArm" + n, (UA[3] - UA[0])*0.42, 0.008, 0.01, "G", s*(UA[0] + (UA[3] - UA[0])*0.66), uay + (uah*sk + t)/2, uaz, 0, 0, 0, 4, 0, 3, 2, 0.3);
+    p("LowerArm" + n, ["s", lah*0.55, 9, 7], "D", s*(LA[0] + 0.005), lay, laz, 0, 0, 0, 1, 1, 1, 4);
+    C("LowerArm" + n, lah*0.62, lah*0.62, lad*0.66, -H0, 1.6, H0, 1.5, "B", s*(LA[0] + 0.01), lay, laz - 0.006, 4, K.plain, null, null, 6, 6);
+    // the forearm: the gauntlet, an overlapping top plate, the cuff, the seam (and Strider's blade)
+    var gw = (LA[3] - LA[0])*0.78, gx = s*(LA[0] + (LA[3] - LA[0])*0.56);
+    R("LowerArm" + n, gw, (lah + 1.3*t)*fist*sk, (lad + 1.3*t)*fist*sk, "A", gx, lay, laz, 0, 0, 0, 5, K.gauntlet, 10, 7);
+    R("LowerArm" + n, gw*0.75, 0.03, (lad + t)*fist*sk*0.7, "B", gx - s*gw*0.08, lay + (lah + 1.3*t)*fist*sk/2, laz, 0, 0, 0, 5, K.plain, 7, 3);
+    p("LowerArm" + n, ["y", (lah*0.5 + t)*fist*sk*1.08, (lah*0.5 + t)*fist*sk*1.08, 0.026, 14], "B", s*(LA[3] - 0.012), lay, laz, 0, 0, PI/2, 1, 1, 1.15, 5, K.plain);
+    if(Y.seams) R("LowerArm" + n, gw*0.7, 0.008, 0.01, "G", gx, lay, laz + (lad + 1.3*t)*fist*sk/2, 0, 0, 0, 5, 0, 3, 2, 0.3);
+    if(Y.fins) R("LowerArm" + n, gw*0.9, 0.012, 0.06, "B", gx, lay - 0.01, LA[2] - 0.02, 0, 0, 0, 5, K.plain, 6, 2, 0.2);
+    // the hand: the back plate, articulated finger plates (two per finger, two on the thumb), the palm's repulsor
+    R("Wrist" + n, (knx - HB[0])*1.05*fist, 0.026*fist, (HB[5] - HB[2])*0.82*fist, "A", s*(HB[0] + (knx - HB[0])*0.5), HB[4] + 0.004, hz - 0.01, 0, 0, 0, 5, K.plain, 7, 4);
+    ["Index", "Middle", "Ring", "Pinky"].forEach(function(d){ [2, 3].forEach(function(k){
+      var a = J[d + k + n], z = J[d + (k + 1) + n]; if(!a || !z) return;
+      var len = Math.abs(z.x - a.x) + 0.01, mx = (Math.abs(a.x) + Math.abs(z.x))/2;
+      R(d + k + n, len, 0.013, 0.022*fist, k === 2 ? "B" : "A", s*mx, Math.max(a.y, z.y) + 0.015, (a.z + z.z)/2, 0, 0, 0, 5, K.plain, 5, 3);
+    }); });
+    ["Thumb2", "Thumb3"].forEach(function(nm, i){ var a = J[nm + n]; if(a) R(nm + n, 0.028, 0.017, 0.024, i ? "A" : "B", s*Math.abs(a.x), a.y + 0.008, a.z + 0.012, 0, s*0.6, 0, 5, K.plain, 5, 3); });
+    var px = s*(HB[0] + (knx - HB[0])*0.55);
+    p("Wrist" + n, ["y", 0.024*fist, 0.024*fist, 0.008, 14], "G", px, HB[1] - 0.002, hz, 0, 0, 0, 1, 1, 1, 5);
+    p("Wrist" + n, ["t", 0.03*fist, 0.005, 14], "B", px, HB[1] - 0.003, hz, PI/2, 0, 0, 1, 1, 1, 5);
+    // the hip's tasset; the thigh's front and side plates and seam; the knee's joint and cop
+    R("UpperLeg" + n, ulw*0.7, (yHip - yK)*0.28, 0.05, "B", s*(UL[3] + 0.005), yHip - (yHip - yK)*0.16, ulz, 0, 0, s*0.18, 1, K.plain, 7, 5);
+    R("UpperLeg" + n, ulw*0.86*sk + t, (yHip - yK)*0.55, uld*0.62*sk + t, "A", s*ulx, yK + (yHip - yK)*0.47, ulz + uld*0.16, 0, 0, 0, 1, K.plain, 9, 7);
+    R("UpperLeg" + n, 0.035, (yHip - yK)*0.44, uld*0.7, "B", s*(UL[3] - 0.004), yK + (yHip - yK)*0.42, ulz, 0, 0, 0, 1, K.plain, 4, 6);
+    if(Y.seams) R("UpperLeg" + n, 0.01, (yHip - yK)*0.42, 0.01, "G", s*ulx, yK + (yHip - yK)*0.47, ulz + uld*0.16 + (uld*0.62*sk + t)/2, 0, 0, 0, 1, 0, 2, 3, 0.3);
+    p("LowerLeg" + n, ["s", llw*0.48, 9, 7], "D", s*llx, yK + 0.004, llz, 0, 0, 0, 1, 1, 1, 1);
+    R("LowerLeg" + n, llw*0.8*sk, 0.11, 0.055, "B", s*llx, yK - 0.008, LL[5] + 0.014, 0.25, 0, 0, 1, K.plain, 8, 6);
+    R("LowerLeg" + n, llw*0.32, 0.05, 0.03, "A", s*llx, yK - 0.008, LL[5] + 0.044, 0.25, 0, 0, 1, K.plain, 5, 4);
+    // the shin, the calf plate, the seam (Strider's blade), the boot's cuff
+    R("LowerLeg" + n, llw*sk + t, (yK - 0.18)*0.8, lld*0.7*sk + t, "A", s*llx, 0.18 + (yK - 0.18)*0.45, llz + lld*0.14, 0, 0, 0, 1, K.shin, 9, 7);
+    R("LowerLeg" + n, llw*0.8*sk, (yK - 0.18)*0.6, 0.05, "B", s*llx, 0.2 + (yK - 0.18)*0.5, LL[2] - 0.004, 0, 0, 0, 1, K.plain, 7, 5);
+    if(Y.seams) R("LowerLeg" + n, 0.01, (yK - 0.18)*0.62, 0.01, "G", s*llx, 0.18 + (yK - 0.18)*0.45, llz + lld*0.14 + (lld*0.7*sk + t)/2, 0, 0, 0, 1, 0, 2, 3, 0.3);
+    if(Y.fins) R("LowerLeg" + n, 0.014, (yK - 0.2)*0.7, 0.1, "B", s*(LL[3] + 0.024), 0.2 + (yK - 0.2)*0.45, llz - 0.03, -0.25, 0, 0, 1, K.plain, 3, 6, 0.2);
+    R("LowerLeg" + n, llw + 1.8*t*sk, 0.14, lld + 1.8*t*sk, "B", s*llx, 0.13, llz, 0, 0, 0, 0, K.boot, 10, 5);
+    // the boot: its shell, the toe cap, the heel, the sole (Abyss's weighted), the jet ring
+    var wt = Y.weights ? 1.15 : Y.fists ? 1.2 : 1;
+    R("Foot" + n, (fw + 1.6*t)*wt, FT[4] - FT[1] + 0.03, fl + 1.4*t, "B", s*fx, (FT[1] + FT[4])/2 + 0.012, fz + 0.004, 0, 0, 0, 0, K.boot, 10, 6);
+    R("Foot" + n, (fw + 1.4*t)*wt*0.9, 0.035, fl*0.34, "A", s*fx, FT[4] - 0.005, FT[5] - fl*0.2, 0.32, 0, 0, 0, K.plain, 8, 4);
+    R("Foot" + n, (fw + 1.2*t)*wt*(Y.weights ? 1.1 : 1), Y.weights ? 0.05 : 0.03, fl + 0.8*t, "D", s*fx, FT[1] + (Y.weights ? 0.02 : 0.012), fz + 0.004, 0, 0, 0, 0, 0, 8, 3, 0.3);
+    p("Foot" + n, ["t", 0.03, 0.006, 14], "G", s*fx, FT[1] - 0.008, FT[2] + fl*0.32, PI/2, 0, 0, 1, 1, 1, 0);
   });
   return P;
 }
@@ -332,11 +460,12 @@ function spec(F, M){ return M && M.rig === "uni" ? specU(F, M) : specK(F, M); }
 // the eye lenses: x off the head's centre and y up it, as shares of the helmet's width and height (where the Kenney
 // characters' own eyes are); KNEE [shin, boot] the faked knee bend (rad about X, + the top forward)
 var EYE_X = 0.19, EYE_Y = 0.47, KNEE = [0.12, 0.2];
-function sp(c){ return (c < 0 ? -1 : 1)*Math.pow(Math.abs(c), 0.42); }
+function sp(c, e){ return (c < 0 ? -1 : 1)*Math.pow(Math.abs(c), e || 0.42); }
 function shape(T, s){
   if(s[0] === "r"){
-    var g = new T.SphereGeometry(1, s[4] || 10, s[5] || 7), a = g.attributes.position;
-    for(var i = 0; i < a.count; i++) a.setXYZ(i, sp(a.getX(i))*s[1]/2, sp(a.getY(i))*s[2]/2, sp(a.getZ(i))*s[3]/2);
+    // a rounded box: a sphere pushed out toward its box (s[6] the edge: 0.42 soft, 0.2 a crisp bevel)
+    var g = new T.SphereGeometry(1, s[4] || 10, s[5] || 7), a = g.attributes.position, ee = s[6] || 0.42;
+    for(var i = 0; i < a.count; i++) a.setXYZ(i, sp(a.getX(i), ee)*s[1]/2, sp(a.getY(i), ee)*s[2]/2, sp(a.getZ(i), ee)*s[3]/2);
     g.computeVertexNormals(); return g;
   }
   if(s[0] === "k"){
@@ -345,8 +474,14 @@ function shape(T, s){
     for(var ik = 0; ik < ak.count; ik++){ var dy = ak.getY(ik), jw = dy < 0 ? 1 - 0.16*dy*dy : 1; ak.setXYZ(ik, ak.getX(ik)*s[1]*jw, dy*s[2], ak.getZ(ik)*s[3]*jw); }
     gk.computeVertexNormals(); return gk;
   }
+  if(s[0] === "c"){
+    // a curved plate: a patch of an ellipsoid (the head's jaw taper too), facing out
+    var gc = new T.SphereGeometry(1, s[8] || 12, s[9] || 8, s[4], s[5], Math.max(0, s[6]), Math.min(PI - Math.max(0, s[6]), s[7])), ac = gc.attributes.position;
+    for(var ic = 0; ic < ac.count; ic++){ var cy = ac.getY(ic), jc = cy < 0 ? 1 - 0.16*cy*cy : 1; ac.setXYZ(ic, ac.getX(ic)*s[1]*jc, cy*s[2], ac.getZ(ic)*s[3]*jc); }
+    gc.computeVertexNormals(); return gc;
+  }
   if(s[0] === "s") return new T.SphereGeometry(s[1], s[2] || (s[1] < 0.03 ? 8 : 16), s[3] || (s[1] < 0.03 ? 6 : 12));
-  if(s[0] === "t") return new T.TorusGeometry(s[1], s[2], 3, s[3] || 12);
+  if(s[0] === "t") return new T.TorusGeometry(s[1], s[2], 4, s[3] || 12, s[4] || PI*2);
   if(s[0] === "b") return new T.BoxGeometry(s[1], s[2], s[3]);
   return new T.CylinderGeometry(s[1], s[2], s[3], s[4] || 12);
 }
@@ -1011,6 +1146,8 @@ var SFX1 = {
     sNoise(o, "bandpass", dn ? 3000 : 900, dn ? 800 : 3200, 4, 0.8, 0.05); },
   clank: function(o, k){ var p = 0.8 + 0.4*cl(fin(k), 0, 1); sNoise(o, "bandpass", 2600*p, 1500*p, 3, 0.09, 0.22); sTone(o, "triangle", 210*p, 95*p, 0.16, 0.16);
     sTone(o, "square", 1250*p, 0, 0.04, 0.03, 0.012); },
+  visor: function(o){ sNoise(o, "highpass", 2200, 5200, 0.7, 0.4, 0.08); sTone(o, "sawtooth", 180, 520, 0.38, 0.02); sTone(o, "triangle", 160, 70, 0.14, 0.2, 0.42);
+    sNoise(o, "bandpass", 2400, 1200, 3, 0.08, 0.18, 0.42); },
   power: function(o){ sTone(o, "sine", 420, 1500, 0.5, 0.07); sTone(o, "sine", 840, 3000, 0.35, 0.03, 0.12); },
   roar: function(o){ sNoise(o, "lowpass", 2400, 380, 0.7, 1.4, 0.32); sTone(o, "sawtooth", 70, 42, 0.9, 0.08); sNoise(o, "bandpass", 5200, 1800, 1.2, 0.5, 0.1); },
   thump: function(o, k){ var w = cl(fin(k) || 1, 0.5, 2); sTone(o, "sine", 92/Math.sqrt(w), 34, 0.38*w, 0.32*Math.min(1.4, w)); sNoise(o, "lowpass", 700, 120, 0.9, 0.3*w, 0.22);
@@ -1068,7 +1205,8 @@ function seq(T, ch, style, opts){
   ch.o.updateMatrixWorld(true);
   var to = opts.to && isFinite(opts.to.x + opts.to.y + opts.to.z) ? opts.to : null;
   var S = {g: g, ch: ch, parts: parts, style: style, t: 0, rev: !!opts.reverse, rd: Math.max(0.3, Math.min(5, fin(opts.rdur) || 0.9)), keep: !!to, done: false, m4: new T.Matrix4(), inv: new T.Matrix4().copy(ch.o.matrixWorld).invert(),
-           q: new T.Quaternion(), q1: new T.Quaternion(), e: new T.Euler(), v: new T.Vector3(), s: new T.Vector3(), T: T};
+           q: new T.Quaternion(), q1: new T.Quaternion(), e: new T.Euler(), v: new T.Vector3(), s: new T.Vector3(), T: T,
+           m5: new T.Matrix4(), m6: new T.Matrix4(), m7: new T.Matrix4()};
   X.spec.forEach(function(q, i){
     var geo = pieceGeo(T, q);
     var c = new T.Color(colOf(q[2], o)), n = geo.attributes.position.count, ca = new Float32Array(n*3);
@@ -1084,9 +1222,28 @@ function seq(T, ch, style, opts){
     else if(style === "summon"){ var an = rnd(i, o.f)*6.28; pc.from = new T.Vector3(Math.cos(an)*6, 3 + rnd(i + 3, o.f)*4, Math.sin(an)*6); pc.del = gr*0.22 + rnd(i, o.f)*0.15; pc.d = 0.7; pc.spin = 4; }
     else if(style === "drop"){ pc.from = new T.Vector3(0, 13, 0); pc.del = gr*0.32; pc.d = 0.45; }
     else { pc.flow = 1; pc.del = hp.distanceTo(new T.Vector3(0, 0.3, 0.1))*3.2; pc.d = 0.5; }
+    if(q[15] === "visor"){ pc.vis = 1; pc.flow = 0; parts.push(pc); return; }
     dur = Math.max(dur, pc.del + pc.d); parts.push(pc);
   });
+  // the faceplate: it rides in open on the helmet (slid up over the dome) and slides shut when all else is home
+  var helm = 0; parts.forEach(function(pc){ if(!pc.vis && pc.bone === "Head") helm = Math.max(helm, pc.del + pc.d); });
+  var M0 = X.M, piv = M0.rig === "uni" ? new T.Vector3(M0.head.c.x, M0.head.c.y, M0.head.c.z).applyMatrix4(M0.hb) : null;
+  parts.forEach(function(pc){ if(!pc.vis) return; pc.show = Math.min(helm, dur); pc.del = dur + 0.05; pc.d = 0.5; pc.piv = piv; pc.from = new T.Vector3(); });
+  if(piv) dur += 0.6;
+  // your face (the toy head without what would poke through the helmet: hair, hat, the neck) while the faceplate is open
+  var hg = ch.head && ch.head.g, Hh = X.M.head;
+  if(piv && hg && Hh){
+    S.face = {g: hg, off: []};
+    hg.children.forEach(function(m){
+      if(!m.isMesh || !m.geometry) return;
+      m.geometry.computeBoundingBox(); m.updateMatrix(); var bb = m.geometry.boundingBox.clone().applyMatrix4(m.matrix);
+      var r = Math.max(Math.abs(bb.min.x - Hh.c.x)/Hh.rx, Math.abs(bb.max.x - Hh.c.x)/Hh.rx, Math.abs(bb.min.y - Hh.c.y)/Hh.ry, Math.abs(bb.max.y - Hh.c.y)/Hh.ry,
+                       Math.abs(bb.min.z - Hh.c.z)/Hh.rz, Math.abs(bb.max.z - Hh.c.z)/Hh.rz);
+      if(r > 1.066 || m.userData.hat) S.face.off.push([m, m.visible]);
+    });
+  }
   S.dur = dur + 0.45;
+  faceOn(S, true);
   X.meshes.forEach(function(m){ m.visible = false; });
   if(M.G) M.G.emissiveIntensity = S.rev ? 2.2 : 0; X.U.uGK.value = S.rev ? 1 : 0;
   ch.o.add(g);
@@ -1106,6 +1263,18 @@ function seqStep(S, dt){
     var k = Math.max(0, Math.min(1, (t - p.del)/p.d)), e = S.style === "drop" ? (k < 1 ? k*k : 1) : ease(k);
     p.m.visible = k > 0 || S.keep;
     home(S, p, S.m4);
+    if(p.vis){
+      // the faceplate, slid up over the dome (turned about the head's centre, in bind space) until it shuts
+      var vk = Math.max(0, Math.min(1, (t - p.del)/p.d)), ang = -1.45*(1 - sm(vk));
+      p.m.visible = t >= p.show || S.keep || S.rev;
+      if(p.piv){ S.m5.makeTranslation(p.piv.x, p.piv.y, p.piv.z).multiply(S.m6.makeRotationX(ang)).multiply(S.m7.makeTranslation(-p.piv.x, -p.piv.y, -p.piv.z)); S.m4.multiply(S.m5); }
+      p.m.matrix.copy(S.m4);
+      if(vk > 0 && !p.snd && !S.rev){ p.snd = 1; if(!S.vsnd){ S.vsnd = 1; sfx1("visor"); } }
+      if(vk >= 1 && !p.done && !S.rev){ p.done = 1; out.lock = p.hp.clone().applyMatrix4(S.ch.o.matrix); out.shake = Math.max(out.shake, 0.05); }
+      if(vk < 1) p.done = 0;
+      S.vk = Math.min(S.vk == null ? 1 : S.vk, vk);
+      return;
+    }
     if(p.flow){ var sc = Math.max(0.001, ease(k)); S.m4.scale(S.v.set(sc, sc, sc)); p.m.matrix.copy(S.m4); }
     else {
       S.m4.decompose(S.v, S.q, S.s); var f = 1 - e;
@@ -1116,6 +1285,7 @@ function seqStep(S, dt){
       sfx1(S.style === "drop" && p.del === 0 ? "thump" : "clank", S.style === "drop" ? 0 : 1 - p.del/Math.max(0.1, S.dur)); }
     if(k < 1) p.done = 0;
   });
+  if(S.vk != null){ faceOn(S, S.vk < 1); S.vk = null; }
   out.k = Math.min(1, S.t/(S.rev ? S.rd : S.dur));
   if(!S.keep) scaleTo(S, S.rev ? 1 - out.k : out.k*1.6);
   var end = S.rev ? S.rd : S.dur, G = S.ch._exo.mats.G;
@@ -1126,8 +1296,14 @@ function seqStep(S, dt){
   return out;
 }
 // the end (or Esc): forward, the merged armour shows; reverse, the layer comes off
+// the toy head shown (its hair, hat and neck kept hidden) or hidden again as the armour has it
+function faceOn(S, on){
+  var F = S && S.face; if(!F || F.on === on) return; F.on = on;
+  F.g.visible = on; F.off.forEach(function(h){ h[0].visible = on ? false : h[1]; });
+}
 function seqEnd(S){
   if(!S || S.done) return; S.done = true;
+  faceOn(S, false);
   if(S.g.parent) S.g.parent.remove(S.g);
   S.g.children.forEach(function(m){ m.geometry.dispose(); });
   var X = S.ch._exo; if(!X) return;

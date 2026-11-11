@@ -23,6 +23,8 @@ var MODES = [["standing", null], ["hover", {mode: "hover", speed: 0, agl: 6}], [
 if(Q.get("only")) MODES = MODES.filter(function(m){ return m[0] === Q.get("only"); });
 var BASES = Q.get("bases") != null;          // ?bases&only=mode: that mode on all six bodies
 if(BASES) MODES = [0, 1, 2, 3, 4, 5].map(function(){ return MODES[0]; });
+var FRAMESQ = Q.get("frames") != null;       // ?frames&only=mode: the six frames side by side in that mode
+if(FRAMESQ) MODES = [0, 1, 2, 3, 4, 5].map(function(){ return MODES[0]; });
 var look = {f: +(Q.get("f") || 0), p: Q.get("p") != null ? +Q.get("p") : null, fin: Q.get("fin") != null ? +Q.get("fin") : null, g: +(Q.get("g") || 0)};
 var F = XO.FRAMES[look.f] || XO.FRAMES[0]; if(look.p == null) look.p = F.paint; if(look.fin == null) look.fin = F.fin;
 E.lib().then(function(L){
@@ -43,15 +45,16 @@ E.lib().then(function(L){
     [3, 4, 1, 0, 0, 1, 0, 0, 0, 0], [4, 5, 4, 5, 0, 3, 2, 0, 0, 0], [5, 6, 2, 2, 1, 0, 3, 1, 0, 0], [0, 1, 9, 9, 2, 5, 0, 1, 0, 1]];
   Promise.all(MODES.map(function(m, i){ var s = specs[i % specs.length].slice(); if(base != null) s[0] = base; if(BASES) s[0] = i; return HQV.people3d.build(s); })).then(function(chs){
     var yaw = Q.get("yaw") != null ? +Q.get("yaw") : 0.9;
-    document.getElementById("lab").innerHTML = MODES.map(function(m){ return "<span>" + m[0] + "</span>"; }).join("");
+    document.getElementById("lab").innerHTML = MODES.map(function(m, i){ return "<span>" + (FRAMESQ ? XO.FRAMES[i].n : m[0]) + "</span>"; }).join("");
     chs.forEach(function(ch, i){
       ch.base = 1.7/0.72; ch.o.scale.setScalar(ch.base);
       ch.o.position.set(i*gap - W/2, MODES[i][1] && MODES[i][0] !== "landing" ? (MODES[i][0] === "hover" ? 1.0 : 1.6) : 0, 0);
       ch.o.rotation.y = yaw; ch.o.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
       S.add(ch.o); if(ch.acts.idle) ch.acts.idle.play();
-      XO.wear(T, ch, look);
+      if(FRAMESQ){ var Fi = XO.FRAMES[i]; XO.wear(T, ch, {f: i, p: Fi.paint, fin: Fi.fin, g: look.g}); } else XO.wear(T, ch, look);
     });
-    var t = 1, steps = +(Q.get("steps") || 150);
+    var t = 1, steps = +(Q.get("steps") || 150), SQ = Q.get("seq") ? chs.map(function(ch){ return XO.seq(T, ch, Q.get("seq"), {}); }) : null;
+    if(SQ){ var at = +(Q.get("at") || 1); for(var q = 0; q < at*60; q++){ chs.forEach(function(ch, i){ ch.mixer.update(1/60); ch.update(t); XO.seqStep(SQ[i], 1/60); }); t += 1/60; } steps = 0; }
     for(var k = 0; k < steps; k++){
       t += 1/60;
       chs.forEach(function(ch, i){

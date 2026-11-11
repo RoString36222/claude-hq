@@ -3,7 +3,7 @@
 One node process loads the vendored three.js (and its GLTFLoader), games/people3d.js and games/hqexo.js, builds real
 people from games/people/*.glb (+ anims.glb) as hq3d does (the humanoid rig: elbows, knees, fingers, IK feet, our big toy
 head) and puts every frame x paint x finish x glow on the first body and every frame on all six; counts the armour's
-draw calls and triangles (at most 4 and 6k); checks the helmet covers the toy head, the boots sit on the feet, the hair
+draw calls and triangles (at most 4 and 10k); checks the helmet covers the toy head, the boots sit on the feet, the hair
 and hat hide and the clothes turn to the undersuit; poses each in the air (hover, cruise, boost, swim, landed) and on
 foot through odd clocks (NaN, a step back, a long stall) after the idle clip (and a jolt) has moved the bones, and
 checks every bone stays finite and the joints bend the right way (knees, elbows, palms and soles to the jets); runs
@@ -81,7 +81,7 @@ function run(T, X, pool, specs, S0){
         if(bi && (p || fin || g)) continue;                    // every look on the first body, every frame on all six
         var ok = X.wear(T, ch, {f: fi, p: p, fin: fin, g: g}); out.built++;
         if(!ok){ out.bad.push(file + "/" + F.id + ": did not fit"); continue; }
-        var s = X.stats(ch); out.budget[F.id] = s; if(s.draws > 4 || s.tris > 6000) out.over.push([file, F.id, p, fin, g, s]);
+        var s = X.stats(ch); out.budget[F.id] = s; out.maxTris = Math.max(out.maxTris || 0, s.tris); if(s.draws > 4 || s.tris > 10000) out.over.push([file, F.id, p, fin, g, s]);
       }
       var c2 = person(bi); c2.o.updateMatrixWorld(true);
       var skull = new T.Box3().setFromObject(c2.head.g.children[0]);
@@ -254,12 +254,12 @@ class ExoBudget(unittest.TestCase):
 
     def test_every_frame_paint_finish_and_glow_within_budget(self):
         o = self.o
-        self.assertEqual(o["over"], [], "armour over 4 draw calls or 6k triangles")
+        self.assertEqual(o["over"], [], "armour over 4 draw calls or 10k triangles")
         self.assertEqual(sorted(o["budget"]), ["abyss", "bulwark", "flux", "sentinel", "stratos", "strider"])
         for k, s in o["budget"].items():
             self.assertLessEqual(s["draws"], 4, k)
-            self.assertLessEqual(s["tris"], 6000, k)
-            self.assertGreater(s["tris"], 2500, k + ": a real suit, not a few boxes")
+            self.assertLessEqual(s["tris"], 10000, k)
+            self.assertGreater(s["tris"], 6000, k + ": a real suit of layered plates, not a few boxes")
         self.assertEqual(o["budget"]["abyss"]["draws"], 4, "abyss alone has the glass dome")
         self.assertEqual(o["budget"]["sentinel"]["draws"], 3)
 

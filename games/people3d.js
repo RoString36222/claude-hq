@@ -16,10 +16,57 @@
  *                                 seat, a forward lean, hands on the grips (fingers curled), feet on the pegs
  *   HQV.people3d.ik.reach(ch, side, target, pole) / grip(ch, side, amount)
  *   HQV.people3d.FILES / TOP (each outfit's recolourable top material)
+ *   HQV.people3d.gaitPlan(v, rel, rate) / gaitDrive(ch, plan, dt) (before the mixer step) / gaitPost(ch, dt) (after it):
+ *                                 the measured gait: one phase for every locomotion clip, the stride lengthened past a
+ *                                 jog, directional clips, planted feet held (HQV.gait is the pure part, for tests)
  */
 (function(){
 "use strict";
 var HQV = window.HQV = window.HQV || {};
+
+/* ---------- the gait (HQ 3.41): pure, so node tests and the crowds share it ----------
+ * Measured from anims.glb at the drawn 1.7 m (games/proto: the stance foot's speed under the hips x the cycle):
+ * Walk covers 1.43 m a cycle (0.86 m/s at timeScale 1), Run 2.0 m (2.0 m/s), Run_Back 2.05 m, Run_Left / Run_Right
+ * 2.0 m. off: where that clip's left heel strikes, as a share of its cycle, less the walk's (0.035): every clip of the
+ * blend is driven from ONE phase (a sync group), so a planted foot in one clip is planted in the others and the legs
+ * never scissor through a walk / run crossfade. Past a jog the stride itself lengthens (k: the feet reach further
+ * from the hips, by leg IK after the clips; gaitPost), so a fast run is longer strides and not only faster legs.
+ * walkTo / runFrom: the walk / run crossfade (m/s); kMax the most stretch (the legs still reach the ground). */
+var GAIT = {walk: {stride: 1.43, off: 0}, sprint: {stride: 2.0, off: 0.415}, back: {stride: 2.05, off: 0.28},
+            left: {stride: 2.0, off: 0.95}, right: {stride: 2.0, off: 0.415},
+            idleTo: 0.6, walkTo: 1.5, runFrom: 2.6, kPer: 0.12, kMax: 1.45, shuffle: 0.9, drop: 0.035};
+var GAIT_CLIPS = ["walk", "sprint", "back", "left", "right"];
+function smooth01(a, b, x){ var t = Math.max(0, Math.min(1, (x - a)/(b - a))); return t*t*(3 - 2*t); }
+// v: ground speed (m/s, >= 0) at the drawn 1.7 m; rel: the way you move relative to your facing (rad: 0 ahead, +PI/2
+// to your left, PI back); rate: your turn (rad/s, a shuffle when turning on the spot).
+// -> {idle, walk, sprint, back, left, right (weights, sum 1), k (stride stretch), stride (m a cycle), cps (cycles/s)}
+function gaitPlan(v, rel, rate){
+  v = Math.max(0, +v || 0); rel = +rel || 0; rate = Math.abs(+rate || 0);
+  var sh = v < GAIT.idleTo ? Math.min(1, rate/2.5)*(1 - v/GAIT.idleTo)*0.6 : 0;
+  var idle = Math.max(0, 1 - v/GAIT.idleTo)*(1 - sh), go = 1 - idle;
+  var c = Math.cos(rel), s = Math.sin(rel), fw = c > 0 ? c*c : 0, bk = c < 0 ? c*c : 0, lt = s > 0 ? s*s : 0, rt = s < 0 ? s*s : 0;
+  if(sh > 0){ fw += bk + lt + rt; bk = lt = rt = 0; }                      // turning on the spot: the walk, a shuffle
+  var r = smooth01(GAIT.walkTo, GAIT.runFrom, v);
+  var P = {idle: idle, walk: go*fw*(1 - r), sprint: go*fw*r, back: go*bk, left: go*lt, right: go*rt};
+  P.k = 1 + Math.min(GAIT.kMax - 1, Math.max(0, v - GAIT.runFrom)*GAIT.kPer);
+  P.stride = gaitStride(P, P.k);
+  P.cps = Math.max(v/P.stride, sh > 0 ? rate*GAIT.shuffle/GAIT.walk.stride : 0);
+  return P;
+}
+// metres a cycle of a blend (weights w, stretch k): the walk's own stride, the run clips' stretched. Blended poses
+// blend the feet's paths as vectors (ahead and to the left at once is a diagonal only cos 45 as long), so the stride
+// is the length of the weighted sum of each clip's stride along its own way.
+var GAIT_DIR = {walk: [0, 1], sprint: [0, 1], back: [0, -1], left: [1, 0], right: [-1, 0]};
+function gaitStride(w, k){
+  var sum = 0, x = 0, z = 0;
+  GAIT_CLIPS.forEach(function(n){
+    var a = Math.max(0, +w[n] || 0), m = a*GAIT[n].stride*(n === "walk" ? 1 : k);
+    sum += a; x += m*GAIT_DIR[n][0]; z += m*GAIT_DIR[n][1];
+  });
+  return sum > 1e-6 ? Math.max(0.5, Math.hypot(x, z)/sum) : GAIT.walk.stride;
+}
+HQV.gait = {GAIT: GAIT, CLIPS: GAIT_CLIPS, plan: gaitPlan, stride: gaitStride};
+
 var E = HQV.engine;
 if(!E){ return; }
 
@@ -30,7 +77,7 @@ var TOP = {"woman-casual": ["White"], "man-hoodie": ["Purple"], "woman-adventure
            "man-adventurer": ["Green"], "woman-worker": ["Worker_Vest"], "man-casual": ["Red_Dark"]};
 var CH_H = 0.72;          // drawn height in model units (hq3d draws people 1.7 m: scale 1.7 / CH_H)
 var HEAD_K = 2.0;         // head scale over the pack's: the toy proportions
-var ANIM = {idle: "Idle", walk: "Walk", sprint: "Run", "emote-yes": "Wave"};
+var ANIM = {idle: "Idle", walk: "Walk", sprint: "Run", "emote-yes": "Wave", back: "Run_Back", left: "Run_Left", right: "Run_Right"};
 
 function A3(){ return HQV.avatar3d || {}; }
 function hexOf(pal, i){ var p = (A3().PALETTES || {})[pal]; return p && i > 0 && p[i] ? p[i] : null; }
@@ -143,6 +190,79 @@ function seat(ch, w, opts){
   o.updateMatrixWorld(true);
 }
 
+/* ---------- the gait, driven (HQ 3.41) ---------- */
+// One frame of locomotion, BEFORE the mixer step. P: gaitPlan(v, rel, rate); v the ground speed at the drawn 1.7 m.
+// The weights ease (omega 10: a change of pace or direction crossfades) into ch.loco; ONE phase (ch.gait.ph)
+// advances at the cadence the drawn blend needs (from the eased weights and stretch, so the planted foot keeps pace
+// with the ground) and every locomotion clip is set to that phase plus its own offset, timeScale 0 (the phase owns
+// their time). A character without a directional clip runs forward instead.
+function gaitDrive(ch, P, dt){
+  dt = Math.max(0, +dt || 0);
+  var G = ch.gait || (ch.gait = {ph: 0, k: 1, rel: 0}), L = ch.loco || (ch.loco = {}), acts = ch.acts, e = 1 - Math.exp(-10*dt);
+  var W = {idle: P.idle, walk: P.walk, sprint: P.sprint, back: P.back, left: P.left, right: P.right};
+  ["back", "left", "right"].forEach(function(n){ if(!acts[n] && W[n]){ W.sprint += W[n]; W[n] = 0; } });
+  if(!acts.sprint){ W.walk += W.sprint; W.sprint = 0; }
+  ["idle"].concat(GAIT_CLIPS).forEach(function(n){ L[n] = (+L[n] || 0) + ((W[n] || 0) - (+L[n] || 0))*e; });
+  G.k += (P.k - G.k)*e;
+  if(P.rel != null){ var dr = Math.atan2(Math.sin(P.rel - G.rel), Math.cos(P.rel - G.rel)); G.rel += dr*e; }
+  var S = gaitStride(L, G.k), cps = P.cps*(P.stride > 0 ? P.stride/S : 1);
+  G.ph = ((G.ph + cps*dt) % 1 + 1) % 1; G.cps = cps;
+  if(acts.idle){ acts.idle.enabled = true; if(!acts.idle.isRunning()){ acts.idle.play(); } acts.idle.timeScale = 1; acts.idle.setEffectiveWeight(L.idle); }
+  GAIT_CLIPS.forEach(function(n){
+    var a = acts[n]; if(!a){ return; }
+    a.enabled = L[n] > 1e-3; if(!a.enabled){ return; }                // out of the blend: not evaluated
+    if(!a.isRunning()){ a.play(); }
+    a.setEffectiveWeight(L[n]); a.timeScale = 0;
+    a.time = ((G.ph + GAIT[n].off) % 1)*a.getClip().duration;
+  });
+}
+// After the mixer step (dt: this frame's): the longer stride, and the planted foot held where it landed.
+// Stride: with ch.gait.k > 1 each foot's reach from the hips along the way you move is scaled by k, the hips a little
+// lower so the planted foot still reaches the ground. Plant: a foot at the ground (within PLANT_Y of the body's feet
+// level) is locked where it touched down for as long as it stays down, so the last few % the clips' own stance
+// wobbles by never shows as a glide; it lets go smoothly (omega 30) as the foot lifts, at once if the body is pulled
+// more than PLANT_MAX from it (a teleport, a shove). Each leg is then solved to its foot (two-bone IK).
+var GV = null, PLANT_Y = 0.05, PLANT_MAX = 0.35;
+function gaitPost(ch, dt){
+  var G = ch.gait, B = ch.bones;
+  if(!G || ch.cur !== "loco" || !B || !B.Hips || !ch.L){ if(G){ G.lk = null; } return; }
+  var THREE = ch.L.THREE, o = ch.o;
+  if(!GV){ GV = {q: new THREE.Quaternion(), s: new THREE.Vector3(), d: new THREE.Vector3(), f: new THREE.Vector3(), H: new THREE.Vector3(),
+                 F: new THREE.Vector3(), K: new THREE.Vector3(), T: new THREE.Vector3(), P: new THREE.Vector3(), O: new THREE.Vector3(),
+                 end: new THREE.Object3D(), K2: ikLib(THREE)}; }
+  dt = Math.max(0, +dt || 0);
+  var stretch = G.k > 1.003, lk = G.lk || (G.lk = {L: {on: false, w: 0, x: 0, z: 0}, R: {on: false, w: 0, x: 0, z: 0}});
+  var standing = !stretch && !(G.cps > 0.01);                          // standing: the clip's feet do not move; locks ease off
+  if(standing){ lk.L.on = lk.R.on = false; if(!lk.L.w && !lk.R.w){ return; } }
+  mark(ch);
+  o.updateMatrixWorld(true);
+  o.getWorldQuaternion(GV.q); o.getWorldScale(GV.s); o.getWorldPosition(GV.O);
+  var sc = GV.s.x*CH_H/1.7, t = stretch ? (G.k - 1)/(GAIT.kMax - 1) : 0, rel = 1 - Math.exp(-30*dt);
+  GV.f.set(0, 0, 1).applyQuaternion(GV.q); GV.f.y = 0; GV.f.normalize();
+  GV.d.set(Math.sin(G.rel), 0, Math.cos(G.rel)).applyQuaternion(GV.q); GV.d.y = 0; GV.d.normalize();
+  B.Hips.getWorldPosition(GV.H);
+  if(stretch){ GV.H.y -= GAIT.drop*t*sc; B.Hips.position.copy(B.Hips.parent.worldToLocal(GV.T.copy(GV.H))); B.Hips.updateMatrixWorld(true); }
+  ["L", "R"].forEach(function(s){
+    if(!B["Foot" + s] || !B["LowerLeg" + s]){ return; }
+    var foot = B["Foot" + s], shin = B["LowerLeg" + s], P = lk[s];
+    foot.getWorldPosition(GV.F); shin.getWorldPosition(GV.K);
+    GV.T.copy(GV.F);
+    if(stretch){ GV.T.addScaledVector(GV.d, ((GV.F.x - GV.H.x)*GV.d.x + (GV.F.z - GV.H.z)*GV.d.z)*(G.k - 1)); }
+    var down = !standing && GV.T.y - GV.O.y < PLANT_Y*sc;
+    if(down && !P.on){ P.on = true; P.x = GV.T.x; P.z = GV.T.z; P.w = 1; }
+    else if(!down){ P.on = false; }
+    if(P.on && Math.hypot(P.x - GV.T.x, P.z - GV.T.z) > PLANT_MAX*sc){ P.on = false; P.w = 0; }
+    if(!P.on){ P.w -= P.w*rel; if(P.w < 1e-3){ P.w = 0; } }
+    if(P.w > 0){ GV.T.x += (P.x - GV.T.x)*P.w; GV.T.z += (P.z - GV.T.z)*P.w; }
+    if(!stretch && P.w === 0){ return; }                                 // the clip's own leg, untouched
+    GV.P.copy(GV.K).addScaledVector(GV.f, 0.5*sc);
+    // the leg's end is where the clip put this foot, in the shin's space (exact when nothing moves it), not legTo's ankle
+    shin.add(GV.end); shin.updateMatrixWorld(true); GV.end.position.copy(shin.worldToLocal(GV.F.clone()));
+    GV.K2.twoBone(B["UpperLeg" + s], shin, GV.end, GV.T, GV.P);
+    GV.end.getWorldPosition(GV.F); shin.remove(GV.end);
+    foot.position.copy(foot.parent.worldToLocal(GV.F)); foot.updateMatrixWorld(true);
+  });
+}
 /* ---------- the toy head ---------- */
 // the old head in head-bone space: the bind-pose box of skin vertices weighted to the Head bone
 function skullBox(THREE, root, head){
@@ -601,7 +721,8 @@ function crowd(base, variant){
 
 // the IK helpers need THREE, which arrives with the first build
 var IK = {seat: seat, reach: reach, grip: grip, leg: legTo, mark: mark, twoBone: null, aim: null};
-HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, crowd: crowd, build: function(spec){
+HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, crowd: crowd, GAIT: GAIT, gaitPlan: gaitPlan,
+  gaitDrive: gaitDrive, gaitPost: gaitPost, build: function(spec){
   return build(spec).then(function(ch){
     if(!IK.twoBone){ var K = ikLib(ch.L.THREE); IK.twoBone = K.twoBone; IK.aim = K.aim; }
     return ch;

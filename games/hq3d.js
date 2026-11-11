@@ -6122,17 +6122,29 @@ function mount(el, api){
   // walking into a new part of the City, ~110 ms the first frame in B1, 2 s once with a cold driver cache). warmWorld
   // compiles a world's every material (hidden ones too: three's compile walks the whole tree) and yours against its
   // lights, in parallel where KHR_parallel_shader_compile allows, and resolves when they are linked (or after cap ms).
-  // warmSweep does the same for the world you are in, now and then in idle time, so what streams in (traffic, people,
+  // warmSweep does the same, each second in idle time, for what is new in the world you are in, so what streams in (traffic, people,
   // a level of detail switched on later) is linked before it comes into view.
   function warmWorld(w, cap){
     if(!renderer || !w || !w.scene || !renderer.compileAsync) return Promise.resolve(false);
     var c = curCam(), ps = [];
     try { ps.push(renderer.compileAsync(w.scene, c, w.scene)); } catch(e){}
+    if(warmSeen) w.scene.traverse(function(o){ if(o.material) warmSeen.add(o); });
     if(avatar && avatar.g && avatar.g.parent !== w.scene){ try { ps.push(renderer.compileAsync(avatar.g, c, w.scene)); } catch(e){} }
     return Promise.race([Promise.all(ps).then(function(){ return true; }, function(){ return false; }),
                          new Promise(function(r){ setTimeout(function(){ r(false); }, cap || 2500); })]);
   }
-  var warmAt = 0, warmBusy = false;
+  var warmAt = 0, warmBusy = false, warmSeen = typeof WeakSet === "function" ? new WeakSet() : null;
+  // only what is new since the last look (three's compile walks the whole tree: ~12 ms in the City, too much to repeat)
+  function warmNew(w){
+    if(!renderer || !w || !w.scene || !warmSeen || !renderer.compileAsync) return Promise.resolve(false);
+    var list = [];
+    w.scene.traverse(function(o){ if(o.material && !warmSeen.has(o)){ warmSeen.add(o); list.push(o); } });
+    if(!list.length) return Promise.resolve(true);
+    // compile() walks scene.traverse for materials (and the scene's own lights with traverseVisible): a stand-in
+    // that walks just the new objects, against the world's lights (its targetScene)
+    var some = {traverse: function(fn){ for(var i = 0; i < list.length; i++) fn(list[i]); }, traverseVisible: function(){}};
+    try { return renderer.compileAsync(some, curCam(), w.scene); } catch(e){ return Promise.resolve(false); }
+  }
   // and the models of the vehicles you own (B1 builds them all when you go down: ~10-20 ms each the first time, a clone
   // after), one per idle moment, so the garage opens on clones instead of a quarter-second freeze
   function ownWarm(){
@@ -6146,10 +6158,10 @@ function mount(el, api){
     }
   }
   function warmSweep(dt){
-    if(warmBusy || !cur || !cur.scene || (warmAt += dt) < 2) return;
+    if(warmBusy || !cur || !cur.scene || (warmAt += dt) < 1) return;
     warmAt = 0; warmBusy = true;
     if(typeof requestIdleCallback === "function") requestIdleCallback(ownWarm, {timeout: 4000});
-    var w = cur, run = function(){ if(!inst.alive || cur !== w){ warmBusy = false; return; } warmWorld(w, 4000).then(function(){ warmBusy = false; }); };
+    var w = cur, run = function(){ if(!inst.alive || cur !== w){ warmBusy = false; return; } warmNew(w).then(function(){ warmBusy = false; }, function(){ warmBusy = false; }); };
     if(typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout: 1000}); else setTimeout(run, 0);
   }
   var preFaded = null;                                               // [realism perf] the world the fade is already down for

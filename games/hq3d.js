@@ -2097,18 +2097,18 @@ function mount(el, api){
   function uniHip(ch){
     if(ch.rig !== "uni" || !ch.bones || !ch.bones.Hips) return null;
     if(ch._hip) return ch._hip;
-    var sc = ch.o.scale.x || 1, keep = [ch.o.position.clone(), ch.o.rotation.clone()];
-    ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); ch.o.updateMatrixWorld(true);
-    var w = ch.bones.Hips.getWorldPosition(new THREE.Vector3());
-    ch.o.position.copy(keep[0]); ch.o.rotation.copy(keep[1]); ch.o.updateMatrixWorld(true);
-    return (ch._hip = [w.x/sc, w.y/sc - 0.012, w.z/sc]);
+    // in o's own frame (wherever o hangs: its parents may be anywhere in the world)
+    ch.o.updateMatrixWorld(true);
+    var w = ch.o.worldToLocal(ch.bones.Hips.getWorldPosition(new THREE.Vector3()));
+    return (ch._hip = [w.x, w.y - 0.012, w.z]);
   }
   // the same riding pose on the new humanoid: lean from the waist, twist into the turn, then two-bone IK from the
   // shoulders to the grips and from the hips to the pegs (knees forward and a little out, elbows out and down)
   function ridePoseUni(ch, B, steer, top){
     var P = HQV.people3d, K = P && P.ik, Bo = ch.bones;
-    if(!K || !K.twoBone) return;
+    if(!K || !K.twoBone || window.__noRP) return;
     if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+    if(K.mark) K.mark(ch);                   // undone before the next mixer step (games/people3d.js)
     var lean = B.lean || 0.3;
     if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.5;
     if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.5; Bo.Chest.rotation.y += steer*0.14; }
@@ -2154,7 +2154,7 @@ function mount(el, api){
   }
   // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
   // TEMP-HQDEV (remove before the PR): a test hook for the realism revamp
-  if(/hqdev/.test(location.search)){ window.__hq3d = {mount: function(i){ return mount(i); }, cur: function(){ return cur; }, avatar: function(){ return avatar; }, view: view}; }
+  if(/hqdev/.test(location.search)){ window.__hq3d = {mount: function(i){ return mount(i); }, cur: function(){ return cur; }, avatar: function(){ return avatar; }, view: view, kinds: function(){ return Object.keys(VEHICLES); }, ride: function(kind){ if(ride) return "riding"; var b = {g: new THREE.Group(), x: avatar.x, z: avatar.z, yaw: avatar.yaw, color: "#c0392b", accent: "#222", kind: kind}; mountOn(b, -1); return !!ride; }, ridek: function(){ return ride; }, iso: function(keep){ cur.scene.children.forEach(function(c){ if(c !== avatar.g && !c.isLight && (!keep || keep.indexOf(c) < 0)) c.visible = false; }); cur.scene.background = new THREE.Color(0xdde6e0); return cur.scene.children.length; }, THREE: function(){ return THREE; }, look: function(dx, dy, dz, ty, fov){ var c = window.__hqcam || (window.__hqcam = new THREE.PerspectiveCamera(fov || 30, inst.w/inst.h, 0.05, 200)); var g = avatar.g.position, yw = avatar.yaw, cs = Math.cos(yw), sn = Math.sin(yw); c.position.set(g.x + dx*cs + dz*sn, g.y + dy, g.z - dx*sn + dz*cs); c.lookAt(g.x, g.y + (ty == null ? 0.9 : ty), g.z); c.aspect = inst.w/inst.h; c.updateProjectionMatrix(); return [g.x, g.y, g.z]; }, people: function(){ return peers; }}; }
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", base = baseKind(kind), car = base === "car", Vc = VEHICLES[kind].cat, boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
@@ -4704,7 +4704,7 @@ function mount(el, api){
     return y != null && isFinite(y) ? y : null;
   }
   // The camera that draws and picks: the perspective one in every rig mode but Classic.
-  function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
+  function curCam(){ if(window.__hqcam) return window.__hqcam; return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }   // TEMP-HQDEV
   // [sound] where that camera hears from (E.listener's at, with its facing): Classic from what it looks at, the Map from
   // the ground at its centre (its camera is hundreds of metres up, past every world sound's reach), the rest from the
   // camera itself (null)

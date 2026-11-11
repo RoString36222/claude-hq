@@ -80,10 +80,13 @@ function ikLib(THREE){
   return {aim: aim, twoBone: twoBone};
 }
 
+// before posing over the clips: the bones come back to the clip's pose at the next mixer step (build's mark)
+function mark(ch){ if(ch && ch.mark){ ch.mark(); } }
 // the shin ends at a virtual ankle (the rig's feet are IK controls under Root, not children of the shin)
 function legTo(ch, side, target, pole){
   var THREE = ch.L.THREE, B = ch.bones, K = ikLib(THREE), shin = B["LowerLeg" + side], foot = B["Foot" + side];
   if(!shin || !foot){ return; }
+  mark(ch);
   var ankle = new THREE.Object3D();
   ankle.position.set(0, ch.legLen[side], 0);       // shin-bone units (its own scale is 1)
   shin.add(ankle);
@@ -95,10 +98,12 @@ function legTo(ch, side, target, pole){
 }
 function reach(ch, side, target, pole){
   var B = ch.bones, K = ikLib(ch.L.THREE);
+  mark(ch);
   if(B["UpperArm" + side]){ K.twoBone(B["UpperArm" + side], B["LowerArm" + side], B["Wrist" + side], target, pole); }
 }
 function grip(ch, side, amount){
   var B = ch.bones, k = (amount == null ? 0.85 : amount) * 1.1, sgn = side === "L" ? -1 : 1;
+  mark(ch);
   ["Index", "Middle", "Ring", "Pinky"].forEach(function(f){
     for(var j = 1; j <= 3; j++){ var b = B[f + j + side]; if(b){ b.rotation.z += sgn * k; } }
   });
@@ -109,6 +114,7 @@ function seat(ch, w, opts){
   opts = opts || {};
   var THREE = ch.L.THREE, B = ch.bones, o = ch.o;
   if(!B.Hips){ return; }
+  mark(ch);
   o.updateMatrixWorld(true);
   var hips = B.Hips.getWorldPosition(new THREE.Vector3());
   var lift = opts.hipLift != null ? opts.hipLift : 0.04 * (ch.scaleW || 1);
@@ -409,12 +415,28 @@ function build(spec){
       var box = new THREE.Box3().setFromObject(o, true), h = box.max.y - box.min.y || 1, k = CH_H / h;
       inner.scale.setScalar(k); inner.position.y = -box.min.y * k;
       var mixer = new THREE.AnimationMixer(model), acts = {};
+      // Posing on top of the clips (IK, seats, rails) must come off again before the next mixer step: three's mixer
+      // writes a bone only when the clip's value changes, so a held clip (most of Idle, all of sit) never resets what
+      // we added and it would pile up frame on frame. mark() snapshots every bone the first time a frame poses it;
+      // the next update() puts them back first.
+      var allBones = []; model.traverse(function(n){ if(n.isBone){ allBones.push(n); } });
+      var snap = null, dirty = false, upd = mixer.update.bind(mixer);
+      mixer.update = function(dt){
+        if(dirty){ for(var i = 0; i < allBones.length; i++){ allBones[i].quaternion.copy(snap[i].q); allBones[i].position.copy(snap[i].p); } dirty = false; }
+        return upd(dt);
+      };
       Object.keys(ANIM).forEach(function(n){
         var cl = THREE.AnimationClip.findByName(clips, ANIM[n]);
         if(cl){ acts[n] = mixer.clipAction(cl); }
       });
       var ch = {o: o, inner: inner, model: model, mixer: mixer, acts: acts, cur: null, spec: spec, L: L, rig: "uni",
         bones: bones, legLen: legLen, head: head, scaleW: 1,
+        mark: function(){
+          if(dirty){ return; }
+          if(!snap){ snap = allBones.map(function(b){ return {q: b.quaternion.clone(), p: b.position.clone()}; }); }
+          else { for(var i = 0; i < allBones.length; i++){ snap[i].q.copy(allBones[i].quaternion); snap[i].p.copy(allBones[i].position); } }
+          dirty = true;
+        },
         update: function(t){
           if(head && !E.calm()){ head.g.traverse(function(m){ if(m.userData.spin){ m.rotation.z = t * 1.2; } }); }
         }};
@@ -427,7 +449,7 @@ function build(spec){
 }
 
 // the IK helpers need THREE, which arrives with the first build
-var IK = {seat: seat, reach: reach, grip: grip, leg: legTo, twoBone: null, aim: null};
+var IK = {seat: seat, reach: reach, grip: grip, leg: legTo, mark: mark, twoBone: null, aim: null};
 HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, build: function(spec){
   return build(spec).then(function(ch){
     if(!IK.twoBone){ var K = ikLib(ch.L.THREE); IK.twoBone = K.twoBone; IK.aim = K.aim; }

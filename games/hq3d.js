@@ -2037,7 +2037,7 @@ function mount(el, api){
   // pointing each arm at its grip and each leg at its peg or pedal, every frame after the clips
   // have run (each limb is one bone, so it is aimed, and stretched or shortened a little to reach).
   // Seated, everyone is drawn a little smaller (RIDER_K) so the vehicles stay a believable size.
-  var HIP = [0, 0.176, -0.029], RIDER_K = 0.85;
+  var HIP = [0, 0.176, -0.029], RIDER_K = 0.85, UNI_RIDER = 1.1;
   var LEG_REST = [0, -0.168, 0.012];
   function rigOf(ch){
     if(!ch) return null;
@@ -2108,7 +2108,8 @@ function mount(el, api){
     var bare = !!(B && B.hats === false);
     hatsOf(ch).forEach(function(o){ o.visible = !bare; });
     if(B && B.seat){
-      var s = base*(B.riderK || RIDER_K), p = B.seat.position;
+      // games/people3d.js people are slimmer than the Mini Characters the seats were laid out for: drawn a little bigger
+      var s = base*(B.riderK || RIDER_K)*(ch.rig === "uni" ? UNI_RIDER : 1), p = B.seat.position;
       var hip = ch.hip || uniHip(ch) || HIP;
       ch.o.scale.setScalar(s); ch.o.rotation.set(0, 0, 0);
       ch.o.position.set(p.x - hip[0]*s, p.y - hip[1]*s, p.z - hip[2]*s);
@@ -2135,17 +2136,26 @@ function mount(el, api){
   // shoulders to the grips and from the hips to the pegs (knees forward and a little out, elbows out and down)
   function ridePoseUni(ch, B, steer, top){
     var P = HQV.people3d, K = P && P.ik, Bo = ch.bones;
-    if(!K || !K.twoBone || window.__noRP) return;
+    if(!K || !K.twoBone) return;
     if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
     if(K.mark) K.mark(ch);                   // undone before the next mixer step (games/people3d.js)
     var lean = B.lean || 0.3;
-    if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.5;
-    if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.5; Bo.Chest.rotation.y += steer*0.14; }
-    if(Bo.Neck){ Bo.Neck.rotation.x -= lean*0.7; Bo.Neck.rotation.y += steer*0.25; }
+    if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.3;              // (the reach below adds more if the grips need it)
+    if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.3; Bo.Chest.rotation.y += steer*0.14; }
+    if(Bo.Neck){ Bo.Neck.rotation.x -= lean*0.6; Bo.Neck.rotation.y += steer*0.25; }
     top.updateMatrixWorld(true);
     var q = ch.o.getWorldQuaternion(new THREE.Quaternion()), sc = ch.o.getWorldScale(tmpB).y || 1;
     var fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
     ch.scaleW = sc / (1.7/CH_H);
+    // grips out of reach (a toy body's short arms, a long bike): bend further from the waist until the hands get there
+    if(B.grips && B.grips[0] && B.grips[1] && Bo.Abdomen && Bo.UpperArmL){
+      for(var it = 0; it < 2; it++){
+        var far = 0;
+        ["L", "R"].forEach(function(sd, i){ far = Math.max(far, Bo["UpperArm" + sd].getWorldPosition(new THREE.Vector3()).distanceTo(B.grips[i].getWorldPosition(new THREE.Vector3()))/(uniArmLen(ch, sd) || 1)); });
+        if(far <= 0.96) break;
+        uniTurn(Bo.Abdomen, side, Math.min(0.22, (far - 0.96)*1.2));
+      }
+    }
     ["L", "R"].forEach(function(sd, i){
       var sg = i ? -1 : 1;
       if(B.feet && B.feet[i]){
@@ -2153,7 +2163,8 @@ function mount(el, api){
         K.leg(ch, sd, peg, peg.clone().addScaledVector(fwd, 1).addScaledVector(up, 0.8).addScaledVector(side, sg*0.25));
       }
       if(B.grips && B.grips[i]){
-        var g = B.grips[i].getWorldPosition(new THREE.Vector3());
+        // the wrist a hand's breadth back and a little over the grip, so the palm (not the wrist) closes round it
+        var g = B.grips[i].getWorldPosition(new THREE.Vector3()).addScaledVector(fwd, -0.035*ch.scaleW).addScaledVector(up, 0.012*ch.scaleW);
         K.reach(ch, sd, g, g.clone().addScaledVector(side, sg*0.6).addScaledVector(up, -0.4).addScaledVector(fwd, -0.5));
         K.grip(ch, sd, 0.85);
       }

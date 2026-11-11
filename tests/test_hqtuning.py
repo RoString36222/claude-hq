@@ -375,7 +375,8 @@ class Wiring(unittest.TestCase):
         self.assertIn("HQV.hqVehicleModels.build(ctx, Vc, b.color, {tune: tn})", src)                            # the one you get in
         self.assertIn("M: V.M};", src)
         b1 = read("games", "hqbasement.js")
-        self.assertIn("HQV.hqVehicleModels.build(c, entry, hex, {tune: r.tune})", b1)
+        self.assertIn("VM.build(c, entry, hex, far ? {tune: r.tune, lod: 1} : {tune: r.tune})", b1)   # [realism perf] far first
+        self.assertIn("HQV.hqVehicleModels.build(c, r.entry, hex, {tune: r.tune})", b1)                 # then the full one, tuned
         self.assertIn("b.tsig === r.tsig", b1)
         self.assertIn('Tn.onChange(function(key){', b1)
         gm = read("games", "hqgaragemgr.js")

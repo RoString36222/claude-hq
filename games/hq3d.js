@@ -6118,11 +6118,41 @@ function mount(el, api){
     if(nearBike() >= 0) rideToggle();
     return b;
   }
+  // [realism perf] Shaders compile on first sight, and a first sight that links a program stalls the frame (39-240 ms
+  // walking into a new part of the City, ~110 ms the first frame in B1, 2 s once with a cold driver cache). warmWorld
+  // compiles a world's every material (hidden ones too: three's compile walks the whole tree) and yours against its
+  // lights, in parallel where KHR_parallel_shader_compile allows, and resolves when they are linked (or after cap ms).
+  // warmSweep does the same for the world you are in, now and then in idle time, so what streams in (traffic, people,
+  // a level of detail switched on later) is linked before it comes into view.
+  function warmWorld(w, cap){
+    if(!renderer || !w || !w.scene || !renderer.compileAsync) return Promise.resolve(false);
+    var c = curCam(), ps = [];
+    try { ps.push(renderer.compileAsync(w.scene, c, w.scene)); } catch(e){}
+    if(avatar && avatar.g && avatar.g.parent !== w.scene){ try { ps.push(renderer.compileAsync(avatar.g, c, w.scene)); } catch(e){} }
+    return Promise.race([Promise.all(ps).then(function(){ return true; }, function(){ return false; }),
+                         new Promise(function(r){ setTimeout(function(){ r(false); }, cap || 2500); })]);
+  }
+  var warmAt = 0, warmBusy = false;
+  function warmSweep(dt){
+    if(warmBusy || !cur || !cur.scene || (warmAt += dt) < 2) return;
+    warmAt = 0; warmBusy = true;
+    var w = cur, run = function(){ if(!inst.alive || cur !== w){ warmBusy = false; return; } warmWorld(w, 4000).then(function(){ warmBusy = false; }); };
+    if(typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout: 1000}); else setTimeout(run, 0);
+  }
+  var preFaded = null;                                               // [realism perf] the world the fade is already down for
   function enterWorld(name, from, instant){
     name = outside(name);
     if(entering === name) return;                                   // already on the way there
-    var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
+    // [realism perf] a world not built yet is built behind the fade (B1's build is ~90 ms), not before it shows
+    if(!instant && !E.calm() && !fading && name !== "mission" && !worlds[name] && preFaded !== name && HQV.hqWorlds[name === "city" ? "city3d" : name]){
+      fading = true; fadeEl.classList.add("on"); E.sfx("door");
+      setTimeout(function(){ fading = false; if(!inst.alive) return; preFaded = name; enterWorld(name, from, instant); if(preFaded === name){ preFaded = null; fadeEl.classList.remove("on"); } }, 260);
+      return;
+    }
+    var pre = preFaded === name; preFaded = null;
+    var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading){ if(pre) fadeEl.classList.remove("on"); return; }
     if(w.whenReady && !w.isReady){
+      if(pre) fadeEl.classList.remove("on");                          // the loading line shows instead
       entering = name; showLoading("Building the city…");
       var to = 0, settle = function(ok, err){
         // a later enterWorld replaced this one (or this world was dropped): nothing to do here
@@ -6171,9 +6201,23 @@ function mount(el, api){
       if(api.onWorld) api.onWorld(name);
       if(prev && prev.swapOut && prev !== w && prev.destroy){ try { prev.destroy(); } catch(e){} }   // the island you left
     };
+    var warm = warmWorld(w);                                         // [realism perf] linked under the fade, not on the first frame
     if(instant || E.calm()){ go(); return; }
-    fading = true; fadeEl.classList.add("on"); E.sfx("door");
-    setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
+    // the fade stays down until the new world has drawn a frame: what only its own lights, shadows and arrival make
+    // (the shadow pass's depth shaders, a material onEnter changed) links behind it, not in front of you
+    if(!pre){ fadeEl.classList.add("on"); E.sfx("door"); }
+    fading = true;
+    var faded = new Promise(function(r){ setTimeout(r, pre ? 0 : 260); });
+    Promise.all([faded, warm]).then(function(){
+      if(!inst.alive) return;
+      go();
+      return warmWorld(cur, 1500);
+    }).then(function(){
+      var lift = function(){ fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); };
+      if(!inst.alive) return;
+      if(!inst.running) return lift();
+      requestAnimationFrame(function(){ requestAnimationFrame(lift); });
+    });
   }
   function onWheel(e){
     e.preventDefault(); noteInput();
@@ -6421,6 +6465,7 @@ function mount(el, api){
       if(mcPanel) mcPanelClose();
       if(rigOn()){ qualityStep(ms); perfLog(ms); }
       if(cur.update){ if(cur.camModes) cur.update(t, dt, k, camInfo()); else cur.update(t, dt, k); }
+      warmSweep(dt);
       placeRideUi();
       renderer.render(cur.scene, curCam());
       smokeFrame();

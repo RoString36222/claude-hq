@@ -658,22 +658,55 @@ HQV.hqWorlds.basement = function(c, w){
       if(b.g.parent) b.g.parent.remove(b.g);
       delete ownProps[k];
     });
+    wantNow = want;
     rows.forEach(function(r){
       var k = "own:" + r.id; if(ownProps[k]) return;
       var entry = r.entry; if(!entry || !HQV.hqVehicleModels || !HQV.hqVehicleModels.build) return;
-      var hex = paintHex(entry, r.paint), P = L.plinths[NSTART + r.bay] || bayPose(r.bay), rig;
-      try { rig = HQV.hqVehicleModels.build(c, entry, hex, {tune: r.tune}); } catch(e){ return; }
-      if(!rig || !rig.g) return;
-      measure(rig.g);
-      if(rig.ready && rig.ready.then) rig.ready.then(function(){ if(!dead) measure(rig.g); }, function(){});   // a model3d swapped in: measure again
-      var g = new THREE.Group(); g.add(rig.g); g.position.set(P.x, 0, P.z); g.rotation.y = P.yaw; S.add(g);
-      g.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
-      var o = {key: k, ownId: r.id, vehicleId: r.vehicle_id, color: hex, world: "basement", x: P.x, z: P.z, yaw: P.yaw, home: {x: P.x, z: P.z, yaw: P.yaw}, stored: false, basement: true, bay: r.bay};
-      var b = {g: g, x: P.x, z: P.z, yaw: P.yaw, color: hex, paint: Math.max(0, r.paint | 0), paintIdx: r.paint, kind: r.vehicle_id, vehicle_id: r.vehicle_id, id: k, stay: true,
-               world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8, tsig: r.tsig};
-      bikes.push(b); ownProps[k] = b;
+      ownJob(function(){ placeOwn(r); });
     });
     drawCards(byBay);
+  }
+  // [realism perf] Your cars go onto their bays a few milliseconds' worth a frame, not all in one frame (twelve new
+  // models froze B1 for ~240 ms). A model whose full blueprint is not made yet (games/hqvehiclemodels.js: ~10-20 ms
+  // the first time) stands first as its far model (a third of the work, often already made by the Dealership's
+  // turntables) and is swapped for the full one a frame later, one car a frame. Without frames (node tests): at once.
+  var ownQ = [], ownPumping = false, wantNow = {};
+  var clock = typeof performance !== "undefined" && performance.now ? function(){ return performance.now(); } : Date.now;
+  function ownJob(fn){
+    if(typeof requestAnimationFrame !== "function"){ fn(); return; }
+    ownQ.push(fn);
+    if(!ownPumping){ ownPumping = true; requestAnimationFrame(ownPump); }
+  }
+  function ownPump(){
+    ownPumping = false; if(dead){ ownQ = []; return; }
+    var t0 = clock();
+    while(ownQ.length){ ownQ.shift()(); if(clock() - t0 > 6) break; }
+    if(ownQ.length){ ownPumping = true; requestAnimationFrame(ownPump); }
+  }
+  function placeOwn(r){
+    var k = "own:" + r.id, VM = HQV.hqVehicleModels;
+    if(dead || ownProps[k] || wantNow[k] !== r) return;               // built meanwhile, or no longer wanted
+    var entry = r.entry, hex = paintHex(entry, r.paint), P = L.plinths[NSTART + r.bay] || bayPose(r.bay), rig;
+    var far = typeof requestAnimationFrame === "function" && VM.hasBlueprint && !VM.hasBlueprint(THREE, entry, r.tune);
+    try { rig = VM.build(c, entry, hex, far ? {tune: r.tune, lod: 1} : {tune: r.tune}); } catch(e){ return; }
+    if(!rig || !rig.g) return;
+    measure(rig.g);
+    if(rig.ready && rig.ready.then) rig.ready.then(function(){ if(!dead) measure(rig.g); }, function(){});   // a model3d swapped in: measure again
+    var g = new THREE.Group(); g.add(rig.g); g.position.set(P.x, 0, P.z); g.rotation.y = P.yaw; S.add(g);
+    // (shadows: the models cast from their body, trim and wheels already; not every lamp, lens and pane of glass)
+    var o = {key: k, ownId: r.id, vehicleId: r.vehicle_id, color: hex, world: "basement", x: P.x, z: P.z, yaw: P.yaw, home: {x: P.x, z: P.z, yaw: P.yaw}, stored: false, basement: true, bay: r.bay};
+    var b = {g: g, x: P.x, z: P.z, yaw: P.yaw, color: hex, paint: Math.max(0, r.paint | 0), paintIdx: r.paint, kind: r.vehicle_id, vehicle_id: r.vehicle_id, id: k, stay: true,
+             world: w, rig: rig, own: o, home: {x: P.x, z: P.z, yaw: P.yaw}, bay: r.bay, gallery: NSTART + r.bay, reach: L.r + 0.8, tsig: r.tsig};
+    bikes.push(b); ownProps[k] = b;
+    if(far) ownJob(function(){ fullOwn(b, r, hex); });
+  }
+  function fullOwn(b, r, hex){
+    if(dead || ownProps[b.id] !== b || !b.rig || !b.rig.farOnly) return;
+    if(riddenOff(b)){ setTimeout(function(){ ownJob(function(){ fullOwn(b, r, hex); }); }, 1000); return; }   // later, once parked
+    var R; try { R = HQV.hqVehicleModels.build(c, r.entry, hex, {tune: r.tune}); } catch(e){ return; }
+    if(!R || !R.g) return;
+    b.g.remove(b.rig.g); b.g.add(R.g); b.rig = R; measure(R.g);
+    if(R.ready && R.ready.then) R.ready.then(function(){ if(!dead) measure(R.g); }, function(){});
   }
   var dead = false, unsubs = [];
   function refresh(fresh){

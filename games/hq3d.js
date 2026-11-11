@@ -6133,9 +6133,22 @@ function mount(el, api){
                          new Promise(function(r){ setTimeout(function(){ r(false); }, cap || 2500); })]);
   }
   var warmAt = 0, warmBusy = false;
+  // and the models of the vehicles you own (B1 builds them all when you go down: ~10-20 ms each the first time, a clone
+  // after), one per idle moment, so the garage opens on clones instead of a quarter-second freeze
+  function ownWarm(){
+    var VM = HQV.hqVehicleModels, G = HQV.hqGarage, l = G && G.cached ? G.cached() : null;
+    if(!VM || !VM.warm || !Array.isArray(l) || !l.length) return;
+    for(var i = 0; i < l.length; i++){
+      var v = l[i], V = v && VEHICLES[v.vehicle_id], e = V && V.cat;
+      if(!e) continue;
+      var tn = HQV.hqTuning && HQV.hqTuning.of ? HQV.hqTuning.of("own:" + v.id) : null;
+      try { if(VM.warm(THREE, e, tn)){ requestIdleCallback(ownWarm, {timeout: 4000}); return; } } catch(err){}   // the next one in the next idle moment
+    }
+  }
   function warmSweep(dt){
     if(warmBusy || !cur || !cur.scene || (warmAt += dt) < 2) return;
     warmAt = 0; warmBusy = true;
+    if(typeof requestIdleCallback === "function") requestIdleCallback(ownWarm, {timeout: 4000});
     var w = cur, run = function(){ if(!inst.alive || cur !== w){ warmBusy = false; return; } warmWorld(w, 4000).then(function(){ warmBusy = false; }); };
     if(typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout: 1000}); else setTimeout(run, 0);
   }

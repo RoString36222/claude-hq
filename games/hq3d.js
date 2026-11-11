@@ -1045,6 +1045,8 @@ function mount(el, api){
       return;
     }
     var A3 = HQV.avatar3d;
+    // HQ 3.41: no saved character still gets one of the new people, picked from the key (same key, same person)
+    if(!(spec && A3 && A3.valid(spec)) && A3 && A3.fromSeed && HQV.people3d) spec = A3.fromSeed(key);
     if(spec && A3 && A3.valid(spec)){
       A3.build(spec).then(function(ch){
         if(!inst.alive) return;
@@ -2060,6 +2062,10 @@ function mount(el, api){
   // brow): headwear, a halo, a crest. Glasses and visors stay.
   function hatsOf(ch){
     if(ch._hats) return ch._hats;
+    if(ch.rig === "uni"){                    // games/people3d.js tags its headwear
+      var hs = []; ch.o.traverse(function(o){ if(o.isMesh && o.userData.hat) hs.push(o); });
+      return (ch._hats = hs);
+    }
     var h = ch.o.getObjectByName("head"), out = [];
     if(h) h.children.forEach(function(gp){ if(gp.isBone) return; gp.traverse(function(o){ if(o.isMesh && o.position.y > 0.6) out.push(o); }); });
     return (ch._hats = out);
@@ -2074,7 +2080,7 @@ function mount(el, api){
     hatsOf(ch).forEach(function(o){ o.visible = !bare; });
     if(B && B.seat){
       var s = base*(B.riderK || RIDER_K), p = B.seat.position;
-      var hip = ch.hip || HIP;
+      var hip = ch.hip || uniHip(ch) || HIP;
       ch.o.scale.setScalar(s); ch.o.rotation.set(0, 0, 0);
       ch.o.position.set(p.x - hip[0]*s, p.y - hip[1]*s, p.z - hip[2]*s);
       setAnim(ch, "idle");
@@ -2087,9 +2093,47 @@ function mount(el, api){
     }
     setAnim(ch, "idle");
   }
+  // games/people3d.js bodies: the hips in o's own units, measured once in the idle pose
+  function uniHip(ch){
+    if(ch.rig !== "uni" || !ch.bones || !ch.bones.Hips) return null;
+    if(ch._hip) return ch._hip;
+    var sc = ch.o.scale.x || 1, keep = [ch.o.position.clone(), ch.o.rotation.clone()];
+    ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); ch.o.updateMatrixWorld(true);
+    var w = ch.bones.Hips.getWorldPosition(new THREE.Vector3());
+    ch.o.position.copy(keep[0]); ch.o.rotation.copy(keep[1]); ch.o.updateMatrixWorld(true);
+    return (ch._hip = [w.x/sc, w.y/sc - 0.012, w.z/sc]);
+  }
+  // the same riding pose on the new humanoid: lean from the waist, twist into the turn, then two-bone IK from the
+  // shoulders to the grips and from the hips to the pegs (knees forward and a little out, elbows out and down)
+  function ridePoseUni(ch, B, steer, top){
+    var P = HQV.people3d, K = P && P.ik, Bo = ch.bones;
+    if(!K || !K.twoBone) return;
+    if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+    var lean = B.lean || 0.3;
+    if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.5;
+    if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.5; Bo.Chest.rotation.y += steer*0.14; }
+    if(Bo.Neck){ Bo.Neck.rotation.x -= lean*0.7; Bo.Neck.rotation.y += steer*0.25; }
+    top.updateMatrixWorld(true);
+    var q = ch.o.getWorldQuaternion(new THREE.Quaternion()), sc = ch.o.getWorldScale(tmpB).y || 1;
+    var fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    ch.scaleW = sc / (1.7/CH_H);
+    ["L", "R"].forEach(function(sd, i){
+      var sg = i ? -1 : 1;
+      if(B.feet && B.feet[i]){
+        var peg = B.feet[i].getWorldPosition(new THREE.Vector3()).addScaledVector(up, 0.05);
+        K.leg(ch, sd, peg, peg.clone().addScaledVector(fwd, 1).addScaledVector(up, 0.8).addScaledVector(side, sg*0.25));
+      }
+      if(B.grips && B.grips[i]){
+        var g = B.grips[i].getWorldPosition(new THREE.Vector3());
+        K.reach(ch, sd, g, g.clone().addScaledVector(side, sg*0.6).addScaledVector(up, -0.4).addScaledVector(fwd, -0.5));
+        K.grip(ch, sd, 0.85);
+      }
+    });
+  }
   // The riding pose, after the clips have run: `top` is the group the rider and vehicle hang from
   // (your avatar or a peer); steer -1..1 turns the head and shoulders into the bend.
   function ridePose(ch, B, steer, top){
+    if(ch && ch.rig === "uni"){ if(B && B.seat && B.grips) ridePoseUni(ch, B, steer || 0, top); return; }
     var R = rigOf(ch); if(!R || !B || !B.seat || !B.grips) return;
     if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
     steer = steer || 0;

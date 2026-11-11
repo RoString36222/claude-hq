@@ -69,7 +69,7 @@ function charSig(s){ return (s || charSpec()).join("."); }
 function charLoad(){
   if(window.HQV && window.HQV.avatar3d) return Promise.resolve(window.HQV.avatar3d);
   if(CHAR.load) return CHAR.load;
-  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["avatar3d"]);
+  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["avatar3d", "people3d"]);
   CHAR.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc = document.createElement("script"); sc.src = "/games/" + name + ".js"; sc.async = false;

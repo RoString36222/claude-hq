@@ -85,8 +85,7 @@ function legTo(ch, side, target, pole){
   var THREE = ch.L.THREE, B = ch.bones, K = ikLib(THREE), shin = B["LowerLeg" + side], foot = B["Foot" + side];
   if(!shin || !foot){ return; }
   var ankle = new THREE.Object3D();
-  var s = new THREE.Vector3(); shin.getWorldScale(s);
-  ankle.position.set(0, ch.legLen[side] / (s.y || 1), 0);
+  ankle.position.set(0, ch.legLen[side], 0);       // shin-bone units (its own scale is 1)
   shin.add(ankle);
   K.twoBone(B["UpperLeg" + side], shin, ankle, target, pole);
   var at = ankle.getWorldPosition(new THREE.Vector3());
@@ -253,6 +252,12 @@ function hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at){
 
 // headwear (1 beanie, 2 cap, 3 headband, 4 party hat, 5 neural halo) and accessory (1 round glasses, 2 shades, 3 AR visor)
 function wear(THREE, grp, spec, at, rx, ry, rz, c){
+  var n0 = grp.children.length;
+  wear0(THREE, grp, spec, at, rx, ry, rz, c);
+  // headwear comes off under a car roof (games/hq3d.js hatsOf): tag what this added, except glasses and visors
+  for(var i = n0; i < grp.children.length; i++){ if(!grp.children[i].userData.face){ grp.children[i].userData.hat = true; } }
+}
+function wear0(THREE, grp, spec, at, rx, ry, rz, c){
   var hw = spec[5] | 0, acc = spec[6] | 0, outfit = hexOf("outfitColor", spec[3]) || "#3f6fb3";
   if(hw === 1){
     var beanie = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.18 ? 1.12 : 0.9; }), mat(THREE, outfit, 0.9));
@@ -281,15 +286,15 @@ function wear(THREE, grp, spec, at, rx, ry, rz, c){
     var lens = acc === 2 ? new THREE.MeshStandardMaterial({color: "#141518", roughness: 0.1, metalness: 0.6}) : null;
     [-1, 1].forEach(function(sx){
       var ring = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.17, rx * 0.022, 8, 24), frame);
-      ring.position.copy(at(sx * 0.36, -0.02, 1.02)); ring.rotation.y = sx * 0.3; grp.add(ring);
-      if(lens){ var l = new THREE.Mesh(new THREE.CircleGeometry(rx * 0.16, 20), lens); l.position.copy(ring.position); l.rotation.y = sx * 0.3; grp.add(l); }
+      ring.position.copy(at(sx * 0.36, -0.02, 1.02)); ring.rotation.y = sx * 0.3; ring.userData.face = true; grp.add(ring);
+      if(lens){ var l = new THREE.Mesh(new THREE.CircleGeometry(rx * 0.16, 20), lens); l.position.copy(ring.position); l.rotation.y = sx * 0.3; l.userData.face = true; grp.add(l); }
     });
     var bridge = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.015, rx * 0.015, rx * 0.36, 6), frame);
-    bridge.rotation.z = Math.PI / 2; bridge.position.copy(at(0, 0.0, 1.06)); grp.add(bridge);
+    bridge.rotation.z = Math.PI / 2; bridge.position.copy(at(0, 0.0, 1.06)); bridge.userData.face = true; grp.add(bridge);
   } else if(acc === 3){
     var visor = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, ry * 0.26, 32, 1, true, -1.1, 2.2),
       new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#2aa9c9", emissiveIntensity: 0.9, transparent: true, opacity: 0.6, side: THREE.DoubleSide}));
-    visor.scale.set(rx * 1.04, 1, rz * 1.06); visor.rotation.y = Math.PI / 2; visor.position.copy(at(0, 0.0, 0)); grp.add(visor);
+    visor.scale.set(rx * 1.04, 1, rz * 1.06); visor.rotation.y = Math.PI / 2; visor.position.copy(at(0, 0.0, 0)); visor.userData.face = true; grp.add(visor);
   }
 }
 
@@ -403,8 +408,6 @@ function build(spec){
       o.updateMatrixWorld(true);
       var box = new THREE.Box3().setFromObject(o, true), h = box.max.y - box.min.y || 1, k = CH_H / h;
       inner.scale.setScalar(k); inner.position.y = -box.min.y * k;
-      // legLen was measured in model units before scaling; IK works in world units
-      legLen.L *= k; legLen.R *= k;
       var mixer = new THREE.AnimationMixer(model), acts = {};
       Object.keys(ANIM).forEach(function(n){
         var cl = THREE.AnimationClip.findByName(clips, ANIM[n]);

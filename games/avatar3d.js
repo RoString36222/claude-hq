@@ -309,6 +309,13 @@ function addOns(L, o, spec, P){
 var ANIMS = ["idle", "walk", "sit", "emote-yes", "sprint"];
 function build(spec){
   spec = clampSpec(spec);
+  // HQ 3.41: the people are games/people3d.js (CC0 humanoid bodies with our toy head); this Kenney build stays as
+  // the fallback when that module is missing or a body fails to load
+  var P = HQV.people3d;
+  if(P && !P.off){ return P.build(spec).catch(function(){ return kenney(spec); }); }
+  return kenney(spec);
+}
+function kenney(spec){
   return E.lib().then(function(L){
     return Promise.all([E.loadGlb(L, "golf", FILES[spec[0]]), atlas()]).then(function(r){
       var gltf = r[0], P = prep(spec[0], gltf, r[1]);
@@ -362,7 +369,8 @@ function portrait(spec, px){
     ch.update(0.4);
     PR.S.add(ch.o); ch.o.updateMatrixWorld(true);
     // head and shoulders, a little from the side
-    PR.cam.position.set(0.32, 0.6, 1.25); PR.cam.lookAt(0, 0.43, 0); PR.cam.updateProjectionMatrix();
+    var hy = ch.rig === "uni" ? 0.6 : 0.43;
+    PR.cam.position.set(0.32, hy + 0.17, 1.25); PR.cam.lookAt(0, hy, 0); PR.cam.updateProjectionMatrix();
     PR.r.setClearColor(0x000000, 0); PR.r.render(PR.S, PR.cam);
     var c = document.createElement("canvas"); c.width = c.height = px;
     var g = c.getContext("2d"); bgPaint(g, px, spec[8]); g.drawImage(PR.r.domElement, 0, 0, px, px);
@@ -395,7 +403,7 @@ function preview(canvas, spec){
         var L = c.L, THREE = L.THREE, r = new THREE.WebGLRenderer({canvas: canvas, antialias: true, alpha: true});
         r.outputColorSpace = THREE.SRGBColorSpace; r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
         R = {r: r, S: stage(L), cam: new THREE.PerspectiveCamera(28, 1, 0.05, 20)};
-        R.cam.position.set(0, 0.5, 2.05); R.cam.lookAt(0, 0.38, 0);
+        R.cam.position.set(0, 0.5, 2.05); R.cam.lookAt(0, c.rig === "uni" ? 0.4 : 0.38, 0);
       }
       if(ch) R.S.remove(ch.o);
       ch = c; R.S.add(ch.o); if(ch.acts.idle) ch.acts.idle.play();

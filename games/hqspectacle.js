@@ -1525,7 +1525,7 @@ function create(c, W, o){
       var SK = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0x5c3a21];
       members.forEach(function(m, k){
         gait[3*k] = H(k, "ph")*TAU; gait[3*k + 1] = m.kind === "walk" ? m.v/1.5 : 0.3; gait[3*k + 2] = m.kind === "walk" ? 0.55 : m.kind === "ride" ? 0 : 0.04;
-        [[shirt, SH], [pants, PA], [skin, SK]].forEach(function(pr, j){ var hx = pr[1][Math.floor(H(k, "c" + j)*pr[1].length)]; if(!j) m.shirtHex = hx;
+        [[shirt, SH], [pants, PA], [skin, SK]].forEach(function(pr, j){ var hx = pr[1][Math.floor(H(k, "c" + j)*pr[1].length)]; if(!j) m.shirtHex = hx; if(j === 2) m.skinHex = hx;
           col.setHex(hx); pr[0][3*k] = col.r; pr[0][3*k + 1] = col.g; pr[0][3*k + 2] = col.b; });
         m.look = Math.floor(H(k, "char")*Math.max(1, (ND.CHAR_FILES || []).length));
       });
@@ -1547,9 +1547,20 @@ function create(c, W, o){
       // until a look has loaded, and beyond NEAR, a person is the instanced body.
       var CHARS = ND.CHAR_FILES || [], NEAR = 40, NEAR_OUT = 44, NEAR_MAX = 36, SC = 1.7/0.72, TINT = 0.45;
       var free = {}, made = 0, loadingN = 0, held = {};                  // held[member] = character
+      var HAIR = [0x2b1b10, 0x3a2a20, 0x6b4228, 0xb5651d, 0x1a1a1a, 0xd8b26e];
       function loadChar(k){
         if(!E.loadGlb || !Lb || !CHARS[k] || made + loadingN >= NEAR_MAX + 6) return;
         loadingN++;
+        var P = HQV.people3d;
+        if(P && P.crowd){                                                 // [realism] the people of games/people3d.js
+          var q = made + loadingN;
+          P.crowd(k, {hat: q % 5 === 1 ? 2 : q % 7 === 3 ? 1 : 0, acc: q % 6 === 2 ? 2 : 0, hair: q % 9 === 4 ? 1 : 0}).then(function(ch){
+            loadingN--; if(dead){ ch.dispose(); return; }
+            ch.k = k; ch.mats = []; ch.hair = HAIR[q % HAIR.length]; ch.o.scale.setScalar(SC); ch.o.traverse(function(n){ if(n.isMesh) n.castShadow = true; });
+            made++; (free[k] = free[k] || []).push(ch);
+          }, function(){ loadingN--; });
+          return;
+        }
         E.loadGlb(Lb, "golf", CHARS[k]).then(function(gl){
           loadingN--; if(dead) return;
           var o = Lb.clone(gl.scene), mixer = new THREE.AnimationMixer(o), acts = {}, ch = {o: o, mixer: mixer, acts: acts, mats: [], cur: null, k: k};
@@ -1600,7 +1611,8 @@ function create(c, W, o){
             var mm = members[kk], list = free[mm.look];
             if(list && list.length){
               var ch = list.pop(); held[kk] = ch; g.add(ch.o); ch.cur = null;
-              var w = new THREE.Color(0xffffff).lerp(new THREE.Color(mm.shirtHex), TINT); ch.mats.forEach(function(mt){ mt.color.copy(w); });
+              if(ch.recolour) ch.recolour({top: mm.shirtHex, skin: mm.skinHex != null ? mm.skinHex : 0xf1c8a6, hair: ch.hair});
+              else { var w = new THREE.Color(0xffffff).lerp(new THREE.Color(mm.shirtHex), TINT); ch.mats.forEach(function(mt){ mt.color.copy(w); }); }
             } else loadChar(mm.look);
           });
         } else if(!cam || cam.x == null){ Object.keys(held).forEach(release); }

@@ -164,13 +164,16 @@ function skullBox(THREE, root, head){
   return box.isEmpty() ? null : box;
 }
 
+// geometry detail: 1 for your own and the people near you, less for crowds (crowdHead)
+var SEGK = 1;
+function sg(n){ return Math.max(6, Math.round(n * SEGK)); }
 function mat(THREE, hex, rough, extra){
   return new THREE.MeshStandardMaterial(Object.assign({color: hex, roughness: rough == null ? 0.7 : rough, metalness: 0}, extra || {}));
 }
 
 // smooth skull shape: the sphere with a softer, narrower jaw; k (number or fn of the unit direction) scales it
 function skullGeo(THREE, rx, ry, rz, k){
-  var g = new THREE.SphereGeometry(1, 40, 28), p = g.attributes.position, d = new THREE.Vector3();
+  var g = new THREE.SphereGeometry(1, sg(40), sg(28)), p = g.attributes.position, d = new THREE.Vector3();
   for(var i = 0; i < p.count; i++){
     d.fromBufferAttribute(p, i);
     var jaw = d.y < 0 ? 1 - 0.16 * d.y * d.y : 1, kk = typeof k === "function" ? k(d) : k;
@@ -195,26 +198,26 @@ function toyHead(L, skull, spec, female){
   var neck = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.36, rx * 0.42, ry * 0.9, 16), skin);
   neck.position.copy(at(0, -1.05, -0.08)); grp.add(neck);
   [-1, 1].forEach(function(sx){
-    var eye = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), eyeM);
+    var eye = new THREE.Mesh(new THREE.SphereGeometry(1, sg(20), sg(14)), eyeM);
     eye.scale.set(rx * 0.11, ry * 0.15, rz * 0.06); eye.position.copy(at(sx * 0.36, -0.02, 0.93)); eye.rotation.y = sx * 0.35;
     grp.add(eye);
     if(!lit){
-      var glint = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({color: 0xffffff}));
+      var glint = new THREE.Mesh(new THREE.SphereGeometry(1, sg(10), sg(8)), new THREE.MeshBasicMaterial({color: 0xffffff}));
       glint.scale.setScalar(rx * 0.03); glint.position.copy(at(sx * 0.33, 0.04, 0.985)); grp.add(glint);
     }
     var brow = new THREE.Mesh(new THREE.CapsuleGeometry(rx * 0.025, rx * 0.16, 4, 8), hairM);
     brow.rotation.set(0, sx * 0.35, Math.PI / 2 + sx * 0.12); brow.position.copy(at(sx * 0.37, 0.24, 0.93)); grp.add(brow);
-    var ear = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), skin);
+    var ear = new THREE.Mesh(new THREE.SphereGeometry(1, sg(14), sg(10)), skin);
     ear.scale.set(rx * 0.08, ry * 0.17, rz * 0.13); ear.position.copy(at(sx * 0.98, -0.06, -0.05)); grp.add(ear);
   });
-  var nose = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), skin);
+  var nose = new THREE.Mesh(new THREE.SphereGeometry(1, sg(14), sg(10)), skin);
   nose.scale.set(rx * 0.07, ry * 0.06, rz * 0.06); nose.position.copy(at(0, -0.22, 0.99)); grp.add(nose);
   var mouth = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.09, rx * 0.017, 6, 16, Math.PI), mat(THREE, "#8a3b32", 0.5));
   mouth.rotation.set(-0.25, 0, Math.PI); mouth.scale.z = 0.3; mouth.position.copy(at(0, -0.40, 0.875)); grp.add(mouth);
   hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at);
   wear(THREE, grp, spec, at, rx, ry, rz, c);
   grp.traverse(function(m){ if(m.isMesh){ m.castShadow = true; } });
-  return {g: grp, c: c, rx: rx, ry: ry, rz: rz};
+  return {g: grp, c: c, rx: rx, ry: ry, rz: rz, skin: skin, hair: hairM};
 }
 
 // hairStyle: 0 own (women: fringe + tied ponytail; men: short crop), 1 shaved, 2 neon crest
@@ -270,7 +273,7 @@ function wear0(THREE, grp, spec, at, rx, ry, rz, c){
     beanie.position.copy(c); grp.add(beanie);
     var cuff = new THREE.Mesh(new THREE.TorusGeometry(1, 0.09, 8, 32), mat(THREE, outfit, 0.9));
     cuff.scale.set(rx * 1.08, rz * 1.08, ry * 0.9); cuff.rotation.x = Math.PI / 2; cuff.position.copy(at(0, 0.22, 0)); grp.add(cuff);
-    var pom = new THREE.Mesh(new THREE.SphereGeometry(rx * 0.16, 12, 10), mat(THREE, "#f2f0ea", 1)); pom.position.copy(at(0, 1.18, 0)); grp.add(pom);
+    var pom = new THREE.Mesh(new THREE.SphereGeometry(rx * 0.16, sg(12), sg(10)), mat(THREE, "#f2f0ea", 1)); pom.position.copy(at(0, 1.18, 0)); grp.add(pom);
   } else if(hw === 2){
     var crown = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.25 ? 1.1 : 0.9; }), mat(THREE, outfit, 0.8));
     crown.position.copy(c); grp.add(crown);
@@ -449,9 +452,156 @@ function build(spec){
   });
 }
 
+/* ---------- crowds: light people for the City's residents (games/npcdraw.js, games/hqspectacle.js) ----------
+ * Same bodies and toy heads, built to be drawn by the dozen: per outfit, one template whose body parts are merged
+ * into a single skinned mesh and whose head is one mesh on the Head bone, every colour in a vertex colour, and the
+ * recolourable parts (skin, top, hair) tagged by a slot attribute that the material's uniforms fill. A crowd
+ * person is a clone of the template sharing its geometry: two draw calls, its own material (so its own colours)
+ * and its own mixer, and recolour() changes the colours in place (pools hand a person on to someone else).
+ *   HQV.people3d.crowd(base, variant) -> Promise<{o, mixer, acts, cur, rig, bones, recolour({skin, top, hair})}>
+ *   variant {hair 0 own | 1 shaved, hat 0..3, acc 0..2} (the spec's hairStyle, headwear, accessory)
+ */
+var SLOT = {skin: 1, top: 2, hair: 3};
+function crowdMat(THREE){
+  var u = {uSkin: {value: new THREE.Color(0xf1c8a6)}, uTop: {value: new THREE.Color(0x3f6fb3)}, uHair: {value: new THREE.Color(0x3a2a20)}};
+  var m = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.72, metalness: 0});
+  m.onBeforeCompile = function(sh){
+    sh.uniforms.uSkin = u.uSkin; sh.uniforms.uTop = u.uTop; sh.uniforms.uHair = u.uHair;
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float aSlot;\nvarying float vSlot;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSlot = aSlot;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vSlot;\nuniform vec3 uSkin;\nuniform vec3 uTop;\nuniform vec3 uHair;")
+      .replace("#include <color_fragment>", "#include <color_fragment>\nif(vSlot > 0.5){ diffuseColor.rgb *= vSlot < 1.5 ? uSkin : (vSlot < 2.5 ? uTop : uHair); }");
+  };
+  m.customProgramCacheKey = function(){ return "hq-crowd-person"; };
+  m.userData.u = u;
+  return m;
+}
+// geometries (each in the space `toSpace` maps it to) -> one non-indexed geometry with color + aSlot (+ skin attributes)
+function mergeParts(THREE, parts, skinned){
+  var n = 0;
+  parts.forEach(function(pt){ pt.g = pt.g.index ? pt.g.toNonIndexed() : pt.g; n += pt.g.attributes.position.count; });
+  var pos = new Float32Array(3*n), nrm = new Float32Array(3*n), col = new Float32Array(3*n), slot = new Float32Array(n);
+  var si = skinned ? new Uint16Array(4*n) : null, sw = skinned ? new Float32Array(4*n) : null, o = 0, v = new THREE.Vector3();
+  parts.forEach(function(pt){
+    var g = pt.g, P = g.attributes.position, N = g.attributes.normal, nm = pt.m ? new THREE.Matrix3().getNormalMatrix(pt.m) : null;
+    for(var i = 0; i < P.count; i++, o++){
+      v.fromBufferAttribute(P, i); if(pt.m){ v.applyMatrix4(pt.m); } pos[3*o] = v.x; pos[3*o + 1] = v.y; pos[3*o + 2] = v.z;
+      if(N){ v.fromBufferAttribute(N, i); if(nm){ v.applyMatrix3(nm).normalize(); } nrm[3*o] = v.x; nrm[3*o + 1] = v.y; nrm[3*o + 2] = v.z; }
+      col[3*o] = pt.c.r; col[3*o + 1] = pt.c.g; col[3*o + 2] = pt.c.b; slot[o] = pt.slot;
+      if(skinned){
+        for(var k = 0; k < 4; k++){ si[4*o + k] = g.attributes.skinIndex.getComponent(i, k); sw[4*o + k] = g.attributes.skinWeight.getComponent(i, k); }
+      }
+    }
+  });
+  var out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(pos, 3)); out.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+  out.setAttribute("color", new THREE.BufferAttribute(col, 3)); out.setAttribute("aSlot", new THREE.BufferAttribute(slot, 1));
+  if(skinned){ out.setAttribute("skinIndex", new THREE.BufferAttribute(si, 4)); out.setAttribute("skinWeight", new THREE.BufferAttribute(sw, 4)); }
+  out.computeBoundingSphere();
+  return out;
+}
+var CROWD = {}, CROWD_HEAD = {};
+// the body template for outfit `base`: {root, clips, sit, skull, female, file} (its head added per person: crowdHead)
+function crowdTemplate(base){
+  var file = FILES[base] || FILES[0];
+  if(CROWD[file]){ return CROWD[file]; }
+  return (CROWD[file] = E.lib().then(function(L){
+    return Promise.all([E.loadGlb(L, "people", file), animsOf(L)]).then(function(r){
+      var THREE = L.THREE, model = L.clone(r[0].scene), bones = {}, body = [], drop = [];
+      model.traverse(function(n){
+        if(n.isBone){ bones[n.name] = n; }
+        if(n.isMesh){ if(n.isSkinnedMesh && !(/head/i.test(n.name) || (n.parent && /head/i.test(n.parent.name)))){ body.push(n); } else { drop.push(n); } }
+      });
+      model.updateMatrixWorld(true);
+      var skull = bones.Head ? skullBox(THREE, model, bones.Head) : null, tops = TOP[file] || [];
+      // every body part in one skinned mesh (one skeleton; each part's own bind matrix folded into its vertices)
+      var sk = body[0].skeleton, bind = body[0].bindMatrix.clone(), bindInv = bind.clone().invert(), parts = [];
+      body.forEach(function(m){
+        var g = m.geometry.clone(); soften(g);
+        var mats = Array.isArray(m.material) ? m.material : [m.material], fold = bindInv.clone().multiply(m.bindMatrix);
+        var grp = g.groups.length > 1 ? g.groups : [{start: 0, count: 0, materialIndex: 0}];
+        grp.forEach(function(gr){
+          var mt = mats[gr.materialIndex] || mats[0], nm = mt.name || "", sub = g;
+          if(g.groups.length > 1){ sub = g.clone(); sub.setIndex(Array.prototype.slice.call(g.index.array, gr.start, gr.start + gr.count)); }
+          var slot = /^skin/i.test(nm) ? SLOT.skin : tops.indexOf(nm) >= 0 ? SLOT.top : 0;
+          var c = slot ? new THREE.Color(1, 1, 1).multiplyScalar(/darker/i.test(nm) ? 0.85 : 1) : mt.color.clone();
+          parts.push({g: sub, m: fold, c: c, slot: slot});
+        });
+      });
+      var merged = new THREE.SkinnedMesh(mergeParts(THREE, parts, true), crowdMat(THREE));
+      merged.name = "crowd-body"; merged.castShadow = true; merged.frustumCulled = false;
+      body[0].parent.add(merged); merged.bind(sk, bind);
+      body.concat(drop).forEach(function(m){ if(m.parent){ m.parent.remove(m); } });
+      if(bones.Head){ bones.Head.scale.setScalar(HEAD_K); }
+      ["WristL", "WristR"].forEach(function(b){ if(bones[b]){ bones[b].scale.setScalar(1.12); } });
+      var inner = new THREE.Group(); inner.add(model);
+      var o = new THREE.Group(); o.add(inner); o.name = "person";
+      o.updateMatrixWorld(true);
+      // measured with a plain toy head on, as build() measures its people
+      var probe = skull && bones.Head ? toyHead(L, skull, [base, 0, 0, 0, 0, 0, 0, 0, 0, 0], FEMALE[base] || false).g : null;
+      if(probe){ bones.Head.add(probe); o.updateMatrixWorld(true); }
+      var box = new THREE.Box3().setFromObject(o, true), h = box.max.y - box.min.y || 1, k = CH_H / h;
+      if(probe){ bones.Head.remove(probe); probe.traverse(function(m){ if(m.isMesh){ m.geometry.dispose(); m.material.dispose(); } }); }
+      inner.scale.setScalar(k); inner.position.y = -box.min.y * k;
+      var clips = r[1], idle = THREE.AnimationClip.findByName(clips, "Idle"), T = {root: o, clips: clips, sit: null, skull: skull, file: file, female: FEMALE[base] || false};
+      if(idle){
+        try {
+          o.updateMatrixWorld(true);
+          var legLen = {};
+          ["L", "R"].forEach(function(sd){ legLen[sd] = bones["LowerLeg" + sd].getWorldPosition(new THREE.Vector3()).distanceTo(bones["Foot" + sd].getWorldPosition(new THREE.Vector3())) * 0.93; });
+          var ch = {o: o, inner: inner, model: model, mixer: new THREE.AnimationMixer(model), bones: bones, legLen: legLen, L: L, scaleW: 1};
+          T.sit = makeSit(ch, idle); ch.mixer.stopAllAction(); ch.mixer.uncacheRoot(model);
+        } catch(e){ T.sit = null; }
+      }
+      return T;
+    });
+  }, function(e){ delete CROWD[file]; throw e; }));
+}
+// the merged toy head for a template and a variant, in head-bone space (no glow, no visor: crowds are seen from a way off)
+function crowdHead(L, T, base, variant){
+  var key = T.file + "|" + (variant.hair | 0) + "." + (variant.hat | 0) + "." + (variant.acc | 0);
+  if(CROWD_HEAD[key] !== undefined){ return CROWD_HEAD[key]; }
+  var THREE = L.THREE, geo = null;
+  if(T.skull){
+    SEGK = 0.45;
+    var th; try { th = toyHead(L, T.skull, [base, 0, 0, 0, variant.hair | 0, variant.hat | 0, variant.acc | 0, 0, 0, 0], T.female); } finally { SEGK = 1; }
+    var hp = [];
+    th.g.updateMatrixWorld(true);
+    th.g.traverse(function(m){
+      if(!m.isMesh || m.material.transparent){ return; }
+      var slot = m.userData.hat ? SLOT.top : m.material === th.skin ? SLOT.skin : m.material === th.hair ? SLOT.hair : 0;
+      hp.push({g: m.geometry, m: m.matrixWorld.clone(), c: slot ? new THREE.Color(1, 1, 1) : m.material.color.clone(), slot: slot});
+    });
+    geo = mergeParts(THREE, hp, false);
+    th.g.traverse(function(m){ if(m.isMesh){ m.geometry.dispose(); m.material.dispose(); } });
+  }
+  return (CROWD_HEAD[key] = geo);
+}
+function crowd(base, variant){
+  base = Math.max(0, Math.min(FILES.length - 1, base | 0)); variant = variant || {};
+  return Promise.all([E.lib(), crowdTemplate(base)]).then(function(r){
+    var L = r[0], THREE = L.THREE, T = r[1], o = L.clone(T.root), bones = {}, model = o.children[0].children[0], mat = crowdMat(THREE);
+    o.traverse(function(n){ if(n.isBone){ bones[n.name] = n; } if(n.isMesh){ n.material = mat; n.frustumCulled = false; } });
+    var hg = crowdHead(L, T, base, variant);
+    if(hg && bones.Head){ var hm = new THREE.Mesh(hg, mat); hm.name = "crowd-head"; hm.castShadow = true; bones.Head.add(hm); }
+    var mixer = new THREE.AnimationMixer(model), acts = {};
+    Object.keys(ANIM).forEach(function(n){ var cl = THREE.AnimationClip.findByName(T.clips, ANIM[n]); if(cl){ acts[n] = mixer.clipAction(cl); } });
+    if(T.sit){ acts.sit = mixer.clipAction(T.sit); }
+    var u = mat.userData.u;
+    return {o: o, mixer: mixer, acts: acts, cur: null, rig: "uni", crowd: true, bones: bones, L: L, mat: mat, update: function(){},
+      recolour: function(c){
+        c = c || {};
+        if(c.skin != null){ u.uSkin.value.set(c.skin); }
+        if(c.top != null){ u.uTop.value.set(c.top); }
+        if(c.hair != null){ u.uHair.value.set(c.hair); }
+      },
+      dispose: function(){ mat.dispose(); }};
+  });
+}
+
 // the IK helpers need THREE, which arrives with the first build
 var IK = {seat: seat, reach: reach, grip: grip, leg: legTo, mark: mark, twoBone: null, aim: null};
-HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, build: function(spec){
+HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, crowd: crowd, build: function(spec){
   return build(spec).then(function(ch){
     if(!IK.twoBone){ var K = ikLib(ch.L.THREE); IK.twoBone = K.twoBone; IK.aim = K.aim; }
     return ch;

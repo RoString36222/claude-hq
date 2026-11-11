@@ -1602,7 +1602,7 @@ HQV.hqWorlds.city3d = function(c, w){
       try {
         var sdoc = Object.assign({}, doc, {layers: Object.assign({}, doc.layers, {zones: simZones(doc.layers.zones)})});
         nsim = HQV.npcSim.create(sdoc, {tier: tier, grow: grow, seed: W.seed || W.id, world: W});   // [crowds] W: citylife's land use and gathering spots
-        ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L});
+        ndraw = HQV.npcDraw.create(THREE, S, nsim, {lib: c.L}); if(/hqdev/.test(location.search)) window.__ndraw = ndraw;   // TEMP-HQDEV
       } catch(e){ nsim = null; ndraw = null; }
     }
     if(HQV.cityPlay){                                                                                // [3.22] things to do

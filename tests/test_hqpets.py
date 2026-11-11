@@ -370,7 +370,9 @@ class PetsEngine(unittest.TestCase):
         for sid, m in self.o["models"].items():
             self.assertLessEqual(m["meshes"], 6, sid)          # + its name tag: at most 7 draw calls a pet
             self.assertEqual(m["meshes"], m["drawn"], sid)
-            self.assertLessEqual(m["tris"], 4500, sid)
+            # a dragon is sculpted (the swept body, ridged horns, 12-sided limbs; mounts are seen close up): its own
+            # budget near, and its limbs and bits swap to lighter shapes far off (Mo.lod)
+            self.assertLessEqual(m["tris"], 14000 if sid.endswith("dragon") else 4500, sid)
             self.assertTrue(m["finite"], sid)
             self.assertEqual(m["mat"], "MeshStandardMaterial", sid)
         M = self.o["models"]

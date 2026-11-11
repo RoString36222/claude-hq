@@ -2643,6 +2643,7 @@ function mount(el, api){
             pet: {id: r.p.id, name: r.p.name, sp: r.sp, breathT: 0}};
     avatar.hy = st.y; avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     if(PK && PK.setMounted) PK.setMounted(r.p.id);
+    if(rk === "dragon" && HQV.hqPets && HQV.hqPets.Fx && cur && cur.scene && !E.calm()) petFx();   // its breath's pool (and heat light) now, not mid-breath
     movedHere = true; E.sfx("go");
     driveHud(rk); rideUiSync(true);
     return true;
@@ -2673,6 +2674,8 @@ function mount(el, api){
     var k = PR.breathOf(ride.pet.sp, E.calm());
     if(!k){ if(api.announce) api.announce(E.calm() ? "Calm is on: no breath effects." : ride.pet.name + " has no breath to show."); return; }
     ride.pet.breathT = 1.4;
+    // the roar and the breath's sound (games/hqpets.js sfx: off in Calm and at 0% SFX volume)
+    var PS = HQV.hqPets; if(PS && PS.sfx){ if(PR.rideKind && PR.rideKind(ride.pet.sp) === "dragon") PS.sfx("roar", {size: 1.3}); PS.sfx("breath", {kind: k}); }
   }
   function petBreathStep(dt){
     var PR = HQV.hqPetRide, P = ride && ride.pet; if(!P || !PR || !(P.breathT > 0)) return false;

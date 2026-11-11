@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Dragon Lineup</title>
+<style>html,body{margin:0;height:100%;background:#9fb6c8;overflow:hidden}canvas{display:block}</style></head>
+<body>
+<script src="/games/engine.js"></script>
+<script src="/games/world.js"></script><script src="/games/hqnav.js"></script><script src="/games/hqdealer.js"></script><script src="/games/hqcasino.js"></script>
+<script src="/games/hqpets.js"></script>
+<script>
+(function(){
+var Q = new URLSearchParams(location.search), view = Q.get("view") || "line", anim = Q.get("anim") || "stand", t0 = +(Q.get("t") || 3);
+HQV.engine.lib().then(function(L){
+  var THREE = L.THREE, r = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
+  r.setSize(innerWidth, innerHeight); r.toneMapping = THREE.ACESFilmicToneMapping; r.shadowMap.enabled = true; document.body.appendChild(r.domElement);
+  var S = new THREE.Scene(); S.background = new THREE.Color(Q.get("night") ? 0x0a1020 : 0x9fb6c8);
+  S.add(new THREE.HemisphereLight(0xdfe8ff, 0x5a5040, Q.get("night") ? 0.3 : 1.4));
+  var d = new THREE.DirectionalLight(0xfff3e2, Q.get("night") ? 0.3 : 2.4); d.position.set(4, 8, 6); d.castShadow = true; S.add(d);
+  var gnd = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI/2), new THREE.MeshStandardMaterial({color: 0x6a7a5a})); gnd.receiveShadow = true; S.add(gnd);
+  var P = HQV.hqPets, ids = ["firedragon", "icedragon", "stormdragon", "crystaldragon", "shadowdragon", "golddragon"];
+  var cam = new THREE.PerspectiveCamera(35, innerWidth/innerHeight, 0.05, 200);
+  var list = view === "line" ? ids : [Q.get("sp") || "firedragon"], Ms = [], tb = performance.now();
+  list.forEach(function(id, i){
+    var M = P.model(THREE, {species: id, variant: 0, acc: 0, stage: 2}); M.g.scale.setScalar(2.6);
+    var st = P.newState(7 + i, 0, 0, 0); st.anim = anim; st.speed = anim === "walk" ? 1.5 : 0; if(anim === "fly"){ st.wing = Q.get("wing") || "climb"; st.y = 3; st.agl = 3; }
+    M.g.position.set(view === "line" ? (i - 2.5)*4.2 : 0, anim === "fly" ? 2.5 : 0, 0); M.g.rotation.y = view === "line" ? 0.9 : +(Q.get("yaw") || 0.9);
+    S.add(M.g); Ms.push({M: M, st: st});
+  });
+  var buildMs = performance.now() - tb;
+  if(Q.get("lod")) Ms.forEach(function(o){ o.M.lod = true; });
+  var tp = performance.now(), nP = 0;
+  for(var k = 0; k < 30; k++) Ms.forEach(function(o){ P.pose(o.M, o.st, t0 - 1 + k/30, false); nP++; });
+  var poseMs = (performance.now() - tp)/nP;
+  if(view === "line"){ cam.position.set(0, 6, 22); cam.lookAt(0, 1.2, 0); }
+  else if(view === "head"){ cam.position.set(3.2, 2.6, 4.2); cam.lookAt(0.8, 1.5, 1.0); }
+  else if(view === "breath"){ cam.position.set(-6, 4, 16); cam.lookAt(5, 1.2, 6); }
+  else { cam.position.set(6, 3.5, 7); cam.lookAt(0, 1.4 + (anim === "fly" ? 2.5 : 0), 0); }
+  if(Q.get("cam") === "head"){ var M0 = Ms[0].M, hw = new THREE.Vector3(); M0.g.updateMatrixWorld(true); M0.head.getWorldPosition(hw); var yy = M0.g.rotation.y, d0 = +(Q.get("cd") || 1.6), sa = +(Q.get("ca") || 0.9);
+    cam.position.set(hw.x + Math.sin(yy + sa)*d0, hw.y + 0.35, hw.z + Math.cos(yy + sa)*d0); cam.lookAt(hw.x, hw.y - 0.05, hw.z); }
+  else if(Q.get("cam")){ var cv = Q.get("cam").split(",").map(Number); cam.position.set(cv[0], cv[1], cv[2]); cam.lookAt(cv[3], cv[4], cv[5]); }
+  if(Q.get("fx")){ var F = P.Fx(THREE, S), o = Ms[0]; F.pts.material.size = 0.9; var hp = new THREE.Vector3(), fy = o.M.g.rotation.y, f0 = Math.sin(fy), f1 = Math.cos(fy), maxLive = 0, stepMs = 0;
+    for(var j = 0; j < 36; j++){ P.pose(o.M, o.st, t0 + j/30, false); o.M.g.updateMatrixWorld(true); o.M.head.getWorldPosition(hp); hp.x += f0*0.5; hp.z += f1*0.5;
+      F.emit("fire", hp.x, hp.y, hp.z, 12, f0, f1, 22, 3.6, 1.05, 0); F.emit("ember", hp.x + f0*2.4, hp.y - 0.15, hp.z + f1*2.4, 8, f0, f1, 19, 4.2, 1.15, 0); F.emit("fire", hp.x + f0*5.5, hp.y - 0.35, hp.z + f1*5.5, 6, f0, f1, 16, 5, 1.25, 0);
+      var ts0 = performance.now(); F.step(1/30); stepMs += performance.now() - ts0; maxLive = Math.max(maxLive, F.used); }
+    window.__fx = {maxLive: maxLive, stepMs: +(stepMs/36).toFixed(3), dropped: F.dropped || 0}; }
+  var tr = performance.now(); r.render(S, cam); var rMs = performance.now() - tr;
+  if(Q.get("perf")){ var tf = performance.now(), NF = 20; for(var pf = 0; pf < NF; pf++){ Ms.forEach(function(o){ P.pose(o.M, o.st, t0 + 1 + pf/30, false); }); r.render(S, cam); } r.getContext().finish(); window.__perf = {frameMs: +((performance.now() - tf)/NF).toFixed(1), tris: r.info.render.triangles, calls: r.info.render.calls}; }
+  window.__stats = {buildMs: +buildMs.toFixed(1), poseMs: +poseMs.toFixed(3), renderMs: +rMs.toFixed(1), calls: r.info.render.calls, tris: r.info.render.triangles,
+    fx: window.__fx || null, perf: window.__perf || null, per: Ms.map(function(o){ return {sp: o.M.sp.id, meshes: o.M.meshes, tris: o.M.tris}; })};
+  window.__ready = true;
+}).catch(function(e){ console.error(e && e.stack || e); window.__ready = true; });
+})();
+</script></body></html>

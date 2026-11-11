@@ -2660,6 +2660,40 @@ function makeGame(host, opts){
   // wrapped to (-π, π]. Pure helpers — no state, no random calls.
   function springTo(x, goal, k, h){ return x + (goal - x) * Math.min(1, Math.max(0, 1 - Math.exp(-k * h))); }
   function wrapPi(a){ return ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI; }
+  // the remote dragons' snapshot buffer: id -> [{t, x, y, z, yaw}] on the local clock.
+  // Rendering only (the judge still owns where they are): each frame a dragon is drawn
+  // DRG_INTERP behind the newest snapshot, between the two around that time, its yaw
+  // wrapped the short way; a teleport (> 8 m) snaps.
+  var drgBuf = {}, DRG_INTERP = 0.1;
+  function dragonSnapPush(D, t){
+    if(!D || D.id == null) return;
+    var b = drgBuf[D.id] || (drgBuf[D.id] = []), L = b[b.length - 1];
+    if(L && (Math.abs(D.x - L.x) > 8 || Math.abs(D.z - L.z) > 8 || Math.abs(D.y - L.y) > 8)) b.length = 0;
+    if(L && t - L.t < 0.004){ L.x = D.x; L.y = D.y; L.z = D.z; L.yaw = D.yaw; }
+    else b.push({t: t, x: D.x, y: D.y, z: D.z, yaw: D.yaw});
+    if(b.length > 8) b.shift();
+  }
+  function dragonInterp(t){
+    var seen = {};
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.id == null) return;
+      seen[D.id] = 1;
+      var b = drgBuf[D.id];
+      if(D.riderIsMe || !b || !b.length || V.mode !== "mp") return;
+      var rt = t - DRG_INTERP, a = b[0], c = b[b.length - 1], k, f;
+      if(rt <= a.t){ D.x = a.x; D.y = a.y; D.z = a.z; D.yaw = a.yaw; return; }
+      if(rt >= c.t){
+        // past the newest: coast on the last velocity for at most a snapshot's worth
+        var p = b.length > 1 ? b[b.length - 2] : c, dt0 = Math.max(0.01, c.t - p.t), ex = Math.min(rt - c.t, 0.06)/dt0;
+        D.x = c.x + (c.x - p.x)*ex; D.y = c.y + (c.y - p.y)*ex; D.z = c.z + (c.z - p.z)*ex; D.yaw = c.yaw; return;
+      }
+      for(k = 1; k < b.length; k++) if(b[k].t >= rt) break;
+      a = b[k - 1]; c = b[k]; f = (rt - a.t)/Math.max(1e-4, c.t - a.t);
+      D.x = a.x + (c.x - a.x)*f; D.y = a.y + (c.y - a.y)*f; D.z = a.z + (c.z - a.z)*f;
+      D.yaw = a.yaw + wrapPi(c.yaw - a.yaw)*f;
+    });
+    for(var id in drgBuf) if(!seen[id]) delete drgBuf[id];
+  }
   function dragonTick(dt, t){
     if(!V.dragons || !V.dragons.length) return;
     // mounted flight: the rider steers, Space/A climbs, Shift sinks
@@ -2765,9 +2799,12 @@ function makeGame(host, opts){
       // nobody claims one. After the boss falls the bots hop the stragglers.
       if(cand && !V.warden) dragonMount(Dr, cand.uid || cand.user, false, t);
     });
-    if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
     // prune dead bodies after a beat so the mesh can play out its fall
     V.dragons = (V.dragons || []).filter(function(D){ return D && !D.dead; });
+    // the others' mounts: drawn a beat behind the server between its snapshots
+    dragonInterp(t);
+    // ONE pose a frame: moveDragons reads speed and climb from the change since its
+    // last call, so a second call in the same frame saw zero and drew a sliding stand
     if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
   }
   function wardenBoxes(W){
@@ -5609,7 +5646,10 @@ function makeGame(host, opts){
             biteAt: 0, dead: false, hit: 0
           };
         });
-        if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
+        // buffer each remote mount's path (drawn ~100 ms behind by dragonInterp each
+        // frame) instead of jumping 20 times a second; posed once a frame in dragonTick
+        V.dragons.forEach(function(D){ if(!D.riderIsMe) dragonSnapPush(D, t); });
+        dragonInterp(t);
       }
     } else if(V.dragons && V.dragons.length && V.mode === "mp"){
       if(R3 && R3.clearDragons) R3.clearDragons();
@@ -9654,6 +9694,9 @@ function makeGame(host, opts){
       var P = dragonPets();
       if(!P || !P.Fx) return null;
       try { dragonFx = P.Fx(THREE, scene); } catch(e){ dragonFxDead = true; return null; }
+      // a battle jet off a 2.6x mount: metre-scale puffs (the pool thins its rate to match), and its heat light is
+      // made now, with the pool, so the scene never recompiles mid-breath
+      if(dragonFx && dragonFx.pts && dragonFx.pts.material) dragonFx.pts.material.size = 0.95;
       return dragonFx;
     }
     // A rider-sized plume, not a wisp: the Commons pool paints 0.13 u sprites at
@@ -9664,8 +9707,16 @@ function makeGame(host, opts){
     function dragonBreathFx(D, at, dts, quiet){
       var F = dragonFxPool();
       if(!F || quiet) return;
-      if(!dragonBreathOn(D, at)) return;
+      var su = (D.mesh && D.mesh.userData) || D;
+      if(!dragonBreathOn(D, at)){ su.sndOn = false; return; }
       var fx = DRAGON_BREATH_FX[(D && D.tier) || "fire"] || "fire";
+      // the roar and the breath's sound as it opens (hqPets.sfx: off in Calm / at 0% SFX), fading with distance
+      if(!su.sndOn){
+        su.sndOn = true;
+        var Ps = dragonPets(), cd = camera && camera.position ? Math.hypot(camera.position.x - (D.x || 0), camera.position.y - (D.y || 0), camera.position.z - (D.z || 0)) : 0;
+        var vol = Math.max(0, 1 - cd / 90);
+        if(Ps && Ps.sfx && vol > 0){ Ps.sfx("roar", {size: 2.6, vol: vol}); Ps.sfx("breath", {kind: fx, vol: vol}); }
+      }
       // mouth: the posed pet's jaw when we have it, else the head cube
       var hx, hy, hz;
       var Mo = D.mesh && D.mesh.userData && D.mesh.userData.Pm;
@@ -9740,22 +9791,22 @@ function makeGame(host, opts){
       if(acc < 1/20){ D.flAcc = acc; return; }
       D.flAcc = 0;
       var hue = fx === "ice" ? 0.35 : (fx === "shadow" || fx === "wisp") ? 0.72 : 0.08;
-      // three puffs a tick, staggered down the cone, each a big additive fireball
-      for(var k = 0; k < 3; k++){
+      // the white-hot throat of the jet, right at the jaw (the plume itself is the Commons pool's soft fire and smoke)
+      for(var k = 0; k < 1; k++){
         var sp = P.list[P.next]; P.next = (P.next + 1) % P.list.length;
         if(!sp) return;
         var r1 = Math.sin((P.next + 1) * 12.9898 + k * 78.233) * 43758.5453;
         r1 -= Math.floor(r1);
-        var along = 0.8 + k * 2.6 + r1 * 1.4;
+        var along = 0.5 + r1 * 0.9;
         var side = (r1 - 0.5) * (0.7 + along * 0.22);
         var px = hx + f0 * along + f1 * side;
         var pz = hz + f1 * along - f0 * side;
         var py = hy - 0.15 + (r1 - 0.5) * 0.7 + ((D.vy || 0) - (D.pitch || 0) * 6) * along * 0.02;
         sp.position.set(px, py, pz);
         // the core is fat at the mouth and blooms as it goes out
-        var grow = 1.15 + along * 0.22 + r1 * 0.55;
+        var grow = 0.7 + along * 0.3 + r1 * 0.35;
         sp.scale.set(grow * 1.55, grow * 1.15, 1);
-        sp.material.opacity = 0.95 - k * 0.12;
+        sp.material.opacity = 0.75;
         sp.material.color.setHSL(hue, 0.85, 0.58);
         sp.visible = true;
         sp.userData.life = 0.22 + k * 0.05;
@@ -10064,12 +10115,19 @@ function makeGame(host, opts){
         if(Mo && window.HQV && window.HQV.hqPets && window.HQV.hqPets.pose){
           // the Commons pet build: pose it the way the city does (breath jaw + wing modes)
           var P = window.HQV.hqPets;
+          if(!dragonFx) dragonFxPool();
+          // far off: a lighter dragon (its limbs and claws on simpler shapes, a fresh pose every 4th frame)
+          Mo.lod = !!(camera && camera.position && Math.hypot(camera.position.x - (D.x || 0), camera.position.z - (D.z || 0)) > 70);
           if(!Mo.sm) Mo.sm = {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null};
           if(!dp.userData.pst) dp.userData.pst = {anim: "stand", ph: 0, yaw: 0, speed: 0};
           var st = dp.userData.pst, prev = dp.userData.pp || (dp.userData.pp = {x: D.x || 0, z: D.z || 0, y: D.y || 0, t: at});
           var dts = Math.max(0.001, Math.min(0.1, at - (prev.t || at)));
-          var sp = Math.hypot((D.x || 0) - prev.x, (D.z || 0) - prev.z) / dts;
-          var vy = ((D.y || 0) - prev.y) / dts;
+          // speed and climb, smoothed (a raw per-frame delta flickers the gait and wing mode)
+          var spRaw = Math.hypot((D.x || 0) - prev.x, (D.z || 0) - prev.z) / dts;
+          var vyRaw = ((D.y || 0) - prev.y) / dts, ke = Math.min(1, dts * 8);
+          prev.sp = prev.sp == null ? spRaw : prev.sp + (spRaw - prev.sp) * ke;
+          prev.vy = prev.vy == null ? vyRaw : prev.vy + (vyRaw - prev.vy) * ke;
+          var sp = prev.sp, vy = prev.vy;
           prev.x = D.x || 0; prev.y = D.y || 0; prev.z = D.z || 0; prev.t = at;
           st.yaw = D.yaw || 0;
           st.speed = sp;

@@ -2153,6 +2153,8 @@ function mount(el, api){
     mountOn(b, i);
   }
   // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
+  // TEMP-HQDEV (remove before the PR): a test hook for the realism revamp
+  if(/hqdev/.test(location.search)){ window.__hq3d = {mount: function(i){ return mount(i); }, cur: function(){ return cur; }, avatar: function(){ return avatar; }, view: view}; }
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", base = baseKind(kind), car = base === "car", Vc = VEHICLES[kind].cat, boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;

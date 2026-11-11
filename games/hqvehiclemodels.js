@@ -748,7 +748,7 @@ var TYRES = {
   "bugatti-veyron": [[265, 35, 20], [365, 30, 21]],
   "koenigsegg-jesko-absolut": [[265, 35, 20], [325, 30, 21]], "koenigsegg-agera-rs": [[265, 35, 19], [345, 30, 20]],
   "koenigsegg-one-1": [[265, 35, 19], [345, 30, 20]], "koenigsegg-regera": [[255, 35, 19], [335, 30, 20]],
-  "lamborghini-temerario": [[265, 35, 20], [325, 30, 21]], "lamborghini-countach-lp400": [[205, 70, 14], [215, 70, 14]],
+  "lamborghini-temerario": [[255, 35, 20], [325, 30, 21]], "lamborghini-countach-lp400": [[205, 70, 14], [215, 70, 14]],
   "lamborghini-revuelto": [[265, 35, 20], [345, 30, 21]], "lamborghini-huracan-sto": [[245, 30, 20], [305, 30, 20]],
   "lamborghini-urus-performante": [[285, 40, 22], [325, 35, 22]]
 };

@@ -37,8 +37,10 @@
  *     (false: the geometry differs, build again). A starter (c.car / c.moto) gets tuneStarter(). Anchors, wheels, radius
  *     and collision never change. Budgets tuned: a car <= 16 draw calls and < 8k triangles, a bike <= 12 and < 6k.
  *
- * Budget: under 6k triangles per vehicle (about 3.8-5.0k a bike, 4.4-5.4k a car), 8-10 draw calls a bike, 14 a car
- * (the atlas adds none: every textured part rides a material the vehicle already draws).
+ * [4.0] Budget, per level of detail (lodRig): LOD 0 (near) up to ~40k triangles a car (16 draw calls with its doors,
+ * calipers and steering wheel), ~20k a bike (<= 12); LOD 1 (far) under 3k and <= 10. The trim and wheel materials also read
+ * a surface atlas (roughness, metalness per patch: chrome, metal, satin, rubber, plastic, gloss, carbon), so metals and
+ * rubber share one draw call. The cars and bikes are rebuilt by the generators below (buildCar, buildBike).
  * Each rigid piece (the body; each wheel; a bike's steering; a car's steering wheel; a car's wheel holder, for its
  * caliper) is merged into one mesh per material, and the body uses at most five: paint (recolourable, one
  * per vehicle), trim (vertex coloured: black, greys, chrome, KTM orange), glass, lights (vertex coloured, unlit)

@@ -241,8 +241,8 @@ class Tuning(unittest.TestCase):
     def test_budgets_with_the_heaviest_tune(self):
         for r in self.o["cat"]:
             car = r["kind"] == "car"
-            self.assertLessEqual(r["dc"], 19 if car else 12, r)   # ([3.39] a car's two doors are pieces of their own: 18, + the plate)
-            self.assertLess(r["tris"], 8000 if car else 6000, r)
+            self.assertLessEqual(r["dc"], 17 if car else 12, r)   # ([4.0] LOD 0: a car 16 with its doors, + the plate)
+            self.assertLess(r["tris"], 42000 if car else 30000, r)
             self.assertLessEqual(r["dc"] - r["dc0"], 1, ("a tune adds one mesh at most: the plate", r))
             self.assertTrue(r["same"], ("the rider's anchors, the wheels, the radius are the stock rig's", r))
         self.assertGreaterEqual(len(self.o["cat"]), 40)

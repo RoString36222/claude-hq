@@ -290,6 +290,7 @@ function bakedOf(c, v){
   if(!HQV.hqVehicleModels) return null;
   var entry = Object.assign({}, v, {model3d: null}), rig;
   try { rig = HQV.hqVehicleModels.build(c, entry, parseInt(p.slice(1), 16)); } catch(e){ return null; }
+  if(rig.setLod) rig.setLod(1);                       // [4.0] the far model (LOD 1): one baked draw per turntable stays cheap
   return (BAKED[key] = bake(T, rig.g));
 }
 function brandsOf(cat){

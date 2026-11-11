@@ -72,7 +72,7 @@ class ShowroomNode(unittest.TestCase):
             self.assertEqual(r["roll"], "function", r["id"] + ": hq3d rolls a catalogue rig's own wheels")
             self.assertTrue(r["seat"], r["id"])
             # ([3.39] a Koenigsegg under 7k: its lofted shell with the scoops, the door skins inside and out, real lamps)
-            self.assertLess(r["tris"], 7000 if r["id"].startswith("koenigsegg-") else 6000, r["id"])
+            self.assertLess(r["tris"], 42000 if r["kind"] == "car" else 30000, r["id"])   # ([4.0] LOD 0, the near model)
 
     def test_a_chiron_outruns_a_390_duke_off_the_line(self):
         rows = {r["id"]: r for r in self.o["rows"]}

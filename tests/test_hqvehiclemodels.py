@@ -65,7 +65,7 @@ for (const e of ENTRIES){
   const before = r.paint.color.getHex(); r.setPaint(0xff0000);
   const w0 = r.wheels[0].rotation.x; r.roll(1.0, 0.5);
   const st = r.brake && (r.brake(true), r.meshes.filter(m => m.userData.mk === "tail").map(m => m.material.color.getHex()));
-  out.rows.push({id: e.id, kind: r.kind, tris: V.triangles(r), dc: V.drawCalls(r), size: s.toArray(), minY: b.min.y,
+  out.rows.push({id: e.id, kind: r.kind, tris: V.triangles(r), dc: V.drawCalls(r), tris1: V.triangles(r, 1), dc1: V.drawCalls(r, 1), size: s.toArray(), minY: b.min.y,
     tyreW: tb.max.x - tb.min.x, dims: V.dims(e), shown: V.shown(e), scale: r.scale, radii: r.radii, R: r.R,
     wheels: r.wheels.map(w => ({name: w.name, p: wpos(w)})),
     anchors: ["a-seat", "a-grip-l", "a-grip-r", "a-foot-l", "a-foot-r"].map(n => !!r.g.getObjectByName(n)),
@@ -81,7 +81,9 @@ const cat = JSON.parse(fs.readFileSync(root + "/games/vehicles/catalogue.json", 
 out.cat = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
   const r = V.build(THREE, v, 0x3366cc); r.g.updateMatrixWorld(true);
   const s = new THREE.Box3().setFromObject(r.g).getSize(v3());
-  return {id: v.id, kind: r.kind, size: s.toArray(), seatY: r.seat.getWorldPosition(v3()).y, tris: V.triangles(r), dc: V.drawCalls(r), shown: V.shown(v)};
+  r.setLod(1); const far = r.meshes.filter(m => m.visible).length + "/" + r.lodMeshes.filter(m => m.visible).length; r.setLod(0);
+  return {id: v.id, kind: r.kind, size: s.toArray(), seatY: r.seat.getWorldPosition(v3()).y, tris: V.triangles(r), dc: V.drawCalls(r),
+          tris1: V.triangles(r, 1), dc1: V.drawCalls(r, 1), far, near: r.meshes.every(m => m.visible || m.userData.mk === "plate") && r.lodMeshes.every(m => !m.visible), shown: V.shown(v)};
 });
 out.SCALE = V.SCALE;
 // [3.39] the doors: each car's door pieces shut and open (both sides), and a play's timeline (calm: no swing)
@@ -147,19 +149,25 @@ class VehicleModels(unittest.TestCase):
         cls.o = json.loads(r.stdout.strip().splitlines()[-1])
         cls.rows = {x["id"]: x for x in cls.o["rows"]}
 
+    # [4.0] the budgets per level of detail: LOD 0 (near, the full model) about 40k triangles a car, 30k a bike, at most
+    # 16 draw calls; LOD 1 (far) under 3k triangles and 10 draw calls
     def test_budgets(self):
+        for r in self.o["rows"] + self.o["cat"]:
+            self.assertLess(r["tris"], 42000 if r["kind"] == "car" else 30000, r["id"])
+            self.assertLessEqual(r["dc"], 16, r["id"])
+            self.assertLess(r["tris1"], 3000, r["id"])
+            self.assertLessEqual(r["dc1"], 10, r["id"])
+            self.assertGreater(r["tris"], r["tris1"]*4, r["id"])
+        for r in self.o["cat"]:
+            self.assertTrue(r["near"], r["id"])                                   # built near: LOD 1 hidden
+            self.assertEqual(r["far"], "0/%d" % r["dc1"], r["id"])                # setLod(1): only LOD 1 shows
         for r in self.o["rows"]:
-            self.assertLess(r["tris"], 6000, r["id"])
             # the body: at most five materials; one mesh per wheel; a bike's steering; a car's steering wheel
             body = sum(1 for k in r["mats"] if k in ("paint", "trim", "glass", "light", "tail"))
             self.assertLessEqual(body, 5, (r["id"], r["mats"]))
-            # a mesh per material per rigid piece; a car's calipers ride its four wheel holders
-            # ([3.39] a car 18: its two doors are each a piece of their own, the paint and the side pane, so they can open)
-            self.assertLessEqual(r["dc"], 18 if r["kind"] == "car" else 12, (r["id"], r["mats"]))
-        for r in self.o["cat"]:
-            # ([3.39] a Koenigsegg under 7k: its lofted shell carries the scoops, a door skin inside and out and real lamps)
-            self.assertLess(r["tris"], 7000 if r["id"].startswith("koenigsegg-") else 6000, r["id"])
-            self.assertLessEqual(r["dc"], 18 if r["kind"] == "car" else 12, r["id"])
+            # a mesh per material per rigid piece: a car's two doors (paint, pane), four wheels, two front calipers on
+            # their holders, the steering wheel; a bike's steering and wheels
+            self.assertLessEqual(r["dc"], 16 if r["kind"] == "car" else 12, (r["id"], r["mats"]))
 
     def test_size_matches_dims(self):
         for r in self.o["rows"]:
@@ -182,7 +190,7 @@ class VehicleModels(unittest.TestCase):
         self.assertAlmostEqual(self.rows["t-ev"]["size"][2], 5.39*self.o["SCALE"]["car"], delta=0.27)
 
     # the starters as hq3d draws them (games/hq3d.js carModel / motoModel, measured: length, height, width in m)
-    STARTER = {"car": (3.97, 1.79, 2.08), "bike": (2.64, 1.59, 0.96)}
+    STARTER = {"car": (3.95, 1.73, 2.09), "bike": (2.59, 1.40, 1.02)}   # [4.0] the revamped starters (games/hq3d.js STARTER_E)
 
     def test_the_starters_scale_family(self):
         # by box size (the cube root of length × height × width): each kind's median within 15% of its starter,
@@ -243,7 +251,7 @@ class VehicleModels(unittest.TestCase):
         chiron = next(r for r in self.o["cat"] if r["id"] == "bugatti-chiron-super-sport")
         self.assertTrue(all(r["tris"] != chiron["tris"] for r in ks.values()))
         for r in ks.values():
-            self.assertLess(r["tris"], 7000, r["id"]); self.assertLessEqual(r["dc"], 18, r["id"])   # ([3.39] doors, scoops, lamps)
+            self.assertLess(r["tris"], 42000, r["id"]); self.assertLessEqual(r["dc"], 16, r["id"])   # ([4.0] LOD 0)
             self.assertAlmostEqual(r["size"][1]/r["shown"]["heightM"], 1, delta=0.06, msg=(r["id"], "wing, fins and scoop within the real height"))
         # the Jesko Absolut is the longest (its extended tail), the Agera RS the shortest
         self.assertGreater(ks["koenigsegg-jesko-absolut"]["size"][2], max(r["size"][2] for i, r in ks.items() if i != "koenigsegg-jesko-absolut"))

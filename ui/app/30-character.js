@@ -4,7 +4,7 @@
 // city walk it around, and (paired) the Arena gets the portrait so friends' lists show it in place of
 // your GitHub picture. The 2D trainer stays as the fallback where WebGL2 isn't available.
 //   config.character  ten small numbers, see games/avatar3d.js (CHAR_MAX here mirrors its MAX and
-//                     dashboard.py's CHARACTER_MAX; tests/test_character.py keeps the three equal)
+//                     dashboard-rs/src/app.rs CHARACTER_MAX; tests/test_character.py keeps the three equal)
 //   localStorage hq_char_portrait {sig, url}  the rendered portrait for the current character
 //   localStorage hq_char_up       sig of the portrait the Arena has
 var CHAR_MAX = [5, 7, 9, 9, 2, 5, 3, 1, 4, 1];
@@ -69,7 +69,7 @@ function charSig(s){ return (s || charSpec()).join("."); }
 function charLoad(){
   if(window.HQV && window.HQV.avatar3d) return Promise.resolve(window.HQV.avatar3d);
   if(CHAR.load) return CHAR.load;
-  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["avatar3d"]);
+  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat(["avatar3d", "people3d"]);
   CHAR.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc = document.createElement("script"); sc.src = "/games/" + name + ".js"; sc.async = false;

@@ -11,7 +11,7 @@
  *   hairStyle    own hair / shaved / Neon crest      headwear  none / beanie / cap / headband / party hat / Neural halo
  *   accessory    none / round glasses / shades / AR visor     eyes  normal / Lit eyes
  *   background   (portrait only) theme / sunset / mint / night / Neon grid     outfitStyle  plain / Techwear
- * MAX below is mirrored by CHARACTER_MAX in dashboard.py and pinned by tests/test_character.py.
+ * MAX below is mirrored by CHARACTER_MAX in dashboard-rs/src/app.rs and pinned by tests/test_character.py.
  *
  * Colours: the six models share one palette atlas (colormap.png) with their shading baked into
  * neighbouring swatches. Each vertex's atlas colour is looked up once per model, sorted into a
@@ -309,6 +309,13 @@ function addOns(L, o, spec, P){
 var ANIMS = ["idle", "walk", "sit", "emote-yes", "sprint"];
 function build(spec){
   spec = clampSpec(spec);
+  // HQ 3.41: the people are games/people3d.js (CC0 humanoid bodies with our toy head); this Kenney build stays as
+  // the fallback when that module is missing or a body fails to load
+  var P = HQV.people3d;
+  if(P && !P.off){ return P.build(spec).catch(function(){ return kenney(spec); }); }
+  return kenney(spec);
+}
+function kenney(spec){
   return E.lib().then(function(L){
     return Promise.all([E.loadGlb(L, "golf", FILES[spec[0]]), atlas()]).then(function(r){
       var gltf = r[0], P = prep(spec[0], gltf, r[1]);
@@ -362,7 +369,10 @@ function portrait(spec, px){
     ch.update(0.4);
     PR.S.add(ch.o); ch.o.updateMatrixWorld(true);
     // head and shoulders, a little from the side
-    PR.cam.position.set(0.32, 0.6, 1.25); PR.cam.lookAt(0, 0.43, 0); PR.cam.updateProjectionMatrix();
+    // (games/people3d.js people: the big head's centre about 0.6 up, drawn closer so it fills the frame)
+    if(ch.rig === "uni"){ PR.cam.position.set(0.2, 0.67, 0.86); PR.cam.lookAt(0, 0.575, 0); }
+    else { PR.cam.position.set(0.32, 0.6, 1.25); PR.cam.lookAt(0, 0.43, 0); }
+    PR.cam.updateProjectionMatrix();
     PR.r.setClearColor(0x000000, 0); PR.r.render(PR.S, PR.cam);
     var c = document.createElement("canvas"); c.width = c.height = px;
     var g = c.getContext("2d"); bgPaint(g, px, spec[8]); g.drawImage(PR.r.domElement, 0, 0, px, px);
@@ -395,7 +405,8 @@ function preview(canvas, spec){
         var L = c.L, THREE = L.THREE, r = new THREE.WebGLRenderer({canvas: canvas, antialias: true, alpha: true});
         r.outputColorSpace = THREE.SRGBColorSpace; r.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
         R = {r: r, S: stage(L), cam: new THREE.PerspectiveCamera(28, 1, 0.05, 20)};
-        R.cam.position.set(0, 0.5, 2.05); R.cam.lookAt(0, 0.38, 0);
+        if(c.rig === "uni"){ R.cam.position.set(0, 0.48, 1.75); R.cam.lookAt(0, 0.37, 0); }
+        else { R.cam.position.set(0, 0.5, 2.05); R.cam.lookAt(0, 0.38, 0); }
       }
       if(ch) R.S.remove(ch.o);
       ch = c; R.S.add(ch.o); if(ch.acts.idle) ch.acts.idle.play();

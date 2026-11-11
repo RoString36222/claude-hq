@@ -231,7 +231,7 @@ class SkyStrikeBodyAndGait(unittest.TestCase):
     def test_hooked_into_make_character(self):
         self.assertIn("HQV.skystrike", HQ3D)
         self.assertIn("SS.wanted(key)", HQ3D)
-        self.assertIn("ch.hip || HIP", HQ3D)
+        self.assertIn("ch.hip || uniHip(ch) || HIP", HQ3D)
 
 
 # --- runtime harness: actually EXECUTE the gait. Substring checks cannot catch a

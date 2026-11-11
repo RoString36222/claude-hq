@@ -172,11 +172,12 @@ function packFar(items, B, cols){
 function bodyGeometry(){
   var P = [], N = [], part = [], limb = [], piv = [], idx = [];
   // [cx, y0, cz, w, h, d, part, limb, pivot]
+  // [realism] the proportions of games/people3d.js's people: slim limbs, a short body and the big toy head
   var BOX = [
-    [-0.1, 0, 0, 0.15, 0.8, 0.17, 2, 1, 0.8], [0.1, 0, 0, 0.15, 0.8, 0.17, 2, -1, 0.8],
-    [0, 0.78, 0, 0.42, 0.6, 0.24, 1, 0, 0],
-    [-0.27, 0.86, 0, 0.11, 0.52, 0.13, 1, 2, 1.34], [0.27, 0.86, 0, 0.11, 0.52, 0.13, 1, -2, 1.34],
-    [0, 1.4, 0.01, 0.27, 0.3, 0.27, 0, 0, 0]
+    [-0.08, 0, 0, 0.12, 0.74, 0.14, 2, 1, 0.74], [0.08, 0, 0, 0.12, 0.74, 0.14, 2, -1, 0.74],
+    [0, 0.72, 0, 0.32, 0.5, 0.2, 1, 0, 0],
+    [-0.21, 0.76, 0, 0.08, 0.46, 0.09, 1, 2, 1.18], [0.21, 0.76, 0, 0.08, 0.46, 0.09, 1, -2, 1.18],
+    [0, 1.22, 0.01, 0.4, 0.48, 0.38, 0, 0, 0]
   ];
   var FACES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   BOX.forEach(function(b){
@@ -276,10 +277,26 @@ function bodyMaterial(THREE, U){
   m.customProgramCacheKey = function(){ return "hq-npc-body"; };
   return m;
 }
-// hq3d.js's way to load a character (makeCharacter without the custom avatar): needs an engine lib
+// [realism] a pooled near person's hair and headwear, from its place in the pool (the people are passed from one
+// resident to the next, so this is the person's own, not the resident's): mostly bare-headed, some caps, beanies,
+// headbands, glasses and shades, now and then a shaved head
+var HAIRS = [0x2b1b10, 0x3a2a20, 0x6b4228, 0xb5651d, 0x1a1a1a, 0xd8b26e, 0x8a8a8a, 0x5a3825];
+function variantOf(seq){
+  seq = seq | 0;
+  var a = frac(seq*3 + 11), b = frac(seq*5 + 23), c = frac(seq*7 + 37);
+  return {hair: a < 0.12 ? 1 : 0, hat: b < 0.62 ? 0 : 1 + Math.floor((b - 0.62)/0.38*3), acc: c < 0.75 ? 0 : 1 + Math.floor((c - 0.75)/0.25*2)};
+}
+function hairOf(id){ return HAIRS[Math.floor(frac((id | 0) + 101)*HAIRS.length)]; }
+// hq3d.js's way to load a character (makeCharacter without the custom avatar): needs an engine lib. [realism] With
+// games/people3d.js, the crowd people (one skinned mesh and one head each, recoloured per resident); Kenney's
+// characters otherwise
 function engineLoader(THREE, L){
   return function(look, cb){
-    var E = HQV.engine; if(!E || !L) return;
+    var E = HQV.engine, P = HQV.people3d; if(!E || !L) return;
+    if(P && P.crowd){
+      P.crowd(((look && look.char) | 0) % CHAR_FILES.length, variantOf(look && look.seq)).then(cb, function(){ cb(null); });
+      return;
+    }
     E.loadGlb(L, "golf", CHAR_FILES[((look && look.char) | 0) % CHAR_FILES.length]).then(function(g){
       var o = L.clone(g.scene), mixer = new THREE.AnimationMixer(o), acts = {};
       ["idle", "walk", "sit", "sprint"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
@@ -313,14 +330,16 @@ function create(THREE, parent, sim, opts){
   group.add(bodies);
 
   /* near: pooled skinned characters, per look.char */
-  var free = {}, pend = {}, made = 0, loading = 0, slots = {}, nearIds = {}, avoidSt = {};
-  function tint(ch, look){
+  var free = {}, pend = {}, made = 0, loading = 0, slots = {}, nearIds = {}, avoidSt = {}, seq = 0;
+  function tint(ch, look, id){
+    if(ch.recolour){ ch.recolour({skin: look && look.skin != null ? look.skin : 0xf1c8a6, top: look && look.shirt != null ? look.shirt : 0xffffff, hair: hairOf(id)}); return; }
     var c = new THREE.Color(look && look.shirt != null ? look.shirt : 0xffffff), w = new THREE.Color(0xffffff).lerp(c, TINT);
     ch.mats.forEach(function(m){ m.color.copy(w); });
   }
   function adopt(ch){
     ch.mats = [];
     ch.o.scale.setScalar(BODY_H/CH_H);
+    if(ch.recolour){ ch.cur = null; return ch; }   // [realism] a crowd person: its own material, recoloured in place
     ch.o.traverse(function(n){
       if(!n.isMesh) return;
       n.castShadow = true; n.frustumCulled = false;
@@ -345,7 +364,7 @@ function create(THREE, parent, sim, opts){
       for(var w = need[k] - (pend[k] | 0); w > 0; w--){
         if(made + loading >= MAX_NEAR + POOL_SPARE && !evict(k)) return;
         loading++; pend[k] = (pend[k] | 0) + 1;
-        loader({char: +k}, function(ch){
+        loader({char: +k, seq: seq++}, function(ch){
           loading--; pend[k]--;
           if(draw.dead || !ch || !ch.o) return;
           made++; (free[k] || (free[k] = [])).push(adopt(ch));
@@ -355,7 +374,7 @@ function create(THREE, parent, sim, opts){
   }
   function evict(k){
     for(var j in free) if(j !== String(k) && free[j].length){
-      var ch = free[j].pop(); ch.mats.forEach(function(m){ m.dispose(); }); made--;
+      var ch = free[j].pop(); ch.mats.forEach(function(m){ m.dispose(); }); if(ch.dispose) ch.dispose(); made--;
       return true;
     }
     return false;
@@ -442,7 +461,7 @@ function create(THREE, parent, sim, opts){
         var ch = take(look, need);
         if(!ch){ lo.push(r); return; }
         slot = slots[r.id] = {ch: ch, k: (look.char | 0) % CHAR_FILES.length, yaw: r.yaw || 0};
-        tint(ch, look); ch.o.visible = true; ch.o.userData.npcId = r.id; group.add(ch.o);
+        tint(ch, look, r.lk != null ? r.lk : r.id); ch.o.visible = true; ch.o.userData.npcId = r.id; group.add(ch.o);
       }
       keep[r.id] = 1;
       slot.yaw += wrapPi((r.yaw || 0) - slot.yaw)*ease(TURN_K, dt);

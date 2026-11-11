@@ -2736,6 +2736,7 @@ function view(c){
   // a rig's visible meshes as one geometry, centred, wheels on the ground, scaled to the car's footprint; null if empty
   function bake(R){
     if(!R || !R.g) return null;
+    if(R.setLod) R.setLod(1);                                 // [4.0] the far model (LOD 1): a light instance for traffic
     var P = [], N = [], C = [], K = [], k = new THREE.Color();
     R.g.position.set(0, 0, 0); R.g.rotation.set(0, 0, 0); R.g.scale.set(1, 1, 1);
     R.g.updateMatrixWorld(true);

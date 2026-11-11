@@ -46,7 +46,7 @@ function fmtTime(ms){
 function dist3(a, b){ var dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2]; return Math.sqrt(dx*dx + dy*dy + dz*dz); }
 
 /* ---------- three.js and models ---------- */
-var KITS = ["golf", "kart", "platformer", "fps", "hq"];
+var KITS = ["golf", "kart", "platformer", "fps", "hq", "people"];
 var LIB = null, GLB = {};
 // three.js, its GLTF loader and SkeletonUtils, imported once for every game.
 // Each Kenney kit's GLBs point at their own "Textures/colormap.png"; one copy sits

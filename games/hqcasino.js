@@ -471,6 +471,7 @@ HQV.hqWorlds.casino = function(c, w){
   function addOn(ch, uniform){
     // a white shirt front and a red bow tie riding the torso bone (in model space, as avatar3d's add-ons do)
     if(!uniform) return;
+    if(ch.rig === "uni" && ch.bones && ch.bones.Chest && ch.bones.Neck){ addOnUni(ch); return; }
     var o = ch.o, torso = o.getObjectByName("torso"), head = o.getObjectByName("head"); if(!torso || !head) return;
     o.updateMatrixWorld(true);
     var hp = new T.Vector3(), inv = new T.Matrix4().copy(o.matrixWorld).invert(); head.getWorldPosition(hp); hp.applyMatrix4(inv);
@@ -482,6 +483,28 @@ HQV.hqWorlds.casino = function(c, w){
     var red = new T.MeshStandardMaterial({color: 0xc1121f, roughness: 0.5});
     [-1, 1].forEach(function(sd){ var w2 = new T.Mesh(new T.ConeGeometry(0.03, 0.05, 4), red); w2.rotation.z = sd*PI/2; w2.position.x = sd*0.028; bow.add(w2); });
     bow.add(new T.Mesh(new T.SphereGeometry(0.014, 6, 4), red));
+  }
+  // the same on games/people3d.js bodies: a group on the Chest bone in o's own frame and units, the shirt front and
+  // the bow found on the skin by a ray in from the front, just under the collar
+  function addOnUni(ch){
+    var o = ch.o, C = ch.bones.Chest; o.updateMatrixWorld(true);
+    var q = o.getWorldQuaternion(new T.Quaternion()), s = o.getWorldScale(new T.Vector3()).y || 1;
+    var fwd = new T.Vector3(0, 0, 1).applyQuaternion(q), up = new T.Vector3(0, 1, 0).applyQuaternion(q);
+    var nk = ch.bones.Neck.getWorldPosition(new T.Vector3()), skin = [];
+    o.traverse(function(n){ if(n.isSkinnedMesh && n.visible) skin.push(n); });
+    var front = function(h){
+      var at = nk.clone().addScaledVector(up, -h*s), hit = new T.Raycaster(at.clone().addScaledVector(fwd, 0.4*s), fwd.clone().negate(), 0, 0.8*s).intersectObjects(skin, false)[0];
+      return hit ? hit.point : at.addScaledVector(fwd, 0.04*s);
+    };
+    var gp = new T.Group(), cs = C.getWorldScale(new T.Vector3()).x || 1; C.add(gp);
+    gp.quaternion.copy(C.getWorldQuaternion(new T.Quaternion()).invert().multiply(q)); gp.scale.setScalar(s/cs);
+    var put = function(m, h, out){ var p = front(h).addScaledVector(fwd, out*s); m.position.copy(gp.worldToLocal(p)); gp.add(m); };
+    gp.updateMatrixWorld(true);
+    put(new T.Mesh(new T.PlaneGeometry(0.06, 0.07), new T.MeshStandardMaterial({color: 0xffffff, roughness: 0.8})), 0.055, 0.003);
+    var bow = new T.Group(), red = new T.MeshStandardMaterial({color: 0xc1121f, roughness: 0.5});
+    [-1, 1].forEach(function(sd){ var w2 = new T.Mesh(new T.ConeGeometry(0.018, 0.03, 4), red); w2.rotation.z = sd*PI/2; w2.position.x = sd*0.017; bow.add(w2); });
+    bow.add(new T.Mesh(new T.SphereGeometry(0.009, 6, 4), red));
+    put(bow, 0.03, 0.01);
   }
   function person(x, z, yaw, opt){
     opt = opt || {};

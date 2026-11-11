@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Realism Prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #dfe6e2; overflow: hidden; font: 13px system-ui, sans-serif; }
+  canvas { display: block; }
+  #ui { position: fixed; left: 12px; top: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+  #ui button { border: 0; border-radius: 6px; padding: 6px 10px; background: rgba(20, 24, 28, .72); color: #fff; cursor: pointer; }
+  #ui button.on { background: #1f8f86; }
+  #stats { position: fixed; right: 12px; bottom: 12px; color: #223; background: rgba(255, 255, 255, .7); padding: 4px 8px; border-radius: 6px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three-module.js" } }
+</script>
+</head>
+<body>
+<div id="ui"></div>
+<div id="stats"></div>
+<script type="module" src="realism.js"></script>
+</body>
+</html>

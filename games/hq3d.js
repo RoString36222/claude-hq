@@ -6162,14 +6162,16 @@ function mount(el, api){
     var w = cur, run = function(){ if(!inst.alive || cur !== w){ warmBusy = false; return; } warmNew(w).then(function(){ warmBusy = false; }, function(){ warmBusy = false; }); };
     if(typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout: 1000}); else setTimeout(run, 0);
   }
-  var preFaded = null;                                               // [realism perf] the world the fade is already down for
+  var preFaded = null, fadeT0 = 0;                                   // [realism perf] the world the fade is already going down for, since when
   function enterWorld(name, from, instant){
     name = outside(name);
     if(entering === name) return;                                   // already on the way there
     // [realism perf] a world not built yet is built behind the fade (B1's build is ~90 ms), not before it shows
     if(!instant && !E.calm() && !fading && name !== "mission" && !worlds[name] && preFaded !== name && HQV.hqWorlds[name === "city" ? "city3d" : name]){
-      fading = true; fadeEl.classList.add("on"); E.sfx("door");
-      setTimeout(function(){ fading = false; if(!inst.alive) return; preFaded = name; enterWorld(name, from, instant); if(preFaded === name){ preFaded = null; fadeEl.classList.remove("on"); } }, 260);
+      // the build starts a few frames into the fade, not after it: the overlay's opacity runs on the compositor, so it keeps
+      // darkening over a held frame while the main thread builds and links (the screen was black ~0.4 s longer)
+      fading = true; fadeEl.classList.add("on"); E.sfx("door"); fadeT0 = performance.now();
+      setTimeout(function(){ fading = false; if(!inst.alive) return; preFaded = name; enterWorld(name, from, instant); if(preFaded === name){ preFaded = null; fadeEl.classList.remove("on"); } }, 60);
       return;
     }
     var pre = preFaded === name; preFaded = null;
@@ -6230,7 +6232,7 @@ function mount(el, api){
     // (the shadow pass's depth shaders, a material onEnter changed) links behind it, not in front of you
     if(!pre){ fadeEl.classList.add("on"); E.sfx("door"); }
     fading = true;
-    var faded = new Promise(function(r){ setTimeout(r, pre ? 0 : 260); });
+    var faded = new Promise(function(r){ setTimeout(r, pre ? Math.max(0, 260 - (performance.now() - fadeT0)) : 260); });
     Promise.all([faded, warm]).then(function(){
       if(!inst.alive) return;
       go();

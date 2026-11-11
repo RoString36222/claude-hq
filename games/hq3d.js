@@ -317,7 +317,7 @@ function mount(el, api){
   // The 3D City (worlds with camModes): a perspective camera driven by games/camrig.js, the HUD of
   // games/hqhud.js and the quality governor of games/worldbuild.js. Other worlds keep the ortho `cam`.
   var pcam = null, rig = null, hud = null, pose = null, camSet = null, lastMode = null, lastFpView = null, calmWas = null, calmT = 0;
-  var gov = null, govQ = null, perf = {t: 0, n: 0, ms: 0}, entering = null, cityFailed = false, failLogged = false, cityRetried = false;
+  var gov = null, govQ = null, perf = {t: 0, n: 0, ms: 0}, entering = null, warming = false, cityFailed = false, failLogged = false, cityRetried = false;
   var idleT = 0, occT = 0, pad = {on: false, prev: [], st: null}, frustum = null, projM = null, projV = null, lastPeers = [];
   var SMOKE = smokeParams();
   // URL hooks for tools/ui_smoke.py and tools/hq_shots.py (inert without ?hqsmoke=1; ?hqperf=1 logs frame times).
@@ -881,8 +881,179 @@ function mount(el, api){
       } catch(e){}
       shown.forEach(function(o){ o.visible = false; });
       return true;
-    }
+    },
+    // [load] the same, off the main thread: resolves when root's programs (and their shadow passes') are linked
+    warm: function(root, target){ return warmAsync(root, target); }
   };
+
+  /* ---------- [load] shader programs compiled before they are drawn ----------
+     A program three links on first draw blocks the frame until the GPU process has compiled it (100+ ms each, cold,
+     after an update). renderer.compileAsync links them up front and, with KHR_parallel_shader_compile, waits for them
+     without blocking: a world is warmed behind its loading overlay / door fade, a person before they are shown.
+     compile() does not cover the shadow pass, so each shadow-casting kind of mesh (skinned or not, its side) gets a
+     stand-in with a depth material, compiled with an offscreen target bound (the shadow pass's colour space and tone
+     mapping): three's program cache hands the shadow pass the same program. Stand-in materials are kept (disposing
+     them would free the shared program). */
+  var warmRT = null, warmDepth = {};
+  function warmDepthGroup(root){
+    var g = new THREE.Group(), seen = {}, flip = {}; flip[THREE.FrontSide] = THREE.BackSide; flip[THREE.BackSide] = THREE.FrontSide; flip[THREE.DoubleSide] = THREE.DoubleSide;
+    root.traverse(function(o){
+      if(!o.castShadow || !o.isMesh || !o.geometry || o.isBatchedMesh || o.customDepthMaterial) return;
+      var geo = o.geometry, at = geo.attributes, ma = geo.morphAttributes || {};
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function(m){
+        if(!m || !m.visible) return;
+        var side = m.shadowSide != null ? m.shadowSide : flip[m.side], cut = m.alphaTest > 0 && (m.map || m.alphaMap);
+        var k = [o.isSkinnedMesh ? 1 : 0, o.isInstancedMesh ? (o.instanceColor ? 2 : 1) : 0, side, cut ? (m.map ? 1 : 0) + (m.alphaMap ? 2 : 0) : 0, m.wireframe ? 1 : 0,
+                 at.uv1 ? 1 : 0, at.uv2 ? 1 : 0, at.uv3 ? 1 : 0, (ma.position || []).length, (ma.normal || []).length, (ma.color || []).length].join();
+        if(seen[k]) return; seen[k] = 1;
+        if(cut) k += "|" + m.uuid;                                   // (three keeps a depth material per such material)
+        var dm = warmDepth[k] || (warmDepth[k] = new THREE.MeshDepthMaterial());
+        dm.side = side; dm.wireframe = !!m.wireframe; dm.map = cut ? m.map : null; dm.alphaMap = cut ? m.alphaMap : null; dm.alphaTest = cut ? m.alphaTest : 0;
+        var p;
+        if(o.isSkinnedMesh){ p = new THREE.SkinnedMesh(geo, dm); p.bind(o.skeleton, o.bindMatrix); }
+        else if(o.isInstancedMesh){ p = new THREE.InstancedMesh(geo, dm, 1); if(o.instanceColor) p.instanceColor = o.instanceColor; }
+        else p = new THREE.Mesh(geo, dm);
+        if(o.morphTargetInfluences) p.morphTargetInfluences = o.morphTargetInfluences;
+        g.add(p);
+      });
+    });
+    return g;
+  }
+  function warmAsync(root, target){
+    if(!renderer || !renderer.compile || !root) return Promise.resolve();
+    target = target || (root.isScene ? root : cur && cur.scene) || root;
+    var c = curCam(), mats = [], before = new Set(renderer.info.programs || []);
+    var add = function(set){ if(set) set.forEach(function(m){ mats.push(m); }); };
+    try { add(renderer.compile(root, c, target)); } catch(e){}
+    try {
+      var dg = warmDepthGroup(root);
+      if(dg.children.length){
+        // (the shadow pass draws with an empty scene: no fog, which three's program key tells apart)
+        var rt0 = renderer.getRenderTarget(), fog0 = target.fog;
+        renderer.setRenderTarget(warmRT || (warmRT = new THREE.WebGLRenderTarget(1, 1))); target.fog = null;
+        try { add(renderer.compile(dg, c, target)); } finally { target.fog = fog0; renderer.setRenderTarget(rt0); }
+      }
+    } catch(e){}
+    try {                                                            // a flat texture sky: three's background plane
+      var bg = root.isScene && root.background;
+      if(bg && bg.isTexture && !bg.isCubeTexture && bg.mapping !== THREE.EquirectangularReflectionMapping && bg.mapping !== THREE.EquirectangularRefractionMapping && bg.mapping !== THREE.CubeUVReflectionMapping){
+        var SL = THREE.ShaderLib.background, bm = new THREE.ShaderMaterial({name: "BackgroundMaterial", uniforms: THREE.UniformsUtils.clone(SL.uniforms),
+          vertexShader: SL.vertexShader, fragmentShader: SL.fragmentShader, side: THREE.FrontSide, depthTest: false, depthWrite: false, fog: false});
+        Object.defineProperty(bm, "map", {get: function(){ return this.uniforms.t2D.value; }});
+        bm.uniforms.t2D.value = bg; bm.toneMapped = THREE.ColorManagement.getTransfer(bg.colorSpace) !== THREE.SRGBTransfer;
+        var pg = new THREE.PlaneGeometry(2, 2); pg.deleteAttribute("normal");
+        var bgG = new THREE.Group(); bgG.add(new THREE.Mesh(pg, bm));
+        add(renderer.compile(bgG, c, target));
+      }
+    } catch(e){}
+    mats.forEach(function(m){ warmSeen.add(m); });
+    // every program these compiles made (a material drawn two ways has two; its currentProgram names only one)
+    var made = (renderer.info.programs || []).filter(function(p){ return !before.has(p); });
+    return warmSettle(mats, made);
+  }
+  // Each program, once the GPU says it is linked, is "first used" (its uniforms and attributes read) here, a few per
+  // task, while the rest still compile: that last step is a blocking round trip of its own (7-30 ms each, cold), which
+  // would otherwise all land in the first frame. Never held up for long: a driver that never says "done" draws (and
+  // finishes compiling) on first use, as before.
+  var warmPar = null;
+  function warmSettle(mats, made){
+    if(warmPar == null){ try { warmPar = !!renderer.getContext().getExtension("KHR_parallel_shader_compile"); } catch(e){ warmPar = false; } }
+    var progs = made.slice(), seen = new Set(progs);
+    mats.forEach(function(m){ var p = renderer.properties.get(m).currentProgram; if(p && !seen.has(p)){ seen.add(p); progs.push(p); } });
+    if(!progs.length) return Promise.resolve();
+    return new Promise(function(res){
+      var t0 = performance.now();
+      (function poll(){
+        var t = performance.now();
+        for(var i = 0; i < progs.length && performance.now() - t < 8; i++){
+          var p = progs[i];
+          if(!warmPar || p.isReady()){ try { p.getUniforms(); p.getAttributes(); } catch(e){} progs.splice(i--, 1); }
+        }
+        if(!progs.length || performance.now() - t0 > 6000){ res(); return; }
+        setTimeout(poll, warmPar ? 4 : 0);
+      })();
+    });
+  }
+  /* Content that arrives after its world was warmed (a tower built as you come into range with its detail level hidden,
+     a rebuilt shop, traffic): an idle-time scan, a few times a second, finds materials not seen before and warms them
+     through stand-ins (same geometry and material) before they are first drawn. The City is a couple of thousand
+     objects: the scan is well under a millisecond. */
+  var warmSeen = new WeakSet(), scanOn = false;
+  function warmStandIn(o){
+    var p = null, geo = o.geometry, m = o.material;
+    try {
+      if(o.isSprite) p = new THREE.Sprite(m);
+      else if(o.isBatchedMesh || !geo) return null;
+      else if(o.isInstancedMesh){ p = new THREE.InstancedMesh(geo, m, 1); if(o.instanceColor) p.instanceColor = o.instanceColor; if(o.morphTexture) p.morphTexture = o.morphTexture; }
+      else if(o.isSkinnedMesh){ p = new THREE.SkinnedMesh(geo, m); p.bind(o.skeleton, o.bindMatrix); }
+      else if(o.isLineSegments) p = new THREE.LineSegments(geo, m);
+      else if(o.isLineLoop) p = new THREE.LineLoop(geo, m);
+      else if(o.isLine) p = new THREE.Line(geo, m);
+      else if(o.isPoints) p = new THREE.Points(geo, m);
+      else if(o.isMesh) p = new THREE.Mesh(geo, m);
+    } catch(e){ return null; }
+    if(p){ p.castShadow = o.castShadow; if(o.morphTargetInfluences) p.morphTargetInfluences = o.morphTargetInfluences; }
+    return p;
+  }
+  function warmScan(){
+    if(!inst.alive || !scene || warming || !inst.running || !cur || !cur.scene) return null;
+    var g = null;
+    cur.scene.traverse(function(o){
+      if(!(o.isMesh || o.isPoints || o.isLine || o.isSprite)) return;
+      var ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [], fresh = false;
+      for(var i = 0; i < ms.length; i++){ if(ms[i] && !warmSeen.has(ms[i])){ warmSeen.add(ms[i]); fresh = true; } }
+      if(!fresh) return;
+      var p = warmStandIn(o); if(p){ (g = g || new THREE.Group()).add(p); }
+    });
+    return g ? warmAsync(g, cur.scene) : null;
+  }
+  function scanLoop(){
+    if(scanOn) return; scanOn = true;
+    var ric = window.requestIdleCallback || function(f){ return setTimeout(f, 50); };
+    (function next(){
+      if(!inst.alive){ scanOn = false; return; }
+      setTimeout(function(){ ric(function(){ var p = null; try { p = warmScan(); } catch(e){} Promise.resolve(p).then(next); }, {timeout: 1000}); }, 250);
+    })();
+  }
+  // no frames while any of these is pending (the overlay is up): then the frames that were wanted start
+  var warmHold = 0;
+  function holdFor(p){
+    warmHold++; warming = true;
+    return Promise.resolve(p).then(null, function(){}).then(function(){
+      if(--warmHold > 0) return;
+      warmHold = 0; warming = false;
+      if(inst.alive && scene && inst.wantRun){ inst.wantRun = false; inst.resume(); }
+    });
+  }
+  // a world and you in it (you join its scene only when you arrive: its light and fog make your own programs)
+  function warmWorld(w){
+    // you, and a person (the first one built: every body shares its programs) for the people who come and go there
+    var mine = function(){
+      var you = avatar && avatar.g && avatar.g.parent !== w.scene ? avatar.g : null, one = warmProto && warmProto.parent !== w.scene ? warmProto : null;
+      return Promise.all([you ? warmAsync(you, w.scene) : null, one ? warmAsync(one, w.scene) : null]);
+    };
+    // (a body still being built is warmed for where it was made: once it is on you, again for this world)
+    var pend = warmPeople.length ? Promise.race([Promise.all(warmPeople.slice()), new Promise(function(r){ setTimeout(r, 3000); })]) : null;
+    return Promise.all([warmAsync(w.scene), pend ? pend.then(mine) : mine()]);
+  }
+  // once the first world is up: Mission Control and the Lobby (built here if need be) warmed in idle time, one at a time,
+  // so their doors open on frames that are ready
+  function idleWarm(){
+    if(cur) cur.warmed = true;
+    scanLoop();
+    var ric = window.requestIdleCallback || function(f){ return setTimeout(f, 300); }, todo = ["mission", "lobby"];
+    // (not before the first frames are drawn: their own sync GL calls would queue behind these compiles)
+    setTimeout(function next(){
+      if(!inst.alive || !todo.length) return;
+      ric(function(){
+        if(!inst.alive || !scene) return;
+        var n = todo.shift(), w = null;
+        try { w = n === "mission" ? worlds.mission : worlds[n] || (HQV.hqWorlds[n] && !entering ? makeWorld(n) : null); } catch(e){ w = null; }
+        if(!w || w.warmed || !w.scene){ next(); return; }
+        w.warmed = true; warmWorld(w).then(next);
+      }, {timeout: 5000});
+    }, 2500);
+  }
 
   /* ---------- day / night from the City's clock ---------- */
   // [3.23] Koramangala's (IST) and Bengaluru's own sunrise and sunset (games/npcsim.js), not the viewer's clock
@@ -1053,7 +1224,7 @@ function mount(el, api){
   // (games/skystrike.js) takes "you:*" while its Valley game is open — a smooth original body.
   function makeCharacter(key, onReady, spec, skipSky){
     var XO = HQV.hqExo, xl = !skipSky && XO && THREE && XO.wanted(key);              // [exo] a suit (games/hqexo.js): armour over the character
-    if(xl){ makeCharacter(key, function(ch){ var l = XO.wanted(key); if(l) XO.wear(THREE, ch, l); onReady(ch); }, spec, true); return; }
+    if(xl){ makeCharacter(key, function(ch){ var l = XO.wanted(key); if(l) XO.wear(THREE, ch, l); readyWarm(ch, onReady); }, spec, true); return; }
     var SS = HQV.skystrike;
     if(!skipSky && SS && SS.wanted && SS.build && SS.wanted(key)){
       SS.build().then(function(ch){
@@ -1070,7 +1241,7 @@ function mount(el, api){
       A3.build(spec).then(function(ch){
         if(!inst.alive) return;
         ch.base = 1.7/CH_H; ch.o.scale.setScalar(ch.base);
-        onReady(ch);
+        return readyWarm(ch, onReady);
       }).catch(function(){ makeCharacter(key, onReady, null, true); });
       return;
     }
@@ -1083,6 +1254,14 @@ function mount(el, api){
       ["idle", "walk", "sit", "emote-yes", "sprint"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
       onReady({o: o, mixer: mixer, acts: acts, cur: null, base: 1.7/CH_H});
     }).catch(function(){});
+  }
+  // [load] a person shown once their shaders are linked (the first of each look; later ones are ready at once)
+  var warmPeople = [], warmProto = null;                             // (the first world's overlay waits for these too)
+  function readyWarm(ch, onReady){
+    if(!warmProto && ch.rig === "uni") warmProto = ch.o;
+    if(!cur || !cur.scene) return onReady(ch);
+    var p = warmAsync(ch.o, cur.scene); warmPeople.push(p);
+    return p.then(function(){ var i = warmPeople.indexOf(p); if(i >= 0) warmPeople.splice(i, 1); if(inst.alive) onReady(ch); });
   }
   var LOCO = ["idle", "walk", "sprint"];
   function setAnim(ch, n, speed){
@@ -6125,7 +6304,9 @@ function mount(el, api){
       var to = 0, settle = function(ok, err){
         // a later enterWorld replaced this one (or this world was dropped): nothing to do here
         if(entering !== name || worlds[name] !== w) return;
-        entering = null; clearTimeout(to); loading.remove();
+        // [load] built: its shaders linked behind the overlay before its first frame
+        if(ok && !w.warmed){ w.warmed = true; clearTimeout(to); warmWorld(w).then(function(){ settle(true); }); return; }
+        entering = null; clearTimeout(to);
         if(ok) w.isReady = true;
         else if(!cityRetried && /unavailable: timeout/.test((err && err.message) || "")){
           // world.js's deadline counts the page's own time (a long first-frame shader compile no longer trips it), so
@@ -6135,7 +6316,9 @@ function mount(el, api){
           if(w.destroy){ try { w.destroy(); } catch(e){} }
         }
         else cityFallback(name, w, err);
-        enterWorld(name, from, instant);
+        // the overlay stays up while what opens (the classic City, say) still links its shaders
+        var held = enterWorld(name, from, instant);
+        if(held && held.then) held.then(function(){ if(!entering && !warmHold) loading.remove(); }); else if(!entering && !warmHold) loading.remove();
       };
       // [3.22] 45 s, not 15: a slow machine (or CI's) building the fuller City should get it, not the classic fallback
       to = setTimeout(function(){ settle(false, new Error("timed out")); }, 45000);
@@ -6169,9 +6352,16 @@ function mount(el, api){
       if(api.onWorld) api.onWorld(name);
       if(prev && prev.swapOut && prev !== w && prev.destroy){ try { prev.destroy(); } catch(e){} }   // the island you left
     };
-    if(instant || E.calm()){ go(); return; }
+    // [load] a world not drawn before: its shaders link while the door fades (off the main thread), it opens when they are
+    var warmP = w.warmed || !w.scene ? null : (w.warmed = true, warmWorld(w));
+    if(instant){
+      go();
+      if(warmP && loading.parentNode) return holdFor(warmP);
+      return;
+    }
+    if(E.calm()){ if(!warmP){ go(); return; } fading = true; warmP.then(function(){ fading = false; go(); }); return; }
     fading = true; fadeEl.classList.add("on"); E.sfx("door");
-    setTimeout(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }, 260);
+    setTimeout(function(){ Promise.resolve(warmP).then(function(){ go(); fadeEl.classList.remove("on"); setTimeout(function(){ fading = false; }, 260); }); }, 260);
   }
   function onWheel(e){
     e.preventDefault(); noteInput();
@@ -6355,6 +6545,7 @@ function mount(el, api){
   function frame(ts){
     raf = 0; if(!inst.running) return;
     raf = requestAnimationFrame(frame);
+    if(warming){ last = 0; return; }                                   // [load] a world behind the overlay, its shaders still linking
     // time from the rAF timestamp (the same clock as E.now()), not from when this callback got to run
     var t = (ts > 0 ? ts/1000 : E.now()) - clock0, ms = last ? (t - last)*1000 : 16.7, dt = Math.max(0, Math.min(0.05, last ? t - last : 0)); last = t;
     var k = E.calm() ? 0.25 : 1;
@@ -7198,13 +7389,13 @@ function mount(el, api){
     if(k !== streamKey){ streamKey = k; buildStreams(); applyFilter(); }
   }
   inst.setFilter = function(p){ filter = p || null; if(scene) applyFilter(); };
-  inst.pause = function(){ inst.running = false; keys = {}; exitLock(); if(raf){ cancelAnimationFrame(raf); raf = 0; }
+  inst.pause = function(){ inst.running = false; inst.wantRun = false; keys = {}; exitLock(); if(raf){ cancelAnimationFrame(raf); raf = 0; }
     if(E.listener) E.listener(null);                                  // [sound] no view, no ears: nothing is placed, every pool's voices go
     peerSoundsOff();                                                  // (theirs too: the next frame starts them again)
     if(cur && cur.soundPause){ try { cur.soundPause(); } catch(e){} } // the floor's own voices (the City's: rebuilt with its next frame)
     if(ride && ride.eng){ ride.eng.stop(); ride.eng = null; } };     // (the engine starts again with the next frame you drive)
   inst.resume = function(){
-    if(!inst.alive || inst.running || !scene) { if(!scene) inst.wantRun = true; return; }
+    if(!inst.alive || inst.running || !scene || warming) { if(!scene || warming) inst.wantRun = true; return; }
     inst.running = true; last = 0; applyTime(); raf = requestAnimationFrame(frame);
   };
   inst.destroy = function(){
@@ -7233,7 +7424,7 @@ function mount(el, api){
     renderer = new THREE.WebGLRenderer({canvas: canvas, antialias: true, stencil: true});   // [3.15] stencil: the sea is not drawn down a metro well
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;   // [load] what three r186 draws PCFSoft as (it switches on the first shadow pass, after a warm-up compiled the wrong kind)
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
     scene = new THREE.Scene(); tgt = scene;
     cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 500);
@@ -7257,13 +7448,22 @@ function mount(el, api){
     // and a long task right after that read would hold up its answer (the < 100 ms cache gate)
     inst.update(sessions);
     drawLeds();
-    enterWorld(HQV.hqWorlds[api.startWorld] || api.startWorld === "mission" ? api.startWorld : "mission", null, true);
+    var held0 = enterWorld(HQV.hqWorlds[api.startWorld] || api.startWorld === "mission" ? api.startWorld : "mission", null, true);
     canvas.addEventListener("pointerdown", onDown); canvas.addEventListener("pointermove", onMove); canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", function(){ tip.hidden = true; });
     canvas.addEventListener("wheel", onWheel, {passive: false});
     canvas.addEventListener("contextmenu", onContext);
-    if(!entering) loading.remove();                                  // (else it stays up until the City is ready)
-    if(inst.wantRun){ inst.wantRun = false; inst.resume(); }
+    // [load] the first world's shaders linked behind the overlay (off the main thread), then its first frame
+    // (and the sound context, ~90 ms to make, made while the GPU compiles rather than in the first frame)
+    setTimeout(function(){ try { if(inst.alive && E.audioOut) E.audioOut(); } catch(e){} }, 0);
+    holdFor(Promise.resolve(held0 && held0.then ? held0 : cur.warmed ? null : (cur.warmed = true, warmAsync(cur.scene))).then(function(){
+      // the people being built meanwhile (their skinned program is the slowest to finish): up to 3 s more
+      return warmPeople.length ? Promise.race([Promise.all(warmPeople.slice()), new Promise(function(r){ setTimeout(r, 3000); })]) : null;
+    })).then(function(){
+      if(!inst.alive) return;
+      if(!entering && !warmHold) loading.remove();                   // (else it stays up until the City is ready)
+      idleWarm();
+    });
   }).catch(function(e){ loading.textContent = "The 3D HQ couldn’t load: " + (e && e.message || e); });
   return inst;
 }

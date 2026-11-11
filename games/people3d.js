@@ -183,7 +183,16 @@ function skullGeo(THREE, rx, ry, rz, k){
   return g;
 }
 
-function toyHead(L, skull, spec, female){
+function toyHead(L, skull, spec, female, file){
+  // [load] build()'s heads: the geometry is made once per outfit and look, then shared (each person keeps its own
+  // materials); crowds (no file) get their own, which they merge and dispose
+  var hk = file ? [file, SEGK, spec[4] | 0, spec[5] | 0, spec[6] | 0, spec[7] === 1 ? 1 : 0, female ? 1 : 0].join("|") : null;
+  var rec = hk ? HEADG[hk] : null, G0 = GREC;
+  GREC = hk ? {list: rec || [], i: 0, replay: !!rec} : null;
+  try { return toyHead0(L, skull, spec, female); }
+  finally { if(hk && !rec){ HEADG[hk] = GREC.list; } GREC = G0; }
+}
+function toyHead0(L, skull, spec, female){
   var THREE = L.THREE, grp = new THREE.Group(); grp.name = "toy-head";
   var c = skull.getCenter(new THREE.Vector3()), sz = skull.getSize(new THREE.Vector3());
   var rx = sz.x * 0.5, ry = sz.y * 0.5, rz = sz.z * 0.44;
@@ -193,31 +202,39 @@ function toyHead(L, skull, spec, female){
   var skin = chrome ? new THREE.MeshStandardMaterial({color: "#c9d1db", roughness: 0.2, metalness: 0.9}) : mat(THREE, skinHex, 0.65);
   var hairM = mat(THREE, hairHex, 0.7), lit = spec[7] === 1;
   var eyeM = lit ? new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#5ff3ff", emissiveIntensity: 1.4}) : mat(THREE, "#2a1c16", 0.3);
-  var head = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, 1), skin); head.position.copy(c); grp.add(head);
+  var head = new THREE.Mesh(G(function(){ return skullGeo(THREE, rx, ry, rz, 1); }), skin); head.position.copy(c); grp.add(head);
   // a neck down into the collar (the pack's own neck went with its head)
-  var neck = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.36, rx * 0.42, ry * 0.9, 16), skin);
+  var neck = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(rx * 0.36, rx * 0.42, ry * 0.9, 16); }), skin);
   neck.position.copy(at(0, -1.05, -0.08)); grp.add(neck);
   [-1, 1].forEach(function(sx){
-    var eye = new THREE.Mesh(new THREE.SphereGeometry(1, sg(20), sg(14)), eyeM);
+    var eye = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(20), sg(14)); }), eyeM);
     eye.scale.set(rx * 0.11, ry * 0.15, rz * 0.06); eye.position.copy(at(sx * 0.36, -0.02, 0.93)); eye.rotation.y = sx * 0.35;
     grp.add(eye);
     if(!lit){
-      var glint = new THREE.Mesh(new THREE.SphereGeometry(1, sg(10), sg(8)), new THREE.MeshBasicMaterial({color: 0xffffff}));
+      var glint = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(10), sg(8)); }), new THREE.MeshBasicMaterial({color: 0xffffff}));
       glint.scale.setScalar(rx * 0.03); glint.position.copy(at(sx * 0.33, 0.04, 0.985)); grp.add(glint);
     }
-    var brow = new THREE.Mesh(new THREE.CapsuleGeometry(rx * 0.025, rx * 0.16, 4, 8), hairM);
+    var brow = new THREE.Mesh(G(function(){ return new THREE.CapsuleGeometry(rx * 0.025, rx * 0.16, 4, 8); }), hairM);
     brow.rotation.set(0, sx * 0.35, Math.PI / 2 + sx * 0.12); brow.position.copy(at(sx * 0.37, 0.24, 0.93)); grp.add(brow);
-    var ear = new THREE.Mesh(new THREE.SphereGeometry(1, sg(14), sg(10)), skin);
+    var ear = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(14), sg(10)); }), skin);
     ear.scale.set(rx * 0.08, ry * 0.17, rz * 0.13); ear.position.copy(at(sx * 0.98, -0.06, -0.05)); grp.add(ear);
   });
-  var nose = new THREE.Mesh(new THREE.SphereGeometry(1, sg(14), sg(10)), skin);
+  var nose = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(14), sg(10)); }), skin);
   nose.scale.set(rx * 0.07, ry * 0.06, rz * 0.06); nose.position.copy(at(0, -0.22, 0.99)); grp.add(nose);
-  var mouth = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.09, rx * 0.017, 6, 16, Math.PI), mat(THREE, "#8a3b32", 0.5));
+  var mouth = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.09, rx * 0.017, 6, 16, Math.PI); }), mat(THREE, "#8a3b32", 0.5));
   mouth.rotation.set(-0.25, 0, Math.PI); mouth.scale.z = 0.3; mouth.position.copy(at(0, -0.40, 0.875)); grp.add(mouth);
   hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at);
   wear(THREE, grp, spec, at, rx, ry, rz, c);
   grp.traverse(function(m){ if(m.isMesh){ m.castShadow = true; } });
   return {g: grp, c: c, rx: rx, ry: ry, rz: rz, skin: skin, hair: hairM};
+}
+
+// a toy-head geometry: made (and recorded) or, for a look made before, the recorded one in the same order
+var GREC = null;
+function G(make){
+  if(!GREC){ return make(); }
+  if(GREC.replay){ var g0 = GREC.list[GREC.i++]; if(g0){ return g0; } GREC.replay = false; }
+  var g = make(); g.userData.shared = true; GREC.list.push(g); return g;
 }
 
 // hairStyle: 0 own (women: fringe + tied ponytail; men: short crop), 1 shaved, 2 neon crest
@@ -234,26 +251,26 @@ function hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at){
   };
   var add = function(g, m){ var h = new THREE.Mesh(g, m || hairM); h.position.copy(c); grp.add(h); return h; };
   if(style === 1){
-    add(skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.012; }));
+    add(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.012; }); }));
     return;
   }
   if(style === 2){
     var neon = new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#5ff3ff", emissiveIntensity: 1.1, roughness: 0.4});
-    add(skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.01; }));
+    add(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.01; }); }));
     for(var i = 0; i < 7; i++){
-      var t = i / 6, a = -0.6 + t * 2.3, spike = new THREE.Mesh(new THREE.ConeGeometry(rx * 0.12, ry * (0.42 - 0.1 * Math.abs(t - 0.4)), 8), neon);
+      var t = i / 6, a = -0.6 + t * 2.3, spike = new THREE.Mesh(G(function(){ return new THREE.ConeGeometry(rx * 0.12, ry * (0.42 - 0.1 * Math.abs(t - 0.4)), 8); }), neon);
       spike.position.set(c.x, c.y + Math.cos(a) * ry * 1.02, c.z + Math.sin(a) * rz * 1.02);
       spike.rotation.x = a; grp.add(spike);
     }
     return;
   }
-  add(shell(true, female ? -0.35 : -0.15));
+  add(G(function(){ return shell(true, female ? -0.35 : -0.15); }));
   if(female && hat !== 4 && hat !== 1){
     var pts = [];
     for(var j = 0; j <= 12; j++){ var u = j / 12; pts.push(new THREE.Vector2(Math.sin(Math.min(1, u * 1.6) * Math.PI * 0.5) * rx * 0.42 * (1 - u * 0.55) + 0.002, -u * ry * 1.2)); }
-    var tail = new THREE.Mesh(new THREE.LatheGeometry(pts, 18), hairM);
+    var tail = new THREE.Mesh(G(function(){ return new THREE.LatheGeometry(pts, 18); }), hairM);
     tail.position.copy(at(0, 0.48, -1.0)); tail.rotation.x = 0.75;
-    var tie = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.12, rx * 0.04, 8, 16), mat(THREE, "#2b2b30", 0.6));
+    var tie = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.12, rx * 0.04, 8, 16); }), mat(THREE, "#2b2b30", 0.6));
     tie.position.copy(tail.position); tie.rotation.x = Math.PI / 2 + 0.75;
     grp.add(tail, tie);
   }
@@ -269,24 +286,24 @@ function wear(THREE, grp, spec, at, rx, ry, rz, c){
 function wear0(THREE, grp, spec, at, rx, ry, rz, c){
   var hw = spec[5] | 0, acc = spec[6] | 0, outfit = hexOf("outfitColor", spec[3]) || "#3f6fb3";
   if(hw === 1){
-    var beanie = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.18 ? 1.12 : 0.9; }), mat(THREE, outfit, 0.9));
+    var beanie = new THREE.Mesh(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.18 ? 1.12 : 0.9; }); }), mat(THREE, outfit, 0.9));
     beanie.position.copy(c); grp.add(beanie);
-    var cuff = new THREE.Mesh(new THREE.TorusGeometry(1, 0.09, 8, 32), mat(THREE, outfit, 0.9));
+    var cuff = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(1, 0.09, 8, 32); }), mat(THREE, outfit, 0.9));
     cuff.scale.set(rx * 1.08, rz * 1.08, ry * 0.9); cuff.rotation.x = Math.PI / 2; cuff.position.copy(at(0, 0.22, 0)); grp.add(cuff);
-    var pom = new THREE.Mesh(new THREE.SphereGeometry(rx * 0.16, sg(12), sg(10)), mat(THREE, "#f2f0ea", 1)); pom.position.copy(at(0, 1.18, 0)); grp.add(pom);
+    var pom = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(rx * 0.16, sg(12), sg(10)); }), mat(THREE, "#f2f0ea", 1)); pom.position.copy(at(0, 1.18, 0)); grp.add(pom);
   } else if(hw === 2){
-    var crown = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.25 ? 1.1 : 0.9; }), mat(THREE, outfit, 0.8));
+    var crown = new THREE.Mesh(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.25 ? 1.1 : 0.9; }); }), mat(THREE, outfit, 0.8));
     crown.position.copy(c); grp.add(crown);
-    var peak = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.62, rx * 0.62, ry * 0.035, 24, 1, false, -Math.PI / 2, Math.PI), mat(THREE, outfit, 0.8));
+    var peak = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(rx * 0.62, rx * 0.62, ry * 0.035, 24, 1, false, -Math.PI / 2, Math.PI); }), mat(THREE, outfit, 0.8));
     peak.position.copy(at(0, 0.28, 0.82)); peak.rotation.x = 0.12; grp.add(peak);
   } else if(hw === 3){
-    var band = new THREE.Mesh(new THREE.TorusGeometry(1, 0.06, 8, 40), mat(THREE, outfit, 0.8));
+    var band = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(1, 0.06, 8, 40); }), mat(THREE, outfit, 0.8));
     band.scale.set(rx * 1.09, rz * 1.09, ry); band.rotation.x = Math.PI / 2 - 0.12; band.position.copy(at(0, 0.38, 0.02)); grp.add(band);
   } else if(hw === 4){
-    var cone = new THREE.Mesh(new THREE.ConeGeometry(rx * 0.42, ry * 1.0, 20), mat(THREE, "#ff5fa2", 0.6));
+    var cone = new THREE.Mesh(G(function(){ return new THREE.ConeGeometry(rx * 0.42, ry * 1.0, 20); }), mat(THREE, "#ff5fa2", 0.6));
     cone.position.copy(at(0.15, 1.35, 0)); cone.rotation.z = -0.2; grp.add(cone);
   } else if(hw === 5){
-    var halo = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.75, rx * 0.04, 8, 40),
+    var halo = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.75, rx * 0.04, 8, 40); }),
       new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#5ff3ff", emissiveIntensity: 1.5}));
     halo.rotation.x = Math.PI / 2; halo.position.copy(at(0, 1.45, 0)); halo.userData.spin = true; grp.add(halo);
   }
@@ -294,14 +311,14 @@ function wear0(THREE, grp, spec, at, rx, ry, rz, c){
     var frame = mat(THREE, acc === 1 ? "#3b2a22" : "#111214", 0.4);
     var lens = acc === 2 ? new THREE.MeshStandardMaterial({color: "#141518", roughness: 0.1, metalness: 0.6}) : null;
     [-1, 1].forEach(function(sx){
-      var ring = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.17, rx * 0.022, 8, 24), frame);
+      var ring = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.17, rx * 0.022, 8, 24); }), frame);
       ring.position.copy(at(sx * 0.36, -0.02, 1.02)); ring.rotation.y = sx * 0.3; ring.userData.face = true; grp.add(ring);
-      if(lens){ var l = new THREE.Mesh(new THREE.CircleGeometry(rx * 0.16, 20), lens); l.position.copy(ring.position); l.rotation.y = sx * 0.3; l.userData.face = true; grp.add(l); }
+      if(lens){ var l = new THREE.Mesh(G(function(){ return new THREE.CircleGeometry(rx * 0.16, 20); }), lens); l.position.copy(ring.position); l.rotation.y = sx * 0.3; l.userData.face = true; grp.add(l); }
     });
-    var bridge = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.015, rx * 0.015, rx * 0.36, 6), frame);
+    var bridge = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(rx * 0.015, rx * 0.015, rx * 0.36, 6); }), frame);
     bridge.rotation.z = Math.PI / 2; bridge.position.copy(at(0, 0.0, 1.06)); bridge.userData.face = true; grp.add(bridge);
   } else if(acc === 3){
-    var visor = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, ry * 0.26, 32, 1, true, -1.1, 2.2),
+    var visor = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(1, 1, ry * 0.26, 32, 1, true, -1.1, 2.2); }),
       new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#2aa9c9", emissiveIntensity: 0.9, transparent: true, opacity: 0.6, side: THREE.DoubleSide}));
     visor.scale.set(rx * 1.04, 1, rz * 1.06); visor.rotation.y = Math.PI / 2; visor.position.copy(at(0, 0.0, 0)); visor.userData.face = true; grp.add(visor);
   }
@@ -313,6 +330,7 @@ function recolour(L, mesh, spec, file){
   var skin = hexOf("skin", spec[1]), chrome = spec[1] === 7, top = hexOf("outfitColor", spec[3]), tops = TOP[file] || [];
   var out = mats.map(function(m0){
     var m = m0.clone(), name = m.name || "";
+    if(m.vertexColors && !mesh.geometry.attributes.color){ m.vertexColors = false; }   // (plainWhite)
     m.flatShading = false; m.roughness = Math.max(0.55, m.roughness == null ? 0.7 : m.roughness); m.metalness = 0;
     if(/^skin/i.test(name)){
       if(chrome){ m.color.set("#c9d1db"); m.metalness = 0.9; m.roughness = 0.2; }
@@ -339,6 +357,19 @@ function soften(g){
     a[3].forEach(function(i){ n.setXYZ(i, a[0] / l, a[1] / l, a[2] / l); });
   });
   n.needsUpdate = true;
+}
+
+// [load] per-outfit caches (build): PREP[file] {geo: original geometry -> softened, skull, legLen}; SITS[file|scale] clip;
+// HEADG[look] the toy head's geometries, made once per outfit and look (toyHead)
+var PREP = {}, SITS = {}, HEADG = {};
+// a vertex colour that is plain opaque white everywhere changes nothing but costs a shader program of its own
+// (USE_COLOR, USE_COLOR_ALPHA): dropped, so every body part is drawn by the one skinned program
+function plainWhite(g){
+  var c = g.attributes.color; if(!c){ return; }
+  for(var i = 0; i < c.count; i++){
+    for(var k = 0; k < c.itemSize; k++){ if(Math.abs(c.getComponent(i, k) - 1) > 1e-3){ return; } }
+  }
+  g.deleteAttribute("color");
 }
 
 // a static clip from the current pose of the given bones (quaternions) and foot controls (positions)
@@ -390,25 +421,33 @@ function build(spec){
     return Promise.all([E.loadGlb(L, "people", file), animsOf(L)]).then(function(r){
       var THREE = L.THREE, gltf = r[0], clips = r[1];
       var model = L.clone(gltf.scene), bones = {}, heads = [];
+      // [load] per outfit, once: the softened body geometry (shared by everyone wearing it), the skull, the legs
+      var pre = PREP[file] || (PREP[file] = {geo: new Map(), skull: undefined, legLen: null});
       model.traverse(function(n){
         if(n.isBone){ bones[n.name] = n; }
         if(n.isMesh){
           n.castShadow = true; n.frustumCulled = false;
           if(/head/i.test(n.name) || (n.parent && /head/i.test(n.parent.name))){ heads.push(n); return; }
-          n.geometry = n.geometry.clone(); soften(n.geometry); recolour(L, n, spec, file);
+          var g0 = n.geometry, g = pre.geo.get(g0);
+          if(!g){ g = g0.clone(); soften(g); plainWhite(g); g.userData.shared = true; pre.geo.set(g0, g); }
+          n.geometry = g; recolour(L, n, spec, file);
         }
       });
       model.updateMatrixWorld(true);
-      var legLen = {};
-      ["L", "R"].forEach(function(s){
-        var a = bones["LowerLeg" + s].getWorldPosition(new THREE.Vector3()), f = bones["Foot" + s].getWorldPosition(new THREE.Vector3());
-        legLen[s] = a.distanceTo(f) * 0.93;
-      });
-      var skull = skullBox(THREE, model, bones.Head), head = null;
+      var legLen = pre.legLen ? {L: pre.legLen.L, R: pre.legLen.R} : {};
+      if(!pre.legLen){
+        ["L", "R"].forEach(function(s){
+          var a = bones["LowerLeg" + s].getWorldPosition(new THREE.Vector3()), f = bones["Foot" + s].getWorldPosition(new THREE.Vector3());
+          legLen[s] = a.distanceTo(f) * 0.93;
+        });
+        pre.legLen = {L: legLen.L, R: legLen.R};
+      }
+      if(pre.skull === undefined){ pre.skull = skullBox(THREE, model, bones.Head); }
+      var skull = pre.skull ? pre.skull.clone() : null, head = null;
       heads.forEach(function(m){ m.visible = false; });
       if(bones.Head && skull){
         bones.Head.scale.setScalar(HEAD_K);
-        head = toyHead(L, skull, spec, female);
+        head = toyHead(L, skull, spec, female, file);
         bones.Head.add(head.g);
       }
       ["WristL", "WristR"].forEach(function(b){ if(bones[b]){ bones[b].scale.setScalar(1.12); } });
@@ -445,7 +484,12 @@ function build(spec){
           if(head && !E.calm()){ head.g.traverse(function(m){ if(m.userData.spin){ m.rotation.z = t * 1.2; } }); }
         }};
       var idle = THREE.AnimationClip.findByName(clips, "Idle");
-      if(idle){ try { acts.sit = mixer.clipAction(makeSit(ch, idle)); } catch(e){ /* no sit pose: standing fallback */ } }
+      if(idle){
+        // [load] the sit pose is the same for one outfit drawn at one scale (the scale differs only with a tall hat)
+        var sk = file + "|" + k.toFixed(6), sit = SITS[sk];
+        if(sit === undefined){ try { sit = makeSit(ch, idle); } catch(e){ sit = null; /* no sit pose: standing fallback */ } SITS[sk] = sit; }
+        if(sit){ acts.sit = mixer.clipAction(sit); }
+      }
       // IK world units scale with how big o is drawn; callers set ch.scaleW = o's world scale when they seat it
       return ch;
     });

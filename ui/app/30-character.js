@@ -179,6 +179,11 @@ function charSaved(spec){
   var rs = $("chReset"); if(rs) rs.addEventListener("click", function(){ buildCharBuilder(charFromTrainer(null)); });
   // Draw (and share) the portrait a little after load when it is missing or out of date, then keep
   // the Arena's copy current when you pair later.
-  setTimeout(charEnsurePortrait, 4000);
+  // [load] in idle time, and not while the 3D HQ is still loading (both would compete for the GPU's shader compiler)
+  var charLater = function(){
+    var go = function(){ if(document.querySelector(".hq3d-loading")) return setTimeout(charLater, 3000); charEnsurePortrait(); };
+    if(window.requestIdleCallback) requestIdleCallback(go, {timeout: 8000}); else go();
+  };
+  setTimeout(charLater, 4000);
   setInterval(charUpload, 60000);
 })();

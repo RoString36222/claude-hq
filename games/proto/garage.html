@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vehicle Garage</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #dfe6e2; overflow: hidden; font: 12px system-ui, sans-serif; }
+  canvas { display: block; }
+  #labels { position: fixed; inset: 0; pointer-events: none; }
+  #labels div { position: absolute; color: #223; background: rgba(255, 255, 255, .65); padding: 1px 5px; border-radius: 4px; }
+  #stats { position: fixed; right: 10px; bottom: 10px; color: #223; background: rgba(255, 255, 255, .75); padding: 4px 8px; border-radius: 6px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three-module.js" } }
+</script>
+</head>
+<body>
+<div id="labels"></div>
+<div id="stats"></div>
+<script>window.HQV = window.HQV || {};</script>
+<script src="../hqvehiclemodels.js"></script>
+<script type="module" src="garage.js"></script>
+</body>
+</html>

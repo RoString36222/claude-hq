@@ -164,6 +164,20 @@ function skullBox(THREE, root, head){
   return box.isEmpty() ? null : box;
 }
 
+// [realism perf] People were never frustum-culled (a skinned mesh's bounds are its bind pose, so they were switched off
+// wholesale): every person drew, and cast, from behind the camera too. A skinned body gets a fixed sphere instead, its
+// bind-pose sphere grown x1.6 (arms out, a stride, a seat's lean all stay inside), and culls like anything else.
+function cullable(THREE, root){
+  root.traverse(function(n){
+    if(!n.isMesh){ return; }
+    n.frustumCulled = true;
+    if(n.isSkinnedMesh){
+      if(!n.geometry.boundingSphere){ n.geometry.computeBoundingSphere(); }
+      var bs = n.geometry.boundingSphere.clone(); bs.radius *= 1.6;
+      n.boundingSphere = bs;
+    }
+  });
+}
 // geometry detail: 1 for your own and the people near you, less for crowds (crowdHead)
 var SEGK = 1;
 function sg(n){ return Math.max(6, Math.round(n * SEGK)); }
@@ -216,7 +230,9 @@ function toyHead(L, skull, spec, female){
   mouth.rotation.set(-0.25, 0, Math.PI); mouth.scale.z = 0.3; mouth.position.copy(at(0, -0.40, 0.875)); grp.add(mouth);
   hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at);
   wear(THREE, grp, spec, at, rx, ry, rz, c);
-  grp.traverse(function(m){ if(m.isMesh){ m.castShadow = true; } });
+  // [realism perf] the skull casts the head's shadow (and the hair and hats, the bigger parts); eyes, glints, brows, ears,
+  // nose and mouth are each a shadow draw for a speck nobody sees
+  grp.traverse(function(m){ if(m.isMesh){ m.castShadow = m === head || m.material === hairM || (m.geometry.boundingSphere || (m.geometry.computeBoundingSphere(), m.geometry.boundingSphere)).radius*Math.max(m.scale.x, m.scale.y, m.scale.z) > rx*0.45; } });
   return {g: grp, c: c, rx: rx, ry: ry, rz: rz, skin: skin, hair: hairM};
 }
 
@@ -418,6 +434,7 @@ function build(spec){
       o.updateMatrixWorld(true);
       var box = new THREE.Box3().setFromObject(o, true), h = box.max.y - box.min.y || 1, k = CH_H / h;
       inner.scale.setScalar(k); inner.position.y = -box.min.y * k;
+      cullable(THREE, model);
       var mixer = new THREE.AnimationMixer(model), acts = {};
       // Posing on top of the clips (IK, seats, rails) must come off again before the next mixer step: three's mixer
       // writes a bone only when the clip's value changes, so a held clip (most of Idle, all of sit) never resets what
@@ -584,6 +601,7 @@ function crowd(base, variant){
     o.traverse(function(n){ if(n.isBone){ bones[n.name] = n; } if(n.isMesh){ n.material = mat; n.frustumCulled = false; } });
     var hg = crowdHead(L, T, base, variant);
     if(hg && bones.Head){ var hm = new THREE.Mesh(hg, mat); hm.name = "crowd-head"; hm.castShadow = true; bones.Head.add(hm); }
+    cullable(THREE, o);
     var mixer = new THREE.AnimationMixer(model), acts = {};
     Object.keys(ANIM).forEach(function(n){ var cl = THREE.AnimationClip.findByName(T.clips, ANIM[n]); if(cl){ acts[n] = mixer.clipAction(cl); } });
     if(T.sit){ acts.sit = mixer.clipAction(T.sit); }

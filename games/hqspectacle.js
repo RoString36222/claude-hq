@@ -1556,7 +1556,7 @@ function create(c, W, o){
           var q = made + loadingN;
           P.crowd(k, {hat: q % 5 === 1 ? 2 : q % 7 === 3 ? 1 : 0, acc: q % 6 === 2 ? 2 : 0, hair: q % 9 === 4 ? 1 : 0}).then(function(ch){
             loadingN--; if(dead){ ch.dispose(); return; }
-            ch.k = k; ch.pace = 0.82; ch.mats = []; ch.hair = HAIR[q % HAIR.length]; ch.o.scale.setScalar(SC); ch.o.traverse(function(n){ if(n.isMesh) n.castShadow = true; });
+            ch.k = k; ch.mats = []; ch.hair = HAIR[q % HAIR.length]; ch.o.scale.setScalar(SC); ch.o.traverse(function(n){ if(n.isMesh) n.castShadow = true; });
             made++; (free[k] = free[k] || []).push(ch);
           }, function(){ loadingN--; });
           return;
@@ -1624,7 +1624,7 @@ function create(c, W, o){
           Mw[k].decompose(wp4, wq4, ws4);
           if(m.kind === "ride") wp4.add(up.clone().applyQuaternion(wq4).multiplyScalar(0.35));   // Kenney's sit pose: hips at chair height
           chr.o.position.copy(wp4); chr.o.quaternion.copy(wq4);
-          anim(chr, m.kind === "walk" ? "walk" : m.kind === "ride" ? "sit" : "idle", m.kind === "walk" ? m.v/(chr.pace || 1.4) : 1);   // [realism perf] the clip's own pace: feet planted
+          anim(chr, m.kind === "walk" ? "walk" : m.kind === "ride" ? "sit" : "idle", m.kind === "walk" ? m.v/1.4 : 1);
           chr.mixer.update(dt || 0);
         }
         mesh.instanceMatrix.needsUpdate = true;

@@ -14,7 +14,7 @@ export const LOOKS = {
 export async function loadCharacter(url, look = LOOKS.rider, opts = {}){
   const gltf = await loader.loadAsync(url);
   const o = gltf.scene;
-  const bones = {}, hairMeshes = [];
+  const bones = {}, hairMeshes = [], headMeshes = [];
   o.traverse(n => { if(n.isBone){ bones[n.name] = n; } });
 
   // smooth, soft shading: weld the faceted low-poly vertices and recompute normals
@@ -27,10 +27,10 @@ export async function loadCharacter(url, look = LOOKS.rider, opts = {}){
     for(const k of Object.keys(g.attributes)){ keep[k] = g.attributes[k]; }
     weldNormals(g);
     const mats = Array.isArray(n.material) ? n.material : [n.material];
-    mats.forEach(m => recolour(m, look));
+    mats.forEach(m => recolour(m, look, n.name));
     n.frustumCulled = false;
     // the pack's shaggy low-poly hair goes; ours (below) is a smooth cap
-    if(mats.some(m => /^hair/i.test(m.name || ""))){ hairMeshes.push(n); }
+    if(/head/i.test(n.name) || /head/i.test(n.parent?.name || "")){ headMeshes.push(n); }
   });
 
   // leg length to the ankle (the rig's feet are IK controls under Root, not children of the shin)
@@ -55,7 +55,11 @@ export async function loadCharacter(url, look = LOOKS.rider, opts = {}){
   if(bones.Neck){ bones.Neck.scale.setScalar(1.05); }
   ["WristL", "WristR"].forEach(b => bones[b] && bones[b].scale.setScalar(1.12));
 
-  if(bones.Head && hairBox){ bones.Head.add(hairCap(hairBox, look)); }
+  const skull = skullBox(o, bones.Head);
+  if(bones.Head && skull){
+    headMeshes.forEach(m => { m.visible = false; });
+    bones.Head.add(toyHead(skull, look));
+  }
 
   o.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(o);
@@ -82,8 +86,9 @@ function weldNormals(g){
 }
 
 // Material names in the Quaternius casual outfits -> our look.
-function recolour(m, look){
+function recolour(m, look, mesh = ""){
   const name = (m.name || "").toLowerCase();
+  if(/feet/i.test(mesh) && name !== "skin"){ m.color.setHex(look.shoes); m.roughness = 0.7; return; }
   m.flatShading = false; m.roughness = 0.75; m.metalness = 0;
   if(name === "skin"){ m.color.setHex(look.skin); }
   else if(name.startsWith("hair") || name === "eyebrows"){ m.color.setHex(look.hair); }
@@ -93,28 +98,82 @@ function recolour(m, look){
   m.needsUpdate = true;
 }
 
-// Smooth hair, fitted to the box the pack's hair occupied (head-bone space, +y up, +z forward): a cap over the
-// crown that comes lower at the back, a side-swept fringe, and (look.ponytail) a tied tail that droops back.
-function hairCap(box, look){
-  const grp = new THREE.Group(); grp.name = "hair";
-  const mat = new THREE.MeshStandardMaterial({color: look.hair, roughness: 0.7});
-  const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
-  const rx = sz.x * 0.45, ry = sz.y * 0.5, rz = sz.z * 0.47;
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 18, 0, Math.PI * 2, 0, Math.PI * 0.56), mat);
-  cap.scale.set(rx, ry, rz); cap.position.copy(c).add(new THREE.Vector3(0, -ry * 0.10, -rz * 0.04));
-  const nape = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 10, Math.PI * 1.05, Math.PI * 0.9, Math.PI * 0.5, Math.PI * 0.32), mat);
-  nape.scale.set(rx * 0.99, ry, rz * 1.0); nape.position.copy(cap.position);
-  grp.add(nape);
-  const fringe = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 10, -0.9, 1.9, Math.PI * 0.18, Math.PI * 0.3), mat);
-  fringe.scale.set(rx * 1.03, ry * 1.0, rz * 1.06); fringe.position.copy(cap.position); fringe.rotation.set(0.05, 0.12, 0.05);
-  grp.add(cap, fringe);
+// The skull in head-bone space: the bind-pose box of the skin vertices weighted mostly to the Head bone.
+function skullBox(root, head){
+  if(!head){ return null; }
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  root.traverse(m => {
+    if(!m.isSkinnedMesh){ return; }
+    const hi = m.skeleton.bones.indexOf(head);
+    if(hi < 0){ return; }
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    if(!mats.some(x => (x.name || "").toLowerCase() === "skin")){ return; }
+    const g = m.geometry, p = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+    const toBone = m.skeleton.boneInverses[hi].clone().multiply(m.bindMatrix);
+    for(let i = 0; i < p.count; i++){
+      let w = 0;
+      for(let k = 0; k < 4; k++){ if(si.getComponent(i, k) === hi){ w += sw.getComponent(i, k); } }
+      if(w > 0.9){ box.expandByPoint(v.fromBufferAttribute(p, i).applyMatrix4(toBone)); }
+    }
+  });
+  return box.isEmpty() ? null : box;
+}
+
+// Our own head, replacing the pack's 334-triangle one: a smooth rounded skull fitted to the old head's box (head-bone
+// space, +y up, +z forward), big simple eyes with a catch-light, brows, a small nose and mouth, ears, and hair as a
+// shell of the same skull (so it always fits) with a brow hairline, and an optional tied ponytail.
+function toyHead(skull, look){
+  const grp = new THREE.Group(); grp.name = "toy-head";
+  const c = skull.getCenter(new THREE.Vector3()), sz = skull.getSize(new THREE.Vector3());
+  const rx = sz.x * 0.5, ry = sz.y * 0.5, rz = sz.z * 0.44;
+  const at = (x, y, z) => new THREE.Vector3(c.x + x * rx, c.y + y * ry, c.z + z * rz);
+  const skin = new THREE.MeshStandardMaterial({color: look.skin, roughness: 0.65});
+  const hairM = new THREE.MeshStandardMaterial({color: look.hair, roughness: 0.7});
+  const dark = new THREE.MeshStandardMaterial({color: 0x2a1c16, roughness: 0.3});
+  const shape = (k, lift = 0) => {
+    const g = new THREE.SphereGeometry(1, 48, 32), p = g.attributes.position, d = new THREE.Vector3();
+    for(let i = 0; i < p.count; i++){
+      d.fromBufferAttribute(p, i);
+      const jaw = d.y < 0 ? 1 - 0.16 * (-d.y) * (-d.y) : 1;     // a softer, narrower jaw
+      const kk = typeof k === "function" ? k(d) : k;
+      p.setXYZ(i, d.x * rx * jaw * kk, (d.y * ry + lift) * kk, d.z * rz * jaw * kk);
+    }
+    g.computeVertexNormals();
+    return g;
+  };
+  const head = new THREE.Mesh(shape(1), skin); head.position.copy(c); grp.add(head);
+  // eyes: dark ovals with a white catch-light; brows; nose; mouth
+  for(const sx of [-1, 1]){
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), dark);
+    eye.scale.set(rx * 0.11, ry * 0.15, rz * 0.06); eye.position.copy(at(sx * 0.36, -0.02, 0.93)); eye.rotation.y = sx * 0.35;
+    const glint = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({color: 0xffffff}));
+    glint.scale.setScalar(rx * 0.03); glint.position.copy(at(sx * 0.33, 0.04, 0.985));
+    const brow = new THREE.Mesh(new THREE.CapsuleGeometry(rx * 0.025, rx * 0.16, 4, 8), hairM);
+    brow.rotation.z = Math.PI / 2 + sx * 0.12; brow.position.copy(at(sx * 0.37, 0.24, 0.93)); brow.rotation.y = sx * 0.35;
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), skin);
+    ear.scale.set(rx * 0.08, ry * 0.17, rz * 0.13); ear.position.copy(at(sx * 0.98, -0.06, -0.05));
+    grp.add(eye, glint, brow, ear);
+  }
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), skin);
+  nose.scale.set(rx * 0.07, ry * 0.06, rz * 0.06); nose.position.copy(at(0, -0.22, 0.99)); grp.add(nose);
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.09, rx * 0.017, 6, 16, Math.PI), new THREE.MeshStandardMaterial({color: 0x8a3b32, roughness: 0.5}));
+  mouth.rotation.z = Math.PI; mouth.scale.z = 0.3; mouth.position.copy(at(0, -0.40, 0.875)); mouth.rotation.x = -0.25; grp.add(mouth);
+  // hair: the same skull shape, a little bigger, with the face and the neck pulled inside the head
+  const hairGeo = shape(d => {
+    const face = d.z > 0.12 && d.y < 0.40 - 0.3 * Math.max(0, Math.abs(d.x) - 0.35);
+    const ears = Math.abs(d.x) > 0.75 && d.y < 0.08 && d.z > -0.35;
+    const neck = d.y < -0.35;
+    if(face || ears || neck){ return 0.9; }
+    return 1.07 + (d.y > 0.4 ? 0.04 * (d.y - 0.4) : 0) + (d.z > 0.4 && d.y > 0.36 ? 0.03 : 0);
+  });
+  const hair = new THREE.Mesh(hairGeo, hairM); hair.position.copy(c); grp.add(hair);
   if(look.ponytail){
     const pts = [];
-    for(let i = 0; i <= 12; i++){ const t = i / 12; pts.push(new THREE.Vector2(Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * rx * 0.42 * (1 - t * 0.6) + 0.002, -t * ry * 1.5)); }
-    const tail = new THREE.Mesh(new THREE.LatheGeometry(pts, 16), mat);
-    tail.position.set(c.x, c.y + ry * 0.05, c.z - rz * 1.0); tail.rotation.x = 0.55;
-    const tie = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.18, rx * 0.05, 8, 16), new THREE.MeshStandardMaterial({color: 0x2b2b30, roughness: 0.6}));
-    tie.position.copy(tail.position).add(new THREE.Vector3(0, -ry * 0.03, -rz * 0.02)); tie.rotation.x = Math.PI / 2 + 0.55;
+    for(let i = 0; i <= 12; i++){ const t = i / 12; pts.push(new THREE.Vector2(Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * rx * 0.42 * (1 - t * 0.55) + 0.002, -t * ry * 1.2)); }
+    const tail = new THREE.Mesh(new THREE.LatheGeometry(pts, 18), hairM);
+    tail.position.copy(at(0, 0.48, -1.0)); tail.rotation.x = 0.75;
+    const tie = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.12, rx * 0.04, 8, 16), new THREE.MeshStandardMaterial({color: 0x2b2b30, roughness: 0.6}));
+    tie.position.copy(tail.position); tie.rotation.x = Math.PI / 2 + 0.75;
     grp.add(tail, tie);
   }
   grp.traverse(m => { if(m.isMesh){ m.castShadow = true; } });

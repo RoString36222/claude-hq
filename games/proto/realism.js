@@ -100,8 +100,11 @@ const VIEWS = {
   "Side": {target: [0, 0.75, 0.0], az: Math.PI / 2, el: 0.05, dist: 4.4},
   "Front 3/4": {target: [0, 0.85, 0.1], az: 0.7, el: 0.12, dist: 4.0},
   "Rider close": {target: [0, 1.2, 0.0], az: -2.0, el: 0.15, dist: 2.2},
+  "Face": {target: [2.75, 1.42, 2.2], az: -0.6, el: 0.05, dist: 1.1},
+  "Face 3/4": {target: [2.75, 1.42, 2.2], az: 0.3, el: 0.12, dist: 1.1},
   "Car 3/4": {target: [4.2, 0.65, 1.0], az: 0.55, el: 0.12, dist: 7.2},
   "Car rear": {target: [4.2, 0.65, 1.0], az: 2.75, el: 0.14, dist: 6.6},
+  "Car nose": {target: [4.6, 0.6, 2.9], az: 0.15, el: 0.1, dist: 3.4},
   "Car side": {target: [4.2, 0.6, 1.0], az: 1.22, el: 0.04, dist: 7.0},
 };
 const orbit = {target: new THREE.Vector3(), az: 0, el: 0, dist: 4};

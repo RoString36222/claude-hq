@@ -30,11 +30,11 @@ function archPts(cz, cy, r, a0, a1, n = 14){
 
 export function buildSportsSaloon(opts = {}){
   const M = {
-    paint: new THREE.MeshPhysicalMaterial({color: opts.paint ?? 0x1f6b4f, roughness: 0.38, metalness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06}),
+    paint: new THREE.MeshPhysicalMaterial({color: opts.paint ?? 0x1d6a4c, roughness: 0.42, metalness: 0.18, clearcoat: 0.8, clearcoatRoughness: 0.12, envMapIntensity: 0.75}),
     black: std(0x141518, 0.45, 0.1),
     gloss: new THREE.MeshPhysicalMaterial({color: 0x0d0e10, roughness: 0.18, metalness: 0.2, clearcoat: 1}),
     carbon: new THREE.MeshPhysicalMaterial({color: 0x1b1d21, roughness: 0.3, metalness: 0.3, clearcoat: 1}),
-    glass: new THREE.MeshPhysicalMaterial({color: 0x1c2730, roughness: 0.05, metalness: 0.1, clearcoat: 1, transparent: true, opacity: 0.86}),
+    glass: new THREE.MeshPhysicalMaterial({color: 0x0f161c, roughness: 0.04, metalness: 0.2, clearcoat: 1, transparent: true, opacity: 0.9, envMapIntensity: 1.2}),
     chrome: std(0xd9dde2, 0.15, 1.0),
     steel: std(0xc5c9ce, 0.25, 0.9),
     rim: std(0x3a3d42, 0.3, 0.8),
@@ -50,7 +50,7 @@ export function buildSportsSaloon(opts = {}){
   const K = new Kit(M);
 
   // ---- body: a loft of rounded (superellipse) sections along the car, wheel arches carved into the flanks -------------
-  const ZF = 2.36, ZR = -2.49, CAP = 0.10, ar = 0.385, acy = R + 0.01;
+  const ZF = 2.36, ZR = -2.49, CAP = 0.07, ar = 0.385, acy = R + 0.01;
   const top = curve([[ZR, 0.98], [-2.42, 1.07], [-2.2, 1.075], [-1.6, 1.04], [-1.0, 0.99], [0.0, 0.97], [0.86, 0.955],
     [1.4, 0.90], [1.95, 0.85], [2.25, 0.78], [ZF, 0.70]]);
   const bot = curve([[ZR, 0.32], [-2.35, 0.24], [-2.0, 0.19], [-1.0, 0.165], [1.0, 0.165], [2.0, 0.19], [2.28, 0.21], [ZF, 0.26]]);
@@ -61,29 +61,41 @@ export function buildSportsSaloon(opts = {}){
     return y;
   };
   const se = (c, n) => Math.sign(c) * Math.pow(Math.abs(c), 2 / n);
-  // a ring from angle a0 to a1 (0 = right flank, pi/2 = top); the underside is lifted into tunnels at the axles,
-  // which is what cuts the arches into the flanks
-  const bodyRing = (z, a0, a1, n) => {
+  // the cross-section, designed rather than a superellipse: rocker, a slightly convex door, the max width low, a crisp
+  // shoulder line, then the upper body tucking in to a gently crowned top. (u: x / half-width, v: 0 sill .. 1 top)
+  const SEC = [[0.95, 0.06], [0.985, 0.18], [1.0, 0.42], [0.99, 0.60], [0.978, 0.70], [0.955, 0.735], [0.90, 0.80],
+    [0.80, 0.90], [0.64, 0.975], [0.32, 1.0], [0.0, 1.006]];
+  const sample = (pts, n) => {
+    const c = new THREE.CatmullRomCurve3(pts.map(([u, v]) => new THREE.Vector3(u, v, 0)), false, "centripetal", 0.5);
+    return c.getSpacedPoints(n).map(q => [q.x, q.y]);
+  };
+  const paintSec = sample(SEC.concat(SEC.slice(0, -1).reverse().map(([u, v]) => [-u, v])), 60);
+  const underSec = sample([[-0.95, 0.06], [-0.80, 0.0], [0, -0.005], [0.80, 0.0], [0.95, 0.06]], 14);
+  const dome = (z, u) => {
+    if(z < 0.95 || z > 2.2){ return 0; }
+    const tz = Math.sin((z - 0.95) / 1.25 * Math.PI);
+    return 0.016 * tz * (Math.exp(-(((u - 0.22) / 0.12) ** 2)) + Math.exp(-(((u + 0.22) / 0.12) ** 2)));
+  };
+  const station = z => {
     let w = half(z), yt = top(z), yb = bot(z);
     const past = Math.max(z - (ZF - CAP), (ZR + CAP) - z, 0);
     const k = past > 0 ? Math.sqrt(Math.max(0.02, 1 - (past / CAP) ** 2)) : 1;
-    const yc = (yt + yb) / 2, h = (yt - yb) / 2 * (0.35 + 0.65 * k);
-    w *= 0.3 + 0.7 * k;
-    const ring = [], ay = archY(z);
-    for(let j = 0; j <= n; j++){
-      const a = a0 + (a1 - a0) * j / n, c = Math.cos(a), sn = Math.sin(a);
-      let x = w * se(c, sn > 0 ? 5 : 6), y = yc + h * se(sn, sn > 0 ? 4.2 : 7);
-      if(sn > 0.2){ x *= 1 - 0.06 * (sn - 0.2); }
-      if(y < ay){ y = ay; }
-      ring.push([x, y]);
-    }
-    return ring;
+    const h = (yt - yb) * (0.4 + 0.6 * k);
+    w *= 0.35 + 0.65 * k;
+    const yb2 = yb + (yt - yb - h) * 0.5;
+    return {w, yb: yb2, h, ay: archY(z)};
   };
-  const A0 = -0.34 * Math.PI, A1 = 1.34 * Math.PI;
-  const up = [], under = [], zs = [], NS = 96;
+  const surf = (z, u, v) => {
+    const S = station(z);
+    let y = S.yb + v * S.h + (v > 0.95 ? dome(z, u) : 0);
+    if(y < S.ay){ y = S.ay; }
+    return new THREE.Vector3(u * S.w, y, z);
+  };
+  const ringOf = (z, sec) => sec.map(([u, v]) => { const q = surf(z, u, v); return [q.x, q.y]; });
+  const up = [], under = [], zs = [], NS = 110;
   for(let i = 0; i <= NS; i++){
     const u = i / NS, z = ZR + (ZF - ZR) * (0.5 - 0.5 * Math.cos(u * Math.PI));
-    zs.push(z); up.push(bodyRing(z, A0, A1, 52)); under.push(bodyRing(z, A1, A0 + Math.PI * 2, 14));
+    zs.push(z); up.push(ringOf(z, paintSec)); under.push(ringOf(z, underSec));
   }
   K.add("paint", loft(up, zs, false));
   K.add("black", loft(under, zs, false));
@@ -119,9 +131,36 @@ export function buildSportsSaloon(opts = {}){
   K.pair("chrome", () => roundedBox(0.25, 0.33, 0.06, 0.05), 0.145, 0.50, 2.335);
   K.pair("gloss", () => roundedBox(0.215, 0.295, 0.06, 0.04), 0.145, 0.50, 2.35);
   for(let i = 0; i < 4; i++){ K.pair("chrome", () => roundedBox(0.012, 0.27, 0.02, 0.005), 0.075 + i * 0.047, 0.50, 2.37); }
-  K.pair("lens", () => roundedBox(0.46, 0.115, 0.10, 0.035), 0.55, 0.67, 2.31, -0.25, -0.42, -0.06);
-  K.pair("lamp", () => roundedBox(0.30, 0.02, 0.02, 0.008), 0.57, 0.645, 2.36, -0.25, -0.42, -0.06);
-  K.pair("lamp", () => roundedBox(0.016, 0.06, 0.02, 0.008), 0.42, 0.665, 2.37, -0.25, -0.42, 0);
+  // headlight units seated on the body surface (position and facing from the loft itself)
+  // the real skin point on the nose for (x, y): walk back from the nose until the section at that height reaches x
+  const boundU = v => {
+    if(v <= SEC[0][1]){ return SEC[0][0]; }
+    for(let q = 1; q < SEC.length; q++){ if(v <= SEC[q][1]){ const [u0, v0] = SEC[q - 1], [u1, v1] = SEC[q]; return u0 + (u1 - u0) * (v - v0) / (v1 - v0); } }
+    return 0;
+  };
+  const noseZ = (x, y) => {
+    let lo = ZF - 0.6, hi = ZF + 0.01;
+    for(let it = 0; it < 30; it++){
+      const mid = (lo + hi) / 2, S = station(mid), v = (y - S.yb) / S.h;
+      const inside = v >= 0 && v <= 1.0 && Math.abs(x) <= boundU(v) * S.w;
+      if(inside){ lo = mid; } else { hi = mid; }
+    }
+    return lo;
+  };
+  const seat = (geo, x, y, out) => {
+    const z = noseZ(x, y), e = 0.02;
+    const dzdx = (noseZ(x + e, y) - noseZ(x - e, y)) / (2 * e), dzdy = (noseZ(x, y + e) - noseZ(x, y - e)) / (2 * e);
+    const n = new THREE.Vector3(-dzdx, -dzdy, 1).normalize(), p0 = new THREE.Vector3(x, y, z);
+    const o = new THREE.Object3D(); o.position.copy(p0).addScaledVector(n, out); o.lookAt(p0.clone().add(n)); o.updateMatrix();
+    return geo.applyMatrix4(o.matrix);
+  };
+  for(const sx of [1, -1]){
+    K.add("gloss", seat(roundedBox(0.30, 0.10, 0.04, 0.03), sx * 0.58, 0.64, -0.008));
+    K.add("lens", seat(roundedBox(0.075, 0.07, 0.03, 0.03), sx * 0.50, 0.645, 0.006));
+    K.add("lens", seat(roundedBox(0.075, 0.07, 0.03, 0.03), sx * 0.63, 0.645, 0.006));
+    K.add("lamp", seat(roundedBox(0.27, 0.014, 0.016, 0.006), sx * 0.58, 0.602, 0.012));
+    K.add("lamp", seat(roundedBox(0.014, 0.06, 0.016, 0.006), sx * 0.43, 0.63, 0.012));
+  }
   K.pair("gloss", () => roundedBox(0.30, 0.17, 0.08, 0.05), 0.58, 0.36, 2.29, 0, -0.3, 0);          // side intakes
   K.add("gloss", roundedBox(0.66, 0.10, 0.08, 0.04), 0, 0.27, 2.33);                                 // centre intake
   K.add("carbon", roundedBox(1.80, 0.025, 0.16, 0.01), 0, 0.19, 2.27);                              // splitter

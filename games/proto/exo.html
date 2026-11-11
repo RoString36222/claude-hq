@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Exosuit Poses</title>
+<style>html,body{margin:0;height:100%;background:#9fb4c4;overflow:hidden}canvas{display:block}
+#lab{position:fixed;left:0;right:0;bottom:8px;display:flex;justify-content:space-around;font:600 13px system-ui,sans-serif;color:#13202b}</style>
+</head>
+<body>
+<div id="lab"></div>
+<script src="/games/engine.js"></script>
+<script src="/games/avatar3d.js"></script>
+<script src="/games/people3d.js"></script>
+<script src="/games/hqexo.js"></script>
+<script>
+// a test bench (not part of the app): the suit on a person in each flight mode side by side.
+// ?f=frame (0-5)  ?p=paint  ?g=glow  ?yaw=rad (the figures' facing)  ?cam=side|front|back|high  ?only=mode  ?base=0-5
+(function(){
+var E = HQV.engine, Q = new URLSearchParams(location.search), XO = HQV.hqExo;
+var MODES = [["standing", null], ["hover", {mode: "hover", speed: 0, agl: 6}], ["cruise", {mode: "cruise", speed: 45}],
+             ["boost", {mode: "cruise", speed: 90, boost: true}], ["bank", {mode: "cruise", speed: 50, turn: 1.1}], ["landing", {mode: "landed"}], ["swim", {mode: "swim", speed: 3}]];
+if(Q.get("only")) MODES = MODES.filter(function(m){ return m[0] === Q.get("only"); });
+var BASES = Q.get("bases") != null;          // ?bases&only=mode: that mode on all six bodies
+if(BASES) MODES = [0, 1, 2, 3, 4, 5].map(function(){ return MODES[0]; });
+var look = {f: +(Q.get("f") || 0), p: Q.get("p") != null ? +Q.get("p") : null, fin: Q.get("fin") != null ? +Q.get("fin") : null, g: +(Q.get("g") || 0)};
+var F = XO.FRAMES[look.f] || XO.FRAMES[0]; if(look.p == null) look.p = F.paint; if(look.fin == null) look.fin = F.fin;
+E.lib().then(function(L){
+  var T = L.THREE, r = new T.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
+  r.setSize(innerWidth, innerHeight); r.toneMapping = T.ACESFilmicToneMapping; r.outputColorSpace = T.SRGBColorSpace; r.shadowMap.enabled = true; document.body.appendChild(r.domElement);
+  var S = new T.Scene(); S.background = new T.Color(0x9fb4c4);
+  S.add(new T.HemisphereLight(0xf3f7ff, 0x6a7a5a, 1.5));
+  var d = new T.DirectionalLight(0xfff3e2, 2.4); d.position.set(3, 6, 5); d.castShadow = true; d.shadow.mapSize.set(2048, 2048);
+  var sc = d.shadow.camera; sc.left = -12; sc.right = 12; sc.top = 6; sc.bottom = -6; S.add(d);
+  var rim = new T.DirectionalLight(0x9fd8ff, 1.0); rim.position.set(-4, 3, -5); S.add(rim);
+  var gnd = new T.Mesh(new T.PlaneGeometry(60, 30), new T.MeshStandardMaterial({color: 0x7d8a78, roughness: 0.95})); gnd.rotation.x = -PI/2; gnd.receiveShadow = true; S.add(gnd);
+  var n = MODES.length, gap = n > 1 ? 2.3 : 0, cam = new T.PerspectiveCamera(n > 1 ? 30 : 32, innerWidth/innerHeight, 0.05, 100), mode = Q.get("cam") || "side";
+  var W = (n - 1)*gap, dist = n > 1 ? W*0.62 + 3 : 4.2, cy = n > 1 ? 1.6 : 1.3;
+  if(mode === "front") cam.position.set(0, cy + 0.6, dist); else if(mode === "back") cam.position.set(0, cy + 1.2, -dist);
+  else if(mode === "high") cam.position.set(dist*0.35, cy + dist*0.7, dist*0.75); else cam.position.set(dist*0.42, cy + 0.9, dist*0.9);
+  cam.lookAt(0, cy, 0);
+  var base = Q.get("base") != null ? +Q.get("base") : null, specs = [[0, 1, 2, 0, 0, 0, 0, 0, 0, 0], [1, 3, 1, 1, 0, 2, 0, 0, 0, 0], [2, 2, 3, 3, 0, 0, 1, 0, 0, 0],
+    [3, 4, 1, 0, 0, 1, 0, 0, 0, 0], [4, 5, 4, 5, 0, 3, 2, 0, 0, 0], [5, 6, 2, 2, 1, 0, 3, 1, 0, 0], [0, 1, 9, 9, 2, 5, 0, 1, 0, 1]];
+  Promise.all(MODES.map(function(m, i){ var s = specs[i % specs.length].slice(); if(base != null) s[0] = base; if(BASES) s[0] = i; return HQV.people3d.build(s); })).then(function(chs){
+    var yaw = Q.get("yaw") != null ? +Q.get("yaw") : 0.9;
+    document.getElementById("lab").innerHTML = MODES.map(function(m){ return "<span>" + m[0] + "</span>"; }).join("");
+    chs.forEach(function(ch, i){
+      ch.base = 1.7/0.72; ch.o.scale.setScalar(ch.base);
+      ch.o.position.set(i*gap - W/2, MODES[i][1] && MODES[i][0] !== "landing" ? (MODES[i][0] === "hover" ? 1.0 : 1.6) : 0, 0);
+      ch.o.rotation.y = yaw; ch.o.traverse(function(o){ if(o.isMesh) o.castShadow = true; });
+      S.add(ch.o); if(ch.acts.idle) ch.acts.idle.play();
+      XO.wear(T, ch, look);
+    });
+    var t = 1, steps = +(Q.get("steps") || 150);
+    for(var k = 0; k < steps; k++){
+      t += 1/60;
+      chs.forEach(function(ch, i){
+        var fl = MODES[i][1]; ch._fly = fl ? Object.assign({}, fl) : null;
+        if(fl && fl.mode === "landed" && k < steps*0.5) ch._fly = {mode: "hover", agl: 0.3};
+        ch.mixer.update(1/60); ch.update(t);
+      });
+    }
+    if(n === 1){
+      var bb = new T.Box3(); chs[0]._exo.meshes.forEach(function(m){ m.updateMatrixWorld(true); }); bb.setFromObject(chs[0].o, true);
+      var c = bb.getCenter(new T.Vector3()), dv = cam.position.clone().sub(new T.Vector3(0, cy, 0)).normalize(), sz = bb.getSize(new T.Vector3()).length();
+      cam.position.copy(c).addScaledVector(dv, sz*1.9 + 0.6); cam.lookAt(c);
+    }
+    r.render(S, cam);
+    window.__stats = chs.map(function(ch){ return XO.stats(ch); });
+    window.__ready = true;
+  }).catch(function(e){ console.error("build failed", e && e.stack || e); window.__ready = true; });
+});
+var PI = Math.PI;
+})();
+</script>
+</body>
+</html>

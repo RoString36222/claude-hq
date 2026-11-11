@@ -3,6 +3,23 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.41.0 — Realism: new people, detailed vehicles, rebuilt exosuits.**
+  - **New people:** everyone (you, friends, crew, City crowds) is a new character with a real skeleton (elbows,
+    knees, fingers) and a soft toy look: a big smooth head with big eyes, fitted hair (fringe and ponytail, short,
+    shaved, neon crest), six outfits, and every saved character carries over (the ten-number spec is unchanged).
+    Bodies are Quaternius "Ultimate Modular" characters (CC0, games/people/LICENSE-quaternius.txt).
+  - **Riding for real:** hands on the grips, the bars or the steering wheel, feet on the pegs or the pedals (they
+    follow the cranks), a lean from the waist and a twist into the turn; skating, rails on transit, desks and seats
+    re-posed for the new body.
+  - **Every vehicle rebuilt:** all 61 catalogue bikes and cars and both starters, modelled from the real layouts
+    and proportions (fairings and frames, spoked or cast wheels, knobbly tyres, discs, engines, exhausts; lofted car
+    bodies with shoulder lines, flush lamps, grilles and intakes, a new Formula 1 car). No badges or logos. Each has
+    a lighter far model, so the City's traffic stays fast.
+  - **Exosuits rebuilt:** the six frames redesigned with layered, articulated plates and their own helmets, cores
+    and backs; fitted to the new body; flight poses with real joints (hover, cruise, boost, bank, landing, swim);
+    thrusters on the palms and soles; a faceplate that closes last; and new synthesised sound (thruster hum, boost
+    roar, servos, landing thump) that follows your volume and Calm settings.
+
 - **3.40.2 — Fix: the City no longer throws walking up to a late-built tile.**
   - Signs, parked cars and street furniture from tiles that finish after the City opens waited for their texture cells
     in the world-wide lists; the props round the camera were refilled from those lists and threw near them. They now

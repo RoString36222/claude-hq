@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "version": "3.41.0",
+      "title": "Realism update",
+      "body": "New people with real joints and a soft toy look, every bike and car rebuilt in detail, riders that hold the bars and stand on the pegs, and redesigned exosuits with new flight poses and sound."
+    },
+    {
       "version": "3.40.2",
       "title": "City fix",
       "body": "Fixed an error when you walked up to part of the City that finished building after you arrived."

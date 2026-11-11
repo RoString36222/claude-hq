@@ -69,7 +69,7 @@ scene.add(bike.g);
 const stats = {};
 let rider = null;
 try {
-  rider = await loadCharacter("assets/W_Casual.gltf", LOOKS.rider);
+  rider = await loadCharacter("../people/woman-adventurer.glb", LOOKS.rider, {anims: "../people/anims.glb"});
   const want = 1.62;   // standing height in metres
   rider.o.scale.setScalar(want / rider.height);
   rider.o.rotation.y = bike.g.rotation.y;
@@ -86,7 +86,8 @@ car.g.position.set(4.2, 0, 1.0); car.g.rotation.y = -0.35;
 scene.add(car.g);
 let walker = null;
 try {
-  walker = await loadCharacter("assets/W_Casual.gltf", Object.assign({}, LOOKS.rider, {top: 0xd9e1e8, legs: 0x3d4a66}));
+  walker = await loadCharacter("../people/man-hoodie.glb", Object.assign({}, LOOKS.rider, {top: 0x3d6fb3, legs: 0x3d4a66, ponytail: false}), {anims: "../people/anims.glb"});
+  console.log("clips", Object.keys(walker.clips).length);
   walker.o.scale.setScalar(1.62 / walker.height);
   walker.o.position.set(2.75, 0, 2.2); walker.o.rotation.y = -0.6;
   scene.add(walker.o);

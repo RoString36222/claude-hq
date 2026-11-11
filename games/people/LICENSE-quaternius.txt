@@ -1,0 +1,4 @@
+Characters: Quaternius "Ultimate Modular Women" and "Ultimate Modular Men" (https://quaternius.com).
+License: CC0 1.0 Universal (public domain dedication). Free for personal and commercial use.
+Packed to GLB by tools/pack_people.py (meshes per outfit; anims.glb holds the shared animations).
+Heads are replaced at runtime by Claude HQ's own toy head (games/people3d.js).

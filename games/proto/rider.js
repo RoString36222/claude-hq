@@ -13,6 +13,7 @@ export const LOOKS = {
 // Load a character, restyle it and return {o, bones, mixer, clips, height}.
 export async function loadCharacter(url, look = LOOKS.rider, opts = {}){
   const gltf = await loader.loadAsync(url);
+  if(opts.anims){ gltf.animations = (await loader.loadAsync(opts.anims)).animations; }
   const o = gltf.scene;
   const bones = {}, hairMeshes = [], headMeshes = [];
   o.traverse(n => { if(n.isBone){ bones[n.name] = n; } });

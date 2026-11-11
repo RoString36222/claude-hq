@@ -184,8 +184,9 @@ class GrenadeWiring(unittest.TestCase):
 
     def test_frame_and_drawing(self):
         fr0 = func_body(self.hq, "frame")
-        self.assertLess(fr0.index("moveAvatar(dt);"), fr0.index("gnFrame(dt);"))   # after you move, before the camera
-        self.assertLess(fr0.index("gnFrame(dt);"), fr0.index("rigFrame(t, dt)"))
+        # (you move, and the camera follows, on the frame's real time in 0.05 s steps: moveAvatar(sdt/sn), rigFrame(t, sdt))
+        self.assertLess(fr0.index("moveAvatar(sdt/sn);"), fr0.index("gnFrame(dt);"))   # after you move, before the camera
+        self.assertLess(fr0.index("gnFrame(dt);"), fr0.index("rigFrame(t, sdt)"))
         self.assertIn("gunStep(avatar.ch, GN.out && !ride, true);", self.hq)
         self.assertIn("gunStep(P.ch, !!P.gl && !vk, true);", self.hq)
         fr = func_body(self.hq, "gnFrame")

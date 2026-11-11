@@ -666,28 +666,36 @@ HQV.hqWorlds.basement = function(c, w){
     });
     drawCards(byBay);
   }
-  // [realism perf] Your cars go onto their bays a few milliseconds' worth a frame, not all in one frame (twelve new
-  // models froze B1 for ~240 ms). A model whose full blueprint is not made yet (games/hqvehiclemodels.js: ~10-20 ms
-  // the first time) stands first as its far model (a third of the work, often already made by the Dealership's
-  // turntables) and is swapped for the full one a frame later, one car a frame. Without frames (node tests): at once.
-  var ownQ = [], ownPumping = false, wantNow = {};
+  // [realism perf] Behind the first fade in (B1 built, never shown yet: nobody sees the frame it holds) your cars go onto their
+  // bays at once, each its full model, and hq3d waits for them (w.settle) and links their shaders before the fade lifts,
+  // so you arrive to every car on its bay and none swaps in under you. After that (a car bought, moved down or re-tuned)
+  // they go on a few milliseconds' worth a frame, and while you are here a model whose full blueprint is not made yet (games/hqvehiclemodels.js: ~10-20 ms the first
+  // time) stands first as its far model (a third of the work) and is swapped for the full one a frame later, one car a
+  // frame. Without frames (node tests): at once.
+  var ownQ = [], ownPumping = false, wantNow = {}, shown = false, arrived = false, settles = [];
   var clock = typeof performance !== "undefined" && performance.now ? function(){ return performance.now(); } : Date.now;
   function ownJob(fn){
-    if(typeof requestAnimationFrame !== "function"){ fn(); return; }
+    if(!arrived || typeof requestAnimationFrame !== "function"){ fn(); return; }
     ownQ.push(fn);
     if(!ownPumping){ ownPumping = true; requestAnimationFrame(ownPump); }
   }
   function ownPump(){
-    ownPumping = false; if(dead){ ownQ = []; return; }
+    ownPumping = false; if(dead){ ownQ = []; settled(); return; }
     var t0 = clock();
     while(ownQ.length){ ownQ.shift()(); if(clock() - t0 > 6) break; }
-    if(ownQ.length){ ownPumping = true; requestAnimationFrame(ownPump); }
+    if(ownQ.length){ ownPumping = true; requestAnimationFrame(ownPump); } else settled();
   }
+  function settled(){ var l = settles; settles = []; l.forEach(function(f){ f(); }); }
+  // -> a Promise: your list read (the first refresh) and the cars it queued on their bays, or cap ms passed
+  w.settle = function(cap){
+    var drained = function(){ return !ownQ.length && !ownPumping ? true : new Promise(function(res){ settles.push(function(){ res(true); }); }); };
+    return Promise.race([Promise.resolve(firstLoad).then(drained, drained), new Promise(function(res){ setTimeout(function(){ res(false); }, cap || 600); })]);
+  };
   function placeOwn(r){
     var k = "own:" + r.id, VM = HQV.hqVehicleModels;
     if(dead || ownProps[k] || wantNow[k] !== r) return;               // built meanwhile, or no longer wanted
     var entry = r.entry, hex = paintHex(entry, r.paint), P = L.plinths[NSTART + r.bay] || bayPose(r.bay), rig;
-    var far = typeof requestAnimationFrame === "function" && VM.hasBlueprint && !VM.hasBlueprint(THREE, entry, r.tune);
+    var far = shown && typeof requestAnimationFrame === "function" && VM.hasBlueprint && !VM.hasBlueprint(THREE, entry, r.tune);
     try { rig = VM.build(c, entry, hex, far ? {tune: r.tune, lod: 1} : {tune: r.tune}); } catch(e){ return; }
     if(!rig || !rig.g) return;
     measure(rig.g);
@@ -764,6 +772,7 @@ HQV.hqWorlds.basement = function(c, w){
   w.blocked = function(x, z){ var m = c.motion && c.motion(); return blockedAt(L, x, z, !!(m && m.ride)); };
   w.stale = false;
   w.onEnter = function(from, opts){
+    shown = arrived = true;
     refresh(true);
     fx("enter", c, w);   // [integrate] lets valet() animate props in this live world
     var dir = from === "lobby" ? "lobby" : "down";
@@ -834,10 +843,10 @@ HQV.hqWorlds.basement = function(c, w){
     chipStep(dt);
   };
   w.drawCalls = function(){ return merged ? merged.after : null; };
-  w.onLeave = function(){ if(chip) chip.hidden = true; };
+  w.onLeave = function(){ shown = false; if(chip) chip.hidden = true; };
   w.destroy = function(){ dead = true; if(chip && chip.parentNode) chip.parentNode.removeChild(chip); chip = null; fx("leave"); unsubs.forEach(function(u){ try { if(typeof u === "function") u(); } catch(e){} }); unsubs = []; };
   w.refresh = refresh;
-  refresh(false);
+  var firstLoad = refresh(false);
   return w;
 };
 })();

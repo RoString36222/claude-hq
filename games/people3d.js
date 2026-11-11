@@ -168,8 +168,9 @@ function skullBox(THREE, root, head){
 // wholesale): every person drew, and cast, from behind the camera too. A sub-mesh's own bind sphere does not hold its
 // posed limbs (a sprinting shoe or a seated rider's hand swings 20-40 cm past it), so every skinned part of one person
 // gets the same sphere: the whole body's, centred on the bind hips, radius the body's largest bind extent (about 1.7 m;
-// measured over every clip, the wave's raised hand needs 0.9 of it, a stride, a seat's legs out front and IK grips
+// measured over every clip, the wave's raised hand needs 0.98 of it, a stride, a seat's legs out front and IK grips
 // less). Seats move o, never the hips, so the sphere follows the body.
+var CULL_PAD = 1.5;
 function cullable(THREE, root){
   root.updateMatrixWorld(true);
   var inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), rel = new THREE.Matrix4();
@@ -186,7 +187,9 @@ function cullable(THREE, root){
   });
   if(!meshes.length || box.isEmpty()){ return; }
   var c = hips ? hips.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv) : box.getCenter(new THREE.Vector3());
-  var r = Math.max(box.max.y - box.min.y, box.max.x - box.min.x, box.max.z - box.min.z);
+  // CULL_PAD: the clips reach 0.98 of the bind extent from the hips (the wave's hand, a sprint's shoe); half as much
+  // again holds a pose wider than any clip (an exosuit's spread flight, a bigger emote, an IK reach), for a few more draws
+  var r = Math.max(box.max.y - box.min.y, box.max.x - box.min.x, box.max.z - box.min.z) * CULL_PAD;
   var lc = new THREE.Vector3(), sc = new THREE.Vector3();
   meshes.forEach(function(n){
     rel.multiplyMatrices(inv, n.matrixWorld);

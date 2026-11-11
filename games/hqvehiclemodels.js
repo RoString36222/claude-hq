@@ -486,6 +486,31 @@ function prof(T, pts, w, bevel, cseg){
   var depth = Math.max(0.001, w - 2*bevel);
   var g = new T.ExtrudeGeometry(s, {depth: depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelSegments: cseg || 2, curveSegments: 6});
   g.translate(0, 0, -depth/2); g.rotateY(-PI/2); g.computeVertexNormals();
+  return smoothN(g, 0.62);
+}
+// [4.0.1] smooth an extrusion's normals across coincident vertices whose faces meet at under ~52 degrees (the curve's
+// facets and the bevel round off; the profile's crisp edges and the flat sides stay)
+function smoothN(g, cosT){
+  if(g.index) return g;
+  var p = g.attributes.position, n = g.attributes.normal, cnt = p.count, fn = new Float32Array(cnt*3), grp = {}, i, j;
+  for(i = 0; i < cnt; i += 3){
+    var ax = p.getX(i), ay = p.getY(i), az = p.getZ(i), ux = p.getX(i + 1) - ax, uy = p.getY(i + 1) - ay, uz = p.getZ(i + 1) - az;
+    var vx = p.getX(i + 2) - ax, vy = p.getY(i + 2) - ay, vz = p.getZ(i + 2) - az;
+    var cx = uy*vz - uz*vy, cy = uz*vx - ux*vz, cz = ux*vy - uy*vx;
+    for(j = 0; j < 3; j++){ fn[(i + j)*3] = cx; fn[(i + j)*3 + 1] = cy; fn[(i + j)*3 + 2] = cz; }
+  }
+  for(i = 0; i < cnt; i++){ var k = Math.round(p.getX(i)*2e4) + "," + Math.round(p.getY(i)*2e4) + "," + Math.round(p.getZ(i)*2e4); (grp[k] = grp[k] || []).push(i); }
+  var L = function(q){ return Math.hypot(fn[q*3], fn[q*3 + 1], fn[q*3 + 2]) || 1e-12; };
+  Object.keys(grp).forEach(function(k){
+    var G = grp[k];
+    G.forEach(function(a){
+      var la = L(a), sx = 0, sy = 0, sz = 0;
+      G.forEach(function(b){ var lb = L(b), d = (fn[a*3]*fn[b*3] + fn[a*3 + 1]*fn[b*3 + 1] + fn[a*3 + 2]*fn[b*3 + 2])/(la*lb);
+        if(d > cosT){ sx += fn[b*3]; sy += fn[b*3 + 1]; sz += fn[b*3 + 2]; } });
+      var l = Math.hypot(sx, sy, sz) || 1; n.setXYZ(a, sx/l, sy/l, sz/l);
+    });
+  });
+  n.needsUpdate = true;
   return g;
 }
 // the same through a smooth closed curve (Catmull-Rom) round the points: tanks, fairings, seats, mudguards
@@ -733,18 +758,18 @@ var TYRES = {
 // foot and at the roof (shares of the half width), the plan (nose, waist, tail shares), front overhang share, clearance
 var FAM = {
   hatch: {sec: "saloon", h: [0.5, 0.6, 0.64, 0.68, 0.66], cab: [0.5, 0.86, -0.06, -0.62], gw: 0.8, tw: 0.64, plan: [0.86, 0.985, 0.9], fo: 0.52, gc: 0.13, seat: 0.3},
-  sedan: {sec: "saloon", h: [0.53, 0.61, 0.66, 0.72, 0.69], cab: [0.57, 0.93, 0.43, -0.23], gw: 0.82, tw: 0.62, plan: [0.88, 0.985, 0.9], fo: 0.44, gc: 0.13, seat: 0.27},
-  coupe: {sec: "saloon", h: [0.52, 0.61, 0.66, 0.72, 0.7], cab: [0.6, 1.0, 0.3, -0.36], gw: 0.82, tw: 0.6, plan: [0.88, 0.985, 0.9], fo: 0.45, gc: 0.12, seat: 0.24},
+  sedan: {sec: "saloon", h: [0.53, 0.61, 0.655, 0.69, 0.67], cab: [0.57, 0.93, 0.43, -0.23], gw: 0.82, tw: 0.62, plan: [0.88, 0.985, 0.9], fo: 0.44, gc: 0.13, seat: 0.27},
+  coupe: {sec: "saloon", h: [0.52, 0.61, 0.655, 0.7, 0.68], cab: [0.6, 1.0, 0.3, -0.36], gw: 0.82, tw: 0.6, plan: [0.88, 0.985, 0.9], fo: 0.45, gc: 0.12, seat: 0.24},
   ev:    {sec: "saloon", h: [0.52, 0.6, 0.65, 0.71, 0.69], cab: [0.6, 0.95, 0.3, -0.45], gw: 0.82, tw: 0.6, plan: [0.88, 0.985, 0.9], fo: 0.45, gc: 0.13, seat: 0.27},
   suv:   {sec: "suv", h: [0.53, 0.6, 0.64, 0.66, 0.62], cab: [0.42, 0.82, -0.72, -0.92], gw: 0.85, tw: 0.74, plan: [0.9, 0.99, 0.92], fo: 0.46, gc: 0.2, seat: 0.4},
-  super: {sec: "super", h: [0.33, 0.62, 0.64, 0.74, 0.7], cab: [0.16, 1.05, 0.9, -0.62], gw: 0.72, tw: 0.44, plan: [0.8, 0.9, 0.9], fo: 0.48, gc: 0.1, seat: 0.18, hood: 0.07},
-  hyper: {sec: "super", h: [0.37, 0.62, 0.65, 0.76, 0.73], cab: [0.28, 0.9, 0.72, -0.35], gw: 0.74, tw: 0.48, plan: [0.82, 0.92, 0.9], fo: 0.47, gc: 0.1, seat: 0.2, hood: 0.05}
+  super: {sec: "super", h: [0.28, 0.62, 0.64, 0.74, 0.7], cab: [0.16, 1.05, 0.9, -0.62], gw: 0.72, tw: 0.44, plan: [0.8, 0.9, 0.9], fo: 0.48, gc: 0.1, seat: 0.18, hood: 0.025},
+  hyper: {sec: "super", h: [0.33, 0.62, 0.65, 0.76, 0.73], cab: [0.28, 0.9, 0.72, -0.35], gw: 0.74, tw: 0.48, plan: [0.82, 0.92, 0.9], fo: 0.47, gc: 0.1, seat: 0.2, hood: 0.02}
 };
 // the designed cross-sections ([u, v]: u x / half width, v 0 sill .. 1 top), left side from the sill up to the centre
 var SECS = {
-  saloon: [[0.95, 0.06], [0.985, 0.18], [1.0, 0.42], [0.99, 0.6], [0.978, 0.7], [0.955, 0.735], [0.9, 0.8], [0.8, 0.9], [0.64, 0.975], [0.32, 1.0], [0.0, 1.006]],
-  suv: [[0.95, 0.05], [0.99, 0.2], [1.0, 0.45], [0.995, 0.62], [0.985, 0.73], [0.96, 0.77], [0.9, 0.84], [0.8, 0.92], [0.6, 0.98], [0.3, 1.0], [0.0, 1.004]],
-  super: [[0.92, 0.06], [0.975, 0.2], [1.0, 0.36], [0.985, 0.52], [0.95, 0.64], [0.88, 0.76], [0.76, 0.87], [0.58, 0.95], [0.3, 0.99], [0.0, 1.0]]
+  saloon: [[0.95, 0.06], [0.985, 0.18], [1.0, 0.42], [0.995, 0.6], [0.985, 0.72], [0.97, 0.745], [0.93, 0.8], [0.86, 0.9], [0.74, 0.955], [0.5, 0.985], [0.24, 0.997], [0.0, 1.0]],
+  suv: [[0.95, 0.05], [0.99, 0.2], [1.0, 0.45], [0.998, 0.62], [0.99, 0.74], [0.975, 0.77], [0.93, 0.84], [0.85, 0.92], [0.7, 0.965], [0.4, 0.99], [0.0, 1.0]],
+  super: [[0.93, 0.05], [0.985, 0.18], [1.0, 0.38], [0.99, 0.56], [0.965, 0.68], [0.92, 0.77], [0.84, 0.86], [0.68, 0.935], [0.4, 0.982], [0.0, 1.0]]
 };
 // each model's cues (an unknown model gets its family's defaults). grille: a BMW kidney style; lamp / tail: the
 // lamp graphics; rim: the wheel design; extras as flags. dh / dcab: offsets on the family's heights and cabin.
@@ -794,7 +819,7 @@ function carSpec(entry, st, d){
     P.koen = /Jesko/.test(m) ? "jesko" : /Regera/.test(m) ? "regera" : /One/.test(m) ? "one" : "agera";
     P.lamp = "koen"; P.tail = P.koen === "agera" || P.koen === "one" ? "round" : "koenBar"; P.rim = "mesh"; P.spokes = {jesko: 10, agera: 7, one: 8, regera: 9}[P.koen];
     P.rimCol = P.koen === "agera" || P.koen === "one" ? COL.carbon : COL.alu; P.cal = P.koen === "one" ? COL.orange : COL.red; P.intake = true; P.scoopK = true;
-    P.ex = P.koen === "jesko" ? "oval" : P.koen === "regera" ? "ovalChrome" : "centre"; P.diff = true; P.hood = 0.035;
+    P.ex = P.koen === "jesko" ? "oval" : P.koen === "regera" ? "ovalChrome" : "centre"; P.diff = true; P.hood = 0.02;
     P.wing = P.koen === "agera" ? 6 : P.koen === "one" ? 7 : 0; P.fins = P.koen === "jesko"; P.periscope = P.koen === "one";
     P.fo = {jesko: 0.44, agera: 0.53, one: 0.514, regera: 0.5}[P.koen];
     P.cab = {jesko: [0.3, 0.86, 0.6, -0.92], agera: [0.34, 0.8, 0.55, -0.2], one: [0.34, 0.8, 0.55, -0.24], regera: [0.34, 0.84, 0.55, -0.4]}[P.koen];
@@ -816,12 +841,13 @@ function carShape(T, P, d){
   if(zCr > zAr - 0.25) zCr = zAr - 0.25;
   if(zC > zCr - 0.1) zC = zCr - 0.1;
   var top = curveF([[zT, hh[4] - 0.07*H], [zT + 0.07, hh[4]], [zT + 0.22, Math.max(hh[4], hh[3] - 0.01)], [zC, hh[3]], [zA, hh[2]],
-                    [zf, hh[1]]].concat(P.mid ? [[zN - 0.4, hh[0] + 0.14*H], [zN - 0.12, hh[0] + 0.04*H]] : [[zN - 0.14, hh[0] + 0.035*H]]).concat([[zN, hh[0]]]));
+                    [zf, hh[1]]].concat(P.mid ? [0.75, 0.5, 0.25, 0.08].map(function(t){ var z = zN - (zN - zf)*t; return [z, hh[0] + (hh[1] - hh[0])*t*(0.92 + 0.08*t)]; })
+                                               : [[zN - 0.14, hh[0] + 0.02*H]]).concat([[zN, hh[0]]]));
   var bot = curveF([[zT, gc + 0.16], [zT + 0.16, gc + 0.07], [zr - Rr - 0.1, gc + 0.03], [zr + Rr + 0.1, gc], [zf - Rf - 0.1, gc],
                     [zf + Rf + 0.1, gc + 0.03], [zN - 0.1, gc + 0.06], [zN, gc + 0.12]]);
   var pl = P.plan, mid = P.mid;
   var half = curveF([[zT, (pl[2] - 0.08)*hw], [zT + 0.2, (0.96 + pl[2])/2*hw], [zT + 0.45, 0.975*hw], [zr, hw], [zr + Rr + 0.25, (mid ? pl[1] + 0.04 : 0.99)*hw], [(zf + zr)/2, (mid ? pl[1] : 0.985)*hw],
-                     [zf - Rf - 0.1, (mid ? 0.97 : 0.99)*hw], [zf, hw], [zN - 0.45, 0.965*hw], [zN - 0.2, (0.9 + pl[0])/2*hw], [zN, (pl[0] - 0.1)*hw]]);
+                     [zf - Rf - 0.1, (mid ? 0.97 : 0.99)*hw], [zf, hw], [zN - 0.45, 0.975*hw], [zN - 0.18, (0.93 + pl[0])/2*hw], [zN, (pl[0] - (mid ? 0.12 : 0.03))*hw]]);
   var arF = Rf + 0.035, arR = Rr + 0.04, acF = Rf + 0.012, acR = Rr + 0.012;
   var archY = function(z){
     var y = -9, dz = Math.abs(z - zf); if(dz < arF) y = acF + Math.sqrt(arF*arF - dz*dz);
@@ -829,7 +855,7 @@ function carShape(T, P, d){
     return y;
   };
   var flare = function(z){ var f = Math.max(0, 1 - Math.abs(z - zf)/(arF + 0.25)), r = Math.max(0, 1 - Math.abs(z - zr)/(arR + 0.3)); return Math.max(f*f, r*r*(mid ? 1.4 : 1)); };
-  var SEC = SECS[P.sec] || SECS.saloon, capF = mid ? 0.09 : 0.06, capR = 0.07;
+  var SEC = SECS[P.sec] || SECS.saloon, capF = mid ? 0.22 : 0.05, capR = 0.07;
   // the section as a polyline sampled by arc length, both halves (left from the sill over the top to the right sill)
   var secPts = function(n){
     var c = new T.CatmullRomCurve3(SEC.concat(SEC.slice(0, -1).reverse().map(function(q){ return [-q[0], q[1]]; })).map(function(q){ return new T.Vector3(q[0], q[1], 0); }), false, "centripetal", 0.5);
@@ -848,9 +874,9 @@ function carShape(T, P, d){
   };
   var station = function(z){
     var w = half(z), yt = top(z), yb = bot(z), past = Math.max(z - (zN - capF), (zT + capR) - z, 0), cl = z > 0 ? capF : capR;
-    var k = past > 0 ? Math.sqrt(Math.max(0.02, 1 - (past/cl)*(past/cl))) : 1, h = (yt - yb)*(0.45 + 0.55*k);
-    w *= 0.4 + 0.6*k;
-    return {w: w, yb: yb + (yt - yb - h)*0.5, h: h, ay: archY(z), fl: flare(z)};
+    var k = past > 0 ? Math.sqrt(Math.max(0.02, 1 - (past/cl)*(past/cl))) : 1, fv = z > 0 ? (P.mid ? 0.18 : 0.82) : 0.45, h = (yt - yb)*(fv + (1 - fv)*k), fw = z > 0 ? (P.mid ? 0.86 : 0.7) : 0.4;
+    w *= fw + (1 - fw)*k;                 // a saloon's fascia stands upright
+    return {w: w, yb: yb + (yt - yb - h)*(z > 0 && P.mid ? 0.12 : 0.5), h: h, ay: archY(z), fl: flare(z)};   // a mid-engined nose: a low sharp leading edge
   };
   var surf = function(z, u, v){
     var S = station(z), y = S.yb + v*S.h + (v > 0.9 ? dome(z, u) : 0);
@@ -1089,7 +1115,7 @@ function grilleParts(B, body, S, P, yG){
   var T = B.T, at = function(mk, col, pat, geo, cx, cy, out){ if(pat) B.t(pat); B.put(body, mk, S.onEnd(geo, cx, cy, 1, out || 0), col); };
   var k = P.grille, hw = S.hw;
   if(k){
-    var D = {tall: [0.24, 0.42, 0.06, 0.04, "h"], wide: [0.3, 0.16, 0.05, 0.03, "v"], frameless: [0.27, 0.15, 0.015, 0.025, "h"], wideLit: [0.33, 0.2, 0.06, 0.03, "v"],
+    var D = {tall: [0.25, 0.5, 0.05, 0.035, "h"], wide: [0.3, 0.16, 0.05, 0.03, "v"], frameless: [0.27, 0.15, 0.015, 0.025, "h"], wideLit: [0.33, 0.2, 0.06, 0.03, "v"],
              xl: [0.32, 0.3, 0.07, 0.035, "v"], xlLit: [0.38, 0.28, 0.06, 0.03, "v"], xm: [0.34, 0.3, 0.03, 0.03, "v"], closed: [0.2, 0.3, 0.06, 0.04, "c"], diag: [0.3, 0.24, 0.05, 0.03, "d"]}[k] || [0.3, 0.16, 0.05, 0.03, "v"];
     var w = D[0], h = D[1], r = D[2], gap = D[3], cy = yG - h/2 + (k === "tall" || k === "closed" ? -0.02 : 0.04);
     [1, -1].forEach(function(o){
@@ -1237,12 +1263,14 @@ function buildCar(T, entry, st, d, G){
     [[0.015, 0.31], [0.69, PI/PI - 0.015]].forEach(function(r){
       var a0 = r[0]*PI, a1 = r[1]*PI;
       B.put(body, "paint", band(S.zC, S.zCr + 0.02, a0, a1, 0.006, lod ? 4 : 12, lod ? 3 : 8));         // the C pillars
-      if(!lod) B.put(body, "paint", band(S.zAr + 0.02, S.zA, r[0] < 0.5 ? 0.25*PI : 0.69*PI, r[0] < 0.5 ? 0.31*PI : 0.75*PI, 0.006, 14, 3));   // the A pillars
+      var apM = mid ? "trim" : "paint";
+      if(!lod){ if(mid) B.t("gloss"); B.put(body, apM, band(S.zAr - 0.02, S.zA, r[0] < 0.5 ? 0.22*PI : 0.66*PI, r[0] < 0.5 ? 0.34*PI : 0.78*PI, 0.007, 14, 4), mid ? COL.black : null); }   // the A pillars on the glass edges
+      if(!lod){ B.t("gloss"); B.put(body, "trim", band(S.zCr - 0.02, S.zAr + 0.02, r[0] < 0.5 ? 0.265*PI : 0.705*PI, r[0] < 0.5 ? 0.295*PI : 0.735*PI, 0.008, 20, 1), COL.black); }   // the window's top surround
     });
     if(!lod){
       var trimC = P.mid || /M|CSL/.test(String(entry.model || "")) && P.brand === "bmw" ? COL.black : COL.chrome;
-      B.t(trimC === COL.chrome ? "chrome" : "gloss").put(body, "trim", band(S.zC + 0.02, S.zA - 0.04, 0.0, 0.0015*PI, 0.009, 20, 1), trimC);
-      B.t(trimC === COL.chrome ? "chrome" : "gloss").put(body, "trim", band(S.zC + 0.02, S.zA - 0.04, 0.9985*PI, PI, 0.009, 20, 1), trimC);
+      B.t(trimC === COL.chrome ? "chrome" : "gloss").put(body, "trim", band(S.zC + 0.02, S.zA - 0.04, 0.0, 0.004*PI, 0.009, 20, 1), trimC);
+      B.t(trimC === COL.chrome ? "chrome" : "gloss").put(body, "trim", band(S.zC + 0.02, S.zA - 0.04, 0.996*PI, PI, 0.009, 20, 1), trimC);
       if(!mid) [[0.015, 0.29], [0.71, 0.985]].forEach(function(r){ B.t("gloss").put(body, "trim", band(zB - 0.07, zB + 0.01, r[0]*PI, r[1]*PI, 0.007, 2, 6), COL.black); });   // the B pillars
     }
     // the arch liners (dark), so you never see through the body round a wheel
@@ -1255,7 +1283,7 @@ function buildCar(T, entry, st, d, G){
     });
     // the lamps, front and back, and the grille / intakes
     // lamp heights from the end stations (a share of the way up), their centres and scale from the width there
-    var sF = S.station(zN - (mid ? 0.32 : 0.2)), sR = S.station(zT + 0.2), vL = P.fam === "suv" ? 0.7 : mid ? 0.8 : 0.74, vT = mid ? 0.72 : 0.68;
+    var sF = S.station(zN - (mid ? 0.32 : 0.2)), sR = S.station(zT + 0.2), vL = P.fam === "suv" ? 0.8 : mid ? 0.8 : 0.84, vT = mid ? 0.72 : 0.68;
     var yL = sF.yb + vL*sF.h, yT = sR.yb + vT*sR.h, wF = S.uOfV(vL)*sF.w, wR = S.uOfV(vT)*sR.w;
     var lx = wF*(P.lamp === "koen" ? 0.7 : 0.6), tx = wR*0.62, lsc = Math.min(1.2, (wF*0.97 - lx)/0.22), tsc = Math.min(1.2, (wR*0.98 - tx)/0.23);
     if(lod){
@@ -1347,13 +1375,13 @@ function buildCar(T, entry, st, d, G){
     B.put(dn, "glass", loftG(T, gr, gz.map(function(z){ return z - pv[2]; }), false));
     // the handle (flush, body colour) and the mirror on its stalk
     var hp = S.side(zD1 + 0.18, 0.74, sx, 0.008).p; B.at(dn, "paint", null, rbox(T, 0.02, 0.025, 0.16, 0.01, 1), hp[0] - pv[0], hp[1] - pv[1], hp[2] - pv[2]);
-    var my = S.top(S.zA - 0.1) + 0.07, mz = S.zA - 0.12, mx = sx*(S.half(mz)*0.97 + 0.07);
-    B.at(dn, "paint", null, rodG(T, [sx*S.half(mz)*P.gw*0.98 - pv[0], my - 0.06 - pv[1], mz + 0.05 - pv[2]], [mx - sx*0.06 - pv[0], my - pv[1], mz - pv[2]], 0.018, 0.012, 6));
+    var mz = S.zA - 0.16, my = S.top(mz) + 0.08, xb = S.half(mz)*P.gw*1.02, mx = sx*(xb + 0.12);
+    B.at(dn, "paint", null, rbox(T, 0.05, 0.05, 0.12, 0.02, 1), sx*(xb + 0.03) - pv[0], my - 0.05 - pv[1], mz + 0.02 - pv[2], 0, 0, sx*0.5);   // the arm on the sail
     B.at(dn, "paint", null, rbox(T, 0.16, 0.09, 0.09, 0.035, 2), mx - pv[0], my - pv[1], mz - pv[2], 0, sx*0.12, 0);
     B.at(dn, "glass", null, rbox(T, 0.14, 0.07, 0.01, 0.004, 1), mx - pv[0], my - pv[1], mz - 0.046 - pv[2], 0, sx*0.12, 0);
   });
   B.lod = 1;                                                                                 // far: the mirrors on the body
-  [1, -1].forEach(function(sx){ var mz = S.zA - 0.12; B.at(body, "paint", null, rbox(T, 0.16, 0.09, 0.09, 0.035, 1), sx*(S.half(mz)*0.97 + 0.07), S.top(S.zA - 0.1) + 0.07, mz); });
+  [1, -1].forEach(function(sx){ var mz = S.zA - 0.16; B.at(body, "paint", null, rbox(T, 0.16, 0.09, 0.09, 0.035, 1), sx*(S.half(mz)*P.gw*1.02 + 0.12), S.top(S.zA - 0.16) + 0.08, mz); });
   B.lod = 0;
   // inside: two seats, the dash, the cluster and screen, the console; the steering wheel (spin) before the driver (-x)
   var ys = gc + P.seat, zS = S.zA - Math.min(1.05, (S.zA - S.zCr)*(mid ? 0.62 : 0.66)), xd = -W*0.21, head = S.H - 0.04 - ys;
@@ -1418,44 +1446,49 @@ function buildFormula(T, entry, st, d){
   if(trimC == null) trimC = COL.black;
   var R = Math.min(0.37, H*0.38), twF = Math.min(0.32, W*0.16), twR = Math.min(0.4, W*0.2), gc = 0.05;
   var fo = (L - WB)*0.58, zf = L/2 - fo, zr = zf - WB, zCk = zf - WB*0.42, mw = Math.min(0.62, W*0.32);
-  // the nose (narrow) and the monocoque, engine cover and airbox (one profile each)
-  B.side(body, "paint", null, [[L/2, 0.17], [L/2 - 0.06, 0.26], [zf + 0.15, 0.44], [zf + 0.15, 0.2], [L/2 - 0.3, 0.13]], 0.32, 0.04, 4, 2);
-  B.side(body, "paint", null, [[zf + 0.2, 0.46], [zCk + 0.45, 0.58], [zCk - 0.4, 0.6], [zCk - 0.5, H - 0.08], [zCk - 0.85, H - 0.1],
-                               [zr + 0.2, 0.56], [-L/2 + 0.6, 0.44], [-L/2 + 0.6, 0.18], [zr + 0.4, gc + 0.06], [zf + 0.2, gc + 0.1]], mw, 0.06, 5, 2);
-  B.bar(body, "trim", acc, [0, 0.272, L/2 - 0.07], [0, 0.447, zf + 0.15], 0.1, 0.012);                     // the stripe down the nose
-  B.box(body, "trim", COL.black, mw*0.78, 0.03, 0.8, 0, 0.605, zCk);                                       // the cockpit's padded rim
-  B.box(body, "trim", COL.black, 0.22, 0.14, 0.02, 0, H - 0.17, zCk - 0.5);                                // the airbox's mouth
-  B.side(body, "paint", null, [[zCk - 0.85, H - 0.1], [zr + 0.2, 0.64], [zr + 0.2, 0.56], [zCk - 0.85, H - 0.13]], 0.02, 0, 1);   // the fin
-  // sidepods: an intake each, the livery's accent down the flank, a mirror on a stalk
+  // [4.0.1] the body at the near model's standard (2026 rules: narrower car, a halo, sidepods with undercut, a two-plane
+  // front wing with endplates, a rear wing on a swan-neck pylon with its beam wing, exposed wishbones and push rods)
+  var noseT = taperX(sprof(T, [[L/2 - 0.02, 0.2], [L/2 - 0.25, 0.27], [zf + 0.1, 0.46], [zf - 0.1, 0.5], [zf - 0.1, 0.2], [zf + 0.3, 0.14], [L/2 - 0.3, 0.15]], 0.34, 0.05, 28), zf, L/2, 1, 0.42);
+  B.at(body, "paint", null, noseT);
+  B.at(body, "paint", null, taperX(sprof(T, [[zf + 0.05, 0.5], [zCk + 0.5, 0.6], [zCk - 0.35, 0.64], [zCk - 0.45, H - 0.06], [zCk - 0.9, H - 0.08],
+                                              [zr + 0.25, 0.6], [-L/2 + 0.62, 0.46], [-L/2 + 0.62, 0.22], [zr + 0.4, gc + 0.08], [zf + 0.05, gc + 0.14]], mw, 0.07, 36), zCk - 0.4, -L/2 + 0.6, 1, 0.45));
+  B.at(body, "trim", acc, rodG(T, [0, 0.29, L/2 - 0.2], [0, 0.48, zf], 0.012, 0.02, 6));                                   // the nose stripe
+  B.t("gloss").at(body, "trim", COL.black, sprof(T, [[zCk + 0.42, 0.6], [zCk - 0.2, 0.62], [zCk - 0.32, 0.6], [zCk + 0.4, 0.57]], mw*0.8, 0.02, 12));   // the cockpit rim
+  B.t("gloss").at(body, "trim", COL.black, rbox(T, 0.2, 0.14, 0.04, 0.03, 1), 0, H - 0.15, zCk - 0.46);                     // the airbox
+  B.at(body, "paint", null, prof(T, [[zCk - 0.9, H - 0.08], [zr + 0.15, 0.68], [zr + 0.15, 0.6], [zCk - 0.9, H - 0.14]], 0.016, 0.004));   // the fin
   [1, -1].forEach(function(sx){
-    var px = sx*(mw/2 + 0.22);
-    B.side(body, "paint", null, [[zCk + 0.25, 0.14], [zCk + 0.25, 0.5], [zCk - 0.3, 0.52], [zr + 0.45, 0.3], [zr + 0.45, 0.12]], 0.5, 0.06, 4, 2).translate(px, 0, 0);
-    B.box(body, "trim", COL.black, 0.38, 0.22, 0.02, px, 0.36, zCk + 0.26);
-    B.box(body, "trim", acc, 0.008, 0.07, 1.2, px + sx*0.252, 0.32, zCk - 0.45);
-    B.bar(body, "trim", COL.carbon, [sx*mw/2, 0.58, zCk + 0.3], [sx*(mw/2 + 0.18), 0.66, zCk + 0.3], 0.015, 0.03);
-    B.box(body, "paint", null, 0.12, 0.05, 0.03, sx*(mw/2 + 0.2), 0.66, zCk + 0.3);
+    var px = sx*(mw/2 + 0.2);
+    B.at(body, "paint", null, taperX(sprof(T, [[zCk + 0.28, 0.2], [zCk + 0.3, 0.5], [zCk - 0.2, 0.55], [zr + 0.5, 0.36], [zr + 0.42, 0.18], [zCk - 0.1, 0.12]], 0.46, 0.08, 28), zCk, zr + 0.4, 1, 0.45), px, 0, 0);
+    B.t("honey").at(body, "trim", COL.black, rbox(T, 0.34, 0.2, 0.02, 0.04, 1), px, 0.38, zCk + 0.31);
+    B.at(body, "trim", acc, rbox(T, 0.006, 0.06, 1.0, 0.003, 1), px + sx*0.232, 0.36, zCk - 0.45);
+    B.t("carbon").at(body, "trim", COL.carbon, rodG(T, [sx*mw/2, 0.6, zCk + 0.32], [sx*(mw/2 + 0.16), 0.68, zCk + 0.3], 0.012, 0.01, 6));
+    B.at(body, "paint", null, rbox(T, 0.13, 0.055, 0.04, 0.02, 1), sx*(mw/2 + 0.19), 0.68, zCk + 0.3);
+    B.at(body, "glass", null, rbox(T, 0.11, 0.04, 0.005, 0.01, 1), sx*(mw/2 + 0.19), 0.68, zCk + 0.278);
   });
-  // the floor, the halo
-  B.box(body, "trim", COL.carbon, W*0.58, 0.03, WB - 0.5, 0, gc + 0.015, (zf + zr)/2 - 0.1);
-  B.bar(body, "trim", COL.carbon, [0, 0.58, zCk + 0.42], [0, 0.8, zCk + 0.24], 0.025, null, true);
-  [1, -1].forEach(function(sx){ B.pipe(body, "trim", COL.carbon, [[0, 0.8, zCk + 0.24], [sx*0.2, 0.81, zCk + 0.12], [sx*0.27, 0.8, zCk - 0.12], [sx*0.26, 0.72, zCk - 0.36], [sx*0.24, 0.6, zCk - 0.42]], 0.025); });
-  // the front wing (two elements and the endplates) and the rear wing (the main plane, the flap, the endplates, the
-  // beam wing, the pylon); the rain light under it
-  B.box(body, "trim", trimC, W*0.96, 0.025, 0.42, 0, 0.09, L/2 - 0.24, -0.08, 0, 0);
-  B.box(body, "trim", acc, W*0.9, 0.02, 0.2, 0, 0.15, L/2 - 0.36, -0.35, 0, 0);
-  [1, -1].forEach(function(sx){ B.box(body, "trim", trimC, 0.02, 0.2, 0.5, sx*W*0.48, 0.15, L/2 - 0.26); });
-  B.box(body, "trim", trimC, W*0.53, 0.035, 0.32, 0, H - 0.12, -L/2 + 0.22, -0.15, 0, 0);
-  B.box(body, "trim", acc, W*0.53, 0.02, 0.16, 0, H - 0.03, -L/2 + 0.14, -0.4, 0, 0);
-  [1, -1].forEach(function(sx){ B.box(body, "trim", trimC, 0.02, 0.42, 0.42, sx*W*0.27, H - 0.21, -L/2 + 0.21); });
-  B.box(body, "trim", trimC, W*0.5, 0.02, 0.14, 0, 0.42, -L/2 + 0.3);
-  B.box(body, "trim", COL.carbon, 0.03, H - 0.56, 0.12, 0, (0.44 + H - 0.12)/2, -L/2 + 0.3);
-  B.box(body, "tail", COL.red, 0.12, 0.05, 0.02, 0, 0.34, -L/2 + 0.595);
-  // wishbones, front and rear: an upper and a lower arm to each wheel
+  // the floor with its edge wings, the halo
+  B.t("carbon").at(body, "trim", COL.carbon, rbox(T, W*0.62, 0.025, WB - 0.45, 0.01, 1), 0, gc + 0.015, (zf + zr)/2 - 0.12);
+  [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", COL.carbon, prof(T, [[zf - 0.55, 0], [zr + 0.5, 0], [zr + 0.5, 0.1], [zf - 0.7, 0.04]], 0.01, 0.002), sx*W*0.31, gc + 0.02, 0); });
+  B.t("metal").at(body, "trim", COL.dark, tubeG(T, [[0, 0.58, zCk + 0.44], [0, 0.8, zCk + 0.26], [0.2, 0.81, zCk + 0.12], [0.27, 0.8, zCk - 0.12], [0.26, 0.72, zCk - 0.36], [0.25, 0.62, zCk - 0.42]], 0.024, 30, 8));
+  B.t("metal").at(body, "trim", COL.dark, tubeG(T, [[0, 0.8, zCk + 0.26], [-0.2, 0.81, zCk + 0.12], [-0.27, 0.8, zCk - 0.12], [-0.26, 0.72, zCk - 0.36], [-0.25, 0.62, zCk - 0.42]], 0.024, 24, 8));
+  // the front wing: two elements and the endplates; the rear wing: main plane, flap, endplates, the beam wing, the pylon
+  B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.36, 0.07, W*0.94, 0.08, 6), 0, 0.1, L/2 - 0.04, 0.05);
+  B.at(body, "trim", acc, aeroGeo(T, 0.2, 0.08, W*0.88, 0.1, 6), 0, 0.16, L/2 - 0.3, 0.35);
+  [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", trimC, prof(T, [[L/2 - 0.02, 0.06], [L/2 - 0.52, 0.06], [L/2 - 0.56, 0.24], [L/2 - 0.2, 0.2]], 0.014, 0.004), sx*W*0.47, 0, 0); });
+  B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.3, 0.1, W*0.5, 0.1, 6), 0, H - 0.17, -L/2 + 0.42, 0.12);
+  B.at(body, "trim", acc, aeroGeo(T, 0.18, 0.1, W*0.5, 0.12, 6), 0, H - 0.06, -L/2 + 0.2, 0.42);
+  [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", trimC, prof(T, [[-L/2 + 0.48, 0.38], [-L/2 + 0.02, 0.4], [-L/2 + 0.04, H], [-L/2 + 0.44, H - 0.02]], 0.014, 0.004), sx*W*0.255, 0, 0); });
+  B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.16, 0.1, W*0.46, 0.1, 5), 0, 0.42, -L/2 + 0.36, 0.1);
+  B.t("carbon").at(body, "trim", COL.carbon, tubeG(T, [[0, 0.46, -L/2 + 0.65], [0, H - 0.05, -L/2 + 0.5], [0, H - 0.1, -L/2 + 0.36]], 0.018, 10, 6));
+  B.box(body, "tail", COL.red, 0.12, 0.05, 0.02, 0, 0.34, -L/2 + 0.6);
+  // wishbones (an A-arm above and below, from two chassis points to the upright) and the push rod, front and rear
   [[zf, twF], [zr, twR]].forEach(function(a){
     [1, -1].forEach(function(sx){
-      var hub = sx*(W/2 - a[1] - 0.02), ix = sx*mw*0.38;
-      B.bar(body, "trim", COL.carbon, [ix, 0.38, a[0]], [hub, R + 0.06, a[0]], 0.02, null, true);
-      B.bar(body, "trim", COL.carbon, [ix, 0.18, a[0]], [hub, R - 0.08, a[0]], 0.02, null, true);
+      var hub = sx*(W/2 - a[1] - 0.02), ix = sx*mw*0.36;
+      [[0.36, R + 0.07], [0.18, R - 0.09]].forEach(function(y){
+        B.t("carbon").at(body, "trim", COL.carbon, rodG(T, [ix, y[0], a[0] + 0.16], [hub, y[1], a[0]], 0.012, 0.01, 6));
+        B.t("carbon").at(body, "trim", COL.carbon, rodG(T, [ix, y[0], a[0] - 0.16], [hub, y[1], a[0]], 0.012, 0.01, 6));
+      });
+      B.t("metal").at(body, "trim", COL.dark, rodG(T, [ix*0.8, 0.5, a[0] - 0.05], [hub*0.9, R - 0.06, a[0]], 0.01, 0.01, 6));
     });
   });
   // the driver, low in the middle: hips behind the cockpit's middle, legs out along the nose, a rectangular wheel
@@ -1958,7 +1991,7 @@ function shared(T){
   return (st.mats = {
     trim: new T.MeshStandardMaterial({vertexColors: true, roughness: st.pbr ? 1 : 0.55, metalness: st.pbr ? 1 : 0.35, map: map, roughnessMap: st.pbr || null, metalnessMap: st.pbr || null}),
     wheel: new T.MeshStandardMaterial({vertexColors: true, roughness: st.pbr ? 1 : 0.62, metalness: st.pbr ? 1 : 0.4, map: map, roughnessMap: st.pbr || null, metalnessMap: st.pbr || null}),
-    glass: new T.MeshStandardMaterial({color: 0x0e151c, metalness: 0.6, roughness: 0.04, transparent: true, opacity: 0.84, depthWrite: false}),   // ([3.39] darker: the cabin a shadow behind it)
+    glass: new T.MeshStandardMaterial({color: 0x26343f, metalness: 0.85, roughness: 0.03, transparent: true, opacity: 0.9, depthWrite: false, envMapIntensity: 1.4}),   // ([3.39] darker: the cabin a shadow behind it)
     light: new T.MeshBasicMaterial({vertexColors: true, map: map})
   });
 }

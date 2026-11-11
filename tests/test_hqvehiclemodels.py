@@ -190,7 +190,7 @@ class VehicleModels(unittest.TestCase):
         self.assertAlmostEqual(self.rows["t-ev"]["size"][2], 5.39*self.o["SCALE"]["car"], delta=0.27)
 
     # the starters as hq3d draws them (games/hq3d.js carModel / motoModel, measured: length, height, width in m)
-    STARTER = {"car": (3.95, 1.73, 2.09), "bike": (2.59, 1.40, 1.02)}   # [4.0] the revamped starters (games/hq3d.js STARTER_E)
+    STARTER = {"car": (3.96, 1.73, 1.91), "bike": (2.56, 1.40, 1.02)}   # [4.0] the revamped starters (games/hq3d.js STARTER_E)
 
     def test_the_starters_scale_family(self):
         # by box size (the cube root of length × height × width): each kind's median within 15% of its starter,

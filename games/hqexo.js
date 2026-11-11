@@ -1,13 +1,14 @@
 /* Claude HQ: HQ Exosuit -- six flyable powered suits for the HQ and the City (original designs: armour types, not any
  * film suit).
  *
- * A suit is a layer of armour over your own character (games/avatar3d.js, the Kenney Mini Characters: a big head on a
- * short body, bones root / torso / head / arm-left / arm-right / leg-left / leg-right). Each piece is sized from the box
- * of the skin its bone carries, so it fits all six base models, and is skinned rigidly to that bone, merged per material
- * into at most 4 SkinnedMeshes on the avatar's own skeleton (paint as vertex colour, the finish on the material, the dark
- * undersuit, the glow, Abyss's glass dome): under 4k triangles (tests/test_hqexo.py). The avatar's clips keep running;
- * in the air pose() blends a flight pose over them (lean, bank, climb, crouch) and lights the thrusters (two more draws).
- *
+ * A suit is a layer of armour over your own character: the humanoid of games/people3d.js (HQ 3.41: elbows, knees,
+ * fingers, IK feet, our big toy head), or the Kenney Mini Characters' 7-bone rig as a fallback. Each piece is sized from
+ * the skin its bone carries (the helmet from the toy head), skinned rigidly to that bone, and merged per material into
+ * at most 4 SkinnedMeshes on the avatar's own skeleton (paint as vertex colour, the finish on the material, the dark
+ * parts, the glow, Abyss's glass): layered bevelled and curved plates, under 10k triangles (tests/test_hqexo.py). While
+ * suited the clothes turn to the undersuit and the head, hair and hat hide under the helmet. The avatar's clips keep
+ * running; in the air pose() blends a flight pose over them on the real joints (hover, cruise, boost, bank, landing,
+ * swim) and lights the thrusters at the palms and boot soles (two more draws); sound() hums with them (WebAudio only).
  *   FRAMES / PAINTS / FINISHES / GLOWS   the roster (index for index what presence `ex` carries)
  *   clean(o) -> {f, p, fin, g}           any input to a valid look       load() / save(o)   this browser (hq3d.exo)
  *   encode(o, m) / decode(a)             presence `ex` = [frame, paint, finish, glow, mode] (backend/src/valley/hq.rs)
@@ -16,8 +17,10 @@
  *   strip(ch)                            and off again; stats(ch) -> {draws, tris} of the armour, fx the thrusters' draws
  *   pose(ch, t) / targets(fl) / bankFor(turn, speed)   the flight pose (after the clips), its pure targets, the bank
  *   styleFor(f, where)                   the suit-up style: "gantry" (the Suit-Up Centre), "summon", "flow", "drop"
- *   seq(THREE, ch, style, opts) -> S     the suit-up: one mesh per piece flying home onto its bone (reverse: off, and
- *                                        strip at the end); seqStep(S, dt) -> {done, eyes 0..1, shake, lock, black}
+ *   seq(THREE, ch, style, opts) -> S     the suit-up: one mesh per piece flying home onto its bone, the faceplate sliding
+ *                                        shut last over your face (reverse: off, and strip at the end); seqStep(S, dt) ->
+ *                                        {done, eyes 0..1, shake, lock, black}; servo, clanks and the visor's hiss with it
+ *   sound(ch, dt) / sfx(name, k)         your own suit's thrusters each frame / a one-shot (games/engine.js audioOut)
  *   bay(c, w, x, z, ry) -> B             the lobby's Suit-Up Centre: the plate, two gantry arms, the customiser kiosk
  *   panel(onPick, onSuit) / panelOpen()  the customiser (frame, two-tone paint, finish, glow / HUD tint)
  *   park(T, ch) / unpark(P) / dockRig(T)   [3.38.0] the suit parked on your roof's dock, and its gantry; parked() / setParked(yaw)

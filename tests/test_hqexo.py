@@ -98,10 +98,11 @@ function run(T, X, pool, specs, S0){
       if(bi > 1) return;
       ["gantry", "summon", "flow", "drop"].forEach(function(st){ [false, true].forEach(function(rev){
         var ch3 = person(bi); X.wear(T, ch3, {f: fi}); var S = X.seq(T, ch3, st, {reverse: rev}), r = null, n = 0, locks = 0;
-        for(; n < 2000; n++){ clip(ch3, n/60, 1/60); r = X.seqStep(S, n % 7 ? 1/60 : (n % 3 ? NaN : -1)); if(r.lock) locks++; if(r.done) break; }
+        var faceSeen = false, vis = S.parts.filter(function(q){ return q.vis; }), last = vis.length && vis.every(function(v){ return S.parts.every(function(q){ return q.vis || v.del >= q.del + q.d - 1e-6; }); });
+        for(; n < 2000; n++){ clip(ch3, n/60, 1/60); r = X.seqStep(S, n % 7 ? 1/60 : (n % 3 ? NaN : -1)); if(r.lock) locks++; faceSeen = faceSeen || ch3.head.g.visible; if(r.done) break; }
         var shown = ch3._exo ? ch3._exo.meshes.every(function(m){ return m.visible; }) : false;
         out.seq[file + "/" + F.id + "/" + st + (rev ? "/off" : "")] = {done: !!(r && r.done), steps: n, locks: locks, shown: shown, left: S.g.parent ? 1 : 0, finite: finite(ch3),
-          stripped: !ch3._exo, scale: ch3.o.scale.x/S0};
+          stripped: !ch3._exo, scale: ch3.o.scale.x/S0, visor: vis.length, last: last, faceSeen: faceSeen, faceEnd: ch3.head.g.visible};
       }); });
     });
   });
@@ -353,6 +354,10 @@ class ExoBudget(unittest.TestCase):
                 self.assertAlmostEqual(s["scale"], 1, places=5)
                 continue
             self.assertTrue(s["shown"], k + ": the merged armour shows once the pieces land")
+            self.assertGreater(s["visor"], 2, k + ": a faceplate")
+            self.assertTrue(s["last"], k + ": the faceplate shuts last")
+            self.assertTrue(s["faceSeen"], k + ": your face shows until it does")
+            self.assertFalse(s["faceEnd"], k + ": and hides under it")
             self.assertGreater(s["locks"], 3, k)
             self.assertLess(s["steps"], 400, k)
 

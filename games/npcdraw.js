@@ -44,11 +44,11 @@ var CH_H = 0.72, BODY_H = 1.7;      // a character's model height (hq3d.js CH_H)
 var AV = {player: 1.2, other: 0.7, max: 0.8, w: 7};   // avoidance: radii (m), the push cap (m), spring omega
 var TURN_K = 10;                    // the yaw's ease rate (1/s)
 var STRIDE = 1.5;                   // metres per walk cycle (both steps)
-var WALK_CLIP = 1.4;                // the walk clip's own pace (m/s): its timeScale is speed / this
+var WALK_CLIP = 0.82;               // the walk clip's own pace (m/s, the Quaternius Walk on a 1.7 m body): its timeScale is speed / this
 var TINT = 0.32;                    // how far a near character's material leans toward the shirt colour
 var TALK_REACH = 3.2;
 var WARM_MS = 0.6;                  // route planning per frame (sim.warm), ms
-var JOG_STRIDE = 2.4, SPRINT_CLIP = 3.2;   // [crowds] metres per jog cycle; the sprint clip's own pace (m/s)
+var JOG_STRIDE = 2.4, SPRINT_CLIP = 2.0;   // [crowds] metres per jog cycle; the sprint (Run) clip's own pace (m/s)
 var SIT_SINK = 0.42;                // [crowds] a far body sitting: how far it sinks (no sit pose at that distance)
 var DOG_FAR = 80, MAX_DOGS = 48;    // [play-street] dogs (a walker's on its lead, a loose one) drawn within this of the camera, at most
 var DOG_COLS = [0x8a5a2b, 0xf0e6d2, 0x2b2b2b, 0xc89b5a, 0x6b4a2f, 0xdedede, 0xa0522d];

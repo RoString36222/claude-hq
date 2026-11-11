@@ -99,7 +99,9 @@ function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
 // walking forward turns you to face where a dragged (orbited) camera looks (HQ 3.2: the mouse steers while you walk).
 // 3.2 turns faster (3.6 rad/s, was 2.4) on a snappier spring (omega 18, was 10): the old turn read as sluggish
 // next to the minimap, which turned with your facing at once.
-var FOOT = {walk: 7, run: 10, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
+// [realism perf] walk 3.4 / run 4.8 m/s (were 7 / 10): a jog and a sprint the 1.7 m body's run clip can carry with
+// its feet planted (1.75x and 2.5x its own pace, STRIDE), not a glide at 4-6x what the legs do.
+var FOOT = {walk: 3.4, run: 4.8, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
 // Where you are headed: facing while going forward or turning, facing + PI while stepping back. Standing still it
 // stays your facing if that is where you were last headed (prev: the last travelYaw), so the camera finishes
 // swinging in behind you after you turn on the spot; after a back-step (prev ~ facing + PI) or from a standstill: null
@@ -112,7 +114,7 @@ function travelYawOf(yaw, speed, rate, prev){
 }
 // One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV, travelYaw?, aboutV?,
 // faceGoal?, faceOff?}; inp = {fwd: -1..1 (W +, S -), turn: -1..1 (A +, turns left), run, face?}. The turn rate springs
-// toward +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 7 / 10 m/s forward.
+// toward +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward FOOT.walk / FOOT.run forward.
 // S walks you toward the camera (HQ 3.3.1, as in most third-person games): you turn to face it -- inp.face, the
 // camera's heading + PI (else your facing + PI, latched when S went down) -- on a critically damped spring
 // (FOOT.aboutW: eases in and out, no overshoot), and walk forward out of the turn, faster the more you face it.
@@ -167,19 +169,19 @@ function steerStep(st, inp, dt){
   return {yaw: yaw, speed: s[0], speedV: s[1], mdx: mdx, mdz: mdz};
 }
 // Locomotion (HQ 3.2): idle, walk and sprint play together, weighted by speed, so nothing pops; each clip's playback
-// rate is the ground speed over the ground its stride covers at rate 1 (STRIDE, m/s, fitted to the Mini Characters'
-// clips: leg 0.40 m, walk swing +-1.04 rad over 0.672 s, sprint +-1.56 rad over 0.536 s; the rate that least slides
-// the foot swinging back across the ground is 1.3x at 4 m/s, 1.2x at 7 m/s), so the planted foot keeps up instead of
-// gliding. Turning on the spot shuffles (the walk at a small weight, its
+// rate is the ground speed over the ground its stride covers at rate 1 (STRIDE, m/s), so the planted foot keeps up
+// instead of gliding. [realism perf] STRIDE is measured off the Quaternius clips (games/people3d.js) on a 1.7 m body,
+// from the planted (lower) foot: Walk 0.82 m/s (a 1.667 s cycle), Run 2.0 m/s (1.0 s). The old values (5.4 / 8.3) were the
+// Kenney Mini Characters' and let the body outrun its feet 4-6x (the moonwalk). The walk clip shows only up to a
+// stroll (~1.3 m/s); a jog or a sprint is the run clip. Turning on the spot shuffles (the walk at a small weight, its
 // rate from the turn rate). speed: m/s (signed: < 0 steps back, the clips run backwards); rate: rad/s.
 // -> {idle, walk, sprint (weights, sum 1), walkTs, sprintTs}
-// HQ 3.19: the walk pace is the old run pace (7 m/s) and Shift runs on at 10.
-var STRIDE = {walk: 5.4, sprint: 8.3, shuffle: 0.9};
+var STRIDE = {walk: 0.82, sprint: 2.0, shuffle: 0.14};
 function locoWeights(speed, rate){
   speed = +speed || 0; rate = +rate || 0;
   var v = Math.abs(speed), dir = speed < 0 ? -1 : 1;
   var shuffle = v < 0.8 ? Math.min(1, Math.abs(rate)/2.5)*(1 - v/0.8)*0.6 : 0;
-  var sprint = Math.max(0, Math.min(1, (v - 7.4)/2)), still = Math.max(0, 1 - v/1.1)*(1 - shuffle);
+  var sprint = Math.max(0, Math.min(1, (v - 1.3)/0.9)), still = Math.max(0, 1 - v/1.1)*(1 - shuffle);
   var walk = Math.max(0, 1 - sprint - still);
   var wv = Math.max(v, shuffle > 0 ? Math.abs(rate)*STRIDE.shuffle : 0);
   return {idle: still, walk: walk, sprint: sprint, walkTs: dir*wv/STRIDE.walk, sprintTs: dir*v/STRIDE.sprint};
@@ -6386,7 +6388,7 @@ function mount(el, api){
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     studioFrame();
     garageCam();                                                       // [3.33] Move garage: your lot from above
-    var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
+    var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 9)); view.target.lerp(view.goal, ease);   // on foot 9/s (was 4: 0.25 s behind the body)
     resize(); placeCam();
     exoFrame(dt, t);                                                   // [exo] the suit-up, its effects, the visor
     if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());   // [sound] the ears: this frame's camera (earAt), your reach

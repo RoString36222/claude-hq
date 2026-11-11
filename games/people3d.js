@@ -350,7 +350,8 @@ function poseClip(THREE, name, bones, moved){
   return new THREE.AnimationClip(name, 1, tracks);
 }
 
-// "sit": thighs level, shins down, hips at a chair's height (0.45 m when drawn 1.7 m tall, like the old rig's sit)
+// "sit": thighs level, shins down, the seat of the trousers at a chair's height (0.45 m when drawn 1.7 m tall, the old
+// rig's sit and hq3d's SIT_H): the hip joints ride about 5 cm above what they sit on
 function makeSit(ch, idle){
   var THREE = ch.L.THREE, B = ch.bones, o = ch.o, inner = ch.inner;
   var act = ch.mixer.clipAction(idle); act.play(); ch.mixer.update(0); act.stop();
@@ -358,7 +359,7 @@ function makeSit(ch, idle){
     if(B[n]){ keep[n] = {q: B[n].quaternion.clone(), p: B[n].position.clone()}; }
   });
   o.updateMatrixWorld(true);
-  var want = 0.45 * CH_H / 1.7;     // hip height in o's units
+  var want = 0.50 * CH_H / 1.7;     // hip height in o's units
   var hipsW = B.Hips.getWorldPosition(new THREE.Vector3()), invO = o.matrixWorld.clone().invert();
   var hipsO = hipsW.clone().applyMatrix4(invO);
   var drop = hipsO.y - want, s = inner.scale.y;

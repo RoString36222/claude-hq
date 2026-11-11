@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body>
+<script src="/games/engine.js"></script><script src="/games/avatar3d.js"></script><script src="/games/people3d.js"></script>
+<script>
+HQV.engine.lib().then(function(L){ var THREE=L.THREE;
+ Promise.all([0,1,2,3,4,5].map(function(b){return HQV.people3d.build([b,1,1,1,0,0,0,0,0,0]);})).then(function(chs){
+  var out=chs.map(function(ch){
+   ch.acts.sit.play(); ch.mixer.update(0.1); ch.o.scale.setScalar(1.7/0.72); ch.o.updateMatrixWorld(true);
+   var hip=ch.bones.Hips.getWorldPosition(new THREE.Vector3()), minY=9, v=new THREE.Vector3();
+   ch.o.traverse(function(m){ if(!m.isSkinnedMesh||!m.visible) return; var n=m.geometry.attributes.position.count;
+     for(var i=0;i<n;i+=3){ m.getVertexPosition(i,v); v.applyMatrix4(m.matrixWorld); if(Math.abs(v.z-hip.z)<0.07 && Math.abs(v.x-hip.x)<0.12 && v.y<minY) minY=v.y; } });
+   return [hip.y.toFixed(3), minY.toFixed(3)];
+  });
+  document.title=JSON.stringify(out); window.__out=out; window.__ready=true;
+ });
+});
+</script></body></html>

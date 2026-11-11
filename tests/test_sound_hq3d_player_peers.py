@@ -66,7 +66,7 @@ out.carWant = EN_CAR.idle + (EN_CAR.red - EN_CAR.idle)*0.5*0.6;
 out.carStill = H.peerSound('u1', P({pv: 0.1, vk: 'car'}), CAR, EN_CAR);
 out.carIdle = H.peerSound('u1', P({pv: 0, rpm: 850, vk: 'car'}), CAR, EN_CAR);
 out.noReal = H.peerSound('u1', P({pv: 11, vk: 'car'}), CAR, null);
-out.tuned = H.peerSound('u1', P({pv: 12, rpm: 3200, vk: 'car', ex: 'sport'}), CAR, EN_CAR);
+out.tuned = H.peerSound('u1', P({pv: 12, rpm: 3200, vk: 'car', exh: 'sport'}), CAR, EN_CAR);
 out.moto = H.peerSound('u2', P({pv: 20, rpm: 9000, vk: 'moto'}), MOTO, PH.engineFor({}, 'bike', MOTO.eng, MOTO.gears));
 out.tank = H.peerSound('u3', P({pv: 4, rpm: 1500, vk: 'tank'}), TANK, EN_TANK);
 out.heli = H.peerSound('u4', P({pv: 22.5, vk: 'heli', hy: 50}), HELI.heli, null);
@@ -92,7 +92,7 @@ out.ids1 = PP.update(list1); out.made1 = engines.slice(); out.sets1 = sets.slice
 out.state1 = S.state().pools;
 const list2 = cars([10, 20, 30, 24, 60, 200]).concat(air);      // c3 20% nearer than c2: it takes c2's voice (and its handle)
 out.ids2 = PP.update(list2); out.made2 = engines.length;
-const list3 = list2.slice(); list3[0] = H.peerSound('c0', {x: 10, hy: 0, z: 0, pv: 8, rpm: 2500, vk: 'car', ex: 'sport'}, CAR, EN_CAR);
+const list3 = list2.slice(); list3[0] = H.peerSound('c0', {x: 10, hy: 0, z: 0, pv: 8, rpm: 2500, vk: 'car', exh: 'sport'}, CAR, EN_CAR);
 out.ids3 = PP.update(list3); out.made3 = engines.slice(out.made2);  // another exhaust: its own voice
 store.hq_sfx = '0'; out.muted = PP.update(list3); store.hq_sfx = '0.5';
 E.ambientSetVolume(0); out.ambient0 = PP.update(list3); E.ambientSetVolume(1);   // a person's plane is not ambience
@@ -372,7 +372,7 @@ console.log(JSON.stringify(out, (k, v) => v === Infinity ? "inf" : v));
         for k in ("HQV.hq3dPure.peerPools(E)", "P.g.parent !== cur.scene", "engineOf(V, baseKind(P.vk))",
                   "HQV.hq3dPure.peerSound(u, P, V, EN)", "PSND.update(list)"):
             self.assertIn(k, ps, k)
-        self.assertIn("P.vk = vk; P.ex = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;", func_body(hq, "placePeers"))
+        self.assertIn("P.vk = vk; P.exh = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;", func_body(hq, "placePeers"))
         pause = hq[hq.index("  inst.pause = function(){"):hq.index("  inst.resume = function(){")]
         self.assertIn("peerSoundsOff();", pause)                # a paused or closed view lets every voice go
         self.assertIn("if(cur && cur.soundPause){ try { cur.soundPause(); } catch(e){} }", pause)   # its floor's too

@@ -205,7 +205,7 @@ function peerSound(u, P, V, EN){
     s = {sk: "peer", voice: V.eng, real: real ? EN : null, speed: v, rpm: sent || (real ? EN.idle + (EN.red - EN.idle)*f*0.6 : 900 + 6600*f)};
   }
   if(!s) return null;
-  s.key = String(P.vk || "") + "~" + (P.ex || ""); s.id = String(u) + "|" + s.key; s.ex = P.ex || null;
+  s.key = String(P.vk || "") + "~" + (P.exh || ""); s.id = String(u) + "|" + s.key; s.ex = P.exh || null;   // P.exh: their exhaust (P.ex is their suit)
   s.x = +P.x || 0; s.y = (+P.hy || 0) + 0.8; s.z = +P.z || 0;
   return s;
 }
@@ -6767,7 +6767,7 @@ function mount(el, api){
         var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
         P.bike = vk === "tank" && HQV.hqTank ? HQV.hqTank.model(THREE) : vk === "petride" ? HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id, variant: pmount.variant, acc: pmount.acc, name: pmount.name}) : Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
         if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
-        P.vk = vk; P.ex = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;   // [sound] what it sounds like (peerSounds)
+        P.vk = vk; P.exh = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;   // [sound] what it sounds like (peerSounds; P.ex is the exo suit)
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){

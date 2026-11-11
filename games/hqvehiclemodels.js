@@ -1453,7 +1453,7 @@ function buildFormula(T, entry, st, d){
   var noseT = taperX(sprof(T, [[L/2 - 0.02, 0.2], [L/2 - 0.25, 0.27], [zf + 0.1, 0.46], [zf - 0.1, 0.5], [zf - 0.1, 0.2], [zf + 0.3, 0.14], [L/2 - 0.3, 0.15]], 0.34, 0.05, 28), zf, L/2, 1, 0.42);
   B.at(body, "paint", null, noseT);
   B.at(body, "paint", null, taperX(sprof(T, [[zf + 0.05, 0.5], [zCk + 0.5, 0.6], [zCk - 0.35, 0.64], [zCk - 0.45, H - 0.06], [zCk - 0.9, H - 0.08],
-                                              [zr + 0.25, 0.6], [-L/2 + 0.62, 0.46], [-L/2 + 0.62, 0.22], [zr + 0.4, gc + 0.08], [zf + 0.05, gc + 0.14]], mw, 0.07, 36), zCk - 0.4, -L/2 + 0.6, 1, 0.45));
+                                              [zr + 0.25, 0.6], [-L/2 + 0.62, 0.46], [-L/2 + 0.62, 0.22], [zr + 0.4, gc + 0.13], [zf + 0.05, gc + 0.17]], mw, 0.07, 32), zCk - 0.4, -L/2 + 0.6, 1, 0.45));
   B.at(body, "trim", acc, rodG(T, [0, 0.29, L/2 - 0.2], [0, 0.48, zf], 0.012, 0.02, 6));                                   // the nose stripe
   B.t("gloss").at(body, "trim", COL.black, sprof(T, [[zCk + 0.42, 0.6], [zCk - 0.2, 0.62], [zCk - 0.32, 0.6], [zCk + 0.4, 0.57]], mw*0.8, 0.02, 12));   // the cockpit rim
   B.t("gloss").at(body, "trim", COL.black, rbox(T, 0.2, 0.14, 0.04, 0.03, 1), 0, H - 0.15, zCk - 0.46);                     // the airbox
@@ -1476,8 +1476,8 @@ function buildFormula(T, entry, st, d){
   B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.36, 0.07, W*0.94, 0.08, 6), 0, 0.1, L/2 - 0.04, 0.05);
   B.at(body, "trim", acc, aeroGeo(T, 0.2, 0.08, W*0.88, 0.1, 6), 0, 0.16, L/2 - 0.3, 0.35);
   [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", trimC, prof(T, [[L/2 - 0.02, 0.06], [L/2 - 0.52, 0.06], [L/2 - 0.56, 0.24], [L/2 - 0.2, 0.2]], 0.014, 0.004), sx*W*0.47, 0, 0); });
-  B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.3, 0.1, W*0.5, 0.1, 6), 0, H - 0.17, -L/2 + 0.42, 0.12);
-  B.at(body, "trim", acc, aeroGeo(T, 0.18, 0.1, W*0.5, 0.12, 6), 0, H - 0.06, -L/2 + 0.2, 0.42);
+  B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.3, 0.1, W*0.5, 0.1, 6), 0, H - 0.26, -L/2 + 0.42, 0.12);
+  B.at(body, "trim", acc, aeroGeo(T, 0.18, 0.1, W*0.5, 0.12, 6), 0, H - 0.15, -L/2 + 0.2, 0.42);
   [1, -1].forEach(function(sx){ B.t("carbon").at(body, "trim", trimC, prof(T, [[-L/2 + 0.48, 0.38], [-L/2 + 0.02, 0.4], [-L/2 + 0.04, H], [-L/2 + 0.44, H - 0.02]], 0.014, 0.004), sx*W*0.255, 0, 0); });
   B.t("carbon").at(body, "trim", trimC, aeroGeo(T, 0.16, 0.1, W*0.46, 0.1, 5), 0, 0.42, -L/2 + 0.36, 0.1);
   B.t("carbon").at(body, "trim", COL.carbon, tubeG(T, [[0, 0.46, -L/2 + 0.65], [0, H - 0.05, -L/2 + 0.5], [0, H - 0.1, -L/2 + 0.36]], 0.018, 10, 6));
@@ -1515,7 +1515,7 @@ function buildFormula(T, entry, st, d){
   });
   // [4.0] LOD 1 (far): the tub and nose, the sidepods, both wings, the halo, in a few blocks
   B.lod = 1;
-  B.at(body, "paint", null, sprof(T, [[L/2 - 0.05, 0.22], [zf, 0.42], [zCk + 0.3, 0.62], [zCk - 0.4, H*0.92], [zr + 0.5, 0.6], [zr - 0.2, 0.42], [zr - 0.1, 0.12], [zf - 0.2, 0.1], [L/2 - 0.1, 0.12]], mw, 0.06, 18));
+  B.at(body, "paint", null, sprof(T, [[L/2 - 0.05, 0.22], [zf, 0.42], [zCk + 0.3, 0.62], [zCk - 0.4, H*0.92], [zr + 0.5, 0.6], [zr - 0.2, 0.42], [zr - 0.1, 0.17], [zf - 0.2, 0.16], [L/2 - 0.1, 0.17]], mw, 0.06, 18));
   B.at(body, "paint", null, rbox(T, W*0.8 - 2*twR, 0.3, WB*0.42, 0.1, 1), 0, 0.3, zCk - 0.55);
   B.at(body, "trim", acc, rbox(T, W*0.92, 0.04, 0.32, 0.01, 1), 0, 0.12, L/2 - 0.22);
   B.at(body, "trim", acc, rbox(T, W*0.5, 0.05, 0.3, 0.01, 1), 0, H*0.85, -L/2 + 0.25);

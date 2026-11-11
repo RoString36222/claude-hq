@@ -2128,11 +2128,11 @@ function mount(el, api){
     hatsOf(ch).forEach(function(o){ o.visible = !bare; });
     if(B && B.seat){
       // games/people3d.js people are slimmer than the Mini Characters the seats were laid out for: drawn a little bigger
-      var s = base*(B.riderK || RIDER_K)*(ch.rig === "uni" ? UNI_RIDER : 1), p = B.seat.position;
+      var uni = ch.rig === "uni", s = base*(uni ? uniRideK(B) : (B.riderK || RIDER_K)), p = B.seat.position;
       var hip = ch.hip || uniHip(ch) || HIP;
       ch.o.scale.setScalar(s); ch.o.rotation.set(0, 0, 0);
-      ch.o.position.set(p.x - hip[0]*s, p.y - hip[1]*s, p.z - hip[2]*s);
-      setAnim(ch, "idle");
+      ch.o.position.set(p.x - hip[0]*s, p.y - hip[1]*s, p.z - hip[2]*s);   // (a uni rider's hips are set on the seat each frame: ridePoseUni)
+      setAnim(ch, uni && ch.acts.sit ? "sit" : "idle");
       return;
     }
     ch.o.scale.setScalar(base); ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0);
@@ -2151,42 +2151,141 @@ function mount(el, api){
     var w = ch.o.worldToLocal(ch.bones.Hips.getWorldPosition(new THREE.Vector3()));
     return (ch._hip = [w.x, w.y - 0.012, w.z]);
   }
-  // the same riding pose on the new humanoid: lean from the waist, twist into the turn, then two-bone IK from the
-  // shoulders to the grips and from the hips to the pegs (knees forward and a little out, elbows out and down)
+  // games/people3d.js riders are drawn at the vehicle's own display scale (games/hqvehiclemodels.js draws the
+  // catalogue a size over real: the rider is drawn with it, so a body and its bike stay in proportion). Everything
+  // else keeps the older seated size.
+  function uniRideK(B){
+    if(B.scale && B.entry) return B.scale*(B.uniFit || 1);   // (a low car's driver: as much smaller as its roof needs)
+    return (B.riderK || RIDER_K)*UNI_RIDER;
+  }
+  // the seat's top under the a-seat anchor (B.g's own units, measured once with a ray down onto the vehicle's own
+  // meshes): the anchor is set somewhere on the cushion, not always on its skin
+  function seatTop(B){
+    if(B._seatY !== undefined) return B._seatY;
+    if(B.seatRay === false) return (B._seatY = null);
+    var y = null;
+    try {
+      B.g.updateMatrixWorld(true);
+      var p = B.seat.getWorldPosition(new THREE.Vector3()), up = new THREE.Vector3(0, 1, 0).applyQuaternion(B.g.getWorldQuaternion(new THREE.Quaternion()));
+      var rc = new THREE.Raycaster(p.clone().addScaledVector(up, 0.3), up.clone().negate(), 0, 0.55);
+      var ms = []; B.g.traverse(function(o){ if(o.isMesh && !o.isSprite && o.visible && !o.userData.lod && o.material && !o.material.transparent) ms.push(o); });   // (no sprites: they need a camera)
+      var h = rc.intersectObjects(ms, false)[0];
+      if(h) y = h.point.clone().sub(p).dot(up);
+    } catch(e){ y = null; }
+    return (B._seatY = y);
+  }
+  // the hand's grip on each control: {across (index -> pinky), fdir (the fingers), r, pole, curl}. A steering wheel
+  // (grips under a "spin" node) is held at 9 and 3 round its rim; an upright stick or yoke horn (anchor userData.v)
+  // from the side with the fingers forward; a handlebar overhand, the fingers over its top and down the front.
+  function gripSpec(ch, B, i, at, A, sh){
+    var g = B.grips[i], sg = i ? -1 : 1, o = {r: 0.016*ch.scaleW, curl: 0.95};
+    var wheel = g.parent && g.parent.name === "spin";
+    if(wheel){
+      var c = g.parent.getWorldPosition(new THREE.Vector3()), n = new THREE.Vector3(0, 0, 1).applyQuaternion(g.parent.getWorldQuaternion(new THREE.Quaternion()));
+      var rad = at.clone().sub(c); rad.addScaledVector(n, -rad.dot(n)); var rl = rad.length() || 1; rad.divideScalar(rl);
+      if(n.dot(c.clone().sub(sh)) < 0) n.negate();          // n: away from the driver
+      var tan = new THREE.Vector3().crossVectors(n, rad); if(tan.dot(A.up) > 0) tan.negate();
+      o.across = tan; o.fdir = n.clone().addScaledVector(rad, -0.6); o.r = 0.02*ch.scaleW; o.into = 0.78;
+      o.pole = sh.clone().addScaledVector(A.left, sg*0.5).addScaledVector(A.up, -0.6);
+    } else if(g.userData && g.userData.axis){                  // a lever: its own axis (index -> pinky), fingers given
+      var pq = g.parent.getWorldQuaternion(new THREE.Quaternion()), ax = g.userData.axis, fd = g.userData.fdir || [0, -1, 0];
+      o.across = new THREE.Vector3(ax[0], ax[1], ax[2]).applyQuaternion(pq); o.fdir = new THREE.Vector3(fd[0], fd[1], fd[2]).applyQuaternion(pq);
+      o.pole = sh.clone().addScaledVector(A.left, sg*0.6).addScaledVector(A.up, -0.4).addScaledVector(A.fwd, -0.4);
+    } else if(g.userData && g.userData.v){
+      o.across = A.up.clone().negate().addScaledVector(A.fwd, 0.25); o.fdir = A.fwd.clone().addScaledVector(A.left, -sg*0.8);
+      o.pole = sh.clone().addScaledVector(A.left, sg*0.4).addScaledVector(A.up, -0.7).addScaledVector(A.fwd, -0.2);
+    } else {
+      var other = B.grips[1 - i] ? B.grips[1 - i].getWorldPosition(new THREE.Vector3()) : at.clone().addScaledVector(A.left, -sg);
+      o.across = at.clone().sub(other); if(o.across.lengthSq() < 1e-6) o.across.copy(A.left).multiplyScalar(sg);
+      o.fdir = A.fwd.clone().addScaledVector(A.up, -0.55);
+      o.pole = sh.clone().addScaledVector(A.left, sg*0.55).addScaledVector(A.up, -0.55).addScaledVector(A.fwd, -0.35);
+    }
+    return o;
+  }
+  // square a bone to the rider's facing (the idle clip stands them with the pelvis turned): yaw `bone` so the line
+  // between two of its descendants (`l`, `r`, left and right) runs along the character's own left
+  function uniSquare(bone, l, r, A){
+    if(!bone || !l || !r) return 0;
+    var d = l.getWorldPosition(new THREE.Vector3()).sub(r.getWorldPosition(new THREE.Vector3()));
+    d.addScaledVector(A.up, -d.dot(A.up)); if(d.lengthSq() < 1e-10) return 0;
+    var ang = Math.atan2(d.dot(A.fwd), d.dot(A.left));       // + : the left side swung forward
+    uniTurn(bone, A.up, -ang);
+    return ang;
+  }
+  // The riding pose on a people3d body, over the still sit clip: the pelvis squared and set down on the seat's top,
+  // a lean from the waist (forward on a bike, back into a car's seat), bending further and reaching the shoulders
+  // forward only when the controls are far; legs two-bone to the pegs with the knees in on the tank; hands two-bone to
+  // a wrist placed so the bar lies across the palm, the hand turned to the bar and the fingers closed round it.
   function ridePoseUni(ch, B, steer, top){
     var P = HQV.people3d, K = P && P.ik, Bo = ch.bones;
-    if(!K || !K.twoBone) return;
+    if(!K || !K.twoBone || !K.hold) return;
     if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
-    if(K.mark) K.mark(ch);                   // undone before the next mixer step (games/people3d.js)
-    var lean = B.lean || 0.3;
-    if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.3;              // (the reach below adds more if the grips need it)
-    if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.3; Bo.Chest.rotation.y += steer*0.14; }
-    if(Bo.Neck){ Bo.Neck.rotation.x -= lean*0.6; Bo.Neck.rotation.y += steer*0.25; }
+    K.mark(ch);                              // undone before the next mixer step (games/people3d.js)
     top.updateMatrixWorld(true);
-    var q = ch.o.getWorldQuaternion(new THREE.Quaternion()), sc = ch.o.getWorldScale(tmpB).y || 1;
-    var fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
-    ch.scaleW = sc / (1.7/CH_H);
-    // grips out of reach (a toy body's short arms, a long bike): bend further from the waist until the hands get there
-    if(B.grips && B.grips[0] && B.grips[1] && Bo.Abdomen && Bo.UpperArmL){
-      for(var it = 0; it < 2; it++){
-        var far = 0;
-        ["L", "R"].forEach(function(sd, i){ far = Math.max(far, Bo["UpperArm" + sd].getWorldPosition(new THREE.Vector3()).distanceTo(B.grips[i].getWorldPosition(new THREE.Vector3()))/(uniArmLen(ch, sd) || 1)); });
-        if(far <= 0.96) break;
-        uniTurn(Bo.Abdomen, side, Math.min(0.22, (far - 0.96)*1.2));
+    var A = uniAxes(ch), H = CH_H*A.s;      // drawn height, world
+    ch.scaleW = A.s / (1.7/CH_H);
+    // 1. square the pelvis and the chest, then the hips onto the seat's top (every frame: no drift, no float)
+    var t = uniSquare(Bo.Hips, Bo.UpperLegL, Bo.UpperLegR, A);
+    if(t && Bo.Abdomen) uniTurn(Bo.Abdomen, A.up, t);         // the spine keeps its own facing...
+    uniSquare(Bo.Chest || Bo.Torso, Bo.UpperArmL, Bo.UpperArmR, A);   // ...and is squared on its own
+    if(Bo.Abdomen && Bo.Neck){                                // and upright side to side (the idle stance leans)
+      var sp0 = Bo.Neck.getWorldPosition(new THREE.Vector3()).sub(Bo.Hips.getWorldPosition(tmpA));
+      uniTurn(Bo.Abdomen, A.fwd, Math.atan2(sp0.dot(A.left), sp0.dot(A.up)));
+    }
+    var sy = seatTop(B), seatW = B.seat.getWorldPosition(new THREE.Vector3());
+    if(sy != null) seatW.addScaledVector(A.up, sy);
+    seatW.addScaledVector(A.up, (B.hipUp != null ? B.hipUp : 0.04)*H);   // the hip joints ride ~7 cm (×H/1.7) over the cushion
+    var hipW = Bo.Hips.getWorldPosition(new THREE.Vector3()), par = ch.o.parent;
+    ch.o.position.add(par.worldToLocal(seatW.clone()).sub(par.worldToLocal(hipW)));
+    ch.o.updateMatrixWorld(true);
+    // 2. the lean: forward from the waist on a bike (B.lean), back into the seat in a car (B.lean < 0)
+    // (to an angle, whatever the clip leaves: the spine, hips to neck, pitched `lean` from upright, shared down it)
+    var lean = B.lean == null ? 0.3 : B.lean, bend = lean;
+    function pitch(to){
+      if(!Bo.Abdomen || !Bo.Neck) return;
+      for(var k = 0; k < 2; k++){
+        var sp = Bo.Neck.getWorldPosition(new THREE.Vector3()).sub(Bo.Hips.getWorldPosition(tmpA));
+        var dp = to - Math.atan2(sp.dot(A.fwd), sp.dot(A.up)); if(Math.abs(dp) < 0.01) return;
+        uniTurn(Bo.Hips, A.left, dp*0.55); uniTurn(Bo.Abdomen, A.left, dp*0.3); uniTurn(Bo.Torso || Bo.Abdomen, A.left, dp*0.1); uniTurn(Bo.Chest || Bo.Abdomen, A.left, dp*0.05);   // a flat back: mostly from the hip joints
       }
     }
+    pitch(lean);
+    // 3. the controls far for these short arms: tuck on down from the waist (a sport bike's furthest), then the shoulders forward
+    var grips = B.grips && B.grips[0] && B.grips[1] ? B.grips : null, gW = grips ? [grips[0].getWorldPosition(new THREE.Vector3()), grips[1].getWorldPosition(new THREE.Vector3())] : null;
+    var arm = grips ? [uniArmLen(ch, "L"), uniArmLen(ch, "R")] : null;
+    function far(){ var f = 0; ["L", "R"].forEach(function(sd, i){ f = Math.max(f, Bo["UpperArm" + sd].getWorldPosition(tmpA).distanceTo(gW[i])/(arm[i] || 1)); }); return f; }
+    if(grips && Bo.Abdomen && Bo.UpperArmL){
+      // the spine at most 41° over (63° on a sport bike); leant back in a car, up off the backrest at most ~30°
+      var cap = lean >= 0.5 ? 1.1 : lean < -0.2 ? lean + 0.5 : 0.72;
+      for(var it = 0; it < 4 && bend < cap; it++){
+        var fr = far(); if(fr <= 0.86) break;
+        bend = Math.min(cap, bend + Math.min(0.3, (fr - 0.86)*0.8)); pitch(bend);
+      }
+    }
+    if(grips) ["L", "R"].forEach(function(sd, i){
+      var S = Bo["Shoulder" + sd], U = Bo["UpperArm" + sd]; if(!S || !U) return;
+      var u = U.getWorldPosition(new THREE.Vector3()), dd = u.distanceTo(gW[i]) - 0.86*(arm[i] || 1);
+      if(dd <= 0) return;
+      var cl = u.distanceTo(S.getWorldPosition(tmpA));            // the collarbone swings at most ~0.45 rad
+      K.aim(S, u, u.clone().add(gW[i].clone().sub(u).setLength(Math.min(dd, 0.45*cl))));
+    });
+    // eyes up the road: the neck and head take back most of the bend; into a turn the chest and head follow
+    if(Bo.Neck) uniTurn(Bo.Neck, A.left, -bend*0.5);
+    if(Bo.Head) uniTurn(Bo.Head, A.left, -bend*0.35);
+    if(steer){ if(Bo.Chest) uniTurn(Bo.Chest, A.up, steer*0.14); if(Bo.Neck) uniTurn(Bo.Neck, A.up, steer*0.25); }
+    // 4. the legs: feet flat on the pegs (the ankle over the peg, its ball on it), knees forward and in
     ["L", "R"].forEach(function(sd, i){
       var sg = i ? -1 : 1;
       if(B.feet && B.feet[i]){
-        var peg = B.feet[i].getWorldPosition(new THREE.Vector3()).addScaledVector(up, 0.05);
-        K.leg(ch, sd, peg, peg.clone().addScaledVector(fwd, 1).addScaledVector(up, 0.8).addScaledVector(side, sg*0.25));
+        var peg = B.feet[i].getWorldPosition(new THREE.Vector3()).addScaledVector(A.up, 0.045*H).addScaledVector(A.fwd, -0.025*H);
+        var hp = Bo["UpperLeg" + sd].getWorldPosition(new THREE.Vector3());
+        K.leg(ch, sd, peg, hp.add(peg).multiplyScalar(0.5).addScaledVector(A.fwd, H).addScaledVector(A.up, 0.5*H).addScaledVector(A.left, sg*(B.knees != null ? B.knees : 0.06)*H));
       }
-      if(B.grips && B.grips[i]){
-        // the wrist a hand's breadth back and a little over the grip, so the palm (not the wrist) closes round it
-        var g = B.grips[i].getWorldPosition(new THREE.Vector3()).addScaledVector(fwd, -0.035*ch.scaleW).addScaledVector(up, 0.012*ch.scaleW);
-        K.reach(ch, sd, g, g.clone().addScaledVector(side, sg*0.6).addScaledVector(up, -0.4).addScaledVector(fwd, -0.5));
-        K.grip(ch, sd, 0.85);
-      }
+    });
+    // 5. the hands
+    if(grips) ["L", "R"].forEach(function(sd, i){
+      var sh = Bo["UpperArm" + sd].getWorldPosition(new THREE.Vector3());
+      K.hold(ch, sd, gW[i], gripSpec(ch, B, i, gW[i], A, sh));
     });
   }
   /* ---------- [realism] posing games/people3d.js bodies (rig "uni") over their clips ----------
@@ -2271,7 +2370,7 @@ function mount(el, api){
   // The riding pose, after the clips have run: `top` is the group the rider and vehicle hang from
   // (your avatar or a peer); steer -1..1 turns the head and shoulders into the bend.
   function ridePose(ch, B, steer, top){
-    if(ch && ch.rig === "uni"){ if(B && B.seat && B.grips) ridePoseUni(ch, B, steer || 0, top); return; }
+    if(ch && ch.rig === "uni"){ if(B && B.seat) ridePoseUni(ch, B, steer || 0, top); return; }
     var R = rigOf(ch); if(!R || !B || !B.seat || !B.grips) return;
     if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
     steer = steer || 0;
@@ -6840,7 +6939,7 @@ function mount(el, api){
       P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
       if(P.ch){
         headUndo(P.ch);
-        if(vk || P.ch._fly) setAnim(P.ch, "idle"); else locomote(P.ch, P.fs, P.fr, dt);   // [exo] a flying suit: no walking in the air
+        if(vk || P.ch._fly) setAnim(P.ch, vk && P.bike && P.ch.o.parent === P.lean && P.ch.rig === "uni" && P.ch.acts.sit ? "sit" : "idle"); else locomote(P.ch, P.fs, P.fr, dt);   // [exo] a flying suit: no walking in the air
         P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }

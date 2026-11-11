@@ -404,7 +404,8 @@ function model(c, kind, color, accent){
     for(var k = 0; k < 4; k++){ var vane = box(0.6, 0.04, 0.5, dark, 0, 0, 0, wheel); vane.rotation.x = k*PI/4; }
     var crank = new THREE.Group(); crank.position.set(0.32, 0.5, 0.25); g.add(crank);
     box(0.04, 0.3, 0.04, dark, 0, 0, 0, crank); box(0.18, 0.03, 0.1, dark, 0, 0.15, 0, crank); box(0.18, 0.03, 0.1, dark, 0, -0.15, 0, crank);
-    return {g: g, kind: "pedalo", seat: anchor(pseat, 0.32, 0.06, 0.05), grips: [anchor(g, 0.55, 0.85, 0.05), anchor(g, 0.1, 0.85, 0.05)],
+    // the hands hold the seat's front edge either side of the rider
+    return {g: g, kind: "pedalo", seat: anchor(pseat, 0.32, 0.06, 0.05), grips: [anchor(pseat, 0.54, 0.05, 0.24), anchor(pseat, 0.1, 0.05, 0.24)],
             feet: [anchor(crank, 0.06, 0.15, 0), anchor(crank, -0.06, -0.15, 0)], steer: null, oars: null, wheel: wheel, crank: crank,
             lean: VEHICLES.pedalo.lean, phase: 0, brake: function(){}};
   }
@@ -414,12 +415,16 @@ function model(c, kind, color, accent){
                              [1.3, 0.24, 0.27, 0.18, -0.03, -0.09], [2.1, 0.02, 0.3, 0.01, 0.1, 0.12]]);
     var kh = mesh(kg, paint); kh.material = paint.clone(); kh.material.side = THREE.DoubleSide;
     box(0.5, 0.05, 2.9, paint, 0, 0.27, 0);                                                  // the deck
-    var coam = box(0.46, 0.08, 0.9, dark, 0, 0.32, -0.15);
-    var paddle = new THREE.Group(); paddle.position.set(0, 0.75, 0.25); g.add(paddle);
+    // the cockpit's coaming (a rim: the paddler sits down inside, on a seat in the hull, legs under the deck)
+    var coam = new THREE.Group(); coam.position.set(0, 0.32, -0.15); g.add(coam);
+    box(0.46, 0.08, 0.05, dark, 0, 0, 0.43, coam); box(0.46, 0.08, 0.05, dark, 0, 0, -0.43, coam);
+    box(0.05, 0.08, 0.9, dark, 0.21, 0, 0, coam); box(0.05, 0.08, 0.9, dark, -0.21, 0, 0, coam);
+    var kseat = box(0.36, 0.05, 0.36, dark, 0, 0.1, -0.3);
+    var paddle = new THREE.Group(); paddle.position.set(0, 0.52, 0.12); g.add(paddle);
     var sh = mesh(new THREE.CylinderGeometry(0.018, 0.018, 2.2, 6), dark, 0, 0, 0, paddle); sh.rotation.z = PI/2;
     box(0.04, 0.14, 0.42, acc, 1.12, 0, 0, paddle); box(0.04, 0.14, 0.42, acc, -1.12, 0, 0, paddle);
-    return {g: g, kind: "kayak", seat: anchor(coam, 0, 0.0, -0.1), grips: [anchor(paddle, 0.35, 0, 0), anchor(paddle, -0.35, 0, 0)],
-            feet: [anchor(g, 0.12, 0.12, 0.8), anchor(g, -0.12, 0.12, 0.8)], steer: null, oars: null, paddle: paddle,
+    return {g: g, kind: "kayak", seat: anchor(kseat, 0, 0.025, 0.05), grips: [anchor(paddle, 0.3, 0, 0), anchor(paddle, -0.3, 0, 0)],
+            feet: [anchor(g, 0.11, 0.08, 0.42), anchor(g, -0.11, 0.08, 0.42)], steer: null, oars: null, paddle: paddle,
             lean: VEHICLES.kayak.lean, phase: 0, brake: function(){}};
   }
   var wood = c.mat(0x9b6a3f, {roughness: 0.8});

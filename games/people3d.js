@@ -101,13 +101,64 @@ function reach(ch, side, target, pole){
   mark(ch);
   if(B["UpperArm" + side]){ K.twoBone(B["UpperArm" + side], B["LowerArm" + side], B["Wrist" + side], target, pole); }
 }
+// the hand's own frame, world space: f wrist -> middle knuckle, a index -> pinky knuckle (across the palm),
+// n out of the palm (the way the fingers close), pl the palm's length
+function handFrame(ch, side){
+  var THREE = ch.L.THREE, B = ch.bones, w = B["Wrist" + side], m = B["Middle2" + side], i = B["Index2" + side], p = B["Pinky2" + side];
+  if(!w || !m || !i || !p){ return null; }
+  var W = w.getWorldPosition(new THREE.Vector3()), f = m.getWorldPosition(new THREE.Vector3()).sub(W), pl = f.length();
+  f.normalize();
+  var a = p.getWorldPosition(new THREE.Vector3()).sub(i.getWorldPosition(new THREE.Vector3()));
+  a.addScaledVector(f, -a.dot(f)).normalize();
+  // the palm faces the thigh in the pack's idle: -(f x a) on the left hand, +(f x a) on the right (a mirror)
+  var n = new THREE.Vector3().crossVectors(f, a).multiplyScalar(side === "L" ? -1 : 1);
+  return {w: W, f: f, a: a, n: n, pl: pl};
+}
+// turn a bone about a world axis
+function rotW(THREE, bone, axis, ang){
+  if(!bone || !ang){ return; }
+  var qw = bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(new THREE.Quaternion().setFromAxisAngle(axis, ang));
+  bone.quaternion.copy(bone.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(qw));
+  bone.updateMatrixWorld(true);
+}
+// close the fingers round a bar: each knuckle turns about the palm's across axis (f x n), so the fingertips sweep into
+// the palm and not sideways; the thumb swings across under the bar. amount 0 open .. 1 a fist round a thin bar.
 function grip(ch, side, amount){
-  var B = ch.bones, k = (amount == null ? 0.85 : amount) * 1.1, sgn = side === "L" ? -1 : 1;
+  var THREE = ch.L.THREE, B = ch.bones, k = amount == null ? 0.85 : amount;
   mark(ch);
+  var H = handFrame(ch, side); if(!H){ return; }
+  var ax = new THREE.Vector3().crossVectors(H.f, H.n).normalize();
+  var CURL = [0.12, 1.05, 1.0, 0.7], FK = {Index: 0.88, Middle: 1, Ring: 1.04, Pinky: 1.1};
   ["Index", "Middle", "Ring", "Pinky"].forEach(function(f){
-    for(var j = 1; j <= 3; j++){ var b = B[f + j + side]; if(b){ b.rotation.z += sgn * k; } }
+    for(var j = 1; j <= 4; j++){ rotW(THREE, B[f + j + side], ax, CURL[j - 1] * FK[f] * k); }
   });
-  var t = B["Thumb2" + side]; if(t){ t.rotation.z += sgn * k * 0.5; }
+  // the thumb: across the palm (about the hand's long axis), then its two joints close
+  var t1 = B["Thumb1" + side], t2 = B["Thumb2" + side], t3 = B["Thumb3" + side];
+  if(t1 && t2){
+    rotW(THREE, t1, H.f, (side === "L" ? 1 : -1) * 0.5 * k);
+    var td = t2.getWorldPosition(new THREE.Vector3()).sub(t1.getWorldPosition(new THREE.Vector3())).normalize();
+    var tax = new THREE.Vector3().crossVectors(td, H.n).normalize();
+    rotW(THREE, t2, tax, 0.6 * k); rotW(THREE, t3, tax, 0.5 * k);
+  }
+}
+// Hold a bar, a rim or a stick at world point `at`: o = {across (the bar's axis, the way index -> pinky should run),
+// fdir (roughly where the fingers point), r (the bar's radius, world), curl, pole (the elbow's side)}. The wrist is
+// placed so the bar lies across the palm at the knuckles, the hand turned to the bar, then the fingers close round it.
+function hold(ch, side, at, o){
+  var THREE = ch.L.THREE, B = ch.bones, K = IK;
+  if(!B["UpperArm" + side] || !K.twoBone){ return; }
+  mark(ch);
+  var ad = o.across.clone().normalize(), fd = o.fdir.clone().addScaledVector(ad, -o.fdir.dot(ad)).normalize();
+  var nd = new THREE.Vector3().crossVectors(fd, ad).multiplyScalar(side === "L" ? -1 : 1);
+  var H0 = handFrame(ch, side); if(!H0){ return; }
+  var wt = at.clone().addScaledVector(fd, -H0.pl * (o.into == null ? 0.82 : o.into)).addScaledVector(nd, -(o.r || 0));
+  K.twoBone(B["UpperArm" + side], B["LowerArm" + side], B["Wrist" + side], wt, o.pole);
+  var H = handFrame(ch, side), Mc = new THREE.Matrix4().makeBasis(H.f, H.a, H.n), Md = new THREE.Matrix4().makeBasis(fd, ad, nd);
+  var q = new THREE.Quaternion().setFromRotationMatrix(Md.multiply(Mc.transpose()));
+  var w = B["Wrist" + side], qw = w.getWorldQuaternion(new THREE.Quaternion()).premultiply(q);
+  w.quaternion.copy(w.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(qw));
+  w.updateMatrixWorld(true);
+  grip(ch, side, o.curl == null ? 0.9 : o.curl);
 }
 // Seat on a vehicle: w = {seat, gripL, gripR, pegL, pegR} in world space. Call after the clips for this frame.
 function seat(ch, w, opts){
@@ -600,7 +651,7 @@ function crowd(base, variant){
 }
 
 // the IK helpers need THREE, which arrives with the first build
-var IK = {seat: seat, reach: reach, grip: grip, leg: legTo, mark: mark, twoBone: null, aim: null};
+var IK = {seat: seat, reach: reach, grip: grip, hold: hold, hand: handFrame, leg: legTo, mark: mark, twoBone: null, aim: null};
 HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, crowd: crowd, build: function(spec){
   return build(spec).then(function(ch){
     if(!IK.twoBone){ var K = ikLib(ch.L.THREE); IK.twoBone = K.twoBone; IK.aim = K.aim; }

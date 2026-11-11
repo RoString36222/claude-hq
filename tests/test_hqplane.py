@@ -119,7 +119,12 @@ out.besideNone = P.standBeside([0, 0], [0, 1], 0, null, () => null);
 // the models
 const c = {THREE, mat: (col, o) => new THREE.MeshStandardMaterial(Object.assign({color: col}, o || {}))};
 out.models = ["seaplane", "prop", "airliner", "regional"].map((k) => { const B = P.model(c, k); P.animate(B, P.newState(k), 1/60, true); let n = 0; B.g.traverse((o) => { if(o.isMesh || o.isPoints) n++; });
-  const box = new THREE.Box3().setFromObject(B.g); return {k, draws: n, seat: !!B.seat, minY: box.min.y, len: box.max.z - box.min.z, span: box.max.x - box.min.x}; });
+  const box = new THREE.Box3().setFromObject(B.g); B.g.updateMatrixWorld(true);
+  // the pilot's controls: grips on the yoke (they move with it), each hand and foot in reach of the seat (life size)
+  const s = B.seat.getWorldPosition(new THREE.Vector3());
+  const reach = B.grips.concat(B.feet).map((a) => +(a.getWorldPosition(new THREE.Vector3()).distanceTo(s)).toFixed(3));
+  const onYoke = B.grips.every((a) => a.parent && a.parent.parent && a.parent.parent.name === "pilot-kit" && a.parent !== a.parent.parent);
+  return {k, draws: n, seat: !!B.seat, minY: box.min.y, len: box.max.z - box.min.z, span: box.max.x - box.min.x, reach, onYoke}; });
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -207,6 +212,9 @@ class HqPlane(unittest.TestCase):
         for m in self.o["models"]:
             self.assertTrue(m["seat"])
             self.assertLess(m["draws"], 16, m)                 # merged by material
+            self.assertTrue(m["onYoke"], m)                    # the hands hold a yoke, not the air
+            for d in m["reach"][:2]: self.assertLess(d, 0.62, m)    # yoke horns within a seated arm's reach
+            for d in m["reach"][2:]: self.assertLess(d, 0.62, m)    # pedals within a seated leg's reach
             self.assertGreater(m["minY"], -0.05, m)            # nothing below the surface it stands on
         sp, pp, al, rj = self.o["models"]
         self.assertAlmostEqual(sp["span"], 20, delta=1.5)

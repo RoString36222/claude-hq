@@ -204,6 +204,17 @@ function canDismount(st, env){
 }
 
 /* ---------- the mount: the pet's own model, big, with a saddle (THREE only from here on) ---------- */
+// one geometry from parts (meshes placed in the same parent)
+function bake(T, parts){
+  var pos = [], nor = [];
+  parts.forEach(function(m){
+    m.updateMatrix(); var q = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone(); q.applyMatrix4(m.matrix);
+    pos.push.apply(pos, q.attributes.position.array); nor.push.apply(nor, q.attributes.normal.array); q.dispose(); m.geometry.dispose();
+  });
+  var out = new T.BufferGeometry();
+  out.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); out.setAttribute("normal", new T.Float32BufferAttribute(nor, 3));
+  out.computeBoundingSphere(); return out;
+}
 function mountModel(c, pet){
   var T = c.THREE, P = HQV.hqPets; if(!T || !P) return null;
   pet = pet || {};
@@ -223,11 +234,24 @@ function mountModel(c, pet){
   var bw = Math.max(0.55, d.W*s*1.05);
   var blanket = new T.Mesh(new T.BoxGeometry(bw, 0.06, 0.95), cloth); blanket.position.set(0, top - 0.02, zs); blanket.name = "petride-blanket"; g.add(blanket);
   var seatM = new T.Mesh(new T.CylinderGeometry(0.26, 0.3, 0.16, 12, 1), leather); seatM.scale.set(1, 1, 1.5); seatM.position.set(0, top + 0.08, zs); seatM.name = "petride-saddle"; g.add(seatM);
-  var B = {g: g, M: M, sp: sp, rk: rk, s: s, RS: RS, kind: rk, lean: 0, riderK: 1, hats: true, brake: function(){},
+  // the reins: a pommel on the saddle's front, a short leather handle held over it in both hands (where hq3d's rider,
+  // games/people3d.js, reaches comfortably), straps from its ends down to the neck; stirrups by the flanks
+  var tack = [], part = function(geo, x, y, z){ var m = new T.Mesh(geo); m.position.set(x, y, z); tack.push(m); return m; };
+  part(new T.CylinderGeometry(0.035, 0.045, 0.14, 8), 0, top + 0.22, zs + 0.3);
+  var gy = top + 0.4, gz = zs + 0.54, nk = new T.Vector3(0, top + 0.12, zs + Math.max(0.75, 0.42*d.L*s));
+  var rod = function(a, b2, r){ var v = b2.clone().sub(a), m = part(new T.CylinderGeometry(r, r, v.length(), 6), 0, 0, 0);
+    m.position.copy(a).add(b2).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), v.normalize()); };
+  rod(new T.Vector3(0.15, gy, gz), new T.Vector3(-0.15, gy, gz), 0.016);
+  [1, -1].forEach(function(sx){ rod(new T.Vector3(sx*0.14, gy, gz), nk.clone().setX(sx*0.08), 0.008); });
+  var fx = bw*0.5 + 0.03;
+  [1, -1].forEach(function(sx){ part(new T.BoxGeometry(0.05, 0.03, 0.14), sx*fx, top - 0.34, zs + 0.12);
+    rod(new T.Vector3(sx*(bw*0.5 - 0.02), top + 0.02, zs), new T.Vector3(sx*fx, top - 0.33, zs + 0.1), 0.01); });
+  var tackM = new T.Mesh(bake(T, tack), leather); tackM.name = "petride-tack"; tackM.castShadow = true; g.add(tackM);   // one draw
+  var B = {g: g, M: M, sp: sp, rk: rk, s: s, RS: RS, kind: rk, lean: 0.15, riderK: 1, hats: true, knees: 0.0, brake: function(){},
            seat: anchor(0, top + 0.16, zs - 0.05),
-           grips: [anchor(0.22, top + 0.5, zs + 0.55), anchor(-0.22, top + 0.5, zs + 0.55)],
-           feet: [anchor(bw*0.55, top - 0.35, zs + 0.2), anchor(-bw*0.55, top - 0.35, zs + 0.2)],
-           pst: P.newState(M.seed, 0, 0, 0), saddle: [blanket, seatM]};
+           grips: [anchor(0.12, gy, gz), anchor(-0.12, gy, gz)],
+           feet: [anchor(fx, top - 0.34, zs + 0.12), anchor(-fx, top - 0.34, zs + 0.12)],
+           pst: P.newState(M.seed, 0, 0, 0), saddle: [blanket, seatM], tack: tackM};
   B.pst.anim = "stand";
   var mw = null;
   // the mouth in the world (the breath comes from it); the head's front when the pose has not said where yet

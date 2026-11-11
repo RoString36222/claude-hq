@@ -2459,6 +2459,7 @@ function mount(el, api){
       if(r.done) exoSeqDone();
     }
     exoParkKeep();
+    if(XO.sound && avatar.ch && avatar.ch._exo) XO.sound(avatar.ch, dt);   // the thrusters' hum, a boost's roar, a landing's thump (your own suit only)
     if(EXO.dock && EXO.S && !E.calm()){                              // [3.38.0] docking: a slow orbit round you and the gantry
       var D = EXO.dock, cd = curCam(); D.t += dt; var an = D.a + D.t*0.9;
       cd.position.set(D.x + Math.sin(an)*5.5, D.y + 2.2, D.z + Math.cos(an)*5.5); cd.lookAt(D.x, D.y, D.z);

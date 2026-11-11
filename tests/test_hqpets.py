@@ -68,7 +68,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   wyv.fold = wpose("stand", null, 5); wyv.glide = wpose("fly", "glide", 6); wyv.flap = wpose("fly", "climb", 7); wyv.flap2 = wpose("fly", "climb", 7.13); wyv.dive = wpose("fly", "dive", 8);
   wyv.roar = wpose("roar", null, 9); wyv.stand = wpose("stand", null, 10);
   wyv.L = Wv.dims.L; wyv.fx = [Wv.fx, Wv2.fx, We.fx];
-  // far off (lod): a fresh pose only every fourth frame
+  // far off (lod): the far version, still posed every frame
   Wv.lod = true; var lodN = 0, lastS = wspan(Wv).snap; wst.anim = "fly"; wst.wing = "climb";
   for(var lf = 0; lf < 8; lf++){ P.pose(Wv, wst, 12 + lf/30, false); var sn = wspan(Wv).snap; if(sn !== lastS) lodN++; lastS = sn; }
   wyv.lodPosed = lodN; Wv.lod = false;
@@ -372,7 +372,7 @@ class PetsEngine(unittest.TestCase):
             self.assertEqual(m["meshes"], m["drawn"], sid)
             # a dragon is sculpted (the swept body, ridged horns, 12-sided limbs; mounts are seen close up): its own
             # budget near, and its limbs and bits swap to lighter shapes far off (Mo.lod)
-            self.assertLessEqual(m["tris"], 14000 if sid.endswith("dragon") else 4500, sid)
+            self.assertLessEqual(m["tris"], 12000 if sid.endswith("dragon") else 9000 if sid == "wyvern" else 4500, sid)
             self.assertTrue(m["finite"], sid)
             self.assertEqual(m["mat"], "MeshStandardMaterial", sid)
         M = self.o["models"]
@@ -422,9 +422,9 @@ class PetsEngine(unittest.TestCase):
         self.assertGreater(w["roar"]["frill"], 0.9, "the crown rises")
         self.assertLess(w["stand"]["jaw"], w["roar"]["jaw"])
         self.assertEqual(w["fx"], ["fire", "venom", "ice"])
-        self.assertEqual(w["lodPosed"], 2, "far off it poses every fourth frame")
+        self.assertEqual(w["lodPosed"], 8, "far off it is still posed every frame (its far version is lighter instead)")
         self.assertLessEqual(self.o["models"]["wyvern"]["meshes"], 6)
-        self.assertLessEqual(self.o["models"]["wyvern"]["tris"], 4500)
+        self.assertLessEqual(self.o["models"]["wyvern"]["tris"], 9000)
 
     def test_the_dragons(self):
         # the six dragons share the wyvern's drake build on four legs: forelegs, the veined membrane, a tail tip by element

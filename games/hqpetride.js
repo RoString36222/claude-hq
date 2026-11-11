@@ -241,7 +241,7 @@ function mountModel(c, pet){
   return B;
 }
 // the pet's pose from the ride: a dragon's wings (st.wing), a walker's gait at its speed (in its own size)
-function animate(B, st, t, dt, calm, breath){
+function animate(B, st, t, dt, calm, breath, vol){
   if(!B || !B.M || !HQV.hqPets) return;
   var ps = B.pst, sp = B.sp, v = Math.abs(+st.speed || 0), pv = v/(B.RS || 1);
   ps.yaw = +st.yaw || 0; ps.speed = pv; ps.wing = null;
@@ -250,6 +250,8 @@ function animate(B, st, t, dt, calm, breath){
   else if(B.rk === "serpent"){ ps.anim = v > 0.3 ? "swim" : "float"; ps.wet = true; ps.ph += Math.max(0.6, pv)*dt*2.2; }
   else { ps.anim = breath ? "breath" : v > 0.25 ? (v > (st.walk || 4)*1.15 ? "run" : "walk") : "stand"; ps.ph += pv*dt*(sp.kind === "dino" ? 2.2 : 2.2); }
   HQV.hqPets.pose(B.M, ps, t, !!calm, null);
+  // its wingbeats (hqPets counts them, Mo.beats): yours at full, someone else's by how far (vol); none in Calm
+  if(B.M.beats !== B.lb){ B.lb = B.M.beats; var v2 = vol == null ? 1 : +vol || 0; if(!calm && v2 > 0.02 && HQV.hqPets.sfx) HQV.hqPets.sfx("wing", {vol: v2, size: 2}); }
 }
 // someone else's mount, from their presence: v (m/s across the ground), vy (m/s up), agl (m over the ground)
 function peerState(B, v, vy, agl){
@@ -262,8 +264,9 @@ function peerState(B, v, vy, agl){
 function breathe(F, B, st, dt, kind){
   if(!F || !B || !kind) return;
   if(B.M && B.M.fx) kind = BREATH[B.M.fx] || B.M.fx;                        // the wyvern breathes by its colour (fire, smoke, venom, ice)
-  B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return; B.acc = 0;
   var m = B.mouth(), yaw = +st.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw), sp = Math.abs(+st.speed || 0) + 16;
+  if(F.jet) F.jet(B, kind, m.x, m.y, m.z, fx, -0.1 - (+st.pitch || 0)*0.6, fz);   // the core on the jaw, every frame (hqPets Fx)
+  B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return; B.acc = 0;
   F.emit(kind, m.x + fx*0.4, m.y, m.z + fz*0.4, 4, fx, fz, sp, 2.6, 0.7, (+st.vy || 0) - (st.pitch || 0)*6);
   if(B.sp.fx === "storm" && F.zap && (Math.floor((st.t || 0)*9) % 3) === 0) F.zap(m.x + fx*3, m.y - 0.6, m.z + fz*3);
 }

@@ -36,13 +36,22 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
       var fx = uy*vz - uz*vy, fy = uz*vx - ux*vz, fz = ux*vy - uy*vx, fl = Math.hypot(fx, fy, fz); if(fl < 1e-12) continue;
       tri++; if(fx*(n[a] + n[b] + n[c]) + fy*(n[a + 1] + n[b + 1] + n[c + 1]) + fz*(n[a + 2] + n[b + 2] + n[c + 2]) > 0) outward++;
     }
-    var near = M.tris, lodT = 0; M.lod = true; P.pose(M, st, 31, false);
+    function drawn(){ var n = 0; M.g.traverse(function(o){ if(!o.isMesh) return; var gg = o.geometry, c = (gg.index ? gg.index.count : gg.attributes.position.count)/3; n += o.isInstancedMesh ? c*o.count : c; }); return n; }
+    var nearDrawn = drawn(), tag = g.attributes.drTag ? Array.prototype.filter.call(g.attributes.drTag.array, function(x){ return x > 0.5; }).length : 0;
+    // the jaw: a sculpted mandible on its own pivot, opened by turning it
+    st.anim = "roar"; for(var rq = 0; rq < 40; rq++) P.pose(M, st, 40 + rq/30, false);
+    var jawOk = !!(M.parts.jaw && M.jaw.g && M.parts.jaw.parent === M.jaw.g), jawOpen = M.jaw.g.rotation.x;
+    // wingbeats counted (the whoosh is played by whoever draws it)
+    st.anim = "fly"; st.wing = "climb"; st.y = 3; st.agl = 3; var b0 = M.beats | 0; for(var fq = 0; fq < 90; fq++) P.pose(M, st, 50 + fq/30, false); var beats = (M.beats | 0) - b0;
+    st.anim = "fly"; st.wing = "glide";
+    var near = M.tris, lodT = 0; M.lod = true; P.pose(M, st, 31, false); var farDrawn = drawn();
     [M.limbs, M.bits].forEach(function(im){ var gg = im.geometry; lodT += im.count*(gg.index ? gg.index.count : gg.attributes.position.count)/3; });
     var nearT = 0; M.lod = false; for(var q = 0; q < 4; q++) P.pose(M, st, 32 + q, false);
     [M.limbs, M.bits].forEach(function(im){ var gg = im.geometry; nearT += im.count*(gg.index ? gg.index.count : gg.attributes.position.count)/3; });
     out.dragons[id] = {inPg: M.parts.body.parent === M.P, rings: M.sw ? M.sw.R : 0, uv: !!g.attributes.uv, rest: !!g.attributes.drRp && !!g.attributes.drRn,
                        finite: finite, outward: tri ? outward/tri : 0, meshes: M.meshes, tris: near, lodLimbs: lodT, nearLimbs: nearT,
-                       mat: M.parts.body.material.type, wing: M.wingMesh.material.alphaToCoverage === true};
+                       mat: M.parts.body.material.type, wing: M.wingMesh.material.alphaToCoverage === true,
+                       nearDrawn: nearDrawn, farDrawn: farDrawn, crestVerts: tag, jaw: jawOk, jawOpen: jawOpen, beats: beats};
   });
   // the breath pool: full means new particles are dropped, never a live one recycled
   var F = P.Fx(THREE, null), i;
@@ -55,6 +64,13 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
   out.fx.lit = (function(){ var H = P.Fx(THREE, null); H.emit("fire", 0, 1, 0, 12, 1, 0, 20, 2, 1, 0); H.step(0.016); return H.light.intensity > 0; })();
   out.fx.bad = (function(){ var H = P.Fx(THREE, null); H.emit("fire", NaN, 1, 0, 12, 1, 0, 20, 2, 1, 0); H.step(NaN); return H.used; })();
   out.sfx = [typeof P.sfx, P.sfx("roar", {vol: 1}), P.sfx("nope")];
+  // the jet's core: lit while it is called each frame, gone soon after; the heat haze only round the hot kinds
+  out.jet = (function(){ var H = P.Fx(THREE, null), r = {};
+    H.jet("a", "fire", 0, 1, 0, 1, 0, 0); H.step(1/60); r.on = H.jets[0].mesh.visible; r.haze = !!(H.jets[0].haze && H.jets[0].haze.visible); r.len = +H.jets[0].mesh.scale.z.toFixed(2);
+    H.jet("b", "ice", 0, 1, 0, 0, 0, 1); H.step(1/60); r.two = H.jets[1].mesh.visible; r.coldHaze = !!(H.jets[1].haze && H.jets[1].haze.visible);
+    for(var q = 0; q < 40; q++) H.step(1/60); r.off = !H.jets[0].mesh.visible && !H.jets[1].mesh.visible;
+    H.jet("c", "fire", NaN, 1, 0, 1, 0, 0); H.step(1/60); r.nan = H.jets.some(function(J){ return J.mesh.visible; });
+    return r; })();
   process.stdout.write(JSON.stringify(out));
 }).catch(function(e){ process.stdout.write(JSON.stringify({error: String(e && e.stack || e)})); });
 """
@@ -78,12 +94,32 @@ class DragonRevamp(unittest.TestCase):
             self.assertGreater(d["outward"], 0.97, "its faces wind outward (inside out it shades dark): " + sid)
             self.assertEqual(d["mat"], "MeshStandardMaterial", sid)
             self.assertLessEqual(d["meshes"], 6, sid)
-            self.assertLessEqual(d["tris"], 14000, sid)
+            self.assertLessEqual(d["tris"], 12000, sid)
+            self.assertGreater(d["crestVerts"], 500, "the crest's blades ride on the tube (one draw call): " + sid)
             self.assertTrue(d["wing"], "soft membrane edges (alpha to coverage): " + sid)
 
     def test_far_dragons_are_lighter(self):
         for sid, d in self.o["dragons"].items():
             self.assertLess(d["lodLimbs"], d["nearLimbs"]*0.6, sid)
+            # every part, not just the limbs: the tube, the membrane, the head and jaw too
+            self.assertLess(d["farDrawn"], d["nearDrawn"]*0.35, sid)
+
+    def test_jaw_is_a_hinged_mandible(self):
+        for sid, d in self.o["dragons"].items():
+            self.assertTrue(d["jaw"], sid)
+            self.assertGreater(d["jawOpen"], 0.4, "the roar opens the jaw on its hinge: " + sid)
+
+    def test_wingbeats_are_counted(self):
+        for sid, d in self.o["dragons"].items():
+            self.assertGreaterEqual(d["beats"], 3, sid)
+
+    def test_jet_core_and_haze(self):
+        j = self.o["jet"]
+        self.assertTrue(j["on"] and j["two"], "a core per breathing mouth")
+        self.assertTrue(j["haze"], "heat haze round fire")
+        self.assertFalse(j["coldHaze"], "no heat haze round ice")
+        self.assertTrue(j["off"], "the core goes out once the breath stops")
+        self.assertFalse(j["nan"], "NaN never lights a jet")
 
     def test_breath_pool_never_cuts_a_live_jet_short(self):
         fx = self.o["fx"]
@@ -116,6 +152,11 @@ class StrikeDragonDrawing(unittest.TestCase):
         self.assertIn("function dragonInterp(t)", self.js)
         self.assertRegex(self.js, r"if\(!D\.riderIsMe\) dragonSnapPush\(D, t\)")
         self.assertRegex(self.js, r"D\.yaw = a\.yaw \+ wrapPi\(c\.yaw - a\.yaw\)\*f")
+
+    def test_far_version_switch(self):
+        self.assertRegex(self.js, r"Mo\.lod = lodD > \(Mo\.lod \? 38 : 42\)")
+        self.assertIn('P.sfx("wing"', self.js)
+        self.assertRegex(self.js, r"if\(F\.jet\) F\.jet\(D, ")
 
     def test_breath_sound_gated(self):
         self.assertRegex(self.js, r"Ps\.sfx\(\"roar\"")

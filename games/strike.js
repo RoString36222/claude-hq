@@ -9734,9 +9734,10 @@ function makeGame(host, opts){
       }
       // pet-space forward is (sin, cos) — the same vector dragonHead / the cone use
       var fyaw = D.yaw || 0, f0 = Math.sin(fyaw), f1 = Math.cos(fyaw);
-      // keep one shared flame-sprite pool for every dragon: a fat additive core that
-      // stretches down the cone, so the jet reads as fire from the 3rd-person seat
-      dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
+      // the jet's core on the jaw, every frame (hqPets Fx.jet: a flame cone with its heat haze);
+      // the older sprite throat only where the pool has no jet
+      if(F.jet) F.jet(D, fx === "storm" ? "sparkle" : fx, hx, hy, hz, f0, -0.08 - (D.pitch || 0) * 0.5, f1, 6.5);
+      else dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
       // ~30 Hz emit — dense enough that the jet is continuous, not a dotted line
       D.fxAcc = (D.fxAcc || 0) + (dts || 0.016);
       if(D.fxAcc < 1/30) return;
@@ -10116,8 +10117,9 @@ function makeGame(host, opts){
           // the Commons pet build: pose it the way the city does (breath jaw + wing modes)
           var P = window.HQV.hqPets;
           if(!dragonFx) dragonFxPool();
-          // far off: a lighter dragon (its limbs and claws on simpler shapes, a fresh pose every 4th frame)
-          Mo.lod = !!(camera && camera.position && Math.hypot(camera.position.x - (D.x || 0), camera.position.z - (D.z || 0)) > 70);
+          // past ~40 m: the far version (hqPets drLod: every part lighter, still posed every frame)
+          var lodD = camera && camera.position ? Math.hypot(camera.position.x - (D.x || 0), camera.position.y - (D.y || 0), camera.position.z - (D.z || 0)) : 0;
+          Mo.lod = lodD > (Mo.lod ? 38 : 42);   // (a little hysteresis: no flicker at the line)
           if(!Mo.sm) Mo.sm = {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null};
           if(!dp.userData.pst) dp.userData.pst = {anim: "stand", ph: 0, yaw: 0, speed: 0};
           var st = dp.userData.pst, prev = dp.userData.pp || (dp.userData.pp = {x: D.x || 0, z: D.z || 0, y: D.y || 0, t: at});
@@ -10149,6 +10151,8 @@ function makeGame(host, opts){
           else if(moving){ st.anim = "walk"; st.wing = null; st.ph = (st.ph || 0) + dts * 2.2; }
           else { st.anim = "stand"; st.wing = null; }
           try { P.pose(Mo, st, at, quiet, null); } catch(e){}
+          // its wingbeats (hqPets counts each downstroke): a whoosh by how far it is from the camera (none in Calm)
+          if(Mo.beats !== Mo.lb){ Mo.lb = Mo.beats; if(!quiet && P.sfx && lodD < 70) P.sfx("wing", {vol: 0.8 * (1 - lodD / 70), size: 2.6}); }
           dragonBreathFx(D, at, dts, quiet);
           return;
         }

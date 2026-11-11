@@ -6824,7 +6824,7 @@ function mount(el, api){
         } else if(VEHICLES[vk].petride){             // [3.14] their pet's wings or gait, from how they move
           var pagl = P.th != null ? P.th - groundAt(P.x, P.z) : 0, pvy = dt > 0 && P.phy != null ? (P.hy - P.phy)/dt : 0; P.phy = P.hy;
           var pst = HQV.hqPetRide.peerState(P.bike, v, pvy, pagl); pst.yaw = P.yaw;
-          HQV.hqPetRide.animate(P.bike, pst, t || 0, dt, E.calm(), false);
+          HQV.hqPetRide.animate(P.bike, pst, t || 0, dt, E.calm(), false, avatar ? Math.max(0, 1 - Math.hypot((P.x || 0) - avatar.x, (P.z || 0) - avatar.z)/60)*0.7 : 0);   // (their wingbeats by how far)
         } else if(P.bike.roll) P.bike.roll(jump ? 0 : mv, P.steer);   // a catalogue vehicle's own wheels
         else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
         var pl = E.calm() || baseKind(vk) === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;

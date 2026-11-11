@@ -441,7 +441,7 @@ class PetsEngine(unittest.TestCase):
         self.assertIn("CC0 1.0", lic)
         self.assertIn("quaternius.com/packs/animateddinosaurs.html", lic)
         self.assertEqual(self.o["fallback"]["models"], 0)
-        self.assertRegex(read("dashboard-rs", "src", "server.rs"), r"vehicles\|pets\)/")
+        self.assertRegex(read("dashboard-rs", "src", "server.rs"), r"vehicles\|pets\|people\)/")
         total = 0
         for f in os.listdir(os.path.join(ROOT, "games", "pets")):
             if f.endswith(".glb"):

@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#e4ebe6;overflow:hidden}</style></head><body>
+<script src="/games/engine.js"></script><script src="/games/avatar3d.js"></script><script src="/games/people3d.js"></script>
+<script>
+var E=HQV.engine;
+E.lib().then(function(L){ var THREE=L.THREE, r=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true}); r.setSize(innerWidth,innerHeight); document.body.appendChild(r.domElement);
+ var S=new THREE.Scene(); S.background=new THREE.Color(0xe4ebe6); S.add(new THREE.HemisphereLight(0xf3f7ff,0x8a9a5a,1.6)); var d=new THREE.DirectionalLight(0xfff3e2,2.2); d.position.set(2,4,5); S.add(d);
+ var cam=new THREE.PerspectiveCamera(30,innerWidth/innerHeight,0.05,50); cam.position.set(0,0.55,3.6); cam.lookAt(0,0.38,0);
+ var V=[{},{hat:2},{acc:1},{hair:1},{hat:1,acc:2},{hat:3},{},{hat:2,acc:1}], SK=["#f1c8a6","#8d5524","#c68642","#e0ac69","#5c3a21","#ffdbac","#a0522d","#d9a066"], TP=["#c0392b","#2e86de","#27ae60","#8e44ad","#f39c12","#16a085","#34495e","#e84393"];
+ var t0=performance.now();
+ Promise.all(V.map(function(v,i){ return HQV.people3d.crowd(i%6, v); })).then(function(chs){
+  var t1=performance.now();
+  chs.forEach(function(ch,i){ ch.recolour({skin:SK[i],top:TP[i],hair:i%2?"#2b1b10":"#b5651d"}); ch.o.position.x=(i-(chs.length-1)/2)*0.42; ch.o.rotation.y=0.25; (i==7&&ch.acts.sit?ch.acts.sit:ch.acts.walk||ch.acts.idle).play(); ch.mixer.update(0.4); S.add(ch.o); });
+  r.render(S,cam); var info=r.info.render; window.__out={ms:(t1-t0)|0, calls:info.calls, tris:info.triangles}; window.__ready=true;
+ }).catch(function(e){ window.__out=String(e&&e.stack||e); window.__ready=true; });
+});
+</script></body></html>

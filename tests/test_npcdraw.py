@@ -195,7 +195,7 @@ class NpcDrawTest(unittest.TestCase):
         self.assertEqual(b["wound"], b["tris"])
         self.assertAlmostEqual(b["top"], 1.7, places=3)
         self.assertAlmostEqual(b["lo"], 0.0, places=6)
-        self.assertEqual(b["limbs"], ["-1@0.80/2", "-2@1.34/1", "0@0.00/0", "0@0.00/1", "1@0.80/2", "2@1.34/1"])
+        self.assertEqual(b["limbs"], ["-1@0.74/2", "-2@1.18/1", "0@0.00/0", "0@0.00/1", "1@0.74/2", "2@1.18/1"])
 
     def test_instance_packing(self):
         p = self.r["pack"]

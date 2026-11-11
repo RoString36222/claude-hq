@@ -205,7 +205,7 @@ function peerSound(u, P, V, EN){
     s = {sk: "peer", voice: V.eng, real: real ? EN : null, speed: v, rpm: sent || (real ? EN.idle + (EN.red - EN.idle)*f*0.6 : 900 + 6600*f)};
   }
   if(!s) return null;
-  s.key = String(P.vk || "") + "~" + (P.ex || ""); s.id = String(u) + "|" + s.key; s.ex = P.ex || null;
+  s.key = String(P.vk || "") + "~" + (P.exh || ""); s.id = String(u) + "|" + s.key; s.ex = P.exh || null;   // P.exh: their exhaust (P.ex is their suit)
   s.x = +P.x || 0; s.y = (+P.hy || 0) + 0.8; s.z = +P.z || 0;
   return s;
 }
@@ -1159,6 +1159,7 @@ function mount(el, api){
   function headUndo(ch){ var R = ch && ch._hd; if(R && R.bone){ R.bone.rotation.y -= R.off; R.off = 0; } }
   function headApply(ch, yaw){
     if(!ch) return;
+    if(ch.rig === "uni"){ headUni(ch, yaw); return; }
     if(!ch._hd){ ch._hd = {bone: ch.o.getObjectByName("head") || null, off: 0}; }
     var R = ch._hd; if(!R.bone || !yaw) return;
     R.bone.rotation.y += yaw; R.off = yaw;
@@ -1225,14 +1226,23 @@ function mount(el, api){
       if(B && B.g.visible){ B.g.visible = false; var R0 = rigOf(ch); if(R0) R0.ra.scale.set(1, 1, 1); }
       return;
     }
-    var R = rigOf(ch); if(!R) return;
     if(!boomV) boomV = new THREE.Vector3();
+    if(ch && ch.rig === "uni" && ch.bones && ch.bones.Chest){ boomUni(ch, t, hold); return; }
+    var R = rigOf(ch); if(!R) return;
     if(!B){
       B = ch._bb = boomboxModel(); R.t.add(B.g); B.g.position.set(BOOM_AT[0], BOOM_AT[1], BOOM_AT[2]);
       B.hand = new THREE.Object3D(); B.hand.position.set(BOOM_GRIP[0], BOOM_GRIP[1], BOOM_GRIP[2]); R.t.add(B.hand);
     }
     B.g.visible = true;
     R.t.getWorldScale(boomV); B.g.scale.setScalar(BOOM_SIZE/(boomV.x || 1));
+    boomBeat(B, t);
+    if(hold){
+      if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+      ch.o.updateMatrixWorld(true);
+      aimBone(R.ra, B.hand.getWorldPosition(boomV), R.rav, "x", 0.9, 0);
+    }
+  }
+  function boomBeat(B, t){
     t = t || 0;
     var calm = E.calm(), ph = (t*2) % 1, beat = calm ? 0 : Math.pow(1 - ph, 3);   // 120 bpm
     // squash and stretch on every beat, the woofers pumping out
@@ -1250,10 +1260,28 @@ function mount(el, api){
       n.material.rotation = Math.sin(t*4 + i)*0.35;
       n.material.opacity = f > 0.7 ? (1 - f)/0.3 : 1;
     });
-    if(hold){
-      if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
-      ch.o.updateMatrixWorld(true);
-      aimBone(R.ra, B.hand.getWorldPosition(boomV), R.rav, "x", 0.9, 0);
+  }
+  // the boombox on a games/people3d.js body: on the right shoulder (the Chest bone, placed once in o's frame,
+  // upright), the right hand up round its outer end
+  function boomUni(ch, t, hold){
+    var B = ch._bb, C = ch.bones.Chest;
+    if(!B){
+      B = ch._bb = boomboxModel(); C.add(B.g); B.hand = new THREE.Object3D(); C.add(B.hand);
+      var A = uniAxes(ch), sh = (ch.bones.ShoulderR || C).getWorldPosition(new THREE.Vector3());
+      var at = sh.clone().addScaledVector(A.up, 0.05*A.s).addScaledVector(A.left, -0.06*A.s);
+      B.g.position.copy(C.worldToLocal(at.clone()));
+      B.g.quaternion.copy(C.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(ch.o.getWorldQuaternion(new THREE.Quaternion())));
+      B.hand.position.copy(C.worldToLocal(at.clone().addScaledVector(A.left, -0.05*A.s).addScaledVector(A.up, -0.02*A.s)));
+    }
+    B.g.visible = true;
+    C.getWorldScale(boomV); B.g.scale.setScalar(BOOM_SIZE*0.62/(boomV.x || 1));    // the slimmer body: a smaller box
+    boomBeat(B, t);
+    var K = uniK(ch);
+    if(hold && K){
+      K.mark(ch); ch.o.updateMatrixWorld(true);
+      var A2 = uniAxes(ch), g = B.hand.getWorldPosition(new THREE.Vector3());
+      K.reach(ch, "R", g, g.clone().addScaledVector(A2.left, -0.6).addScaledVector(A2.up, -0.6));
+      K.grip(ch, "R", 0.8);
     }
   }
   /* ---------- [3.16] the grenade launcher (games/hqgrenade.js) ----------
@@ -1648,7 +1676,7 @@ function mount(el, api){
     var ch = D.ch; if(!ch) return;
     ch.o.visible = st !== "stale";
     // Kenney's "sit" pose sits on a seat about chair height; stand beside the desk to wave.
-    if(st === "working"){ ch.o.position.set(0, 0.06, -0.05); ch.o.rotation.set(0, 0, 0); setAnim(ch, "sit", 1); }
+    if(st === "working"){ ch.o.position.set(0, 0.06, ch.rig === "uni" ? 0.04 : -0.05); ch.o.rotation.set(0, 0, 0); setAnim(ch, "sit", 1); }
     else if(st === "idle"){ ch.o.position.set(0, 0.04, -0.18); ch.o.rotation.set(-0.18, 0, 0); setAnim(ch, "sit", 0.3); }
     else if(st === "needs"){ ch.o.position.set(1.0, 0, -0.35); ch.o.rotation.set(0, -2.4, 0); setAnim(ch, "emote-yes", 1); }
     D.chair.rotation.y = st === "needs" ? 0.5 : 0;
@@ -1996,6 +2024,7 @@ function mount(el, api){
     ch._po = {la: 0, ra: 0, t: 0, l: 0};
   }
   function poseApply(ch, pose){
+    if(ch && ch.rig === "uni"){ if(!E.calm()) poseUni(ch, pose); return; }
     var b = poseBones(ch); if(!b || !pose) return;
     var o = {la: pose.arms*1.25, ra: -pose.arms*1.25, t: pose.twist || 0, l: -pose.crouch*0.7};
     b.la.rotation.z += o.la; b.ra.rotation.z += o.ra; b.t.rotation.y += o.t;
@@ -2004,7 +2033,7 @@ function mount(el, api){
   }
   // [3.15] standing in a full bus, tram or train: the right arm up to the ceiling rail (undone before the next mixer step)
   function railUndo(ch){ var b = poseBones(ch), o = ch && ch._rail; if(!b || !o) return; b.ra.rotation.z -= o; ch._rail = 0; }
-  function railApply(ch){ var b = poseBones(ch); if(!b || E.calm()) return; var o = -2.5; b.ra.rotation.z += o; ch._rail = o; }
+  function railApply(ch){ if(ch && ch.rig === "uni"){ if(!E.calm()) railUni(ch); return; } var b = poseBones(ch); if(!b || E.calm()) return; var o = -2.5; b.ra.rotation.z += o; ch._rail = o; }
   // the pose for a skater, from the sim's state (yours) or from a trick id k (someone else's)
   function skatePoseOf(k, air, crouchT){
     var K = HQV.hqSkateSim ? HQV.hqSkateSim.K : {};
@@ -2027,7 +2056,7 @@ function mount(el, api){
   // pointing each arm at its grip and each leg at its peg or pedal, every frame after the clips
   // have run (each limb is one bone, so it is aimed, and stretched or shortened a little to reach).
   // Seated, everyone is drawn a little smaller (RIDER_K) so the vehicles stay a believable size.
-  var HIP = [0, 0.176, -0.029], RIDER_K = 0.85;
+  var HIP = [0, 0.176, -0.029], RIDER_K = 0.85, UNI_RIDER = 1.1;
   var LEG_REST = [0, -0.168, 0.012];
   function rigOf(ch){
     if(!ch) return null;
@@ -2098,7 +2127,8 @@ function mount(el, api){
     var bare = !!(B && B.hats === false);
     hatsOf(ch).forEach(function(o){ o.visible = !bare; });
     if(B && B.seat){
-      var s = base*(B.riderK || RIDER_K), p = B.seat.position;
+      // games/people3d.js people are slimmer than the Mini Characters the seats were laid out for: drawn a little bigger
+      var s = base*(B.riderK || RIDER_K)*(ch.rig === "uni" ? UNI_RIDER : 1), p = B.seat.position;
       var hip = ch.hip || uniHip(ch) || HIP;
       ch.o.scale.setScalar(s); ch.o.rotation.set(0, 0, 0);
       ch.o.position.set(p.x - hip[0]*s, p.y - hip[1]*s, p.z - hip[2]*s);
@@ -2116,11 +2146,10 @@ function mount(el, api){
   function uniHip(ch){
     if(ch.rig !== "uni" || !ch.bones || !ch.bones.Hips) return null;
     if(ch._hip) return ch._hip;
-    var sc = ch.o.scale.x || 1, keep = [ch.o.position.clone(), ch.o.rotation.clone()];
-    ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); ch.o.updateMatrixWorld(true);
-    var w = ch.bones.Hips.getWorldPosition(new THREE.Vector3());
-    ch.o.position.copy(keep[0]); ch.o.rotation.copy(keep[1]); ch.o.updateMatrixWorld(true);
-    return (ch._hip = [w.x/sc, w.y/sc - 0.012, w.z/sc]);
+    // in o's own frame (wherever o hangs: its parents may be anywhere in the world)
+    ch.o.updateMatrixWorld(true);
+    var w = ch.o.worldToLocal(ch.bones.Hips.getWorldPosition(new THREE.Vector3()));
+    return (ch._hip = [w.x, w.y - 0.012, w.z]);
   }
   // the same riding pose on the new humanoid: lean from the waist, twist into the turn, then two-bone IK from the
   // shoulders to the grips and from the hips to the pegs (knees forward and a little out, elbows out and down)
@@ -2128,14 +2157,24 @@ function mount(el, api){
     var P = HQV.people3d, K = P && P.ik, Bo = ch.bones;
     if(!K || !K.twoBone) return;
     if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+    if(K.mark) K.mark(ch);                   // undone before the next mixer step (games/people3d.js)
     var lean = B.lean || 0.3;
-    if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.5;
-    if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.5; Bo.Chest.rotation.y += steer*0.14; }
-    if(Bo.Neck){ Bo.Neck.rotation.x -= lean*0.7; Bo.Neck.rotation.y += steer*0.25; }
+    if(Bo.Abdomen) Bo.Abdomen.rotation.x += lean*0.3;              // (the reach below adds more if the grips need it)
+    if(Bo.Chest){ Bo.Chest.rotation.x += lean*0.3; Bo.Chest.rotation.y += steer*0.14; }
+    if(Bo.Neck){ Bo.Neck.rotation.x -= lean*0.6; Bo.Neck.rotation.y += steer*0.25; }
     top.updateMatrixWorld(true);
     var q = ch.o.getWorldQuaternion(new THREE.Quaternion()), sc = ch.o.getWorldScale(tmpB).y || 1;
     var fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
     ch.scaleW = sc / (1.7/CH_H);
+    // grips out of reach (a toy body's short arms, a long bike): bend further from the waist until the hands get there
+    if(B.grips && B.grips[0] && B.grips[1] && Bo.Abdomen && Bo.UpperArmL){
+      for(var it = 0; it < 2; it++){
+        var far = 0;
+        ["L", "R"].forEach(function(sd, i){ far = Math.max(far, Bo["UpperArm" + sd].getWorldPosition(new THREE.Vector3()).distanceTo(B.grips[i].getWorldPosition(new THREE.Vector3()))/(uniArmLen(ch, sd) || 1)); });
+        if(far <= 0.96) break;
+        uniTurn(Bo.Abdomen, side, Math.min(0.22, (far - 0.96)*1.2));
+      }
+    }
     ["L", "R"].forEach(function(sd, i){
       var sg = i ? -1 : 1;
       if(B.feet && B.feet[i]){
@@ -2143,10 +2182,90 @@ function mount(el, api){
         K.leg(ch, sd, peg, peg.clone().addScaledVector(fwd, 1).addScaledVector(up, 0.8).addScaledVector(side, sg*0.25));
       }
       if(B.grips && B.grips[i]){
-        var g = B.grips[i].getWorldPosition(new THREE.Vector3());
+        // the wrist a hand's breadth back and a little over the grip, so the palm (not the wrist) closes round it
+        var g = B.grips[i].getWorldPosition(new THREE.Vector3()).addScaledVector(fwd, -0.035*ch.scaleW).addScaledVector(up, 0.012*ch.scaleW);
         K.reach(ch, sd, g, g.clone().addScaledVector(side, sg*0.6).addScaledVector(up, -0.4).addScaledVector(fwd, -0.5));
         K.grip(ch, sd, 0.85);
       }
+    });
+  }
+  /* ---------- [realism] posing games/people3d.js bodies (rig "uni") over their clips ----------
+     World-space helpers: everything they turn is put back at the character's next mixer step (people3d mark()),
+     so none of them needs an undo. The character faces +z in o's frame, its left hand on +x. */
+  function uniK(ch){ var P = HQV.people3d, K = P && P.ik; return ch && ch.rig === "uni" && ch.bones && K && K.twoBone ? K : null; }
+  function uniAxes(ch){
+    ch.o.updateMatrixWorld(true);
+    var q = ch.o.getWorldQuaternion(new THREE.Quaternion());
+    return {fwd: new THREE.Vector3(0, 0, 1).applyQuaternion(q), up: new THREE.Vector3(0, 1, 0).applyQuaternion(q),
+            left: new THREE.Vector3(1, 0, 0).applyQuaternion(q), s: ch.o.getWorldScale(new THREE.Vector3()).y || 1};
+  }
+  // turn a bone about a world axis
+  function uniTurn(bone, axis, ang){
+    if(!bone || !ang) return;
+    var qw = bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(new THREE.Quaternion().setFromAxisAngle(axis, ang));
+    bone.quaternion.copy(bone.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(qw));
+    bone.updateMatrixWorld(true);
+  }
+  function uniArmLen(ch, sd){
+    var B = ch.bones, a = B["UpperArm" + sd], b = B["LowerArm" + sd], c = B["Wrist" + sd]; if(!a || !b || !c) return 0;
+    var pa = a.getWorldPosition(new THREE.Vector3()), pb = b.getWorldPosition(new THREE.Vector3());
+    return pa.distanceTo(pb) + pb.distanceTo(c.getWorldPosition(new THREE.Vector3()));
+  }
+  // the skate pose {crouch 0..1, arms 0..1, twist}: knees bent over planted feet, arms out for balance, the chest turned
+  function poseUni(ch, pose){
+    var K = uniK(ch); if(!K || !pose) return;
+    K.mark(ch);
+    var B = ch.bones, A = uniAxes(ch);
+    if(pose.crouch > 0.01 && B.Body){
+      var feet = ["L", "R"].map(function(sd){ return B["Foot" + sd] ? B["Foot" + sd].getWorldPosition(new THREE.Vector3()) : null; });
+      var drop = pose.crouch*0.16*CH_H*A.s;                          // up to a sixth of their height
+      var p = B.Body.parent.worldToLocal(B.Body.getWorldPosition(new THREE.Vector3()).addScaledVector(A.up, -drop));
+      B.Body.position.copy(p); B.Body.updateMatrixWorld(true);
+      ["L", "R"].forEach(function(sd, i){
+        if(!feet[i]) return;
+        var hip = B["UpperLeg" + sd].getWorldPosition(new THREE.Vector3());
+        K.leg(ch, sd, feet[i], hip.addScaledVector(A.fwd, 1).addScaledVector(A.up, -0.2*A.s));
+      });
+    }
+    if(pose.twist) uniTurn(B.Chest || B.Torso, A.up, pose.twist);
+    if(pose.arms > 0.05){
+      ["L", "R"].forEach(function(sd, i){
+        var sh = B["UpperArm" + sd]; if(!sh) return;
+        var L = uniArmLen(ch, sd)*0.97, a = 0.25 + pose.arms*1.2, sg = i ? -1 : 1;   // from down by the side (0) up to level (1)
+        var at = sh.getWorldPosition(new THREE.Vector3()), tg = at.clone().addScaledVector(A.left, sg*Math.sin(a)*L).addScaledVector(A.up, -Math.cos(a)*L);
+        K.reach(ch, sd, tg, at.clone().addScaledVector(A.fwd, -1).addScaledVector(A.up, -0.3*A.s));
+      });
+    }
+  }
+  // standing in a full bus, tram or train: the right hand up on the ceiling rail, fingers round it
+  function railUni(ch){
+    var K = uniK(ch); if(!K) return;
+    K.mark(ch);
+    var B = ch.bones, A = uniAxes(ch), sh = B.UpperArmR; if(!sh) return;
+    var L = uniArmLen(ch, "R"), at = sh.getWorldPosition(new THREE.Vector3());
+    var tg = at.clone().addScaledVector(A.up, L*0.82).addScaledVector(A.left, -L*0.42).addScaledVector(A.fwd, L*0.1);   // up beside the (big) head
+    K.reach(ch, "R", tg, at.clone().addScaledVector(A.left, -1).addScaledVector(A.fwd, -0.3));
+    K.grip(ch, "R", 0.9);
+  }
+  // the head into a turn: neck and head share it
+  function headUni(ch, yaw){
+    var K = uniK(ch); if(!K || !yaw) return;
+    K.mark(ch);
+    var A = uniAxes(ch); uniTurn(ch.bones.Neck, A.up, yaw*0.4); uniTurn(ch.bones.Head, A.up, yaw*0.6);
+  }
+  // at a desk (games/hq3d.js Mission Control): typing hands on the keyboard (its centre `kb`, world), or slumped back idle
+  function deskUni(ch, kb, side, t, typing){
+    var K = uniK(ch); if(!K) return;
+    K.mark(ch);
+    var B = ch.bones, A = uniAxes(ch);
+    if(!typing){ uniTurn(B.Neck, A.left, 0.15); return; }   // leant back (applyState tips them), eyes on the screen
+    uniTurn(B.Abdomen, A.left, 0.1);
+    ["L", "R"].forEach(function(sd, i){
+      var sg = i ? -1 : 1, tap = E.calm() ? 0 : Math.max(0, Math.sin(t*14 + i*1.9))*0.018*A.s/2.36;
+      var tg = kb.clone().addScaledVector(side, sg*0.11*A.s/2.36).addScaledVector(A.fwd, -0.04*A.s/2.36).addScaledVector(A.up, 0.03*A.s/2.36 + tap);
+      var sh = B["UpperArm" + sd]; if(!sh) return;
+      K.reach(ch, sd, tg, sh.getWorldPosition(new THREE.Vector3()).addScaledVector(A.left, sg*0.6).addScaledVector(A.up, -0.5).addScaledVector(A.fwd, -0.3));
+      K.grip(ch, sd, 0.35);
     });
   }
   // The riding pose, after the clips have run: `top` is the group the rider and vehicle hang from
@@ -2173,7 +2292,7 @@ function mount(el, api){
   }
   // b: a parked {g, x, z, yaw, color, roof?, kind}; i: its index in cur.bikes (-1: not parked anywhere)
   // TEMP-HQDEV (remove before the PR): a test hook for the realism revamp
-  if(/hqdev/.test(location.search)){ window.__hq3d = {mount: function(i){ return mount(i); }, cur: function(){ return cur; }, avatar: function(){ return avatar; }, view: view}; }
+  if(/hqdev/.test(location.search)){ window.__hq3d = {mount: function(i){ return mount(i); }, cur: function(){ return cur; }, avatar: function(){ return avatar; }, view: view, kinds: function(){ return Object.keys(VEHICLES); }, ride: function(kind){ if(ride) return "riding"; var b = {g: new THREE.Group(), x: avatar.x, z: avatar.z, yaw: avatar.yaw, color: "#c0392b", accent: "#222", kind: kind}; mountOn(b, -1); return !!ride; }, ridek: function(){ return ride; }, enter: function(n){ enterWorld(n, null, true); return !!cur; }, desks: function(){ return desks; }, worldName: function(){ return Object.keys(worlds).filter(function(k){ return worlds[k] === cur; })[0]; }, iso: function(keep){ cur.scene.children.forEach(function(c){ if(c !== avatar.g && !c.isLight && (!keep || keep.indexOf(c) < 0)) c.visible = false; }); cur.scene.background = new THREE.Color(0xdde6e0); return cur.scene.children.length; }, THREE: function(){ return THREE; }, look: function(dx, dy, dz, ty, fov){ var c = window.__hqcam || (window.__hqcam = new THREE.PerspectiveCamera(fov || 30, inst.w/inst.h, 0.05, 200)); var g = avatar.g.position, yw = avatar.yaw, cs = Math.cos(yw), sn = Math.sin(yw); c.position.set(g.x + dx*cs + dz*sn, g.y + dy, g.z - dx*sn + dz*cs); c.lookAt(g.x, g.y + (ty == null ? 0.9 : ty), g.z); c.aspect = inst.w/inst.h; c.updateProjectionMatrix(); return [g.x, g.y, g.z]; }, people: function(){ return peers; }}; }
   function mountOn(b, i){
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", base = baseKind(kind), car = base === "car", Vc = VEHICLES[kind].cat, boat = !!VEHICLES[kind].boat && !!HQV.hqboat, heli = !!VEHICLES[kind].heli && !!HQV.hqheli;
@@ -4723,7 +4842,7 @@ function mount(el, api){
     return y != null && isFinite(y) ? y : null;
   }
   // The camera that draws and picks: the perspective one in every rig mode but Classic.
-  function curCam(){ return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }
+  function curCam(){ if(window.__hqcam) return window.__hqcam; return rigOn() && rig.mode !== "classic" && pcam ? pcam : cam; }   // TEMP-HQDEV
   // [sound] where that camera hears from (E.listener's at, with its facing): Classic from what it looks at, the Map from
   // the ground at its centre (its camera is hundreds of metres up, past every world sound's reach), the rest from the
   // camera itself (null)
@@ -6287,6 +6406,7 @@ function mount(el, api){
       var bOn = !!boomMe && !POOL.u && (!ride || ride.kind === "skate");
       boomStep(avatar.ch, bOn, t, bOn);
       gunStep(avatar.ch, GN.out && !ride, true);                       // [3.16] the launcher, on foot
+      if(window.__hqpose) window.__hqpose(avatar.ch, {poseApply: poseApply, railApply: railApply, headApply: headApply, boomStep: boomStep}, t);   // TEMP-HQDEV
     }
     placePeers(dt, t);
     tankFrame(dt);                                                     // [3.16] tanks: the turret, a gunner's aim
@@ -6323,14 +6443,20 @@ function mount(el, api){
     // crew
     desks.forEach(function(D){
       var st = crewState(D.s);
-      if(D.ch) D.ch.mixer.update(dt*k);
+      if(D.ch){
+        D.ch.mixer.update(dt*k);
+        if(D.ch.rig === "uni" && D.ch.o.visible && (st === "working" || st === "idle")){     // [realism] hands on the keyboard
+          D.root.updateMatrixWorld(true);
+          deskUni(D.ch, D.root.localToWorld(new THREE.Vector3(0, 1.05, 0.62)), new THREE.Vector3(1, 0, 0).transformDirection(D.root.matrixWorld), t, st === "working");
+        }
+      }
       if(D.badge){ if(st === "needs") D.badge.position.y = 2.3 + Math.abs(Math.sin(t*3))*0.3*k; else { var zz = (t*0.5) % 1; D.badge.position.y = 2.2 + zz*0.8*k; D.badge.material.opacity = 1 - zz*0.7; } }
       if(st === "needs") D.strip.material.emissiveIntensity = Math.sin(t*5) > 0 ? 2.6 : 0.6;
       var hop = st === "needs" ? Math.abs(Math.sin(t*5 + D.root.position.x))*0.25 : st === "working" ? Math.abs(Math.sin(t*2.5 + D.root.position.x))*0.06 : 0;
       D.pet.children[0].position.y = 0.4 + hop*k;
     });
     streams.forEach(function(s){ s.dots.forEach(function(d, i){ var u = (t*s.speed*k + i/4) % 1; if(s.dir < 0) u = 1 - u; s.curve.getPoint(u, d.position); d.material.opacity = Math.sin(u*PI); }); });
-    renderer.render(scene, cam);
+    renderer.render(scene, window.__hqcam || cam);   // TEMP-HQDEV
   }
 
   /* ---------- lifecycle ---------- */
@@ -6671,7 +6797,7 @@ function mount(el, api){
         var ptn = P.vt && HQV.hqTuning && (vk === "car" || vk === "moto" || Vc) ? HQV.hqTuning.decode(P.vt, (Vc ? VEHICLES[vk].kind === "bike" : vk === "moto") ? "bike" : "car") : null;   // [3.13]
         P.bike = vk === "tank" && HQV.hqTank ? HQV.hqTank.model(THREE) : vk === "petride" ? HQV.hqPetRide.mountModel(ctx, {species: pmount.sp.id, variant: pmount.variant, acc: pmount.acc, name: pmount.name}) : Vc ? HQV.hqVehicleModels.build(ctx, Vc, ph, {tune: ptn}) : VEHICLES[vk].plane ? HQV.hqplane.model(ctx, vk, bikeColor(u)) : VEHICLES[vk].heli ? HQV.hqheli.model(ctx, vk, bikeColor(u)) : vk === "car" ? carModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : vk === "moto" ? motoModel(bikeColor(u), undefined, ptn && ptn.plate || undefined) : bikeModel(bikeColor(u));
         if(ptn && !Vc && (vk === "car" || vk === "moto") && HQV.hqVehicleModels && HQV.hqVehicleModels.tuneStarter) HQV.hqVehicleModels.tuneStarter(THREE, P.bike, ptn, vk === "car" ? "car" : "bike");
-        P.vk = vk; P.ex = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;   // [sound] what it sounds like (peerSounds)
+        P.vk = vk; P.exh = ptn && HQV.hqTuning.exhaustOf ? HQV.hqTuning.exhaustOf(ptn) : null;   // [sound] what it sounds like (peerSounds; P.ex is the exo suit)
         P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){

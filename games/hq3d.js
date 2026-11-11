@@ -4959,7 +4959,7 @@ function mount(el, api){
             size: ride && ride.V && ride.V.size || 1,
             lean: ride && ride.lean ? ride.lean.rotation.z : EXO.fly ? exoLean() : 0, moving: !!keyMove,
             travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0,
-            boost: EXO.fly && EXO.fly.st.boosting ? 1 : 0};
+            boost: EXO.fly && EXO.fly.st.boosting ? 1 : 0, breath: !!(ride && ride.pet && ride.pet.breathT > 0)};
   }
   // Any key, click, wheel or pad input: the idle timer restarts and a cinematic hands back the camera.
   function noteInput(){

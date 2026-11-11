@@ -1180,7 +1180,7 @@ var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake 
 	// reads a ~4 m tall mount at about a third of the screen. Sits behind your look (the
 	// breath aims down it) and restores to first-person the moment you step off. Client art
 	// only — no judge twin.
-	var DRAGON_CAM_BACK = 7.5, DRAGON_CAM_UP = 3.0;
+	var DRAGON_CAM_BACK = 7.5, DRAGON_CAM_UP = 3.0, DRAGON_CAM_SIDE = 2.4;   // + over the right shoulder (see the ride camera)
 	// kill feed: keep causes readable long enough to see how you died
 	var FEED_TTL = 8;
 	var FEED_MAX = 6;
@@ -7475,14 +7475,15 @@ function makeGame(host, opts){
         // toward ready (the same read as the gun reloading). A full tank is the plain
         // prompt with no bar.
         var inh = (ride.rechargeAt && t < ride.rechargeAt) ? clamp(1 - (ride.rechargeAt - t) / DRAGON_INHALE_SECS, 0, 1) : 0;
+        var mhp = " \u00b7 mount " + Math.round(100 * Math.max(0, ride.hp != null ? ride.hp : DRAGON_HP) / Math.max(1, ride.max || DRAGON_HP)) + "%";
         if(inh > 0){
           var secs = Math.max(1, Math.ceil(ride.rechargeAt - t));
-          dragonPrompt("G  dismount · inhaling…", inh, " " + secs + "s");
+          dragonPrompt("G  dismount · inhaling…" + mhp, inh, " " + secs + "s");
         } else if(!(ride.breathLeft > 0)){
           // tank dry and the inhale has not started yet (the frame you let go of it)
-          dragonPrompt("G  dismount · click to draw breath", 0.02);
+          dragonPrompt("G  dismount · click to draw breath" + mhp, 0.02);
         } else {
-          dragonPrompt("G  dismount · click to breathe", 0);
+          dragonPrompt("G  dismount · click to breathe" + mhp, 0);
         }
         return;
       }
@@ -9672,6 +9673,7 @@ function makeGame(host, opts){
     // not vehicles, in an 80 m arena. > 2 keeps the pet pose on its slow ridden-mount
     // wing beats; the saddle still sits above the rider's feet (DRAGON_SEAT).
     var DRAGON_ART_S = 2.6;
+    var DRAGON_JET_LEN = DRAGON_BREATH_LEN * 0.72;   // m of breath jet off a battle mount's jaw (hqPets Fx.jet)
     var dragonPetWait = false;
     function dragonPets(){ return (window.HQV && window.HQV.hqPets) || null; }
     function dragonPetsWant(){
@@ -9734,32 +9736,60 @@ function makeGame(host, opts){
       }
       // pet-space forward is (sin, cos) — the same vector dragonHead / the cone use
       var fyaw = D.yaw || 0, f0 = Math.sin(fyaw), f1 = Math.cos(fyaw);
-      // the jet's core on the jaw, every frame (hqPets Fx.jet: a flame cone with its heat haze);
-      // the older sprite throat only where the pool has no jet
-      if(F.jet) F.jet(D, fx === "storm" ? "sparkle" : fx, hx, hy, hz, f0, -0.08 - (D.pitch || 0) * 0.5, f1, 6.5);
+      // the jet's core on the jaw, every frame (hqPets Fx.jet: a flame cone with its heat haze), long and
+      // flared: the chase camera sits behind the mount, so the jet runs away down the lens and a short,
+      // slim cone read as a glow at the head. The older sprite throat only where the pool has no jet.
+      // your own mount breathes where you look (the crosshair, up or down onto the deck); the others' by their
+      // flight attitude. Art only: the judge's cone is flat (dragonBreathStep), so this changes no hit.
+      var jdy = D.riderIsMe ? clamp(Math.tan((V.pitch || 0) - 0.04), -1.2, 0.25) : -0.1 - (D.pitch || 0) * 0.5;
+      var jn = 1 / Math.sqrt(1 + jdy * jdy), d0 = f0 * jn, d1 = jdy * jn, d2 = f1 * jn;   // the jet's unit direction
+      if(F.jet) F.jet(D, fx === "storm" ? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1.45, 1.8);
       else dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
-      // ~30 Hz emit — dense enough that the jet is continuous, not a dotted line
+      // ~30 Hz emit, by the ticks this frame covered (a slow frame pours as much as three fast ones, so the
+      // stream stays dense on a laptop instead of thinning to a dotted line)
       D.fxAcc = (D.fxAcc || 0) + (dts || 0.016);
       if(D.fxAcc < 1/30) return;
-      D.fxAcc = 0;
+      var tk = Math.min(4, Math.floor(D.fxAcc * 30));
+      D.fxAcc = Math.min(1/30, D.fxAcc - tk / 30);
       // the Commons sprays at speed+16; a battle jet is hotter and heavier
-      var spd = (D.vF || 0) + 22;
-      var lift = (D.vy || 0) - (D.pitch || 0) * 6;
+      // (emit takes a flat heading, a speed along it and a climb: the jet's speed split the same way)
+      var sp0 = (D.vF || 0) + 24, spd = sp0 * jn;
+      var lift = (D.vy || 0) + d1 * sp0;
+      // the stations down the stream (m from the jaw): fat at the lips, blooming out to the tip
+      var L = DRAGON_JET_LEN, s1 = L * 0.12, s2 = L * 0.45, s3 = L * 0.8;
+      function at3(d){ return [hx + d0 * d, hy + d1 * d, hz + d2 * d]; }
+      var p1 = at3(s1), p2 = at3(s2), p3 = at3(s3);
       if(fx === "storm"){
-        F.emit("sparkle", hx, hy, hz, 8, f0, f1, spd, 2.8, 0.85, lift);
-        F.emit("sparkle", hx + f0 * 2.2, hy - 0.2, hz + f1 * 2.2, 6, f0, f1, spd * 0.85, 3.4, 0.75, lift * 0.7);
-        if(F.zap && (Math.floor(at * 9) % 2) === 0) F.zap(hx + f0 * 3.2, hy - 0.6, hz + f1 * 3.2);
+        F.emit("sparkle", p1[0], p1[1], p1[2], 10 * tk, f0, f1, spd, 2.8, 0.85, lift);
+        F.emit("sparkle", p2[0], p2[1], p2[2], 8 * tk, f0, f1, spd * 0.85, 3.6, 0.75, lift * 0.7);
+        F.emit("smoke", p3[0], p3[1] + 0.4, p3[2], 3 * tk, f0, f1, spd * 0.4, 3.0, 1.2, 1.2);
+        if(F.zap && (Math.floor(at * 9) % 2) === 0) F.zap(p2[0], p2[1] - 0.6, p2[2]);
       } else if(fx === "fire"){
-        F.emit("fire", hx + f0 * 0.5, hy, hz + f1 * 0.5, 12, f0, f1, spd, 3.6, 1.05, lift);
-        F.emit("ember", hx + f0 * 2.4, hy - 0.15, hz + f1 * 2.4, 8, f0, f1, spd * 0.88, 4.2, 1.15, lift * 0.75);
-        F.emit("fire", hx + f0 * 5.5, hy - 0.35, hz + f1 * 5.5, 6, f0, f1, spd * 0.72, 5.0, 1.25, lift * 0.5);
+        F.emit("fire", p1[0], p1[1], p1[2], 16 * tk, f0, f1, spd, 3.4, 1.0, lift);
+        F.emit("fire", p2[0], p2[1], p2[2], 12 * tk, f0, f1, spd * 0.8, 5.0, 1.1, lift * 0.6);
+        F.emit("ember", p2[0], p2[1] - 0.15, p2[2], 10 * tk, f0, f1, spd * 0.9, 5.5, 1.2, lift * 0.75);
+        F.emit("fire", p3[0], p3[1] - 0.3, p3[2], 8 * tk, f0, f1, spd * 0.6, 6.5, 1.25, lift * 0.4);
+        var p4 = at3(L);
+        F.emit("fire", p4[0], p4[1] - 0.2, p4[2], 8 * tk, f0, f1, spd * 0.45, 7.5, 1.1, lift * 0.3 + 0.8);   // the tip, still burning as it billows out
+        F.emit("smoke", p4[0], p4[1] + 0.8, p4[2], 5 * tk, f0, f1, spd * 0.3, 5.0, 1.8, 1.8);   // the black smoke rolling off its end
       } else if(fx === "ice"){
-        F.emit("ice", hx + f0 * 0.5, hy, hz + f1 * 0.5, 10, f0, f1, spd * 0.95, 3.2, 1.0, lift);
-        F.emit("snow", hx + f0 * 2.6, hy - 0.15, hz + f1 * 2.6, 8, f0, f1, spd * 0.82, 3.8, 1.2, lift * 0.7);
+        F.emit("ice", p1[0], p1[1], p1[2], 14 * tk, f0, f1, spd * 0.95, 3.2, 1.0, lift);
+        F.emit("ice", p2[0], p2[1], p2[2], 10 * tk, f0, f1, spd * 0.75, 4.6, 1.1, lift * 0.6);
+        F.emit("snow", p2[0], p2[1] - 0.15, p2[2], 10 * tk, f0, f1, spd * 0.82, 5.0, 1.3, lift * 0.7);
       } else {
-        F.emit(fx, hx + f0 * 0.5, hy, hz + f1 * 0.5, 8, f0, f1, spd * 0.85, 3.0, 1.05, lift);
-        F.emit(fx, hx + f0 * 3.0, hy - 0.2, hz + f1 * 3.0, 6, f0, f1, spd * 0.7, 3.8, 1.15, lift * 0.6);
+        F.emit(fx, p1[0], p1[1], p1[2], 12 * tk, f0, f1, spd * 0.85, 3.0, 1.05, lift);
+        F.emit(fx, p2[0], p2[1], p2[2], 10 * tk, f0, f1, spd * 0.7, 4.4, 1.15, lift * 0.6);
+        F.emit(fx, p3[0], p3[1], p3[2], 6 * tk, f0, f1, spd * 0.5, 5.4, 1.25, lift * 0.4);
       }
+      // where the stream meets the deck: a splash of flame (or frost) and the heat light down there, so a
+      // low pass sets the ground alight under it
+      var tip = at3(L), tgy = holeGroundY(tip[0], tip[2]);
+      if(tgy != null && tip[1] - tgy < 4.5){
+        var gk = fx === "ice" ? "snow" : fx === "storm" ? "sparkle" : fx === "fire" ? "fire" : fx;
+        F.emit(gk, tip[0], tgy + 0.3, tip[2], 10 * tk, f0, f1, 5, 9, 0.9, 2.2);
+        if(fx === "fire") F.emit("ember", tip[0], tgy + 0.2, tip[2], 6 * tk, f0, f1, 3, 10, 1.0, 4);
+        if(F.heat) F.heat(tip[0], tgy + 1.2, tip[2], gk, 1);
+      } else if(F.heat) F.heat(p2[0], p2[1], p2[2], fx === "storm" ? "sparkle" : fx === "fire" ? "fire" : fx, 1);
     }
     // additive fire sprites down the jet. One lazy pool of dragon-only sprites
     // (not the Commons Fx points) so the core of the flame is big and bright from
@@ -10110,6 +10140,9 @@ function makeGame(host, opts){
         dp.rotation.z = quiet ? 0 : dpRoll;
         // keep the health bar on the beast
         dragonHpBarSet(dp.userData.hpBar, D.hp != null ? D.hp : DRAGON_HP, D.max || DRAGON_HP);
+        // your own mount's bar sat right over its head in the chase view, hiding the jaw and the breath:
+        // the saddle prompt carries its health instead (dragonPromptTick)
+        if(dp.userData.hpBar) dp.userData.hpBar.visible = !D.riderIsMe && (dp.userData.hpBar.userData.hp | 0) > 0;
         // the "G  Ride" plate rides every idle dragon (hidden once claimed or dead)
         dragonMountPlateSet(dp, !D.rider && !D.dead, D.tier || dp.userData.tier || "fire");
         var Mo = dp.userData && dp.userData.Pm;
@@ -10140,7 +10173,11 @@ function makeGame(host, opts){
           var airH = (D.y || 0) - (gy != null ? gy : 0);
           var flying = riding && airH > 0.8;
           var moving = sp > 0.35;
-          if(dragonBreathOn(D, at)) st.anim = "breath";
+          // breathing on the wing stays on the wing (the jaw opens, the wings keep working): a "breath"
+          // anim folded them to the flanks mid-air and the mount read as a spine with stubs
+          var brOn = dragonBreathOn(D, at);
+          st.breath = brOn && flying;
+          if(brOn && !flying) st.anim = "breath";
           else if(flying){
             st.anim = "fly";
             // the real flight mode when the rider owns it (climb/dive/hover/glide);
@@ -11699,8 +11736,19 @@ function makeGame(host, opts){
       } else if(RIDING){
         // behind and above the saddle, looking where you look (the breath aims down the same
         // yaw). Seat = the rider's feet, so the offset reads as "over the dragon's shoulders".
-        var rfx = Math.sin(V.yaw), rfz = -Math.cos(V.yaw);
-        camera.position.set(M.x - rfx*DRAGON_CAM_BACK, M.y + DRAGON_CAM_UP, M.z - rfz*DRAGON_CAM_BACK);
+        // Over the right shoulder, not dead astern: straight behind, the beast was a thin spine and its
+        // breath a dot (the jet points away down the lens). Off to the side and higher it reads as a whole
+        // animal, wings and flank, and the jet runs across the frame. Airborne it pulls back for the span;
+        // breathing it swings a little wider so the stream shows its length. Eased, never snapped.
+        var rfx = Math.sin(V.yaw), rfz = -Math.cos(V.yaw), rrx = Math.cos(V.yaw), rrz = Math.sin(V.yaw);
+        var rD = myDragon(t), rgy = rD ? holeGroundY(rD.x || 0, rD.z || 0) : null;
+        var rAir = rD ? clamp(((rD.y || 0) - (rgy != null ? rgy : 0)) / 4, 0, 1) : 0, rBr = rD && dragonBreathOn(rD, t) ? 1 : 0;
+        var RC = V.rideCam || (V.rideCam = {air: rAir, br: 0});
+        var rk = Math.min(1, dt * 3);
+        RC.air += (rAir - RC.air) * rk; RC.br += (rBr - RC.br) * Math.min(1, dt * (rBr ? 2.5 : 1.5));
+        var cBack = DRAGON_CAM_BACK + RC.air * 1.4 - RC.br * 2.2, cUp = DRAGON_CAM_UP + RC.air * 1.0 + RC.br * 0.6;
+        var cSide = (quiet ? 1.2 : DRAGON_CAM_SIDE) + RC.br * 2.8;
+        camera.position.set(M.x - rfx*cBack + rrx*cSide, M.y + cUp, M.z - rfz*cBack + rrz*cSide);
         camera.rotation.order = "YXZ";
         camera.rotation.set(V.pitch + (V.dead ? -0.3 : 0), -V.yaw, V.dead && !quiet ? 0.35 : 0);
       } else {

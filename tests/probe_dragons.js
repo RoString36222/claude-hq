@@ -345,15 +345,18 @@ check("JS lights the HUD pill from further out than the bind itself",
 
 // ---- 13. the ride camera: 3rd person in the saddle, 1st person back on dismount ----
 check("JS pulls the camera back and up while riding (Commons chase framing, tight enough to read the beast)",
-      /DRAGON_CAM_BACK = 7\.5, DRAGON_CAM_UP = 3\.0/.test(js)
-      && /camera\.position\.set\(M\.x - rfx\*DRAGON_CAM_BACK, M\.y \+ DRAGON_CAM_UP/.test(js));
+      /DRAGON_CAM_BACK = 7\.5, DRAGON_CAM_UP = 3\.0, DRAGON_CAM_SIDE = 2\.4/.test(js)
+      && /var cBack = DRAGON_CAM_BACK \+ RC\.air/.test(js)
+      && /camera\.position\.set\(M\.x - rfx\*cBack \+ rrx\*cSide, M\.y \+ cUp, M\.z - rfz\*cBack \+ rrz\*cSide\)/.test(js));
+check("JS rides over the right shoulder and swings wider while breathing (the jet runs across the frame)",
+      /RC\.br \+= \(rBr - RC\.br\)/.test(js) && /var cSide = \(quiet \? 1\.2 : DRAGON_CAM_SIDE\) \+ RC\.br \* 2\.8/.test(js));
 check("JS still aims with your look yaw/pitch (the breath aims down it)",
       /camera\.rotation\.set\(V\.pitch \+ \(V\.dead \? -0\.3 : 0\), -V\.yaw/.test(js));
 check("JS only rides the chase cam while a live dragon holds you",
       /var RIDING = !WP && !KC && dragonRiding\(t\)/.test(js)
       && /dragonRiding\(t\)[\s\S]{0,200}!V\.dead/.test(js));
 check("JS restores first-person the moment you step off (the eye path is the else)",
-      /else if\(RIDING\)\{[\s\S]{0,600}else \{\n[\s\S]{0,400}camera\.position\.set\(M\.x \+ plx, M\.y \+ ey/.test(js)
+      /else if\(RIDING\)\{[\s\S]{0,2000}else \{\n[\s\S]{0,400}camera\.position\.set\(M\.x \+ plx, M\.y \+ ey/.test(js)
       && /function dragonDismount\(D, t, silent\)/.test(js));
 check("the stowed gun never paints over the beast",
       /gunHold\.visible = !V\.dead && !sniper && !RIDING/.test(js)
@@ -426,7 +429,8 @@ check("JS steps the flame pool every frame and tears it down with the scene",
 check("JS pours nothing under Calm (the jaw still opens)",
       /function dragonBreathFx\(D, at, dts, quiet\)\{[\s\S]{0,200}if\(!F \|\| quiet\) return/.test(js));
 check("JS pours a full-fledged jet: many particles, fat additive sprites along the cone",
-      /F\.emit\("fire", hx \+ f0 \* 0\.5, hy, hz \+ f1 \* 0\.5, 12,/.test(js)
+      /F\.emit\("fire", p1\[0\], p1\[1\], p1\[2\], 16 \* tk,/.test(js)
+      && /F\.jet\(D, fx === "storm" \? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1\.45, 1\.8\)/.test(js)
       && /function dragonFlamePool\(\)/.test(js)
       && /function dragonFlameTick\(/.test(js)
       && /function dragonFlamesStep\(/.test(js)

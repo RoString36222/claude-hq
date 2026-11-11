@@ -50,7 +50,7 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     [M.limbs, M.bits].forEach(function(im){ var gg = im.geometry; nearT += im.count*(gg.index ? gg.index.count : gg.attributes.position.count)/3; });
     out.dragons[id] = {inPg: M.parts.body.parent === M.P, rings: M.sw ? M.sw.R : 0, uv: !!g.attributes.uv, rest: !!g.attributes.drRp && !!g.attributes.drRn,
                        finite: finite, outward: tri ? outward/tri : 0, meshes: M.meshes, tris: near, lodLimbs: lodT, nearLimbs: nearT,
-                       mat: M.parts.body.material.type, wing: M.wingMesh.material.alphaToCoverage === true,
+                       mat: M.parts.body.material.type, wing: M.wingMesh.material.alphaToCoverage === true || (M.wingMesh.material.transparent === true && M.wingMesh.material.depthWrite === false),
                        nearDrawn: nearDrawn, farDrawn: farDrawn, crestVerts: tag, jaw: jawOk, jawOpen: jawOpen, beats: beats};
   });
   // the breath pool: full means new particles are dropped, never a live one recycled
@@ -70,6 +70,26 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
     H.jet("b", "ice", 0, 1, 0, 0, 0, 1); H.step(1/60); r.two = H.jets[1].mesh.visible; r.coldHaze = !!(H.jets[1].haze && H.jets[1].haze.visible);
     for(var q = 0; q < 40; q++) H.step(1/60); r.off = !H.jets[0].mesh.visible && !H.jets[1].mesh.visible;
     H.jet("c", "fire", NaN, 1, 0, 1, 0, 0); H.step(1/60); r.nan = H.jets.some(function(J){ return J.mesh.visible; });
+    return r; })();
+  // [verify round 2] the closed mouth: every tooth hanging under the upper lip is seated inside the lower jaw's rim (no
+  // row dangling outside the chin); far off the face keeps its eyes and teeth; breathing on the wing keeps the wings
+  // open (the jaw opens, the wings keep working); the ice skin is a cold blue and see-through
+  out.round2 = (function(){ var r = {};
+    var M = P.model(THREE, {species: "firedragon", variant: 0, acc: 0, stage: 2}), st = P.newState(3, 0, 0, 0), hr = M.wy.d.hr;
+    st.anim = "stand"; for(var q = 0; q < 5; q++) P.pose(M, st, 1 + q/30, false);
+    var hg = M.parts.head.geometry, hp = hg.attributes.position.array, ht = hg.attributes.drTag.array, worst = 0, n = 0;
+    for(var i = 0; i < ht.length; i++) if(Math.round(ht[i]) === 1 && hp[i*3 + 1] < -hr*0.07 && hp[i*3 + 2] > hr*0.2 && hp[i*3 + 2] < hr*2.1){ n++; worst = Math.max(worst, Math.abs(hp[i*3])/hr); }
+    r.upperTeeth = n; r.teethHalfWidth = +worst.toFixed(3);                       // in head radii: the jaw's rim is 0.33 at its widest
+    var lo = 0; M.lod = true; P.pose(M, st, 2, false); var lg = M.parts.head.geometry; if(lg.attributes.drTag) Array.prototype.forEach.call(lg.attributes.drTag.array, function(x){ if(Math.round(x) === 2) lo++; });
+    r.farEye = lo; M.lod = false; P.pose(M, st, 3, false);
+    function span(){ var a = M.wingMesh.geometry.attributes.position.array, mx = 0; for(var k = 0; k < a.length; k += 3) mx = Math.max(mx, Math.abs(a[k])); return mx; }
+    st.anim = "fly"; st.wing = "glide"; st.y = 4; st.agl = 4; st.breath = false; for(q = 0; q < 30; q++) P.pose(M, st, 10 + q/30, false); r.glide = span();
+    st.breath = true; for(q = 0; q < 30; q++) P.pose(M, st, 11 + q/30, false); r.glideBreath = span(); r.jawBreath = M.jaw.g.rotation.x;
+    st.breath = false; st.anim = "breath"; for(q = 0; q < 30; q++) P.pose(M, st, 12 + q/30, false); r.groundBreath = span();
+    var I = P.model(THREE, {species: "icedragon", variant: 0, acc: 0, stage: 2}), c = I.wingMesh.geometry.attributes.color.array, sr = 0, sb = 0;
+    for(q = 0; q < c.length; q += 3){ sr += c[q]; sb += c[q + 2]; }
+    r.iceBlue = sb > sr*1.08; r.iceGlass = I.wingMesh.material.transparent === true && I.wingMesh.material.opacity < 1;
+    r.fireOpaque = M.wingMesh.material.transparent !== true;
     return r; })();
   process.stdout.write(JSON.stringify(out));
 }).catch(function(e){ process.stdout.write(JSON.stringify({error: String(e && e.stack || e)})); });
@@ -96,7 +116,7 @@ class DragonRevamp(unittest.TestCase):
             self.assertLessEqual(d["meshes"], 6, sid)
             self.assertLessEqual(d["tris"], 12000, sid)
             self.assertGreater(d["crestVerts"], 500, "the crest's blades ride on the tube (one draw call): " + sid)
-            self.assertTrue(d["wing"], "soft membrane edges (alpha to coverage): " + sid)
+            self.assertTrue(d["wing"], "soft membrane edges (alpha to coverage; the ice and crystal skins see-through): " + sid)
 
     def test_far_dragons_are_lighter(self):
         for sid, d in self.o["dragons"].items():
@@ -132,6 +152,26 @@ class DragonRevamp(unittest.TestCase):
         self.assertTrue(fx["light"] and fx["lit"], "the breath lights the scene")
         self.assertEqual(fx["bad"], 0, "NaN never enters the pool")
 
+    def test_teeth_seat_inside_the_closed_jaw(self):
+        r = self.o["round2"]
+        self.assertGreaterEqual(r["upperTeeth"], 20, "the upper row is there")
+        self.assertLess(r["teethHalfWidth"], 0.3, "inside the lower jaw's rim, not hanging outside it")
+
+    def test_far_head_keeps_its_eyes(self):
+        self.assertGreater(self.o["round2"]["farEye"], 30, "the burning eyes survive the far version")
+
+    def test_breathing_on_the_wing_keeps_the_wings_open(self):
+        r = self.o["round2"]
+        self.assertGreater(r["glideBreath"], r["glide"]*0.85, "the wings stay spread while it breathes in flight")
+        self.assertLess(r["groundBreath"], r["glide"]*0.75, "(on the ground they fold)")
+        self.assertGreater(r["jawBreath"], 0.3, "the jaw opens")
+
+    def test_ice_membrane_is_cold_and_see_through(self):
+        r = self.o["round2"]
+        self.assertTrue(r["iceBlue"], "a glacier blue skin, not parchment")
+        self.assertTrue(r["iceGlass"], "see-through")
+        self.assertTrue(r["fireOpaque"])
+
     def test_sound_is_silent_without_the_engine(self):
         self.assertEqual(self.o["sfx"], ["function", False, False])
 
@@ -157,6 +197,14 @@ class StrikeDragonDrawing(unittest.TestCase):
         self.assertRegex(self.js, r"Mo\.lod = lodD > \(Mo\.lod \? 38 : 42\)")
         self.assertIn('P.sfx("wing"', self.js)
         self.assertRegex(self.js, r"if\(F\.jet\) F\.jet\(D, ")
+
+    def test_breath_reads_from_the_chase_camera(self):
+        body = self.js[self.js.index("function dragonBreathFx(D, at, dts, quiet){"):self.js.index("function dragonFlamePool(")]
+        self.assertIn("DRAGON_JET_LEN, 1.45, 1.8", body, "a long, flared, bright core")
+        self.assertRegex(body, r"var tk = Math\.min\(4, Math\.floor\(D\.fxAcc \* 30\)\)", "emits by the ticks a frame covered")
+        self.assertIn("D.riderIsMe ? clamp(Math.tan((V.pitch || 0)", body, "your own mount breathes where you look")
+        self.assertIn("st.breath = brOn && flying;", self.js, "breathing in the air keeps the wings working")
+        self.assertIn("dp.userData.hpBar.visible = !D.riderIsMe", self.js, "your mount's bar is off its head")
 
     def test_breath_sound_gated(self):
         self.assertRegex(self.js, r"Ps\.sfx\(\"roar\"")

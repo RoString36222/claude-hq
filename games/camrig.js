@@ -59,7 +59,7 @@ var VEHICLE = {
   heli:    {backMul: 2.6, upMul: 1.7, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [-0.4, 1.75, 1.0]}, roll: 0.35},
   attack:  {backMul: 2.8, upMul: 1.8, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.95, 2.1]}, roll: 0.35},
   // your pets (games/hqpetride.js, HQ 3.14): behind and above a dragon (its wings span ~7 m), lower behind a dinosaur or the serpent
-  dragon:  {backMul: 2.3, upMul: 1.6, sideMul: 1,  fovSpeedKick: 0.7, fpAnchor: {seat: [0, 3.4, 0.3]}, roll: 0.3},
+  dragon:  {backMul: 2.3, upMul: 1.75, sideMul: 1, sideOff: 0.2, breathSwing: 0.35, fovSpeedKick: 0.7, fpAnchor: {seat: [0, 3.4, 0.3]}, roll: 0.3},   // over the shoulder: the wings and the breath, not a tail in the lens
   dino:    {backMul: 1.7, upMul: 1.3, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 2.6, 0.2]}, roll: 0},
   serpent: {backMul: 2.0, upMul: 1.2, sideMul: 1,  fovSpeedKick: 0.6, fpAnchor: {seat: [0, 1.6, 0.4]}, roll: 0.2},
   // [exo] flying an exosuit (games/hqexoride.js): a little further back and up, the horizon banking with you; first person is
@@ -430,6 +430,11 @@ function chasePose(s, mode, T, dt, q){
   if(_.bst == null){ _.bst = 0; _.bstV = 0; }
   var bq = spring(_.bst, _.bstV, V && V.boostBack ? T.boost : 0, 3, dt); _.bst = bq[0]; _.bstV = bq[1];
   var back = M.back*(V ? V.backMul : 1)*(V && T.size > 0 ? clamp(T.size, 0.85, 1.5) : 1)*_.backScale*(1 + (V && V.boostBack || 0)*_.bst), baseUp = M.up*(V ? V.upMul : 1), side = M.side*(V ? V.sideMul : 1) + (V && V.sideOff ? V.sideOff*back : 0);
+  // a breath (T.breath, a vehicle with breathSwing): sprung, the chase swings out to the side so the stream runs across
+  // the frame instead of straight away down the lens (none with reduced motion)
+  if(_.brs == null){ _.brs = 0; _.brsV = 0; }
+  var brq = spring(_.brs, _.brsV, V && V.breathSwing && !red && T.breath ? 1 : 0, 4, dt); _.brs = brq[0]; _.brsV = brq[1];
+  if(V && V.breathSwing) side += V.breathSwing*back*_.brs;
   _.upOff = clamp(_.upOff + _.lift*LIFT*dt, 0.6 - baseUp, 2*baseUp);
   var up = baseUp + _.upOff;
   // The orbit offset on top of the heading: Q/R swing eased in and out (exact exponential), right-drag adds

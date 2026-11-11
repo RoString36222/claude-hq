@@ -991,7 +991,10 @@ var WY_FOLD = {root: [0.075, 0.07, 0.27], hum: [0.55, -0.3, -0.78], fore: [0.25,
 // metal (gold). Draw calls as every pet (6).
 var DR_TIP = {firedragon: "flame", icedragon: "shard", stormdragon: "fork", crystaldragon: "gem", shadowdragon: "wisp", golddragon: "ornate"};
 var DR_EL = {firedragon: "fire", icedragon: "ice", stormdragon: "storm", crystaldragon: "crystal", shadowdragon: "shadow", golddragon: "gold"};
-var DR_WTIP = {ice: 0xffffff, gold: 0xfff2b8, crystal: 0xffffff};                // the wing's edge, by element (frost-tipped, gilt)
+var DR_WTIP = {ice: 0xffffff, gold: 0xfff2b8, crystal: 0xffffff};
+// the membrane's own tint where the palette's second colour would read wrong lit through: ice is a cold glacier blue
+// (its white second colour came out as warm parchment against the sun), shadow a bruised violet
+var DR_MEM = {ice: 0x5fb0ec, shadow: 0x3a2450};                // the wing's edge, by element (frost-tipped, gilt)
 var DR_S = 1.2, DR_SEAT = [0, 0.14, 0.12], DR_PITCH = -0.04;                     // its size over the build, the saddle point, its stance
 var DR_FOLD = {root: [0.065, 0.085, 0.2], hum: [0.32, 0.24, -0.92], fore: [0.06, 0.04, 0.99], hint: [0.75, 0.35, -0.55], flank: [0.09, -0.02, -0.1],
                fing: [[0.1, -0.04, -0.99], [0.17, -0.24, -0.95], [0.21, -0.44, -0.87], [0.24, -0.62, -0.75]]};   // [revamp] folded: a cloak down the flank
@@ -1146,17 +1149,22 @@ var WY_SCALES = "{ vec3 wq = vWyP*55.0; vec3 wc = fract(wq) - 0.5; float we = sm
 // [dragon revamp] a dragon's membrane: the sun shines THROUGH it (lit from behind, the thin skin between the veins glows
 // in its own tint, the veins and the thick root stay dark), soft edges (alpha to coverage, not a hard cut-out), a little
 // sheen on its upper face
-function drWingMat(T){
-  if(FIN["dr|wing"]) return FIN["dr|wing"];
+// glass: the ice and crystal dragons' membranes are thin as frost -- see-through (the sky and the body show through the
+// skin between the veins), still lit from behind; drawn after the opaque scene, never writing depth (no sorting holes)
+function drWingMat(T, glass){
+  var key = glass ? "dr|wing|glass" : "dr|wing";
+  if(FIN[key]) return FIN[key];
   var tx = wyVeins(T, false);
-  var m = new T.MeshStandardMaterial({map: tx, vertexColors: true, side: T.DoubleSide, alphaTest: 0.35, alphaToCoverage: true, roughness: 0.55, metalness: 0,
-                                      emissive: new T.Color(0xffffff), emissiveMap: tx, emissiveIntensity: 0.1});
+  var m = new T.MeshStandardMaterial({map: tx, vertexColors: true, side: T.DoubleSide, alphaTest: 0.35, alphaToCoverage: !glass, roughness: glass ? 0.25 : 0.55, metalness: 0,
+                                      emissive: new T.Color(0xffffff), emissiveMap: tx, emissiveIntensity: glass ? 0.22 : 0.1,
+                                      transparent: !!glass, opacity: glass ? 0.62 : 1, depthWrite: !glass});
+  if(glass) m.forceSinglePass = true;                              // (one pass: a double-sided see-through skin is not drawn twice)
   m.onBeforeCompile = function(sh){ sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n#ifdef USE_COLOR\n  totalEmissiveRadiance *= vColor.rgb;\n#endif\n" +
     "#if NUM_DIR_LIGHTS > 0\n  { vec3 wL = directionalLights[0].direction, wV = normalize(vViewPosition); float wbk = pow(max(0.0, -dot(wL, wV)), 1.4)*(0.35 + 0.65*abs(dot(normal, wL)));\n" +
     "    float wth = smoothstep(0.25, 0.75, dot(diffuseColor.rgb, vec3(0.3, 0.5, 0.2))/max(0.05, dot(vColor.rgb, vec3(0.3, 0.5, 0.2))));\n" +
     "    totalEmissiveRadiance += diffuseColor.rgb*directionalLights[0].color*(0.12 + 0.95*wbk)*(0.35 + 0.65*wth); }\n#endif\n"); };
   m.customProgramCacheKey = function(){ return "drmem"; };
-  m.userData.fin = "dragon"; FIN["dr|wing"] = m;
+  m.userData.fin = "dragon"; FIN[key] = m;
   return m;
 }
 function wyMat(T, part, elder){
@@ -1231,9 +1239,9 @@ var WY_TOR = [[0.31, 0.06, 0.07, 0.07, 0.1, 0.004, 0, 0.012], [0.26, 0.045, 0.1,
               [-0.12, 0.022, 0.055, 0.058, 0.052, 0.01, 0.004, 0]];
 var DR_NN = 10, DR_TS = 3, DR_RS = 20;                        // neck rings, rings per tail link, sides a ring
 function drSweep(T, Sx){
-  var TOR = Sx.tor || DR_TOR, nT = Sx.tailN*DR_TS, R = DR_NN + TOR.length + nT, RS = DR_RS, per = RS + 1, nV = R*per, X = Sx.extra;
+  var TOR = Sx.tor || DR_TOR, nT = Sx.tailN*DR_TS, R = DR_NN + TOR.length + nT, RS = Sx.rs || DR_RS, per = RS + 1, nV = R*per, X = Sx.extra, NRb = Sx.bladeNR || 6;
   // [revamp] the crest's blades are part of this mesh too (one draw call): each a drBlade, set on its ring's frame each pose
-  var BL = drBlade(T), blP = BL.attributes.position.array, blN = BL.attributes.normal.array, blI = BL.index.array, nbv = blP.length/3, CR = Sx.crest || [];
+  var BL = drBlade(T, NRb), blP = BL.attributes.position.array, blN = BL.attributes.normal.array, blI = BL.index.array, nbv = blP.length/3, CR = Sx.crest || [];
   var ex = X ? X.pos.length/3 : 0, tot = nV + ex + CR.length*nbv;
   var pos = new Float32Array(tot*3), nor = new Float32Array(tot*3), uv = new Float32Array(tot*2), col = new Float32Array(tot*3), rp = new Float32Array(tot*3), rn = new Float32Array(tot*3);
   var rings = [], u = 0, i, j;
@@ -1244,7 +1252,7 @@ function drSweep(T, Sx){
     rings.push({k: "t", z: tr[0], y: tr[1], rx: tr[2]*0.9, ryT: tr[3], ryB: tr[4], cr: tr[5], hb: tr[6], mb: tr[7], kl: tr[2] > 0.13 ? 0.32 : 0.18, u: u});
     if(i + 1 < TOR.length) u += Math.hypot(tr[0] - TOR[i + 1][0], tr[1] - TOR[i + 1][1]); }
   var sl = Sx.tailLen/Sx.tailN/DR_TS;
-  for(i = 0; i < nT; i++){ var g = (i + 1)/nT, r2 = (Sx.tailR || 0.064)*Math.pow(1 - g, 1.2) + 0.0045; u += sl;
+  for(i = 0; i < nT; i++){ var g = (i + 1)/nT, r2 = (Sx.tailR || 0.064)*Math.pow(1 - g, Sx.tailP || 1.2) + (Sx.tailE || 0.0045); u += sl;
     rings.push({k: "l", f: g, rx: r2, ryT: r2*0.96, ryB: r2*0.88, cr: (0.013*(1 - g) + 0.004)*(1 - 0.5*g), hb: 0, mb: 0, u: u}); }
   var cA = new T.Color(Sx.A), cB = new T.Color(Sx.C), cD = new T.Color(Sx.B2), c = new T.Color();
   // round the girth: the angle from the dorsal line times the girth, smoothed along the spine (a girth that jumps between
@@ -1280,9 +1288,9 @@ function drSweep(T, Sx){
   for(i = 0; i + 1 < rr.length; i++) for(j = 0; j < RS; j += 2){ var a2 = rr[i]*per + j, b2 = a2 + 2, c2 = rr[i + 1]*per + j, d2 = c2 + 2; lo.push(a2, c2, b2, b2, c2, d2); }
   for(i = 0; i < ex; i++) lo.push(nV + i);
   // a far blade: rows 0, 3 and 6 of its seven (4 vertices a row)
-  CR.forEach(function(D, k){ var bb = b0 + k*nbv; [[0, 3], [3, 6]].forEach(function(rp2){ for(var q = 0; q < 4; q++){ var a3 = bb + rp2[0]*4 + q, b3 = bb + rp2[0]*4 + (q + 1) % 4, c3 = bb + rp2[1]*4 + q, d3 = bb + rp2[1]*4 + (q + 1) % 4; lo.push(a3, c3, b3, b3, c3, d3); } }); });
+  CR.forEach(function(D, k){ var bb = b0 + k*nbv; (NRb >= 6 ? [[0, 3], [3, 6]] : [[0, NRb]]).forEach(function(rp2){ for(var q = 0; q < 4; q++){ var a3 = bb + rp2[0]*4 + q, b3 = bb + rp2[0]*4 + (q + 1) % 4, c3 = bb + rp2[1]*4 + q, d3 = bb + rp2[1]*4 + (q + 1) % 4; lo.push(a3, c3, b3, b3, c3, d3); } }); });
   return {geo: geo, geoLo: lodTwin(geo, lo), rings: rings, R: R, per: per, nV: nV, ex: ex, crest: CR, blP: blP, blN: blN, nbv: nbv, b0: b0, xp: X ? new Float32Array(X.pos) : null, xn: X ? new Float32Array(X.nor) : null,
-          C: C, Tn: Tn, N: N, S: new V3(), tp: [], tris: idx.length/3, nT: nT};
+          C: C, Tn: Tn, N: N, S: new V3(), tp: [], tris: idx.length/3, nT: nT, rs: RS};
 }
 // pose the tube: Bm the body's matrix; nk the neck's curve (Bezier: base y z, two controls y z, the head x y z; body
 // space; u 0 base .. 1 head); tp the tail
@@ -1305,7 +1313,7 @@ function drSweepPose(Sw, Bm, nk, tp, up, fr){
   N[m0].copy(up).addScaledVector(Tn[m0], -up.dot(Tn[m0])); if(N[m0].lengthSq() < 1e-8) N[m0].set(0, 1, 0); N[m0].normalize();
   for(i = m0 + 1; i < R; i++){ N[i].copy(N[i - 1]).addScaledVector(Tn[i], -N[i - 1].dot(Tn[i])); if(N[i].lengthSq() < 1e-8) N[i].copy(N[i - 1]); N[i].normalize(); }
   for(i = m0 - 1; i >= 0; i--){ N[i].copy(N[i + 1]).addScaledVector(Tn[i], -N[i + 1].dot(Tn[i])); if(N[i].lengthSq() < 1e-8) N[i].copy(N[i + 1]); N[i].normalize(); }
-  var RS = DR_RS, per = Sw.per;
+  var RS = Sw.rs || DR_RS, per = Sw.per;
   for(i = 0; i < R; i++){
     var G = rings[i], Ci = C[i], Ni = N[i]; S.crossVectors(Tn[i], Ni).normalize();
     for(j = 0; j <= RS; j++){
@@ -1373,10 +1381,13 @@ function drBlade(T, NR){
 }
 function drGeos(T){
   if(GEO.dlimb) return;
-  function limb(cap, rad, bul){ var g = new T.CapsuleGeometry(0.5, 1, cap, rad); g.translate(0, 1, 0); g.scale(1, 0.5, 1); var p = g.attributes.position;
-    for(var i = 0; i < p.count; i++){ var y = Math.max(0, Math.min(1, p.getY(i))), k = (1 - 0.3*y)*(1 + bul*Math.sin(PI*Math.min(1, y*1.35))); p.setX(i, p.getX(i)*k); p.setZ(i, p.getZ(i)*k); }
+  // a muscled limb, not a pipe: the belly of the muscle high on the bone and swelling more to its back (+z: the calf, the
+  // hamstring) than its front, a lean tendon toward the joint below
+  function limb(cap, rad, bul, hs){ var g = new T.CapsuleGeometry(0.5, 1, cap, rad, hs || 1); g.translate(0, 1, 0); g.scale(1, 0.5, 1); var p = g.attributes.position;
+    for(var i = 0; i < p.count; i++){ var y = Math.max(0, Math.min(1, p.getY(i))), m = Math.sin(PI*Math.min(1, y*1.35)), k = (1 - 0.34*y)*(1 + bul*m), z = p.getZ(i);
+      p.setX(i, p.getX(i)*k); p.setZ(i, z*k*(z > 0 ? 1 + bul*0.9*m : 1)); }
     g.computeVertexNormals(); g.userData.shared = true; return g; }
-  GEO.dlimb = limb(2, 11, 0.2); GEO.dlimbLo = limb(1, 7, 0.08);
+  GEO.dlimb = limb(2, 8, 0.3, 3); GEO.dlimbLo = limb(1, 7, 0.14);   // (rows down the shaft: the muscle's swell is sampled, not a straight pipe)
   var b = new T.ConeGeometry(0.5, 1, 7, 3, true); b.translate(0, 0.5, 0); var bp = b.attributes.position;
   for(var i = 0; i < bp.count; i++){ var y = bp.getY(i); bp.setZ(i, bp.getZ(i) + 0.22*y*y); }   // the curve toward +z (a talon)
   b.computeVertexNormals(); b.userData.shared = true; GEO.dbit = b;
@@ -1396,7 +1407,10 @@ function lodTwin(g, idx){
 function lodSoup(g, cell){
   var P = g.attributes.position, p = P.array, n = g.attributes.normal.array, c = g.attributes.color.array, tg = g.attributes.drTag ? g.attributes.drTag.array : null;
   var key = {}, cx = [], nv = p.length/3, id = new Int32Array(nv), i, k;
-  for(i = 0; i < nv; i++){ k = Math.floor(p[i*3]/cell) + "," + Math.floor(p[i*3 + 1]/cell) + "," + Math.floor(p[i*3 + 2]/cell);
+  // the eyes (tag 2) and the ivory (tag 1: teeth, horns) on finer cells of their own: far off the face keeps its
+  // burning eyes and its teeth (a coarse cell melted them into the hide and left a plain blob of a head)
+  for(i = 0; i < nv; i++){ var tv = tg ? Math.round(tg[i]) : 0, ce = tv === 2 ? cell*0.3 : tv === 1 ? cell*0.5 : cell;
+    k = tv + ":" + Math.floor(p[i*3]/ce) + "," + Math.floor(p[i*3 + 1]/ce) + "," + Math.floor(p[i*3 + 2]/ce);
     var q = key[k]; if(q == null){ q = key[k] = cx.length/4; cx.push(0, 0, 0, 0); }
     cx[q*4] += p[i*3]; cx[q*4 + 1] += p[i*3 + 1]; cx[q*4 + 2] += p[i*3 + 2]; cx[q*4 + 3]++; id[i] = q; }
   var op = [], on = [], oc = [], ot = [];
@@ -1417,13 +1431,20 @@ function drLod(Mo, lo){
     var L = me.userData.lod || (me.userData.lod = {hi: me.geometry, lo: null});
     if(lo && !L.lo){ L.lo = lodSoup(L.hi, Mo.wy.d.hr*0.26); L.hi.addEventListener("dispose", function(){ L.lo.dispose(); }); }
     me.geometry = lo ? L.lo : L.hi; });
-  if(GEO.dlimbLo){ Mo.limbs.geometry = lo ? GEO.dlimbLo : GEO.dlimb; Mo.bits.geometry = lo ? GEO.dbitLo : GEO.dbit; }
+  if(GEO.dlimbLo){ var lg = lo || !Mo.wy.dr; Mo.limbs.geometry = lg ? GEO.dlimbLo : GEO.dlimb; Mo.bits.geometry = lg ? GEO.dbitLo : GEO.dbit; }
 }
 // the lower jaw [dragon revamp], in the jaw's own space (its hinge at 0): a lofted mandible from behind the hinge to the
 // chin, each station a cross-section round underneath, its top a trough between two lips (the gums), its width and depth
 // tapering to a rounded chin; nT teeth a side along the lips (a fang near the front) and a forked tongue in the trough
+// the closed lower jaw's lip under head-space z (drJaw's profile, with the head's jaw hinge and tip): its half-width
+// at the rim, the lip's height (head space) and the trough's depth there -- where the upper teeth must seat
+function drLip(hr, zh){
+  var z0 = -hr*0.2, tz = hr*1.85, u = (zh - hr*0.05 - z0)/(tz - z0 + hr*0.05); u = Math.max(0, Math.min(1, u));
+  var R = u > 0.9 ? Math.sqrt(Math.max(0, 1 - Math.pow((u - 0.9)/0.1, 2))) : u < 0.08 ? 0.35 + 0.65*Math.sqrt(1 - Math.pow((0.08 - u)/0.08, 2)) : 1;
+  return {u: u, w: hr*(0.33*(1 - u) + 0.17*u + 0.03*Math.sin(u*PI))*R, y: -hr*0.03 - hr*0.1*u, d: hr*(0.27*Math.pow(1 - u, 1.6) + 0.1)*(0.4 + 0.6*R)};
+}
 function drJaw(P, hr, J, A, C, ivory, nT, dr){
-  var T = P.T, NS = 15, NA = 14, tz = J.tip[2] - J.h[2], ty = J.tip[1] - J.h[1], z0 = -hr*0.2, pos = [], col = [], idx = [];
+  var T = P.T, NS = dr ? 15 : 9, NA = dr ? 14 : 10, tz = J.tip[2] - J.h[2], ty = J.tip[1] - J.h[1], z0 = -hr*0.2, pos = [], col = [], idx = [];
   var cA = new T.Color(A), cB = new T.Color(lerpHex(C, A, 0.25)), cG = new T.Color(0x5a1c22), c = new T.Color();
   function W(u){ return hr*(0.33*(1 - u) + 0.17*u + 0.03*Math.sin(u*PI)); }
   function D(u){ return hr*(0.27*Math.pow(1 - u, 1.6) + 0.1); }
@@ -1441,8 +1462,8 @@ function drJaw(P, hr, J, A, C, ivory, nT, dr){
   P.add(g, new T.Matrix4(), A);
   // the teeth along both lips (ivory, no scales): leaning out a little, the fang a third of the way back from the chin
   P.tagV = 1;
-  [-1, 1].forEach(function(sd){ for(var k = 0; k < nT; k++){ var u = 0.26 + 0.62*k/(nT - 1), fang = k === nT - 2, h = hr*(fang ? 0.2 : 0.09 + 0.03*Math.sin(k*2.3)), r = hr*(fang ? 0.05 : 0.032);
-    var w = W(u)*R(u)*0.78, y = Y(u) + D(u)*0.08; cone(P, sd*w, y + h*0.45, Z(u), r, h, ivory, 0, 0, -sd*0.12, 5); } });
+  [-1, 1].forEach(function(sd){ for(var k = 0; k < nT; k++){ var u = 0.26 + 0.62*k/(nT - 1), fang = k === nT - 2, h = hr*(fang ? 0.2 : 0.09 + 0.03*Math.sin(k*2.3)), r = hr*(fang ? 0.04 : 0.024);
+    var w = W(u)*R(u)*0.74, y = Y(u) + D(u)*0.08; cone(P, sd*w, y + h*0.45, Z(u), r, h, ivory, 0.1, 0, -sd*0.08, dr ? 6 : 5); } });
   // the tongue: a long flat muscle in the trough, forked at its tip
   if(dr){ ell(P, 0, Y(0.4) - D(0.4)*0.12, Z(0.4), [hr*0.12, hr*0.045, hr*0.62], 0xa83040, 0, 0, 8);
     [-1, 1].forEach(function(sd){ cone(P, sd*hr*0.04, Y(0.82) - D(0.82)*0.05, Z(0.82), hr*0.03, hr*0.22, 0xa83040, PI/2, 0, -sd*0.35, 4); }); }
@@ -1503,7 +1524,13 @@ function wyvernModel(T, o, sp){
     ell(Ph, s*hr*0.38, hr*0.08, hr*0.55, [hr*0.1, hr*0.1, hr*0.48], horn, 0, s*0.12, 6);          // the cheekbone
     ell(Ph, s*hr*0.12, hr*(dr ? 0.24 : 0.28), hr*(dr ? 2.0 : 2.06), [hr*(dr ? 0.035 : 0.05), hr*(dr ? 0.022 : 0.04), hr*(dr ? 0.045 : 0.05)], dark, 0, 0, dr ? 6 : 4);   // a nostril
     if(dr) Ph.tagV = 1;                                            // (teeth and horns: smooth ivory, no scales)
-    for(var ti = 0, nt = dr ? 8 : 6; ti < nt; ti++){ var th = ti === 0 || ti === 3 ? (dr ? 0.036 : 0.03) : dr ? 0.017 : 0.02; cone(Ph, s*hr*(0.17 + ti*0.18/nt), -hr*0.1 - th*0.4, hr*(1.98 - ti*1.8/nt), dr ? 0.006 : 0.0055, th, ivory, PI, 0, 0, dr ? 5 : 3); }
+    // the upper teeth, seated INSIDE the lower jaw's rim (drLip: where the closed mandible's lip is under them): each
+    // hangs from the roof of the mouth and its tip sinks just under the lower lip, so the closed jaw sheathes it (no
+    // row dangling below the chin) and an open jaw bares the whole row; slender, raked back, the fang a third along
+    for(var ti = 0, nt = dr ? 9 : 6; ti < nt; ti++){
+      var tzh = hr*(1.8 - ti*1.45/(nt - 1)), Lp = drLip(hr, tzh), fang = ti === 2, tb = -hr*0.06, ttip = Lp.y - Lp.d*(fang ? 0.3 : 0.12);
+      var th = Math.max(hr*0.07, tb - ttip), tr = Math.max(hr*0.022, th*(fang ? 0.2 : 0.17));
+      cone(Ph, s*Lp.w*(fang ? 0.66 : 0.6), tb - th*0.5, tzh, tr, th, ivory, PI - 0.12, 0, s*0.06, dr ? 6 : 4); }
     if(dr){ Ph.tagV = 1;                                           // the dragon's crown: two great ridged horns sweeping back and up,
       dhorn(Ph, s*hr*0.32, hr*0.66, -hr*0.42, [s*0.32, 0.42, -1], [s*0.2, 1, 0.1], hr*(el === "gold" ? 3.0 : 2.6), hr*0.24, 0.55, 5, horn);
       dhorn(Ph, s*hr*0.42, hr*0.36, -hr*0.55, [s*0.6, 0.05, -1], [s*0.3, 0.6, 0], hr*1.3, hr*0.13, 0.4, 3, horn);   // a lesser pair below,
@@ -1546,7 +1573,7 @@ function wyvernModel(T, o, sp){
   var bone = lerpHex(A, B2, 0.22), arms = [];
   [-1, 1].forEach(function(s){ arms.push({s: s, hum: li(A), fore: li(A), thumb: dr ? -1 : li(bone), fing: [bi(bone), bi(bone), bi(bone), bi(bone)],
     spur: bi(horn), claw: bi(claw), hook: bi(claw), knuck: [bi(horn), bi(horn), bi(horn), bi(horn)]}); });
-  var tail = {n: dr ? 7 : 9, len: dr ? 0.86 : 0.82, r0: dr ? 0.05 : 0.045, r1: 0.008, i: [], sp: [], tip: dr || "blade", tipI: []};
+  var tail = {n: dr ? 7 : 9, len: dr ? 0.86 : 0.82, r0: dr ? 0.05 : 0.045, r1: 0.008, i: [], sp: [], tip: dr || "blade", tipI: [], tipS: dr ? 1.9 : 1};
   for(var tj = 0; tj < tail.n; tj++){ tail.i.push(-1); tail.sp.push(-1); }
   // a dragon's dorsal blades: along the swept body's crest (ring index, height), set from the tube's frames each pose
   var dsp = [];
@@ -1555,7 +1582,7 @@ function wyvernModel(T, o, sp){
   var nTail = tail.n*DR_TS, crestK = dr ? 1 : 0.8;
   for(var cn = 1; cn < DR_NN - 1; cn++) dsp.push({r: cn, h: (0.03 + 0.03*cn/DR_NN)*crestK, l: 0.034, i: -1, c: cn % 2 ? horn : lerpHex(B2, A, 0.2)});
   [[DR_NN, 0.06], [DR_NN + 6, 0.06], [DR_NN + 7, 0.075], [DR_NN + 8, 0.085]].forEach(function(q){ dsp.push({r: q[0], h: q[1]*crestK, l: 0.05, i: -1, c: lerpHex(B2, A, 0.2)}); });
-  for(var tb = 1; tb < nTail - 1; tb++){ var tg = tb/nTail; dsp.push({r: DR_NN + 9 + tb, h: (0.075*Math.pow(1 - tg, 0.9) + 0.01)*crestK, l: 0.04*(1 - tg*0.6), i: -1, c: tb % 2 ? horn : lerpHex(B2, A, 0.2)}); }
+  for(var tb = 1; tb < nTail - 1; tb += dr ? 1 : 2){ var tg = tb/nTail; dsp.push({r: DR_NN + 9 + tb, h: (0.075*Math.pow(1 - tg, 0.9) + 0.01)*crestK, l: 0.04*(1 - tg*0.6), i: -1, c: tb % 2 ? horn : lerpHex(B2, A, 0.2)}); }
   var TC = {blade: [B2, horn, horn], flame: [0xffb030, 0xff6a20, 0xff6a20], shard: [0xf4fbff, 0xcfeaff, 0xcfeaff], fork: [B2, B2, lerpHex(B2, 0xffffff, 0.4)],
             gem: [C, B2, B2], wisp: [B2, lerpHex(B2, A, 0.4), lerpHex(B2, A, 0.4)], ornate: [0xfff0b0, EYE, EYE]}[tail.tip];
   for(var tk = 0; tk < 3; tk++) tail.tipI.push(bi(TC[tk]));
@@ -1570,13 +1597,14 @@ function wyvernModel(T, o, sp){
     lg.computeVertexNormals(); lg.userData.shared = true; GEO.wlimb = lg; }
   if(!GEO.wbit){ var bg = new T.ConeGeometry(0.5, 1, 6, 1, true); bg.translate(0, 0.5, 0); bg.userData.shared = true; GEO.wbit = bg; }
   drGeos(T);                                                       // [revamp] the wyvern on the dragons' muscled limbs too
-  var limbs = inst("limbs", GEO.dlimb, LI), bits = inst("bits", GEO.dbit, BI);
+  // (the wyvern, a pet-sized flyer seen at pet distance, wears the lighter limbs and talons near too: its own budget)
+  var limbs = inst("limbs", dr ? GEO.dlimb : GEO.dlimbLo, LI), bits = inst("bits", dr ? GEO.dbit : GEO.dbitLo, BI);
   // ---- the wings' membrane ----
-  var wing = wyWing(T, dr ? (el === "shadow" ? 0x3a2450 : B2) : WY_MEM[vi], A, elder, dr ? DR_WTIP[el] : null), wingMesh = new T.Mesh(wing.geo, dr ? drWingMat(T) : wyMat(T, "m", elder));
+  var wing = wyWing(T, dr ? (DR_MEM[el] != null ? DR_MEM[el] : B2) : WY_MEM[vi], A, elder, dr ? DR_WTIP[el] : null), wingMesh = new T.Mesh(wing.geo, dr ? drWingMat(T, el === "ice" || el === "crystal") : wyMat(T, "m", elder));
   wingMesh.name = "pet-wings"; wingMesh.frustumCulled = false; Pg.add(wingMesh); meshes++; tris += wing.tris; parts.wings = wingMesh;
   var Sw = null;
   if(true){
-    Sw = drSweep(T, {A: A, C: C, B2: B2, extra: Pb.pos.length ? Pb : null, tailN: tail.n, tailLen: tail.len, tor: dr ? DR_TOR : WY_TOR, tailR: dr ? 0.064 : 0.05, crest: dsp});
+    Sw = drSweep(T, {A: A, C: C, B2: B2, extra: Pb.pos.length ? Pb : null, tailN: tail.n, tailLen: tail.len, tor: dr ? DR_TOR : WY_TOR, tailR: dr ? 0.07 : 0.05, tailP: dr ? 0.95 : 1.2, tailE: dr ? 0.009 : 0.0045, crest: dsp, rs: dr ? DR_RS : 12, bladeNR: dr ? 6 : 2});
     for(var tq = 0; tq <= tail.n; tq++) Sw.tp.push(new T.Vector3());
     var bm = new T.Mesh(Sw.geo, drMat(T, el, "s")); bm.name = "pet-body"; bm.frustumCulled = false; bm.castShadow = true; Pg.add(bm); meshes++; tris += Sw.tris; parts.body = bm;
   }
@@ -1593,7 +1621,7 @@ function wyvernModel(T, o, sp){
           meshes: meshes, tris: Math.round(tris), sp: sp, scale: scale, variant: vi, acc: acc, biped: true, seedF: seedF, tv: v, Mh: new T.Matrix4(), q: new T.Quaternion(), mm: new T.Matrix4(),
           sm: {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null},
           dims: {L: L*DS, H: H*DS, W: W*DS, lh: lh*DS, cy: cy*DS, oz: oz*DS, hipZ: hipZ*DS, hr: hr*DS}, parts: parts,
-          wy: {arms: arms, frill: frill, elder: elder, seatL: SL, seat0: cy + sy, pitch: PT, d: dI, dr: dr, el: el, head: [0, 0.22, 0.57],
+          wy: {arms: arms, frill: frill, elder: elder, seatL: SL, seat0: cy + sy, pitch: PT, d: dI, dr: dr, el: el, head: dr ? [0, 0.265, 0.56] : [0, 0.22, 0.57],   // (a dragon carries its head high: a proud S of a neck)
                fold: dr ? DR_FOLD : WY_FOLD, len: dr ? DR_LEN : {hum: WY_HUM, fore: WY_FORE, thumb: WY_THUMB, fing: WY_FING}},
           fx: dr ? null : WY_FX[vi], elder: elder, sw: Sw, dsp: dsp,
           seat: [(cy + sy)*DS, (hipZ + sz)*DS]};                    // where a rider sits (the pet's own space, before its scale)
@@ -1619,12 +1647,14 @@ function wyDir(out, s, fx, fy, fz, ang, roll, k){
 function poseWyvern(Mo, st, t, calm, look){
   var S = Mo.sm, Wy = Mo.wy, d = Wy.d, dr = !!Wy.dr, a = st.anim || "stand", k = calm ? 0.35 : 1, v = Mo.tv;
   if(!UP){ UP = new v[0].constructor(0, 1, 0); TE = new v[0].constructor(); TS = new v[0].constructor(); TQ = Mo.q.clone(); TM = Mo.mm.clone(); }
-  var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
   DR_T.value = t;                                                 // the element shimmer's clock (deterministic: the pose's own time)
   S.frame = (S.frame | 0) + 1;
-  // far off (Mo.lod): every part on its lighter version (drLod); still posed every frame (a pose is ~0.1 ms; skipping
-  // frames stepped the wingbeat and fed the smoothing a dt one frame long)
+  // far off (Mo.lod): every part on its lighter version (drLod), and a fresh pose every fourth frame. The skipped frames
+  // leave lastT alone, so the next pose's dt spans all of them (its smoothing and wingbeat catch up in one step, never
+  // a dt one frame long against four frames of motion)
   if(S.lodG !== !!Mo.lod){ S.lodG = !!Mo.lod; drLod(Mo, S.lodG); }
+  if(Mo.lod && S.posed && S.frame % 4) return;
+  var dt = S.lastT == null ? 0 : Math.max(0, Math.min(0.1, t - S.lastT)); S.lastT = t;
   S.posed = true;
   var body = Mo.body, head = Mo.head, P = Mo.P, IM = Mo.limbs, BM = Mo.bits, hr = d.hr;
   P.position.set(0, 0, 0); P.rotation.set(0, 0, 0); body.rotation.set(0, 0, 0);
@@ -1669,9 +1699,9 @@ function poseWyvern(Mo, st, t, calm, look){
       if(hov){ pitch = -0.55; legs = "reach"; } else if(mode === "climb"){ pitch = -0.25; if(agl < 0.6 || st.leap) legs = "push"; }
       pitch += F0.lift*0.03*k;                                       // the body pitches up a touch on each downstroke
     }
-    if(a === "breath"){                                          // breathing in the air: the jaw still opens
-      jaw = 0.6; frill = 1;
-      if(at < 0.55){ var ihA = Math.sin(Math.min(1, at/0.55)*PI*0.5); swell = 0.06*ihA*k; jaw = 0.08; hz -= 0.04*ihA*k; hpx -= 0.3*ihA*k; hy += 0.02*ihA*k; }
+    if(a === "breath" || st.breath){                             // breathing in the air (a ridden flyer: st.breath): the jaw still opens
+      jaw = st.breath ? 0.72 : 0.6; frill = 1;
+      if(a === "breath" && at < 0.55){ var ihA = Math.sin(Math.min(1, at/0.55)*PI*0.5); swell = 0.06*ihA*k; jaw = 0.08; hz -= 0.04*ihA*k; hpx -= 0.3*ihA*k; hy += 0.02*ihA*k; }
     }
     if(st.leap || tof < 0.3) legs = "push";                        // the takeoff leap: legs thrusting down
     if(tof < 0.3) bob -= Math.sin(Math.min(1, tof/0.3)*PI)*0.035*k; // the crouch before the leap
@@ -1771,7 +1801,9 @@ function poseWyvern(Mo, st, t, calm, look){
   var duty = run ? 0.4 : 0.62, stride = (run ? 0.3 : 0.16)*gk, lift = (run ? 0.06 : 0.035)*gk;
   Mo.legs.forEach(function(Lg, li2){
     var s = Lg.s, fr = !!Lg.front, Hp = v[0].copy(Lg.att).applyMatrix4(Bm), An = v[1], Fo = v[2], K = v[3], gnd = true, fz = fr ? Lg.att.z + d.hipZ + 0.02 : -0.04;
-    if(legs === "tuck"){ if(fr){ An.set(s*0.09, -0.13, 0.22); Fo.set(s*0.08, -0.12, 0.3); } else { An.set(s*0.1, -0.13, -0.17); Fo.set(s*0.1, -0.16, -0.27); } An.applyMatrix4(Bm); Fo.applyMatrix4(Bm); gnd = false; }
+    // in flight a dragon's legs are streamlined: the forelegs folded flat up under the chest, the hind legs stretched
+    // back along the tail (thigh under the hip, the foot trailing behind it), never dangling under the belly
+    if(legs === "tuck"){ if(fr){ An.set(s*0.075, -0.1, dr ? 0.17 : 0.22); Fo.set(s*0.07, -0.085, dr ? 0.26 : 0.3); } else if(dr){ An.set(s*0.085, -0.075, -0.24); Fo.set(s*0.07, -0.06, -0.36); } else { An.set(s*0.1, -0.13, -0.17); Fo.set(s*0.1, -0.16, -0.27); } An.applyMatrix4(Bm); Fo.applyMatrix4(Bm); gnd = false; }
     else if(legs === "reach"){ if(fr){ An.set(s*0.1, -0.22, 0.3); Fo.set(s*0.1, -0.28, 0.35); } else { An.set(s*0.1, -0.24, 0.05); Fo.set(s*0.1, -0.31, 0.1); } An.applyMatrix4(Bm); Fo.applyMatrix4(Bm); gnd = false; }
     else if(legs === "push"){ if(fr){ An.set(s*0.09, -0.22, 0.2); Fo.set(s*0.09, -0.27, 0.16); } else { An.set(s*0.09, -0.27, -0.1); Fo.set(s*0.09, -0.34, -0.15); } An.applyMatrix4(Bm); Fo.applyMatrix4(Bm); gnd = false; }
     else if(legs === "sit"){ if(fr){ Fo.set(s*0.1, 0.012, fz + 0.04); An.set(Fo.x, 0.055, Fo.z - 0.015); } else { Fo.set(s*0.12, 0.012, 0.05); An.set(Fo.x, 0.03, Fo.z - 0.085); } }
@@ -1891,15 +1923,15 @@ function poseWyvern(Mo, st, t, calm, look){
 // the tail's tip, by build: the wyvern's barbed blade; a dragon's by its element (fire a flame, ice a shard, storm a
 // fork, crystal a gem, shadow wisps, gold an ornate spade). pt: the tail's end, dir along it, sd to its side
 function wyTip(Tl, BM, pt, dir, sd, up, t, k, v){
-  var I = Tl.tipI, ty = Tl.tip;
-  function seg(i, from, dx, len, r, rz, sx, ux){ v[7].copy(pt).addScaledVector(dir, from); v[8].copy(v[7]).addScaledVector(dir, dx*len).addScaledVector(sd, (sx || 0)*len).addScaledVector(up, (ux || 0)*len); segAt(BM, I[i], v[7], v[8], r, rz); }
+  var I = Tl.tipI, ty = Tl.tip, S = Tl.tipS || 1;                 // (a dragon's tip is grander: S)
+  function seg(i, from, dx, len, r, rz, sx, ux){ from *= S; len *= S; r *= S; rz *= S; v[7].copy(pt).addScaledVector(dir, from); v[8].copy(v[7]).addScaledVector(dir, dx*len).addScaledVector(sd, (sx || 0)*len).addScaledVector(up, (ux || 0)*len); segAt(BM, I[i], v[7], v[8], r, rz); }
   if(ty === "blade"){ seg(0, -0.012, 1, 0.077, 0.026, 0.006); seg(1, 0.01, -1, 0.026, 0.008, 0.004, -0.85); seg(2, 0.01, -1, 0.026, 0.008, 0.004, 0.85); return; }
   if(ty === "flame"){ var fl = Math.sin(t*9)*0.12*k;
     seg(0, -0.01, 1, 0.075*(1 + fl), 0.02, 0.006, 0, 0.25); seg(1, 0, 1, 0.05*(1 - fl), 0.013, 0.005, -0.45, 0.45); seg(2, 0, 1, 0.05*(1 + fl*0.7), 0.013, 0.005, 0.45, 0.4); return; }
   if(ty === "shard"){ seg(0, -0.008, 1, 0.07, 0.013, 0.011, 0, 0.3); seg(1, -0.004, 1, 0.048, 0.01, 0.008, -0.45, -0.1); seg(2, -0.004, 1, 0.042, 0.01, 0.008, 0.45, -0.12); return; }
   if(ty === "fork"){ seg(0, -0.01, 1, 0.062, 0.012, 0.005, -0.5, 0.05); seg(1, -0.01, 1, 0.062, 0.012, 0.005, 0.5, 0.05); seg(2, -0.01, 1, 0.03, 0.01, 0.005, 0, 0.1); return; }
-  if(ty === "gem"){ v[9].copy(pt).addScaledVector(dir, 0.028);
-    segAt(BM, I[0], v[9], v[10].copy(v[9]).addScaledVector(dir, 0.034), 0.02, 0.02); segAt(BM, I[1], v[9], v[10].copy(v[9]).addScaledVector(dir, -0.03), 0.02, 0.02); hideAt(BM, I[2]); return; }
+  if(ty === "gem"){ v[9].copy(pt).addScaledVector(dir, 0.028*S);
+    segAt(BM, I[0], v[9], v[10].copy(v[9]).addScaledVector(dir, 0.034*S), 0.02*S, 0.02*S); segAt(BM, I[1], v[9], v[10].copy(v[9]).addScaledVector(dir, -0.03*S), 0.02*S, 0.02*S); hideAt(BM, I[2]); return; }
   if(ty === "wisp"){ for(var i = 0; i < 3; i++){ var w = Math.sin(t*3 + i*2.1)*0.3*k; seg(i, -0.006, 1, 0.075 - i*0.01, 0.009, 0.004, (i - 1)*0.35 + w, -0.15 + Math.cos(t*2.3 + i)*0.15*k); } return; }
   if(ty === "ornate"){ seg(0, -0.01, 1, 0.06, 0.03, 0.006); seg(1, 0.012, -1, 0.03, 0.01, 0.004, -1.1, 0.25); seg(2, 0.012, -1, 0.03, 0.01, 0.004, 1.1, 0.25); }
 }
@@ -2197,16 +2229,16 @@ var JET_C = {fire: [[1.5, 1.25, 0.8], [1.5, 0.55, 0.08], [0.8, 0.16, 0.02]], emb
 var JET_VS = "varying vec2 vJ; varying float vF;\n" +
   "void main(){ vJ = vec2(uv.x, position.z); vec4 mv = modelViewMatrix*vec4(position, 1.0); vec3 n = normalize(normalMatrix*normal);\n" +
   "  vF = abs(dot(n, normalize(-mv.xyz))); gl_Position = projectionMatrix*mv; }";
-var JET_FS = "uniform float uT, uE; uniform vec3 uC0, uC1, uC2; varying vec2 vJ; varying float vF;\n" +
+var JET_FS = "uniform float uT, uE, uG; uniform vec3 uC0, uC1, uC2; varying vec2 vJ; varying float vF;\n" +
   "float jh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7)))*43758.5453); }\n" +
   "float jn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0 - 2.0*f); return mix(mix(jh(i), jh(i + vec2(1, 0)), f.x), mix(jh(i + vec2(0, 1)), jh(i + vec2(1, 1)), f.x), f.y); }\n" +
   "void main(){ float z = vJ.y; vec2 q = vec2(vJ.x*7.0, z*5.0 - uT*9.0);\n" +
   "  float n = jn(q)*0.62 + jn(q*2.3 + vec2(3.1, -uT*6.0))*0.38;\n" +
-  "  float body = smoothstep(1.0, 0.25, z + (n - 0.5)*0.55)*smoothstep(0.0, 0.04, z);\n" +
+  "  float body = smoothstep(1.0, mix(0.25, 0.55, clamp(uG - 1.0, 0.0, 1.0)), z + (n - 0.5)*0.55)*smoothstep(0.0, 0.04, z);\n" +
   "  float edge = smoothstep(0.05, 0.6, vF)*(0.55 + 0.45*n);\n" +
   "  vec3 c = mix(uC0, uC1, smoothstep(0.02, 0.35, z + (n - 0.5)*0.2)); c = mix(c, uC2, smoothstep(0.35, 0.85, z + (n - 0.5)*0.3));\n" +
   "  float a = body*edge*uE; if(a < 0.003) discard;\n" +
-  "  gl_FragColor = vec4(c, a*0.5);\n" +                                   // (additive: src x its alpha, onto the frame)
+  "  gl_FragColor = vec4(c*min(1.6, 0.6 + 0.4*uG), a*0.5*uG);\n" +                                   // (additive: src x its alpha, onto the frame)
   "}";
 // the heat haze round the jet: a real distortion, cheaply. The frame drawn so far is copied once (one blit, the first
 // time a haze draws that frame) and the haze cone shows it back through a rippling offset -- no second render of the
@@ -2255,7 +2287,7 @@ function Fx(T, scene){
   var jets = [], jq = new T.Quaternion(), jz = new T.Vector3(0, 0, 1), jd = new T.Vector3();
   for(var ji = 0; ji < 4; ji++){
     var jm = new T.ShaderMaterial({vertexShader: JET_VS, fragmentShader: JET_FS, transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide,
-      uniforms: {uT: {value: ji*1.7}, uE: {value: 0}, uC0: {value: new T.Color()}, uC1: {value: new T.Color()}, uC2: {value: new T.Color()}}});
+      uniforms: {uT: {value: ji*1.7}, uE: {value: 0}, uG: {value: 1}, uC0: {value: new T.Color()}, uC1: {value: new T.Color()}, uC2: {value: new T.Color()}}});
     var jmesh = new T.Mesh(jg, jm); jmesh.visible = false; jmesh.frustumCulled = false; jmesh.renderOrder = 4; jmesh.name = "pet-jet";
     var hm = null, hmesh = null;
     try { hm = new T.ShaderMaterial({vertexShader: HAZE_VS, fragmentShader: HAZE_FS, transparent: true, depthWrite: false, side: T.FrontSide,
@@ -2301,19 +2333,21 @@ function Fx(T, scene){
     if(FX_HEAT[R] && n > 2 && sp > 1) F.heat(x, y, z, R, 1);
   };
   // the jet's core from a mouth at (x, y, z) along (dx, dy, dz), `len` m (default: by the pool's puff size); key: who
-  // breathes (one slot each); call it every frame the breath is on
-  F.jet = function(key, kind, x, y, z, dx, dy, dz, len){
+  // breathes (one slot each); call it every frame the breath is on. wide: its flare (x the default), gain: its
+  // brightness (a battle mount seen from its chase camera passes both up: the jet runs away down the lens)
+  F.jet = function(key, kind, x, y, z, dx, dy, dz, len, wide, gain){
     if(!isFinite(x) || !isFinite(y) || !isFinite(z)) return;
     var J = null, i;
     for(i = 0; i < jets.length; i++) if(jets[i].key === key){ J = jets[i]; break; }
     if(!J){ for(i = 0; i < jets.length; i++) if(jets[i].e <= 0.01 && !(jets[i].on > 0)){ J = jets[i]; break; } }
     if(!J) return;
     var C = JET_C[kind] || JET_C.fire, L = len || Math.max(0.5, (+pm.size || 0.13)*4.6), m = J.mesh, u = m.material.uniforms;
-    J.key = key; J.on = 0.12; J.hot = !!JET_HOT[kind];
+    J.key = key; J.on = 0.12; J.hot = !!JET_HOT[kind]; u.uG.value = gain > 0 ? Math.min(3, gain) : 1;
+    var W = L*0.17*(wide > 0 ? Math.min(3, wide) : 1);
     u.uC0.value.setRGB(C[0][0], C[0][1], C[0][2]); u.uC1.value.setRGB(C[1][0], C[1][1], C[1][2]); u.uC2.value.setRGB(C[2][0], C[2][1], C[2][2]);
     jd.set(dx || 0, dy || 0, dz || 0); if(jd.lengthSq() < 1e-8) jd.set(0, 0, 1); jd.normalize(); jq.setFromUnitVectors(jz, jd);
-    m.position.set(x, y, z); m.quaternion.copy(jq); m.scale.set(L*0.17, L*0.17, L);
-    if(J.haze){ J.haze.position.set(x, y, z); J.haze.quaternion.copy(jq); J.haze.scale.set(L*0.32, L*0.32, L*1.5); }
+    m.position.set(x, y, z); m.quaternion.copy(jq); m.scale.set(W, W, L);
+    if(J.haze){ J.haze.position.set(x, y, z); J.haze.quaternion.copy(jq); J.haze.scale.set(W*1.9, W*1.9, L*1.5); }
   };
   F.heat = function(x, y, z, kind, e){
     if(!light || !isFinite(x)) return; heat.x = x; heat.y = y; heat.z = z; heat.c = FX_HEAT[kind] || FX_HEAT.fire; heat.e = Math.max(heat.e, Math.min(1, +e || 1));

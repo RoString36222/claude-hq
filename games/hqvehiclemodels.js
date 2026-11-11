@@ -1720,8 +1720,8 @@ function buildBike(T, entry, st, d, G){
     if(P.fair === "adv"){
       // the GS's front mask over the lamp and its beak, or KTM's tall nose; the tall screen
       var my = yH + 0.0;
-      B.at(body, "paint", null, sprof(T, [[zH + 0.24, my + 0.2], [zH + 0.1, my + 0.22], [zH + 0.0, my + 0.08], [zH + 0.04, my - 0.1], [zH + 0.2, my - 0.14], [zH + 0.3, my + 0.0]], 0.3, 0.04, 20));
-      B.at(body, P.brand === "bmw" ? "trim" : "paint", P.brand === "bmw" ? (liv ? liv[2] : COL.red) : null, sprof(T, [[zH + 0.38, my - 0.14], [zH + 0.2, my - 0.12], [zH + 0.1, my - 0.2], [zH + 0.26, my - 0.26], [zH + 0.46, my - 0.24]], 0.16, 0.025, 14));   // the beak
+      B.at(body, "paint", null, taperX(sprof(T, [[zH + 0.24, my + 0.2], [zH + 0.1, my + 0.22], [zH + 0.0, my + 0.08], [zH + 0.04, my - 0.1], [zH + 0.2, my - 0.14], [zH + 0.3, my + 0.0]], 0.3, 0.04, 20), zH + 0.05, zH + 0.3, 1, 0.7));
+      B.at(body, P.brand === "bmw" ? "trim" : "paint", P.brand === "bmw" ? (liv ? liv[2] : COL.red) : null, taperX(sprof(T, [[zH + 0.52, my - 0.24], [zH + 0.3, my - 0.12], [zH + 0.12, my - 0.14], [zH + 0.16, my - 0.21], [zH + 0.34, my - 0.24], [zH + 0.54, my - 0.28]], 0.15, 0.02, 16), zH + 0.15, zH + 0.54, 1, 0.55));   // the beak
       B.at(body, "glass", null, sprof(T, [[zH + 0.2, my + 0.2], [zH + 0.24, my + 0.23], [zH + 0.12, H - 0.005], [zH + 0.06, H - 0.01], [zH + 0.12, my + 0.3]], 0.36, 0.006, 14));
       B.t("plastic").at(body, "trim", COL.black, rbox(T, 0.2, 0.13, 0.04, 0.012, 1), 0, my + 0.24, zH + 0.06, -0.6);
       B.t("screen").at(body, "light", 0xffffff, rbox(T, 0.17, 0.1, 0.006, 0.004, 1), 0, my + 0.245, zH + 0.04, -0.6);
@@ -1816,7 +1816,7 @@ function buildBike(T, entry, st, d, G){
     B.t("satin").at(steer, "trim", COL.black, rbox(T, 2*fx + 0.06, 0.04, 0.09, 0.015, 1), 0, 0.0, -0.01);
     B.t("satin").at(steer, "trim", COL.black, rbox(T, 2*fx + 0.06, 0.035, 0.08, 0.015, 1), 0, -0.14, 0.06);
     // the mudguard
-    var mg = new T.CylinderGeometry(Rf + 0.025, Rf + 0.025, twF + (classic || cruiser ? 0.05 : 0.02), 22, 1, true, -PI*0.05, classic || cruiser ? PI*0.75 : PI*0.5); mg.rotateZ(PI/2); mg.rotateX(-0.25);
+    var mg = new T.CylinderGeometry(Rf + 0.025, Rf + 0.025, twF + (classic || cruiser ? 0.05 : 0.02), 22, 1, true, classic || cruiser ? PI*0.12 : PI*0.28, classic || cruiser ? PI*0.7 : PI*0.42); mg.rotateZ(PI/2);
     B.at(steer, adv && P.brand === "bmw" ? "paint" : classic || cruiser ? "paint" : "trim", classic || cruiser || adv && P.brand === "bmw" ? null : COL.black, mg, 0, fy, fz);
     // the bars, grips, levers, mirrors, hand guards
     var bw = P.bar[0], by = P.bar[1], bz = -P.bar[2];
@@ -1855,7 +1855,7 @@ function buildBike(T, entry, st, d, G){
     else [1, -1].forEach(function(sx){ B.at(body, "light", P.lamp === "duc" ? COL.drl : COL.head, rbox(T, 0.08, P.lamp === "duc" ? 0.016 : 0.035, 0.02, 0.008, 1), sx*0.07, ny2, nz2 - 0.02, -0.5, sx*0.4, -sx*0.15); });
   }
   if(P.fair === "adv"){
-    var my2 = yH, lzz = zH + 0.33;
+    var my2 = yH, lzz = zH + 0.37;
     B.t("gloss").at(body, "trim", COL.black, rbox(T, 0.2, 0.17, 0.04, 0.03, 1), 0, my2 + 0.05, lzz - 0.02, -0.3);
     if(P.lamp === "gsX") [0.55, -0.55].forEach(function(a){ B.at(body, "light", COL.head, rbox(T, 0.16, 0.02, 0.02, 0.008, 1), 0, my2 + 0.05, lzz, -0.3, 0, a); });
     else [0.03, -0.06].forEach(function(dy){ B.at(body, "light", COL.head, rbox(T, 0.12, 0.05, 0.02, 0.015, 1), 0, my2 + 0.07 + dy, lzz, -0.3); });
@@ -1914,7 +1914,7 @@ function buildScooter(T, entry, st, d, G){
     if(lod){ B.at(steer, "trim", COL.black, rodG(T, [0.3, 0.08, -0.02], [-0.3, 0.08, -0.02], 0.02, 0.02, 5)); return; }
     B.t("satin").at(steer, "trim", COL.dark, rodG(T, [0, 0, 0], [0, fy + 0.1, fz - 0.02], 0.03, 0.035, 10));
     [1, -1].forEach(function(sx){ B.t("satin").at(steer, "trim", COL.dark, rodG(T, [sx*0.06, fy + 0.18, fz - 0.03], [sx*0.06, fy, fz], 0.02, 0.02, 8)); });
-    var mg = new T.CylinderGeometry(Rf + 0.03, Rf + 0.03, twF + 0.04, 18, 1, true, -PI*0.05, PI*0.55); mg.rotateZ(PI/2);
+    var mg = new T.CylinderGeometry(Rf + 0.03, Rf + 0.03, twF + 0.04, 18, 1, true, PI*0.22, PI*0.5); mg.rotateZ(PI/2);
     B.at(steer, "paint", null, mg, 0, fy, fz);
     B.at(steer, "paint", null, sprof(T, [[0.16, 0.0], [0.02, 0.12], [-0.12, 0.1], [-0.1, -0.02], [0.08, -0.06]], 0.44, 0.04, 14));   // the bar cover
     B.t("bikehead").at(steer, "light", 0xffffff, rbox(T, 0.16, 0.07, 0.02, 0.02, 1), 0, 0.0, 0.16, -0.2);

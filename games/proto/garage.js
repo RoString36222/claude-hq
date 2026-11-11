@@ -55,7 +55,7 @@ const items = list.map(v => {
   const entry = v.slot === "starter" ? Object.assign({}, v, {starter: false}) : v;
   let rig = null, err = null;
   try { rig = VM.build(THREE, entry, hex, q.get("tune") ? {tune: JSON.parse(q.get("tune"))} : {}); } catch(e){ err = e; console.error(v.id, e.stack || e); }
-  if(rig && rig.setLod){ rig.setLod(lod); }
+  if(rig && rig.setLod){ rig.setLod(lod); rig.lodLock = q.get("lod") != null; }
   if(rig && q.get("doors")){ rig.setDoors && rig.setDoors(1, "both"); }
   if(rig && q.get("steer")){ rig.roll(0, +q.get("steer")); }
   return {v, rig, err};

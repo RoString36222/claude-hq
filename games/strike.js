@@ -9672,8 +9672,10 @@ function makeGame(host, opts){
     // battle scale: a little under the Commons mount so the beasts read as threats,
     // not vehicles, in an 80 m arena. > 2 keeps the pet pose on its slow ridden-mount
     // wing beats; the saddle still sits above the rider's feet (DRAGON_SEAT).
-    var DRAGON_ART_S = 2.6;
-    var DRAGON_JET_LEN = DRAGON_BREATH_LEN * 0.72;   // m of breath jet off a battle mount's jaw (hqPets Fx.jet)
+    var DRAGON_ART_S = 3.1;
+    // the breath jet's core runs the whole reach the judge burns (DRAGON_BREATH_LEN): from the chase camera it runs away
+    // down the lens, so anything shorter read as a glow at the jaw
+    var DRAGON_JET_LEN = DRAGON_BREATH_LEN;   // m of breath jet off a battle mount's jaw (hqPets Fx.jet)
     var dragonPetWait = false;
     function dragonPets(){ return (window.HQV && window.HQV.hqPets) || null; }
     function dragonPetsWant(){
@@ -9698,7 +9700,8 @@ function makeGame(host, opts){
       try { dragonFx = P.Fx(THREE, scene); } catch(e){ dragonFxDead = true; return null; }
       // a battle jet off a 2.6x mount: metre-scale puffs (the pool thins its rate to match), and its heat light is
       // made now, with the pool, so the scene never recompiles mid-breath
-      if(dragonFx && dragonFx.pts && dragonFx.pts.material) dragonFx.pts.material.size = 0.95;
+      if(dragonFx && dragonFx.pts && dragonFx.pts.material) dragonFx.pts.material.size = 1.1;
+      if(dragonFx) dragonFx.rate = 3;   // a battle stream, dense: the pool's own thinning (made for pet-sized puffs) x3
       return dragonFx;
     }
     // A rider-sized plume, not a wisp: the Commons pool paints 0.13 u sprites at
@@ -9743,7 +9746,7 @@ function makeGame(host, opts){
       // flight attitude. Art only: the judge's cone is flat (dragonBreathStep), so this changes no hit.
       var jdy = D.riderIsMe ? clamp(Math.tan((V.pitch || 0) - 0.04), -1.2, 0.25) : -0.1 - (D.pitch || 0) * 0.5;
       var jn = 1 / Math.sqrt(1 + jdy * jdy), d0 = f0 * jn, d1 = jdy * jn, d2 = f1 * jn;   // the jet's unit direction
-      if(F.jet) F.jet(D, fx === "storm" ? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1.45, 1.8);
+      if(F.jet) F.jet(D, fx === "storm" ? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1.1, 1.8);
       else dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
       // ~30 Hz emit, by the ticks this frame covered (a slow frame pours as much as three fast ones, so the
       // stream stays dense on a laptop instead of thinning to a dotted line)
@@ -9881,7 +9884,7 @@ function makeGame(host, opts){
       var gp = new THREE.Group();
       gp.add(Mo.g);
       // a soft ground shadow so the beast sits ON the deck (the pet build has none)
-      var sh = new THREE.Mesh(new THREE.CircleGeometry(1.7, 18).rotateX(-Math.PI/2),
+      var sh = new THREE.Mesh(new THREE.CircleGeometry(2.1, 18).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: 0x111111, transparent: true, opacity: 0.22, depthWrite: false, fog: false}));
       sh.position.y = 0.03;
       gp.add(sh);
@@ -9889,10 +9892,35 @@ function makeGame(host, opts){
       gp.userData.pet = 1;
       return gp;
     }
+    // where a rider sits on this mount's posed body (world space): the build's saddle point on its spine, so the rider rides
+    // ON the beast (it bobs, pitches and banks with it) instead of standing at the judge's seat height inside its back.
+    // Art only: the judge's rider stays at DRAGON_SEAT.
+    var dragonSeatV = new THREE.Vector3();
+    function dragonSaddle(D){
+      var Mo = D && D.mesh && D.mesh.userData && D.mesh.userData.Pm;
+      if(!Mo || !Mo.body || !Mo.wy || !Mo.wy.seatL) return null;
+      try { Mo.g.updateMatrixWorld(true); return Mo.body.localToWorld(dragonSeatV.set(0, Mo.wy.seatL[1], Mo.wy.seatL[2])); } catch(e){ return null; }
+    }
+    // seat a fighter's mesh on a mount: hips on the saddle, facing and leaning with the beast, the sitting pose after the clip
+    function dragonSeat(m, D){
+      var sd = dragonSaddle(D);
+      if(!sd) return false;
+      if(m.hipY == null){
+        var hb = m.bones && (m.bones.legL || m.bones.legR), hv = new THREE.Vector3();
+        m.hipY = 0.85;
+        if(hb){ try { m.g.updateMatrixWorld(true); hb.getWorldPosition(hv); var hy = (hv.y - m.g.position.y) / Math.max(0.01, m.g.scale.y || 1); if(hy > 0.3 && hy < 2) m.hipY = hy; } catch(e){} }
+      }
+      var dp = D.mesh;
+      m.g.rotation.order = "YXZ";
+      m.g.rotation.set(dp.rotation.x, dp.rotation.y, dp.rotation.z);
+      m.g.position.set(sd.x, sd.y - m.hipY * (m.g.scale.y || 1) + 0.12, sd.z);
+      m.rideTilt = true;
+      return true;
+    }
     // the dragon's own health bar: a canvas sprite above the beast, redrawn only when
     // the hp fraction moves. Same pattern as the player `tag()` / `dmgSprite()` plates —
     // canvas art, so the fills match those two (dmgSprite already paints raw hex).
-    var DRAGON_HP_BAR_Y = 3.4, DRAGON_HP_BAR_W = 3.2;
+    var DRAGON_HP_BAR_Y = 4.6, DRAGON_HP_BAR_W = 3.2;
     function dragonHpPlate(hp, max){
       var c = document.createElement("canvas"), g = c.getContext("2d");
       c.width = 256; c.height = 48;
@@ -9936,7 +9964,7 @@ function makeGame(host, opts){
     // HUD pill only appears within DRAGON_MOUNT_R, so a new player walking the deck
     // never sees it — this plate rides the beast itself and says how to mount from
     // any angle. Same canvas-sprite idiom as tag() / dragonHpPlate().
-    var DRAGON_MOUNT_PLATE_Y = 4.1, DRAGON_MOUNT_PLATE_W = 3.6;
+    var DRAGON_MOUNT_PLATE_Y = 5.4, DRAGON_MOUNT_PLATE_W = 3.6;
     function dragonMountPlate(tier){
       var c = document.createElement("canvas"), g = c.getContext("2d");
       c.width = 256; c.height = 64;
@@ -11486,10 +11514,13 @@ function makeGame(host, opts){
         if(!P.mesh) addPlayer(P);
         var m = P.mesh; if(!m) return;
         m.g.visible = !P.gone && !(P.dead && t - (P.deadAt || 0) > 1.6);
+        var Pdr = !P.dead && dragonByRider(P.uid || P.user);   // a fighter on a mount sits its saddle (art only)
+        if(m.rideTilt && !Pdr){ m.g.rotation.x = 0; m.g.rotation.z = 0; m.rideTilt = false; }
         m.g.position.set(P.x, P.y, P.z); m.g.rotation.y = Math.PI - P.yaw;
-        setAnim(m, P.dead ? "die" : P.moving > 0.5 ? "walk" : "idle");
-        if(m.gun){ for(var gvi = 0; gvi < m.gun.length; gvi++) m.gun[gvi].visible = (P.w|0) === gvi; }
+        setAnim(m, P.dead ? "die" : P.moving > 0.5 && !Pdr ? "walk" : "idle");
+        if(m.gun){ for(var gvi = 0; gvi < m.gun.length; gvi++) m.gun[gvi].visible = !Pdr && (P.w|0) === gvi; }
         m.mixer.update(dt);
+        if(Pdr && dragonSeat(m, Pdr)) poseSit(m);
         m.tag.visible = !P.dead;
         // Disco: a dancing player is posed AFTER mixer.update so the swing survives
         // idle/walk. NOT dancing means we write nothing — the mixer already owns the
@@ -11705,11 +11736,10 @@ function makeGame(host, opts){
         if(mb && mb.mesh){
           var mm = mb.mesh;
           mm.g.visible = true;
-          mm.g.position.set(M.x, M.y, M.z);
-          mm.g.rotation.y = Math.PI - V.yaw;
           setAnim(mm, "idle");
           if(mm.gun){ for(var mgi = 0; mgi < mm.gun.length; mgi++) mm.gun[mgi].visible = false; }
           mm.mixer.update(dt);
+          if(!dragonSeat(mm, myDragon(t))){ mm.g.position.set(M.x, M.y, M.z); mm.g.rotation.y = Math.PI - V.yaw; }
           poseSit(mm);
           if(mm.headBone) mm.headBone.scale.setScalar(headScaleAt(t));
           if(mm.shield) mm.shield.visible = false;

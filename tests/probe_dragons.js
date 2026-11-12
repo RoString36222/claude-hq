@@ -430,7 +430,7 @@ check("JS pours nothing under Calm (the jaw still opens)",
       /function dragonBreathFx\(D, at, dts, quiet\)\{[\s\S]{0,200}if\(!F \|\| quiet\) return/.test(js));
 check("JS pours a full-fledged jet: many particles, fat additive sprites along the cone",
       /F\.emit\("fire", p1\[0\], p1\[1\], p1\[2\], 16 \* tk,/.test(js)
-      && /F\.jet\(D, fx === "storm" \? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1\.45, 1\.8\)/.test(js)
+      && /F\.jet\(D, fx === "storm" \? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1\.1, 1\.8\)/.test(js)
       && /function dragonFlamePool\(\)/.test(js)
       && /function dragonFlameTick\(/.test(js)
       && /function dragonFlamesStep\(/.test(js)

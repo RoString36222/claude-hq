@@ -200,7 +200,7 @@ class StrikeDragonDrawing(unittest.TestCase):
 
     def test_breath_reads_from_the_chase_camera(self):
         body = self.js[self.js.index("function dragonBreathFx(D, at, dts, quiet){"):self.js.index("function dragonFlamePool(")]
-        self.assertIn("DRAGON_JET_LEN, 1.45, 1.8", body, "a long, flared, bright core")
+        self.assertIn("DRAGON_JET_LEN, 1.1, 1.8", body, "a long, flared, bright core")
         self.assertRegex(body, r"var tk = Math\.min\(4, Math\.floor\(D\.fxAcc \* 30\)\)", "emits by the ticks a frame covered")
         self.assertIn("D.riderIsMe ? clamp(Math.tan((V.pitch || 0)", body, "your own mount breathes where you look")
         self.assertIn("st.breath = brOn && flying;", self.js, "breathing in the air keeps the wings working")

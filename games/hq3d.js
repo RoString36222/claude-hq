@@ -5294,6 +5294,9 @@ function mount(el, api){
       pcam.fov = pose.fov; pcam.near = pose.near; pcam.far = pose.far; pcam.updateProjectionMatrix(); pcam.updateMatrixWorld();
     }
     showAvatar(!(pose && pose.hideAvatar));
+    // [realism perf] your own name over your head only where it helps find you (map, far, classic, photo): a 2 m plate a
+    // few metres from a chase or near camera covered the top of the view (B1's low ceiling brings the camera in close)
+    if(avatar.tag && (rig.mode === "chase" || rig.mode === "near" || rig.mode === "fp")) avatar.tag.visible = false;
     if(rig.mode !== "classic" && rig.mode !== "map" && cur.setFaded && cur.occluderItems && pose){
       occT += dt;
       if(occT >= 0.1){ occT = 0; cur.setFaded(C.occluders(pose.pos, pose.focus || pose.look, cur.occluderItems(avatar.x, avatar.g.position.y, avatar.z))); }
@@ -6330,11 +6333,85 @@ function mount(el, api){
     if(nearBike() >= 0) rideToggle();
     return b;
   }
+  // [realism perf] Shaders compile on first sight, and a first sight that links a program stalls the frame (39-240 ms
+  // walking into a new part of the City, ~110 ms the first frame in B1, 2 s once with a cold driver cache). warmWorld
+  // compiles a world's every material (hidden ones too: three's compile walks the whole tree) and yours against its
+  // lights, in parallel where KHR_parallel_shader_compile allows, and resolves when they are linked (or after cap ms).
+  // warmSweep does the same, each second in idle time, for what is new in the world you are in, so what streams in (traffic, people,
+  // a level of detail switched on later) is linked before it comes into view.
+  function warmWorldP(w, cap){
+    if(!renderer || !w || !w.scene || !renderer.compileAsync) return Promise.resolve(false);
+    var c = curCam(), ps = [], par = parallel();
+    // without parallel linking only what is shown (base and fix alike link on the GPU's one thread: the hidden parts,
+    // a far level of detail, night's lamps, would only add to the wait); with it, all of it, off the main thread
+    var what = par ? w.scene : {traverse: function(fn){ w.scene.traverseVisible(fn); }, traverseVisible: function(){}};
+    try { ps.push(linkAsync(what, c, w.scene)); } catch(e){}
+    if(warmSeenP && par) w.scene.traverse(function(o){ if(o.material) warmSeenP.add(o); });
+    if(avatar && avatar.g && avatar.g.parent !== w.scene){ try { ps.push(linkAsync(avatar.g, c, w.scene)); } catch(e){} }
+    return Promise.race([Promise.all(ps).then(function(){ return true; }, function(){ return false; }),
+                         new Promise(function(r){ setTimeout(function(){ r(false); }, cap || 2500); })]);
+  }
+  // compileAsync waits on KHR_parallel_shader_compile's status; without the extension (SwiftShader, some drivers) three
+  // polls a status it cannot read and never resolves: the fade waited out its cap and the idle sweep stopped after its
+  // first look. There the shaders are compiled now and linked on their first draw (still behind the fade)
+  function parallel(){ var ex = renderer && renderer.extensions; return !!(ex && ex.has && ex.has("KHR_parallel_shader_compile")); }
+  function linkAsync(o, c, target){
+    if(!parallel()){ renderer.compile(o, c, target); return Promise.resolve(true); }
+    return renderer.compileAsync(o, c, target);
+  }
+  var warmAt = 0, warmBusy = false, warmSeenP = typeof WeakSet === "function" ? new WeakSet() : null;
+  // only what is new since the last look (three's compile walks the whole tree: ~12 ms in the City, too much to repeat)
+  function warmNew(w){
+    if(!renderer || !w || !w.scene || !warmSeenP || !renderer.compileAsync) return Promise.resolve(false);
+    var list = [];
+    w.scene.traverse(function(o){ if(o.material && !warmSeenP.has(o)){ warmSeenP.add(o); list.push(o); } });
+    if(!list.length) return Promise.resolve(true);
+    // compile() walks scene.traverse for materials (and the scene's own lights with traverseVisible): a stand-in
+    // that walks just the new objects, against the world's lights (its targetScene)
+    var some = {traverse: function(fn){ for(var i = 0; i < list.length; i++) fn(list[i]); }, traverseVisible: function(){}};
+    try { return linkAsync(some, curCam(), w.scene); } catch(e){ return Promise.resolve(false); }
+  }
+  // and the models of the vehicles you own (B1 builds them all when you go down: ~10-20 ms each the first time, a clone
+  // after), one per idle moment, so the garage opens on clones instead of a quarter-second freeze
+  function ownWarm(){
+    var VM = HQV.hqVehicleModels, G = HQV.hqGarage, l = G && G.cached ? G.cached() : null;
+    if(!VM || !VM.warm || !Array.isArray(l) || !l.length) return;
+    for(var i = 0; i < l.length; i++){
+      var v = l[i], V = v && VEHICLES[v.vehicle_id], e = V && V.cat;
+      if(!e) continue;
+      var tn = HQV.hqTuning && HQV.hqTuning.of ? HQV.hqTuning.of("own:" + v.id) : null;
+      try { if(VM.warm(THREE, e, tn)){ requestIdleCallback(ownWarm, {timeout: 4000}); return; } } catch(err){}   // the next one in the next idle moment
+    }
+  }
+  function warmSweep(dt){
+    if(warmBusy || !cur || !cur.scene || (warmAt += dt) < 1) return;
+    warmAt = 0; warmBusy = true;
+    if(typeof requestIdleCallback === "function") requestIdleCallback(ownWarm, {timeout: 4000});
+    // the shader sweep only where linking runs beside the frame: without KHR_parallel_shader_compile an idle-time link holds
+    // the GPU's one thread just as a first draw does (the City had 130 programs more than it had drawn half a minute in)
+    warmBusy = false; return;   // (shaders: the [load] idle scan links what is new)
+    var w = cur, run = function(){ if(!inst.alive || cur !== w){ warmBusy = false; return; } warmNew(w).then(function(){ warmBusy = false; }, function(){ warmBusy = false; }); };
+    if(typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout: 1000}); else setTimeout(run, 0);
+  }
+  // [realism perf] preFaded, fadeT0: the world the fade is already going down for, since when. blind: the fade is down
+  // and the world you are leaving is still current (the next one settling and linking): its frames are not seen, so
+  // they are not drawn (a 3D City frame behind the black is 100-300 ms of GPU work on a software renderer)
+  var preFaded = null, fadeT0 = 0, blind = false;
   function enterWorld(name, from, instant){
     name = outside(name);
     if(entering === name) return;                                   // already on the way there
-    var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
+    // [realism perf] a world not built yet is built behind the fade (B1's build is ~90 ms), not before it shows
+    if(!instant && !E.calm() && !fading && name !== "mission" && !worlds[name] && preFaded !== name && HQV.hqWorlds[name === "city" ? "city3d" : name]){
+      // the build starts a few frames into the fade, not after it: the overlay's opacity runs on the compositor, so it keeps
+      // darkening over a held frame while the main thread builds and links (the screen was black ~0.4 s longer)
+      fading = true; fadeEl.classList.add("on"); E.sfx("door"); fadeT0 = performance.now();
+      setTimeout(function(){ fading = false; if(!inst.alive) return; preFaded = name; enterWorld(name, from, instant); if(preFaded === name){ preFaded = null; fadeEl.classList.remove("on"); } }, 60);
+      return;
+    }
+    var pre = preFaded === name; preFaded = null;
+    var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading){ if(pre) fadeEl.classList.remove("on"); return; }
     if(w.whenReady && !w.isReady){
+      if(pre) fadeEl.classList.remove("on");                          // the loading line shows instead
       entering = name; showLoading("Building the city…");
       var to = 0, settle = function(ok, err){
         // a later enterWorld replaced this one (or this world was dropped): nothing to do here
@@ -6577,12 +6654,43 @@ function mount(el, api){
   function onBlur(){ keys = {}; DRV.jHeld = false; }
 
   /* ---------- the loop ---------- */
+  // [realism perf] The vehicles standing about (the City's parked cars, bikes by every HQ, the park's bicycles, B1's bays)
+  // cast shadows only within SHADOW_NEAR m of you: each is a dozen or more meshes, and the shadow pass drew all of them
+  // in the sun's 60 m box (the whole map from the map camera): ~150 of the City's ~300 shadow draws a frame. Checked
+  // every 0.4 s; a mesh that never cast stays off. The one you ride is with you, so always near.
+  var SHADOW_NEAR = 30, shT = 0;
+  function propShadows(dt){
+    if(!cur || !Array.isArray(cur.bikes) || !avatar || (shT += dt) < 0.4) return;
+    shT = 0;
+    var ax = avatar.g.matrixWorld.elements[12], az = avatar.g.matrixWorld.elements[14], R2 = SHADOW_NEAR*SHADOW_NEAR, L = cur.bikes;
+    for(var i = 0; i < L.length; i++){
+      var b = L[i], g = b && b.g; if(!g) continue;
+      var e = g.matrixWorld.elements, dx = e[12] - ax, dz = e[14] - az, near = dx*dx + dz*dz < R2, first = g.children[0];
+      if(b._shG !== g || b._shC !== first || b._shN !== g.children.length){   // a new model in it: who casts, again
+        var m = [];
+        (function walk(o){
+          if(o === avatar.g || (avatar.ch && o === avatar.ch.o) || o.isSkinnedMesh) return;   // you (or anyone) in its seat: not the vehicle's
+          if(o.isMesh && (o.castShadow || o.userData.shCast)){ o.userData.shCast = true; m.push(o); }
+          for(var k = 0; k < o.children.length; k++) walk(o.children[k]);
+        })(g);
+        b._shM = m; b._shG = g; b._shC = first; b._shN = g.children.length; b._shNear = null;
+      }
+      if(b._shNear === near) continue;
+      b._shNear = near;
+      for(var j = 0; j < b._shM.length; j++) b._shM[j].castShadow = near;
+    }
+  }
+  var SIM_MAX = 0.25;                                                 // [realism perf] the longest frame you still move through in full
   function frame(ts){
     raf = 0; if(!inst.running) return;
     raf = requestAnimationFrame(frame);
     if(warming){ last = 0; return; }                                   // [load] a world behind the overlay, its shaders still linking
     // time from the rAF timestamp (the same clock as E.now()), not from when this callback got to run
-    var t = (ts > 0 ? ts/1000 : E.now()) - clock0, ms = last ? (t - last)*1000 : 16.7, dt = Math.max(0, Math.min(0.05, last ? t - last : 0)); last = t;
+    var t = (ts > 0 ? ts/1000 : E.now()) - clock0, ms = last ? (t - last)*1000 : 16.7, dt = Math.max(0, Math.min(0.05, last ? t - last : 0));
+    // [realism perf] you (your feet, your vehicle, your suit), your animation and the camera on you run on the real frame
+    // time (up to SIM_MAX s), in steps of at most 0.05 s. Held to 0.05 s a frame, a 12 fps frame (83 ms) moved you as if
+    // 50 ms had passed: at 0.6 of your speed, with the walk cycle slowed to match. The world (traffic, the crowd) keeps the cap
+    var sdt = Math.max(0, Math.min(SIM_MAX, last ? t - last : 0)); last = t;
     var k = E.calm() ? 0.25 : 1;
     syncProps();
     padPoll(dt);
@@ -6591,9 +6699,9 @@ function mount(el, api){
     var kb = keys, kp = withPad();
     keys = rigOn() && (rig.mode === "map" || rig.mode === "photo" || rig.mode === "cine") ? {} : kp;
     exoPre();                                                          // [exo] a suit-up holds you; Space suited lifts off
-    moveAvatar(dt);
+    for(var sn = Math.max(1, Math.ceil(sdt/0.05 - 1e-6)), si = 0; si < sn; si++) moveAvatar(sdt/sn);
     callStep(dt);                                                      // a vehicle you called, on its way
-    motionStep(dt);
+    motionStep(sdt);
     propHomeStep();                                                    // [3.13.4] your roof's helicopter back on its pad
     testStep(dt);                                                      // a dealership test drive
     jackStep();                                                        // [3.27] a car you took, left far behind
@@ -6605,17 +6713,18 @@ function mount(el, api){
     rideUiSync(false); homeUiSync();
     if((phoneBadgeAt += dt) > 1){ phoneBadgeAt = 0; phoneBadge(); }    // [3.15] the phone button's badge
     keys = kp;
-    if(rigOn()) rigFrame(t, dt);
+    if(rigOn()) rigFrame(t, sdt);
     tripCam();
     shotCamApply();                                                    // ?hqsmoke=1 (tools/transit_tour.py): a module's fixed shot
     keys = kb;
     // the camera keeps up better the faster you go (a car at full speed stays on screen)
     studioFrame();
     garageCam();                                                       // [3.33] Move garage: your lot from above
-    var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
+    var ease = 1 - Math.exp(-sdt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
-    exoFrame(dt, t);                                                   // [exo] the suit-up, its effects, the visor
+    exoFrame(sdt, t);                                                  // [exo] the suit-up, its effects, the visor
     if(E.listener) E.listener(curCam(), earAt(curCam()), ownRef());   // [sound] the ears: this frame's camera (earAt), your reach
+    var wdt = dt; dt = sdt;                                            // [realism perf] your pose and clips: the real frame time too
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
@@ -6633,6 +6742,7 @@ function mount(el, api){
       boomStep(avatar.ch, bOn, t, bOn);
       gunStep(avatar.ch, GN.out && !ride, true);                       // [3.16] the launcher, on foot
     }
+    dt = wdt;
     placePeers(dt, t);
     tankFrame(dt);                                                     // [3.16] tanks: the turret, a gunner's aim
     peerSounds();                                                      // [sound] their engines (the nearest few) and horns
@@ -6646,8 +6756,10 @@ function mount(el, api){
       if(mcPanel) mcPanelClose();
       if(rigOn()){ qualityStep(ms); perfLog(ms); }
       if(cur.update){ if(cur.camModes) cur.update(t, dt, k, camInfo()); else cur.update(t, dt, k); }
+      warmSweep(dt);
+      propShadows(dt);
       placeRideUi();
-      renderer.render(cur.scene, curCam());
+      if(!blind) renderer.render(cur.scene, curCam());
       smokeFrame();
       return;
     }
@@ -6681,7 +6793,7 @@ function mount(el, api){
       D.pet.children[0].position.y = 0.4 + hop*k;
     });
     streams.forEach(function(s){ s.dots.forEach(function(d, i){ var u = (t*s.speed*k + i/4) % 1; if(s.dir < 0) u = 1 - u; s.curve.getPoint(u, d.position); d.material.opacity = Math.sin(u*PI); }); });
-    renderer.render(scene, cam);
+    if(!blind) renderer.render(scene, cam);
   }
 
   /* ---------- lifecycle ---------- */

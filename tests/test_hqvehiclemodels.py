@@ -86,6 +86,14 @@ out.cat = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
           tris1: V.triangles(r, 1), dc1: V.drawCalls(r, 1), far, near: r.meshes.every(m => m.visible || m.userData.mk === "plate") && r.lodMeshes.every(m => !m.visible), shown: V.shown(v)};
 });
 out.SCALE = V.SCALE;
+// [realism perf] a far-only build (lod: 1): the far model alone, the same as the full one's far set; no near geometry
+out.farOnly = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
+  const had = V.hasBlueprint(THREE, v), f = V.build(THREE, v, 0x3366cc, {lod: 1});
+  return {id: v.id, near: f.meshes.length, tris1: V.triangles(f, 1), lod: f.lod, lock: !!f.lodLock, farOnly: !!f.farOnly,
+          seat: !!f.seat, had, warm: V.warm(THREE, v), has: V.hasBlueprint(THREE, v)};
+});
+{ const v = cat.vehicles.filter(x => x.slot !== "starter")[0]; V.clearCache(THREE);
+  out.warmFresh = [V.hasBlueprint(THREE, v), V.warm(THREE, v), V.hasBlueprint(THREE, v), V.warm(THREE, v)]; }
 // [3.39] the doors: each car's door pieces shut and open (both sides), and a play's timeline (calm: no swing)
 const box = o => { o.updateWorldMatrix(true, true); return new THREE.Box3().setFromObject(o); };
 out.doors = cat.vehicles.filter(v => v.slot !== "starter").map(v => {
@@ -168,6 +176,17 @@ class VehicleModels(unittest.TestCase):
             # a mesh per material per rigid piece: a car's two doors (paint, pane), four wheels, two front calipers on
             # their holders, the steering wheel; a bike's steering and wheels
             self.assertLessEqual(r["dc"], 16 if r["kind"] == "car" else 12, (r["id"], r["mats"]))
+
+    def test_far_only_builds(self):
+        cat = {x["id"]: x for x in self.o["cat"]}
+        for f in self.o["farOnly"]:
+            self.assertEqual(f["near"], 0, f["id"])                       # no near model kept
+            self.assertEqual(f["tris1"], cat[f["id"]]["tris1"], f["id"])  # the very far model the full build carries
+            self.assertEqual((f["lod"], f["lock"], f["farOnly"], f["seat"]), (1, True, True, True), f["id"])
+            self.assertTrue(f["had"], f["id"])                           # the full blueprint was made above (out.cat)
+            self.assertFalse(f["warm"], f["id"])                         # so warming it again does nothing
+            self.assertTrue(f["has"], f["id"])
+        self.assertEqual(self.o["warmFresh"], [False, True, True, False])   # made once, in an idle moment
 
     def test_size_matches_dims(self):
         for r in self.o["rows"]:

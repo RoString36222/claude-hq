@@ -284,6 +284,40 @@ function skullBox(THREE, root, head){
   return box.isEmpty() ? null : box;
 }
 
+// [realism perf] People were never frustum-culled (a skinned mesh's bounds are its bind pose, so they were switched off
+// wholesale): every person drew, and cast, from behind the camera too. A sub-mesh's own bind sphere does not hold its
+// posed limbs (a sprinting shoe or a seated rider's hand swings 20-40 cm past it), so every skinned part of one person
+// gets the same sphere: the whole body's, centred on the bind hips, radius the body's largest bind extent (about 1.7 m;
+// measured over every clip, the wave's raised hand needs 0.98 of it, a stride, a seat's legs out front and IK grips
+// less). Seats move o, never the hips, so the sphere follows the body.
+var CULL_PAD = 1.5;
+function cullable(THREE, root){
+  root.updateMatrixWorld(true);
+  var inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), rel = new THREE.Matrix4();
+  var box = new THREE.Box3(), gb = new THREE.Box3(), meshes = [], hips = null;
+  root.traverse(function(n){
+    if(n.isBone && !hips && /hips/i.test(n.name)){ hips = n; }
+    if(!n.isMesh){ return; }
+    n.frustumCulled = true;
+    if(!n.isSkinnedMesh){ return; }
+    if(!n.geometry.boundingBox){ n.geometry.computeBoundingBox(); }
+    rel.multiplyMatrices(inv, n.matrixWorld);
+    box.union(gb.copy(n.geometry.boundingBox).applyMatrix4(rel));
+    meshes.push(n);
+  });
+  if(!meshes.length || box.isEmpty()){ return; }
+  var c = hips ? hips.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv) : box.getCenter(new THREE.Vector3());
+  // CULL_PAD: the clips reach 0.98 of the bind extent from the hips (the wave's hand, a sprint's shoe); half as much
+  // again holds a pose wider than any clip (an exosuit's spread flight, a bigger emote, an IK reach), for a few more draws
+  var r = Math.max(box.max.y - box.min.y, box.max.x - box.min.x, box.max.z - box.min.z) * CULL_PAD;
+  var lc = new THREE.Vector3(), sc = new THREE.Vector3();
+  meshes.forEach(function(n){
+    rel.multiplyMatrices(inv, n.matrixWorld);
+    sc.setFromMatrixScale(rel);
+    lc.copy(c).applyMatrix4(rel.invert());
+    n.boundingSphere = new THREE.Sphere(lc.clone(), r / (Math.max(sc.x, sc.y, sc.z) || 1));
+  });
+}
 // geometry detail: 1 for your own and the people near you, less for crowds (crowdHead)
 var SEGK = 1;
 function sg(n){ return Math.max(6, Math.round(n * SEGK)); }
@@ -345,7 +379,9 @@ function toyHead0(L, skull, spec, female){
   mouth.rotation.set(-0.25, 0, Math.PI); mouth.scale.z = 0.3; mouth.position.copy(at(0, -0.40, 0.875)); grp.add(mouth);
   hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at);
   wear(THREE, grp, spec, at, rx, ry, rz, c);
-  grp.traverse(function(m){ if(m.isMesh){ m.castShadow = true; } });
+  // [realism perf] the skull casts the head's shadow (and the hair and hats, the bigger parts); eyes, glints, brows, ears,
+  // nose and mouth are each a shadow draw for a speck nobody sees
+  grp.traverse(function(m){ if(m.isMesh){ m.castShadow = m === head || m.material === hairM || (m.geometry.boundingSphere || (m.geometry.computeBoundingSphere(), m.geometry.boundingSphere)).radius*Math.max(m.scale.x, m.scale.y, m.scale.z) > rx*0.45; } });
   return {g: grp, c: c, rx: rx, ry: ry, rz: rz, skin: skin, hair: hairM};
 }
 
@@ -577,6 +613,7 @@ function build(spec){
       o.updateMatrixWorld(true);
       var box = new THREE.Box3().setFromObject(o, true), h = box.max.y - box.min.y || 1, k = CH_H / h;
       inner.scale.setScalar(k); inner.position.y = -box.min.y * k;
+      cullable(THREE, model);
       var mixer = new THREE.AnimationMixer(model), acts = {};
       // Posing on top of the clips (IK, seats, rails) must come off again before the next mixer step: three's mixer
       // writes a bone only when the clip's value changes, so a held clip (most of Idle, all of sit) never resets what
@@ -748,6 +785,7 @@ function crowd(base, variant){
     o.traverse(function(n){ if(n.isBone){ bones[n.name] = n; } if(n.isMesh){ n.material = mat; n.frustumCulled = false; } });
     var hg = crowdHead(L, T, base, variant);
     if(hg && bones.Head){ var hm = new THREE.Mesh(hg, mat); hm.name = "crowd-head"; hm.castShadow = true; bones.Head.add(hm); }
+    cullable(THREE, o);
     var mixer = new THREE.AnimationMixer(model), acts = {};
     Object.keys(ANIM).forEach(function(n){ var cl = THREE.AnimationClip.findByName(T.clips, ANIM[n]); if(cl){ acts[n] = mixer.clipAction(cl); } });
     if(T.sit){ acts.sit = mixer.clipAction(T.sit); }

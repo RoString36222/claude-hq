@@ -289,8 +289,10 @@ function bakedOf(c, v){
   if(BAKED[key]) return BAKED[key];
   if(!HQV.hqVehicleModels) return null;
   var entry = Object.assign({}, v, {model3d: null}), rig;
-  try { rig = HQV.hqVehicleModels.build(c, entry, parseInt(p.slice(1), 16)); } catch(e){ return null; }
-  if(rig.setLod) rig.setLod(1);                       // [4.0] the far model (LOD 1): one baked draw per turntable stays cheap
+  // [4.0] the far model (LOD 1): one baked draw per turntable stays cheap. [realism perf] built far-only (lod: 1): a third
+  // of the work and no near geometry kept for a model nobody sees up close here
+  try { rig = HQV.hqVehicleModels.build(c, entry, parseInt(p.slice(1), 16), {lod: 1}); } catch(e){ return null; }
+  if(rig.setLod) rig.setLod(1);
   return (BAKED[key] = bake(T, rig.g));
 }
 function brandsOf(cat){
@@ -416,15 +418,29 @@ function build(c, site, opts){
       var colG = new T.BoxGeometry(0.35, gv.y - 0.3, 0.35);
       [gv.x0 + gw*0.25, gv.x0 + gw*0.75].forEach(function(cx){ var cm = new T.Mesh(colG, dark); cm.position.set(cx, PLINTH + (gv.y - 0.3)/2, gv.z1 - 0.6); cm.castShadow = true; dyn.add(cm); });
     }
+    var todo = [];
     L.cells.forEach(function(cell, n){
       var it = items[cell.i], v = HQV.hqVehicles && HQV.hqVehicles.get ? HQV.hqVehicles.get(cat, it.id) : null;
       if(!v) (cat.vehicles || []).forEach(function(x){ if(x.id === it.id) v = x; });
       discs.push(cell); rings.push(cell);
-      var geo = v ? bakedOf(c, v) : null; if(!geo) return;
-      var m = new T.Mesh(geo, vehMat); m.position.set(cell.x, PLINTH + 0.26 + (cell.y || 0), cell.z); m.rotation.y = cell.grid ? 0 : (n*0.7) % (2*PI);
-      m.castShadow = true; m.name = "dealer-vehicle:" + it.id; dyn.add(m);
-      if(!cell.grid) spin.push({m: m, a: m.rotation.y});                // the F1 grid stands still, noses to the glass
+      if(v) todo.push({cell: cell, n: n, v: v, id: it.id});
     });
+    function put(o){
+      var cell = o.cell, geo = bakedOf(c, o.v); if(!geo) return;
+      var m = new T.Mesh(geo, vehMat); m.position.set(cell.x, PLINTH + 0.26 + (cell.y || 0), cell.z); m.rotation.y = cell.grid ? 0 : (o.n*0.7) % (2*PI);
+      m.castShadow = true; m.name = "dealer-vehicle:" + o.id; dyn.add(m);
+      if(!cell.grid) spin.push({m: m, a: m.rotation.y});                // the F1 grid stands still, noses to the glass
+    }
+    // [realism perf] the turntables fill a few at a time (~4 ms a frame), not ~60 models in one frozen frame of the
+    // City's build; the ones already baked (another showroom's) at once. No frames to wait for (node tests): all now.
+    var gen = B.gen = (B.gen || 0) + 1, clock = typeof performance !== "undefined" && performance.now ? function(){ return performance.now(); } : Date.now;
+    if(typeof requestAnimationFrame !== "function") todo.forEach(put);
+    else (function pump(){
+      if(B.dead || B.gen !== gen) return;
+      var t0 = clock();
+      while(todo.length && (clock() - t0 < 4 || BAKED[todo[0].v.id + (((todo[0].v.paints || [])[0] || {}).hex || "#888888")])) put(todo.shift());
+      if(todo.length) requestAnimationFrame(pump);
+    })();
     // turntables: two InstancedMeshes (the discs, their glowing rims), whatever the count
     if(discs.length){
       var dg = new T.CylinderGeometry(1, 1, 0.22, 32), rg = new T.CylinderGeometry(1, 1, 0.06, 32, 1, true);

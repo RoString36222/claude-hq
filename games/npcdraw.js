@@ -308,6 +308,7 @@ function engineLoader(THREE, L){
 }
 
 function create(THREE, parent, sim, opts){
+  var staggerN = 0;   // [realism perf] the next slot's half-rate phase (alternates, so half the far mixers step each frame)
   opts = opts || {};
   var draw = {stats: {near: 0, far: 0, loading: 0, ms: 0}};
   var group = new THREE.Group(); group.name = "npcs"; parent.add(group);
@@ -474,7 +475,12 @@ function create(THREE, parent, sim, opts){
       if(r.anim === "walk" || (r.anim === "jog" && !acts.sprint)) setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP*rsz)/(WALK_CLIP*rsz)));
       else if(r.anim === "jog") setAnim(slot.ch, "sprint", Math.max(0.5, (r.speed || SPRINT_CLIP*rsz)/(SPRINT_CLIP*rsz)));
       else setAnim(slot.ch, r.anim === "sit" && acts.sit ? "sit" : "idle", 1);
-      if(slot.ch.mixer) slot.ch.mixer.update(dt);
+      // [realism perf] past 25 m a person's clips step every other frame (staggered by slot, whatever the ids are; the time saved up): at that size
+      // nobody sees 30 vs 60 poses a second, and 40 near people's mixers halve
+      if(slot.ch.mixer){
+        slot.mt = (slot.mt || 0) + dt; slot.fc = (slot.fc == null ? (staggerN++) : slot.fc) + 1;
+        if((r.d2 || 0) < 625 || slot.fc % 2 === 0){ slot.ch.mixer.update(slot.mt); slot.mt = 0; }
+      }
     });
     Object.keys(slots).forEach(function(id){ if(!keep[id]){ give(slots[id]); delete slots[id]; } });
     fill(need);

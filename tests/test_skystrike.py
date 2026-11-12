@@ -1731,7 +1731,7 @@ class SkyStrikeGaitRuntime(unittest.TestCase):
         # high through a deceleration and is what made the bend linger
         self.assertIn("ch._runWant = runWant == null ? W.sprint", HQ3D)
         self.assertIn("ch._goWant = goWant == null ? 1", HQ3D)
-        self.assertIn("locomote(avatar.ch, avatar.speed, avatar.rate, dt, run, !!(fwd || side || walkTo))", HQ3D)
+        self.assertIn("locomote(avatar.ch, avatar.speed < 0 ? -gSpd : gSpd, avatar.rate, dt, run, !!(fwd || side || walkTo), gRel)", HQ3D)
 
     def test_body_owns_its_own_lean(self):
         # leanStep tips ch.o at the feet ("going into ground"); this body does

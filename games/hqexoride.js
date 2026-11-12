@@ -103,8 +103,26 @@ function step(st, dt, inp, env){
   var I = {f: key(inp.fwd) - key(inp.back), t: key(inp.left) - key(inp.right), v: key(inp.up) - key(inp.down), b: key(inp.boost) > 0.5,
            thr: key(inp.fwd) > 0, up: key(inp.up) > 0};
   st.acc = clamp(st.acc + dt, 0, 1);
-  while(st.acc >= H - 1e-9){ st.acc -= H; sub(st, I, env || {}); }
+  var P = st.prev;
+  while(st.acc >= H - 1e-9){
+    st.acc -= H;
+    P = {x: st.x, y: st.y, z: st.z, yaw: st.yaw, th: st.th, pitch: st.pitch, roll: st.roll};
+    sub(st, I, env || {});
+  }
+  st.prev = P;
+  draw(st);
   return st;
+}
+// [3.41 realism] where to DRAW it this frame: between the last two sub-steps by how far into the next one the clock is
+// (st.acc / H), so a frame that ran 1 sub-step and one that ran 2 move it by what their own time covered (no judder
+// at 50, 60 or 144 Hz). st.r = {x, y, z, yaw, pitch, roll}, one sub-step (8 ms) behind the sim.
+function draw(st){
+  var P = st.prev, a = clamp(st.acc/H, 0, 1);
+  if(!P || Math.abs(P.x - st.x) + Math.abs(P.z - st.z) + Math.abs(P.y - st.y) > 50){ P = st; }   // a teleport: no smear
+  function l(k){ return P[k] + (st[k] - P[k])*a; }
+  function la(k){ return wrapPi(P[k] + wrapPi(st[k] - P[k])*a); }
+  st.r = {x: l("x"), y: l("y"), z: l("z"), yaw: la("yaw"), pitch: l("pitch"), roll: l("roll")};
+  return st.r;
 }
 
 function sub(st, I, env){
@@ -170,5 +188,5 @@ function sub(st, I, env){
   } else st.mode = cruise ? "cruise" : "hover";
 }
 
-HQV.hqExoRide = {STATS: STATS, FRAMES: FRAMES, H: H, CEILING: CEILING, CRUISE_V: CRUISE_V, HYST: HYST, TAPER: TAPER, newState: newState, step: step};
+HQV.hqExoRide = {STATS: STATS, FRAMES: FRAMES, H: H, CEILING: CEILING, CRUISE_V: CRUISE_V, HYST: HYST, TAPER: TAPER, newState: newState, step: step, draw: draw};
 })();

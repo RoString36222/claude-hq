@@ -133,7 +133,18 @@ function model(T, color){
   var seats = [[0.75, 1.55, 2.05], [0, 2.2, -0.35], [0.85, 1.95, -2.45], [-0.85, 1.95, -2.45]].map(function(p, i){
     var o = new T.Object3D(); o.position.set(p[0], p[1], p[2]); if(i) o.name = "a-seat-" + i; g.add(o); return o;   // carpool's poolSpot finds 1-3 by name
   });
+  // the driver stands in the hatch: the hands on its rim either side, the feet on the floor below (hq3d's rider,
+  // games/people3d.js; hipUp: the hips a little over the rim; seatRay false: not set on a surface under the anchor)
+  var d0 = seats[0].position, at = function(x, y, z){ var o = new T.Object3D(); o.position.set(d0.x + x, d0.y + y, d0.z + z); g.add(o); return o; };
+  // two grab handles on the hatch ring, a bar along each side at chest height
+  [1, -1].forEach(function(sx){
+    [0.08, 0.3].forEach(function(z){ box(0.03, 0.17, 0.03, dark, d0.x + sx*0.3, d0.y + 0.09, d0.z + z, g); });
+    box(0.035, 0.035, 0.28, dark, d0.x + sx*0.3, d0.y + 0.18, d0.z + 0.19, g);
+  });
+  var grips = [at(0.3, 0.18, 0.2), at(-0.3, 0.18, 0.2)], feet = [at(0.1, -0.5, 0.06), at(-0.1, -0.5, 0.06)];
+  grips[0].userData = {axis: [0, 0, -1], fdir: [-1, -0.7, 0.2]}; grips[1].userData = {axis: [0, 0, -1], fdir: [1, -0.7, 0.2]};
   return {g: g, hull: hull, turret: turret, barrel: barrel, muzzle: muzzle, seats: seats, seat: seats[0], wheels: wheels, hats: true,
+          grips: grips, feet: feet, lean: 0.12, hipUp: 0.07, seatRay: false, knees: 0.03,
           dispose: function(){ geos.forEach(function(x){ x.dispose(); }); mats.forEach(function(x){ x.dispose(); }); }};
 }
 // Each frame: the wheels by how far each tread ran, the turret and the barrel at the aim ({yaw, pitch}, rad).

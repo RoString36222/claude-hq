@@ -344,8 +344,18 @@ function bboxOf(A){
 function pathNear(A, B, lim){
   var a = bboxOf(A), b = bboxOf(B);
   if(a[0] - b[1] >= lim || b[0] - a[1] >= lim || a[2] - b[3] >= lim || b[2] - a[3] >= lim) return false;
-  for(var i = 1; i < A.length; i++) for(var j = 1; j < B.length; j++)
-    if(segDist(A[i-1][0], A[i-1][2], A[i][0], A[i][2], B[j-1][0], B[j-1][2], B[j][0], B[j][2]) < lim) return true;
+  // [realism perf] each pair's own boxes first too: two segments whose boxes lie lim apart cannot come within lim, so the
+  // exact distance (segDist) runs only for the few pairs near each other (the same answer, a fraction of the work)
+  for(var i = 1; i < A.length; i++){
+    var p0 = A[i-1], p1 = A[i], ax0 = p0[0] < p1[0] ? p0[0] : p1[0], ax1 = p0[0] < p1[0] ? p1[0] : p0[0], az0 = p0[2] < p1[2] ? p0[2] : p1[2], az1 = p0[2] < p1[2] ? p1[2] : p0[2];
+    if(ax0 - b[1] >= lim || b[0] - ax1 >= lim || az0 - b[3] >= lim || b[2] - az1 >= lim) continue;
+    for(var j = 1; j < B.length; j++){
+      var q0 = B[j-1], q1 = B[j];
+      if(ax0 - (q0[0] > q1[0] ? q0[0] : q1[0]) >= lim || (q0[0] < q1[0] ? q0[0] : q1[0]) - ax1 >= lim ||
+         az0 - (q0[2] > q1[2] ? q0[2] : q1[2]) >= lim || (q0[2] < q1[2] ? q0[2] : q1[2]) - az1 >= lim) continue;
+      if(segDist(p0[0], p0[2], p1[0], p1[2], q0[0], q0[2], q1[0], q1[2]) < lim) return true;
+    }
+  }
   return false;
 }
 

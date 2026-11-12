@@ -204,6 +204,17 @@ function canDismount(st, env){
 }
 
 /* ---------- the mount: the pet's own model, big, with a saddle (THREE only from here on) ---------- */
+// one geometry from parts (meshes placed in the same parent)
+function bake(T, parts){
+  var pos = [], nor = [];
+  parts.forEach(function(m){
+    m.updateMatrix(); var q = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone(); q.applyMatrix4(m.matrix);
+    pos.push.apply(pos, q.attributes.position.array); nor.push.apply(nor, q.attributes.normal.array); q.dispose(); m.geometry.dispose();
+  });
+  var out = new T.BufferGeometry();
+  out.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); out.setAttribute("normal", new T.Float32BufferAttribute(nor, 3));
+  out.computeBoundingSphere(); return out;
+}
 function mountModel(c, pet){
   var T = c.THREE, P = HQV.hqPets; if(!T || !P) return null;
   pet = pet || {};
@@ -223,11 +234,24 @@ function mountModel(c, pet){
   var bw = Math.max(0.55, d.W*s*1.05);
   var blanket = new T.Mesh(new T.BoxGeometry(bw, 0.06, 0.95), cloth); blanket.position.set(0, top - 0.02, zs); blanket.name = "petride-blanket"; g.add(blanket);
   var seatM = new T.Mesh(new T.CylinderGeometry(0.26, 0.3, 0.16, 12, 1), leather); seatM.scale.set(1, 1, 1.5); seatM.position.set(0, top + 0.08, zs); seatM.name = "petride-saddle"; g.add(seatM);
-  var B = {g: g, M: M, sp: sp, rk: rk, s: s, RS: RS, kind: rk, lean: 0, riderK: 1, hats: true, brake: function(){},
+  // the reins: a pommel on the saddle's front, a short leather handle held over it in both hands (where hq3d's rider,
+  // games/people3d.js, reaches comfortably), straps from its ends down to the neck; stirrups by the flanks
+  var tack = [], part = function(geo, x, y, z){ var m = new T.Mesh(geo); m.position.set(x, y, z); tack.push(m); return m; };
+  part(new T.CylinderGeometry(0.035, 0.045, 0.14, 8), 0, top + 0.22, zs + 0.3);
+  var gy = top + 0.4, gz = zs + 0.54, nk = new T.Vector3(0, top + 0.12, zs + Math.max(0.75, 0.42*d.L*s));
+  var rod = function(a, b2, r){ var v = b2.clone().sub(a), m = part(new T.CylinderGeometry(r, r, v.length(), 6), 0, 0, 0);
+    m.position.copy(a).add(b2).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), v.normalize()); };
+  rod(new T.Vector3(0.15, gy, gz), new T.Vector3(-0.15, gy, gz), 0.016);
+  [1, -1].forEach(function(sx){ rod(new T.Vector3(sx*0.14, gy, gz), nk.clone().setX(sx*0.08), 0.008); });
+  var fx = bw*0.5 + 0.03;
+  [1, -1].forEach(function(sx){ part(new T.BoxGeometry(0.05, 0.03, 0.14), sx*fx, top - 0.34, zs + 0.12);
+    rod(new T.Vector3(sx*(bw*0.5 - 0.02), top + 0.02, zs), new T.Vector3(sx*fx, top - 0.33, zs + 0.1), 0.01); });
+  var tackM = new T.Mesh(bake(T, tack), leather); tackM.name = "petride-tack"; tackM.castShadow = true; g.add(tackM);   // one draw
+  var B = {g: g, M: M, sp: sp, rk: rk, s: s, RS: RS, kind: rk, lean: 0.15, riderK: 1, hats: true, knees: 0.0, brake: function(){},
            seat: anchor(0, top + 0.16, zs - 0.05),
-           grips: [anchor(0.22, top + 0.5, zs + 0.55), anchor(-0.22, top + 0.5, zs + 0.55)],
-           feet: [anchor(bw*0.55, top - 0.35, zs + 0.2), anchor(-bw*0.55, top - 0.35, zs + 0.2)],
-           pst: P.newState(M.seed, 0, 0, 0), saddle: [blanket, seatM]};
+           grips: [anchor(0.12, gy, gz), anchor(-0.12, gy, gz)],
+           feet: [anchor(fx, top - 0.34, zs + 0.12), anchor(-fx, top - 0.34, zs + 0.12)],
+           pst: P.newState(M.seed, 0, 0, 0), saddle: [blanket, seatM], tack: tackM};
   B.pst.anim = "stand";
   var mw = null;
   // the mouth in the world (the breath comes from it); the head's front when the pose has not said where yet
@@ -241,15 +265,18 @@ function mountModel(c, pet){
   return B;
 }
 // the pet's pose from the ride: a dragon's wings (st.wing), a walker's gait at its speed (in its own size)
-function animate(B, st, t, dt, calm, breath){
+function animate(B, st, t, dt, calm, breath, vol){
   if(!B || !B.M || !HQV.hqPets) return;
   var ps = B.pst, sp = B.sp, v = Math.abs(+st.speed || 0), pv = v/(B.RS || 1);
   ps.yaw = +st.yaw || 0; ps.speed = pv; ps.wing = null;
   ps.agl = +st.agl || 0; ps.vy = +st.vy || 0; ps.leap = (+st.leapT || 0) > 0;   // the wyvern: its takeoff leap and its landing flare
-  if(B.rk === "dragon" && !st.ground){ ps.anim = "fly"; ps.wing = st.wing || "glide"; ps.ph += dt*3.2; }
+  ps.breath = false;
+  if(B.rk === "dragon" && !st.ground){ ps.anim = "fly"; ps.wing = st.wing || "glide"; ps.ph += dt*3.2; ps.breath = !!breath; }   // breathing on the wing: jaw open, wings still working
   else if(B.rk === "serpent"){ ps.anim = v > 0.3 ? "swim" : "float"; ps.wet = true; ps.ph += Math.max(0.6, pv)*dt*2.2; }
   else { ps.anim = breath ? "breath" : v > 0.25 ? (v > (st.walk || 4)*1.15 ? "run" : "walk") : "stand"; ps.ph += pv*dt*(sp.kind === "dino" ? 2.2 : 2.2); }
   HQV.hqPets.pose(B.M, ps, t, !!calm, null);
+  // its wingbeats (hqPets counts them, Mo.beats): yours at full, someone else's by how far (vol); none in Calm
+  if(B.M.beats !== B.lb){ B.lb = B.M.beats; var v2 = vol == null ? 1 : +vol || 0; if(!calm && v2 > 0.02 && HQV.hqPets.sfx) HQV.hqPets.sfx("wing", {vol: v2, size: 2}); }
 }
 // someone else's mount, from their presence: v (m/s across the ground), vy (m/s up), agl (m over the ground)
 function peerState(B, v, vy, agl){
@@ -262,10 +289,25 @@ function peerState(B, v, vy, agl){
 function breathe(F, B, st, dt, kind){
   if(!F || !B || !kind) return;
   if(B.M && B.M.fx) kind = BREATH[B.M.fx] || B.M.fx;                        // the wyvern breathes by its colour (fire, smoke, venom, ice)
-  B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return; B.acc = 0;
-  var m = B.mouth(), yaw = +st.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw), sp = Math.abs(+st.speed || 0) + 16;
-  F.emit(kind, m.x + fx*0.4, m.y, m.z + fz*0.4, 4, fx, fz, sp, 2.6, 0.7, (+st.vy || 0) - (st.pitch || 0)*6);
-  if(B.sp.fx === "storm" && F.zap && (Math.floor((st.t || 0)*9) % 3) === 0) F.zap(m.x + fx*3, m.y - 0.6, m.z + fz*3);
+  // a dragon you ride pours a real stream: a long, flared core on the jaw (seen from the chase camera behind, a short one
+  // read as a glow at the head) and puffs fed in at stations down it, by the ticks the frame covered (a slow frame pours
+  // as much as three fast ones); the wyvern and the others keep their short breath
+  var big = B.rk === "dragon", m = B.mouth(), yaw = +st.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw);
+  // (a dragon pours it down ahead onto the street, under the chase camera's line of sight: straight down the lens it read as a dot)
+  var dy = (big ? -0.42 : -0.12) - (+st.pitch || 0)*0.6, n = 1/Math.sqrt(1 + dy*dy), L = big ? 9 : 0, sp = Math.abs(+st.speed || 0) + (big ? 22 : 16);
+  if(F.jet){ if(big) F.jet(B, kind, m.x, m.y, m.z, fx*n, dy*n, fz*n, L, 1.4, 1.7); else F.jet(B, kind, m.x, m.y, m.z, fx, -0.1 - (+st.pitch || 0)*0.6, fz); }   // the core on the jaw, every frame (hqPets Fx)
+  B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return;
+  var tk = Math.min(4, Math.floor(B.acc*45)); B.acc = Math.min(1/45, B.acc - tk/45);
+  var lift = (+st.vy || 0) + (big ? dy*n*sp : -(st.pitch || 0)*6);
+  if(!big) F.emit(kind, m.x + fx*0.4, m.y, m.z + fz*0.4, 4*tk, fx, fz, sp, 2.6, 0.7, lift);
+  else {
+    var sub = kind === "fire" ? "ember" : kind === "ice" ? "snow" : kind, S = [[0.1, 9, 1, 3], [0.45, 7, 0.8, 4.4], [0.8, 5, 0.6, 5.6]];
+    for(var i = 0; i < S.length; i++){ var d = L*S[i][0], px = m.x + fx*n*d, py = m.y + dy*n*d, pz = m.z + fz*n*d;
+      F.emit(kind, px, py, pz, S[i][1]*tk, fx, fz, sp*n*S[i][2], S[i][3], 1 + i*0.1, lift*S[i][2]);
+      if(i === 1) F.emit(sub, px, py - 0.1, pz, 5*tk, fx, fz, sp*n*0.85, 5, 1.2, lift*0.7); }
+    if(kind === "fire") F.emit("smoke", m.x + fx*n*L, m.y + dy*n*L + 0.6, m.z + fz*n*L, 3*tk, fx, fz, sp*0.3, 4, 1.6, 1.6);   // the smoke rolling off its end
+  }
+  if(B.sp.fx === "storm" && F.zap && (Math.floor((st.t || 0)*9) % 3) === 0) F.zap(m.x + fx*(big ? 5 : 3), m.y - 0.6, m.z + fz*(big ? 5 : 3));
 }
 
 HQV.hqPetRide = {VEHICLES: VEHICLES, DINO: DINO, RIDE_DINO: RIDE_DINO, A_CODE: A_CODE, REACH: REACH, SERPENT_REACH: SERPENT_REACH,

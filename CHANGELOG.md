@@ -3,6 +3,18 @@
 Every Claude HQ release, newest first. The [README](README.md) has an overview of the features and a short list of
 recent releases.
 
+- **3.41.1 — Dragons you can feel from the saddle.**
+  - **The breath from the saddle:** riding a dragon in Strikezone, the camera sits over your right shoulder and swings
+    out while it breathes, so the jet runs across the screen instead of straight away from you. The jet is longer and
+    brighter, aims where you look, keeps pouring on a slow laptop, sets the deck alight where it lands and rolls black
+    smoke off its end. In the City your dragon's breath is a full stream poured down ahead, and the chase camera swings
+    out for it too (not with reduced motion).
+  - **Wings in the air:** a dragon breathing in flight keeps its wings working; they used to fold to its flanks.
+    Your own mount's health bar moved off its head and into the saddle prompt.
+  - **Sharper dragons:** the upper teeth sit inside the closed jaw (finer and raked back), the ice dragon's wings are
+    a see-through glacier blue (the crystal dragon's too), muscled legs that tuck back along the tail in flight, a
+    thicker tail with a bigger tip, the head carried higher, and a far-off dragon keeps its burning eyes and its teeth.
+  - The wyvern is back inside the 4,500-triangle pet budget and far-off dragons pose every fourth frame again.
 - **3.41.0 — Realism: new people, detailed vehicles, rebuilt exosuits.**
   - **New people:** everyone (you, friends, crew, City crowds) is a new character with a real skeleton (elbows,
     knees, fingers) and a soft toy look: a big smooth head with big eyes, fitted hair (fringe and ponytail, short,

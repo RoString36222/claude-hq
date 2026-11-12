@@ -311,11 +311,24 @@ Builder.prototype.ring = function(node, mk, col, r0, r1, seg, x, side){
   for(var i = 0; i < uv.count; i++) uv.setXY(i, (i % (seg + 1))/seg, i < seg + 1 ? 0 : 1);
   return this.add(node, mk, g, col, x, 0, 0, 0, side*PI/2, 0);
 };
+// a bike's steering: "steer" turns (rotation.y) about the raked axis through the steering head and down the fork (as a
+// real one does: the bars swing round their stem, not round the front axle); its one child, square to the bike again,
+// holds the parts in the steering head's own frame (0 at the head)
+function steerAxis(B, root, yH, zH, zf, Rf){
+  var rk = Math.atan2(zf - zH, Math.max(0.1, yH - Rf)), tilt = B.node(root, null, 0, yH, zH);
+  tilt.rotation.x = -rk;
+  var st = B.node(tilt, "steer"), inner = B.node(st, null);
+  inner.rotation.x = rk;
+  return st;
+}
 Builder.prototype.node = function(parent, name, x, y, z){
   var g = new this.T.Group(); if(name) g.name = name; g.position.set(x || 0, y || 0, z || 0);
   g.userData.parts = {}; parent.add(g); return g;
 };
+// [realism perf] FAR_ONLY: a far-only blueprint (build(.., {lod: 1})) keeps none of the near (LOD 0) parts
+var FAR_ONLY = false;
 Builder.prototype.put = function(node, mk, geo, col){
+  if(FAR_ONLY && !this.lod){ this.uvr = null; geo.dispose(); return geo; }
   var T = this.T, g = geo.index ? geo.toNonIndexed() : geo;
   if(g !== geo) geo.dispose();
   ["uv1", "uv2"].forEach(function(a){ if(g.attributes[a]) g.deleteAttribute(a); });
@@ -1224,7 +1237,7 @@ function buildCar(T, entry, st, d, G){
     zs = zs.filter(function(z){ return z >= zT && z <= zN; }).sort(function(a, b){ return a - b; });
     return zs.filter(function(z, k){ return !k || z - zs[k - 1] > 0.004; });
   };
-  var LODS = [0, 1];
+  var LODS = FAR_ONLY ? [1] : [0, 1];                          // [realism perf] a far-only blueprint skips the near loft
   LODS.forEach(function(lod){
     B.lod = lod;
     var zs = stations(lod), ring = secN(lod), under = [[-0.95, 0.06], [-0.8, 0.0], [0, -0.005], [0.8, 0.0], [0.95, 0.06]];
@@ -1388,9 +1401,14 @@ function buildCar(T, entry, st, d, G){
   // inside: two seats, the dash, the cluster and screen, the console; the steering wheel (spin) before the driver (-x)
   var ys = gc + P.seat, zS = S.zA - Math.min(1.05, (S.zA - S.zCr)*(mid ? 0.62 : 0.66)), xd = -W*0.21, head = S.H - 0.04 - ys;
   var k = Math.max(0.55, Math.min(1.0, head/1.22)), riderK = 0.8*k, hb = Math.min(0.62, head*0.75), yb = S.top(S.zA);
+  // the driver (games/people3d.js, drawn at the display scale) lies back into a low cabin rather than shrinking: the
+  // lower the roof, the further back the seat and the driver lean
+  // and is drawn smaller only as far as the roof still needs (fit: the seated head's top, 1.1 m over the seat at this
+  // scale, a little less leant back): the wheel and the pedals below are laid out for that driver
+  var lean = -Math.max(0.3, Math.min(0.7, (1.22 - head)*1.6)), rk = lean, fit = Math.max(0.6, Math.min(1, (head - 0.06)/(1.16 + 0.1*lean)));
   [xd, -xd].forEach(function(x){
     B.t("stitch").at(body, "trim", 0x2a2b2f, rbox(T, 0.48, 0.13, 0.5, 0.05, 2), x, ys - 0.06, zS);
-    B.t("stitch").at(body, "trim", 0x2a2b2f, rbox(T, 0.46, hb, 0.12, 0.05, 2), x, ys + hb/2, zS - 0.28, -0.14);
+    B.t("stitch").at(body, "trim", 0x2a2b2f, rbox(T, 0.46, hb, 0.12, 0.05, 2), x, ys + hb/2*Math.cos(rk), zS - 0.28 - hb/2*Math.sin(-rk) + 0.06, rk);
     if(ys + hb + 0.16 < S.H - 0.03) B.at(body, "trim", COL.dark, rbox(T, 0.26, 0.14, 0.1, 0.04, 1), x, ys + hb + 0.09, zS - 0.3 - 0.13*(hb + 0.08));
   });
   B.t("plastic").at(body, "trim", COL.black, rbox(T, W*(mid ? 0.7 : 0.8), 0.14, 0.34, 0.05, 1), 0, yb - 0.04, S.zA - 0.14);
@@ -1398,15 +1416,17 @@ function buildCar(T, entry, st, d, G){
   B.t("screen").at(body, "light", 0xffffff, rbox(T, 0.28, 0.13, 0.012, 0.004, 1), 0, yb + 0.07, S.zA - 0.22, -0.25);
   var cTop = Math.min(yb - 0.08, ys + 0.2), cLen = Math.max(0.3, S.zA - zS - 0.2);
   B.at(body, "trim", COL.dark, rbox(T, 0.17, Math.max(0.05, cTop - ys + 0.12), cLen, 0.03, 1), 0, (cTop + ys - 0.12)/2, zS + 0.02 + cLen/2);
-  var col = new T.Group(); col.position.set(xd, ys + 0.42*k, zS + 0.36*k); col.rotation.x = -0.6; root.add(col);
+  // the wheel close in and low enough for the toy body's short arms (games/people3d.js), the column raked up to it
+  var zH = zS - 0.1, col = new T.Group(); col.position.set(xd, ys + 0.37*fit, zH + 0.23*fit); col.rotation.x = -0.45; root.add(col);
   var spin = B.node(col, "spin");
   B.t("rubber").at(spin, "trim", COL.black, new T.TorusGeometry(0.155*k, 0.018, 6, 24), 0, 0, 0);
   B.at(spin, "trim", P.brand === "bmw" && P.diff ? COL.bmwBlue : COL.dark, rbox(T, 0.08, 0.07, 0.04, 0.015, 1), 0, 0, 0);
   [PI/2, -PI/2, PI].forEach(function(a){ B.at(spin, "trim", COL.dark, rbox(T, 0.03, 0.15*k, 0.016, 0.006, 1), Math.sin(a)*0.075*k, Math.cos(a)*0.075*k, 0, 0, 0, -a); });
-  var gx = 0.155*k*Math.sin(1.05), gy = 0.155*k*Math.cos(1.05);
-  anchor(T, spin, "a-grip-l", gx, gy, 0.02); anchor(T, spin, "a-grip-r", -gx, gy, 0.02);
-  anchor(T, root, "a-foot-l", xd + 0.11, gc + 0.12, zS + 0.62*k); anchor(T, root, "a-foot-r", xd - 0.11, gc + 0.12, zS + 0.62*k);
-  anchor(T, root, "a-seat", xd, ys, zS);
+  // hands at 9 and 3, on the rim (the anchors turn with the wheel); the pedals ~0.6 m from the hips, on the floor
+  anchor(T, spin, "a-grip-l", 0.155*k, 0, 0.0); anchor(T, spin, "a-grip-r", -0.155*k, 0, 0.0);
+  var fy = Math.max(gc + 0.06, ys - 0.26*fit), fz = zH + Math.sqrt(Math.max(0.01, Math.pow(0.62*fit, 2) - Math.pow(ys + 0.07*fit - fy, 2)));
+  anchor(T, root, "a-foot-l", xd + 0.1, fy, fz); anchor(T, root, "a-foot-r", xd - 0.1, fy, fz);
+  anchor(T, root, "a-seat", xd, ys, zH);                                    // the hips back against the backrest
   // the wheels: the front ones in steer holders, their calipers on the holders
   var radii = [S.Rf, S.Rf, S.Rr, S.Rr];
   [[-1, zf, "steer-l"], [1, zf, "steer-r"], [-1, zr, null], [1, zr, null]].forEach(function(p, i){
@@ -1418,7 +1438,7 @@ function buildCar(T, entry, st, d, G){
   });
   B.lod = 0;
   finish(T, root);
-  return {g: root, meta: {kind: "car", R: S.Rr, radii: radii, lean: mid ? -0.04 : -0.08, riderK: riderK, plates: S.plates || [], door: dtype}};
+  return {g: root, meta: {kind: "car", R: S.Rr, radii: radii, lean: lean, riderK: riderK, uniFit: fit, plates: S.plates || [], door: dtype}};
 }
 
 /* ---------- [3.17] a Formula 1 car (docs/plans/grand-prix-spec.md) ----------
@@ -1494,15 +1514,16 @@ function buildFormula(T, entry, st, d){
     });
   });
   // the driver, low in the middle: hips behind the cockpit's middle, legs out along the nose, a rectangular wheel
-  var ys = 0.2, zS = zCk - 0.2, riderK = 0.5;
+  var ys = 0.2, zS = zCk + 0.12, riderK = 0.5;   // (forward enough that, leant back, the helmet is in the cockpit opening, clear of the airbox)
   B.box(body, "trim", COL.dark, 0.4, 0.06, 0.5, 0, ys - 0.05, zS);
-  var col = new T.Group(); col.position.set(0, 0.5, zS + 0.48); col.rotation.x = -0.9; root.add(col);
+  // (laid out for the games/people3d.js driver lying back under the halo: the wheel over the belly, the pedals at the nose)
+  var col = new T.Group(); col.position.set(0, ys + 0.3, zS + 0.08); col.rotation.x = -0.75; root.add(col);
   var spin = B.node(col, "spin");
   B.box(spin, "trim", COL.black, 0.27, 0.12, 0.03, 0, 0, 0);
   B.t("screen").box(spin, "light", 0xffffff, 0.1, 0.05, 0.01, 0, 0.01, 0.017);
   [1, -1].forEach(function(sx){ B.box(spin, "trim", COL.dark, 0.04, 0.13, 0.04, sx*0.13, -0.01, 0); });
   anchor(T, spin, "a-grip-l", 0.13, 0, 0.02); anchor(T, spin, "a-grip-r", -0.13, 0, 0.02);
-  anchor(T, root, "a-foot-l", 0.1, 0.26, zS + 0.95); anchor(T, root, "a-foot-r", -0.1, 0.26, zS + 0.95);
+  anchor(T, root, "a-foot-l", 0.1, ys + 0.08, zS + 0.58); anchor(T, root, "a-foot-r", -0.1, ys + 0.08, zS + 0.58);
   anchor(T, root, "a-seat", 0, ys, zS);
   // the wheels: the front ones in steer holders
   var wheels = [];
@@ -1522,7 +1543,7 @@ function buildFormula(T, entry, st, d){
   B.at(body, "trim", trimC, rbox(T, W*0.9, 0.02, WB*0.7, 0.01, 1), 0, gc + 0.01, (zf + zr)/2);
   B.lod = 0;
   finish(T, root);
-  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: -0.02, riderK: riderK, plates: []}};
+  return {g: root, meta: {kind: "car", R: R, radii: [R, R, R, R], lean: -1.15, riderK: riderK, uniFit: 0.85, plates: []}};
 }
 
 /* ---------- [4.0] bikes: one parametric generator, each catalogue bike its own layout and cues ----------
@@ -1544,15 +1565,16 @@ var BTYRES = {
   "triumph-street-triple-765-rs": [[120, 70, 17], [180, 55, 17]], "suzuki-access-125": [[90, 90, 12], [90, 100, 10]]
 };
 // the families: rake (rad), the steering head's height and the seat's (m), the bars (half width, height over the head,
-// back from it), the pegs (height, back from the seat), how much the tank stands over the seat
+// back from it: a little narrower than life, for games/people3d.js riders' narrow shoulders), the pegs (height, back
+// from the seat), how much the tank stands over the seat
 var BFAM = {
-  naked: {rake: 0.43, head: 0.93, seat: 0.82, bar: [0.37, 0.1, 0.1], peg: [0.36, -0.02], tank: 0.2},
+  naked: {rake: 0.43, head: 0.93, seat: 0.82, bar: [0.32, 0.1, 0.1], peg: [0.36, -0.02], tank: 0.2},
   sport: {rake: 0.41, head: 0.86, seat: 0.83, bar: [0.33, -0.03, 0.04], peg: [0.4, -0.12], tank: 0.16},
   hypersport: {rake: 0.42, head: 0.87, seat: 0.81, bar: [0.34, -0.02, 0.05], peg: [0.39, -0.1], tank: 0.17},
-  adventure: {rake: 0.47, head: 1.04, seat: 0.85, bar: [0.43, 0.16, 0.08], peg: [0.42, 0.0], tank: 0.18},
-  classic: {rake: 0.47, head: 0.9, seat: 0.8, bar: [0.37, 0.2, 0.12], peg: [0.32, 0.06], tank: 0.21},
-  cruiser: {rake: 0.53, head: 0.86, seat: 0.675, bar: [0.47, 0.17, 0.16], peg: [0.3, 0.72], tank: 0.17},
-  scooter: {rake: 0.47, head: 0.98, seat: 0.77, bar: [0.34, 0.08, 0.02], peg: [0.3, 0.3], tank: 0}
+  adventure: {rake: 0.47, head: 1.04, seat: 0.85, bar: [0.37, 0.16, 0.08], peg: [0.42, 0.0], tank: 0.18},
+  classic: {rake: 0.47, head: 0.9, seat: 0.8, bar: [0.33, 0.2, 0.12], peg: [0.32, 0.06], tank: 0.21},
+  cruiser: {rake: 0.53, head: 0.86, seat: 0.675, bar: [0.41, 0.17, 0.16], peg: [0.32, 0.52], tank: 0.17},
+  scooter: {rake: 0.47, head: 0.98, seat: 0.77, bar: [0.31, 0.08, 0.02], peg: [0.3, 0.3], tank: 0}
 };
 function bikeSpec(entry, st, d){
   var id = String((entry && entry.id) || ""), m = String((entry && entry.model) || ""), b = st.brand, sp = (entry && entry.spec) || {};
@@ -1830,13 +1852,13 @@ function buildBike(T, entry, st, d, G){
     // rear caliper
     B.t("satin").at(body, "trim", P.cal, rbox(T, 0.035, 0.07, 0.06, 0.012, 1), -(twR/2 + 0.02), Rr + 0.09, zr - 0.07);
     anchor(T, root, "a-foot-l", 0.2, pegY + 0.02, pegZ); anchor(T, root, "a-foot-r", -0.2, pegY + 0.02, pegZ);
-    anchor(T, root, "a-seat", 0, ys + 0.02, zS);
+    anchor(T, root, "a-seat", 0, ys + 0.02, zS + (sport ? -0.02 : 0));   // a sport rider sits forward in the seat, clear of the tank
   });
   // ---- the steering: fork, front wheel, mudguard, bars, lamp, dash ----
   B.lod = 0;
   // the steering turns about a vertical axis through the front axle (the raked axis meets the ground near the tyre's
   // contact patch); its parts hang from an inner node at the steering head
-  var steerO = B.node(root, "steer", 0, yH, zf), steer = B.node(steerO, null, 0, 0, zH - zf), fz = zf - zH, fy = Rf - yH, fx = twF/2 + 0.045;
+  var steerO = steerAxis(B, root, yH, zH, zf, Rf), steer = steerO.children[0], fz = zf - zH, fy = Rf - yH, fx = twF/2 + 0.045;
   var fT = function(t){ return [fy*t, fz*t]; };
   [0, 1].forEach(function(lod){
     B.lod = lod;
@@ -1856,8 +1878,10 @@ function buildBike(T, entry, st, d, G){
     var mg = new T.CylinderGeometry(Rf + 0.025, Rf + 0.025, twF + (classic || cruiser ? 0.05 : 0.02), 22, 1, true, classic || cruiser ? PI*0.12 : PI*0.28, classic || cruiser ? PI*0.7 : PI*0.42); mg.rotateZ(PI/2);
     B.at(steer, adv && P.brand === "bmw" ? "paint" : classic || cruiser ? "paint" : "trim", classic || cruiser || adv && P.brand === "bmw" ? null : COL.black, mg, 0, fy, fz);
     // the bars, grips, levers, mirrors, hand guards
-    var bw = P.bar[0], by = P.bar[1], bz = -P.bar[2];
-    if(sport) [1, -1].forEach(function(sx){ B.t("satin").at(steer, "trim", COL.black, rodG(T, [sx*0.08, by, bz + 0.03], [sx*(bw - 0.05), by + 0.01, bz - 0.04], 0.012, 0.012, 8)); });
+    var bw = P.bar[0], by = P.bar[1], bz = -P.bar[2], byi = by, bzi = bz;
+    // clip-ons swept back and up from the fork tops: the rider's (games/people3d.js) arms are short
+    if(sport){ bw -= 0.03; by += 0.08; bz -= 0.15; }
+    if(sport) [1, -1].forEach(function(sx){ B.t("satin").at(steer, "trim", COL.black, rodG(T, [sx*0.08, byi, bzi + 0.03], [sx*(bw - 0.05), by + 0.01, bz - 0.04], 0.012, 0.012, 8)); });
     else B.t("satin").at(steer, "trim", classic || cruiser ? COL.chrome : COL.black, tubeG(T, [[bw - 0.04, by + (cruiser ? 0.04 : 0.02), bz - (cruiser ? 0.12 : 0.03)], [bw*0.6, by, bz], [0.1, by - 0.03, bz + 0.03], [0, by - 0.035, bz + 0.03], [-0.1, by - 0.03, bz + 0.03], [-bw*0.6, by, bz], [-(bw - 0.04), by + (cruiser ? 0.04 : 0.02), bz - (cruiser ? 0.12 : 0.03)]], 0.012, 24, 8));
     var gz = bz - (cruiser ? 0.13 : sport ? 0.05 : 0.04), gy = by + (cruiser ? 0.04 : 0.02);
     [1, -1].forEach(function(sx){
@@ -1871,7 +1895,7 @@ function buildBike(T, entry, st, d, G){
       B.t(classic || cruiser ? "chrome" : "gloss").at(steer, "trim", classic || cruiser ? COL.chrome : COL.black, classic || cruiser ? (function(){ var g = discG(T, 0.05, 0.02, 14); g.rotateY(PI/2); return g; })() : rbox(T, 0.12, mh, 0.03, 0.012, 1), mx, mTop - mh/2, gz + (sport ? 0.2 : 0.02), 0, sx*0.15, sx*0.1);
       if(cruiser || classic) void 0;
     });
-    anchor(T, steer, "a-grip-l", bw - 0.02, gy, gz); anchor(T, steer, "a-grip-r", -(bw - 0.02), gy, gz);
+    anchor(T, steer, "a-grip-l", bw - 0.01, gy, gz); anchor(T, steer, "a-grip-r", -(bw - 0.01), gy, gz);   // mid-rubber: the hand clear of the switchgear
     // the headlight and dash (on the bars on a naked bike, a classic, a cruiser)
     if(P.fair === "none"){
       var lz = 0.1 + (cruiser ? 0.06 : 0), ly = -0.08;
@@ -1945,7 +1969,7 @@ function buildScooter(T, entry, st, d, G){
     anchor(T, root, "a-seat-2", 0, ys + 0.1, zr - 0.25);
   });
   B.lod = 0;
-  var steerO = B.node(root, "steer", 0, yH, zf), steer = B.node(steerO, null, 0, 0, zH - zf), fz = zf - zH, fy = Rf - yH;
+  var steerO = steerAxis(B, root, yH, zH, zf, Rf), steer = steerO.children[0], fz = zf - zH, fy = Rf - yH;
   [0, 1].forEach(function(lod){
     B.lod = lod;
     if(lod){ B.at(steer, "trim", COL.black, rodG(T, [0.3, 0.08, -0.02], [-0.3, 0.08, -0.02], 0.02, 0.02, 5)); return; }
@@ -2000,13 +2024,31 @@ function shared(T){
 function keyOf(entry, st, d, k){ return [entry.id || "?", st.kind, st.type, st.brand, st.ev ? 1 : 0, d.lengthM, d.widthM, d.heightM, d.wheelbaseM, k].join("|"); }
 // [3.13] a blueprint per catalogue entry and tuned geometry (rims, rim colour, size, wing, exhaust, two-tone parts): a
 // stock vehicle keys as it always did, so every untuned copy still shares one
-function blueprint(T, entry, G){
+// [realism perf] far: only the far (LOD 1) parts, its own key (the Dealership's turntables, a first look while the full
+// one waits for an idle moment): ~a third of the work and none of the near geometry kept
+function blueprint(T, entry, G, far){
   G = G || GEO0;
-  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : ""), BP = store(T).bp;
+  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : "") + (far ? "|far" : ""), BP = store(T).bp;
   if(BP[key]) return BP[key];
-  var bp = st.kind === "bike" ? buildBike(T, entry, st, d, G)
-    : st.type === "formula" ? buildFormula(T, entry, st, d) : buildCar(T, entry, st, d, G);
-  return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
+  var bp;
+  FAR_ONLY = !!far;
+  try { bp = st.kind === "bike" ? buildBike(T, entry, st, d, G)
+    : st.type === "formula" ? buildFormula(T, entry, st, d) : buildCar(T, entry, st, d, G); }
+  finally { FAR_ONLY = false; }
+  return (BP[key] = {st: st, d: d, k: k, far: !!far, bp: k === 1 ? bp : scaled(bp, k)});
+}
+// [realism perf] make the full blueprint now (an idle moment), so a build of it later is only a clone. -> true if made
+function warm(c, entry, tune){
+  var T = c && c.Mesh ? c : c && c.THREE;
+  if(!T || !entry || isStarter(entry) || hasBlueprint(T, entry, tune)) return false;
+  blueprint(T, entry, geoOf(tune || null, styleOf(entry).kind));
+  return true;
+}
+// [realism perf] is the full blueprint for this entry (and tune) made yet? (a build of it is then a clone: ~0.1 ms)
+function hasBlueprint(T, entry, tune){
+  if(!T || !entry || isStarter(entry)) return true;
+  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(geoOf(tune || null, st.kind));
+  return !!store(T).bp[keyOf(entry, st, d, k) + (sig ? "|t:" + sig : "")];
 }
 
 /* ---------- [3.13] tuning (games/hqtuning.js, the Tuning shop) ----------
@@ -2188,8 +2230,8 @@ function build(c, entry, paint, opts){
     if(!bike && c.car) sr = c.car(paintOf(entry, paint), opts.accent, tune && plateClean(tune.plate) ? plateClean(tune.plate) : opts.plate);
     if(sr){ if(tune) tuneStarter(T, sr, tune, bike ? "bike" : "car"); return sr; }
   }
-  var kind0 = styleOf(entry || {}).kind, G = geoOf(tune, kind0);
-  var B = blueprint(T, entry || {}, G), bp = B.bp, M = shared(T);
+  var kind0 = styleOf(entry || {}).kind, G = geoOf(tune, kind0), farOnly = opts.lod === 1;
+  var B = blueprint(T, entry || {}, G, farOnly), bp = B.bp, M = shared(T);
   var g = bp.g.clone(true);
   var pm = new (T.MeshPhysicalMaterial || T.MeshStandardMaterial)({color: paintOf(entry, paint), metalness: 0.55, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.08});
   pm.userData.paint = true;
@@ -2221,7 +2263,7 @@ function build(c, entry, paint, opts){
     },
     ready: null
   };
-  if(car){ rig.hats = false; rig.riderK = bp.meta.riderK; }
+  if(car){ rig.hats = false; rig.riderK = bp.meta.riderK; rig.uniFit = bp.meta.uniFit || 1; }
   if(bp.meta.seats) rig.seats = bp.meta.seats;
   lodRig(T, rig, car);
   doorRig(rig, bp.meta.door || "none", get);
@@ -2237,6 +2279,7 @@ function build(c, entry, paint, opts){
   }
   // the material half of a new tune, live (the Tuning shop's preview); geometry changes need a new build (sameGeo says)
   rig.setTune = function(t2){ if(!rig.tuneGeo || geoSig(geoOf(t2, rig.kind)) !== geoSig(rig.tuneGeo) || !!plateClean(t2 && t2.plate) !== !!rig.plateMesh) return false; tuneMats(T, rig, t2 || {}, rig.baseHex != null ? rig.baseHex : paintOf(entry, paint)); return true; };
+  if(farOnly){ rig.setLod(1); rig.lodLock = true; rig.farOnly = true; }   // no near model to switch to
   g.userData.rig = rig; g.name = "vehicle:" + ((entry && entry.id) || "?");
   var m3 = entry && entry.model3d;
   if(m3 && m3.file){
@@ -2366,7 +2409,7 @@ function triangles(rig, lod){ var t = 0; ((lod ? rig.lodMeshes : rig.meshes) || 
 function drawCalls(rig, lod){ return ((lod ? rig.lodMeshes : rig.meshes) || []).length; }
 function clearCache(T){ var BP = store(T).bp; Object.keys(BP).forEach(function(k){ BP[k].bp.g.traverse(function(o){ if(o.isMesh) o.geometry.dispose(); }); delete BP[k]; }); }
 
-HQV.hqVehicleModels = {build: build, dims: dims, shown: shown, scaleOf: scaleOf, SCALE: SCALE, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
+HQV.hqVehicleModels = {build: build, hasBlueprint: hasBlueprint, warm: warm, dims: dims, shown: shown, scaleOf: scaleOf, SCALE: SCALE, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
                        DIMS: DIMS, CAR: CAR, BIKE: BIKE,
                        // [3.13] tuning: the geometry a tune picks (sameGeo: can setTune apply it live?), a starter's tune
                        geoOf: geoOf, geoSig: geoSig, sameGeo: function(a, b, kind){ return geoSig(geoOf(a, kind)) === geoSig(geoOf(b, kind)); },

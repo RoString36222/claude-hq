@@ -1180,7 +1180,7 @@ var DD_SLOW_MULT = 0.65;       // walk speed while a disaster slow is on (quake 
 	// reads a ~4 m tall mount at about a third of the screen. Sits behind your look (the
 	// breath aims down it) and restores to first-person the moment you step off. Client art
 	// only — no judge twin.
-	var DRAGON_CAM_BACK = 7.5, DRAGON_CAM_UP = 3.0;
+	var DRAGON_CAM_BACK = 7.5, DRAGON_CAM_UP = 3.0, DRAGON_CAM_SIDE = 2.4;   // + over the right shoulder (see the ride camera)
 	// kill feed: keep causes readable long enough to see how you died
 	var FEED_TTL = 8;
 	var FEED_MAX = 6;
@@ -2660,6 +2660,40 @@ function makeGame(host, opts){
   // wrapped to (-π, π]. Pure helpers — no state, no random calls.
   function springTo(x, goal, k, h){ return x + (goal - x) * Math.min(1, Math.max(0, 1 - Math.exp(-k * h))); }
   function wrapPi(a){ return ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI; }
+  // the remote dragons' snapshot buffer: id -> [{t, x, y, z, yaw}] on the local clock.
+  // Rendering only (the judge still owns where they are): each frame a dragon is drawn
+  // DRG_INTERP behind the newest snapshot, between the two around that time, its yaw
+  // wrapped the short way; a teleport (> 8 m) snaps.
+  var drgBuf = {}, DRG_INTERP = 0.1;
+  function dragonSnapPush(D, t){
+    if(!D || D.id == null) return;
+    var b = drgBuf[D.id] || (drgBuf[D.id] = []), L = b[b.length - 1];
+    if(L && (Math.abs(D.x - L.x) > 8 || Math.abs(D.z - L.z) > 8 || Math.abs(D.y - L.y) > 8)) b.length = 0;
+    if(L && t - L.t < 0.004){ L.x = D.x; L.y = D.y; L.z = D.z; L.yaw = D.yaw; }
+    else b.push({t: t, x: D.x, y: D.y, z: D.z, yaw: D.yaw});
+    if(b.length > 8) b.shift();
+  }
+  function dragonInterp(t){
+    var seen = {};
+    (V.dragons || []).forEach(function(D){
+      if(!D || D.id == null) return;
+      seen[D.id] = 1;
+      var b = drgBuf[D.id];
+      if(D.riderIsMe || !b || !b.length || V.mode !== "mp") return;
+      var rt = t - DRG_INTERP, a = b[0], c = b[b.length - 1], k, f;
+      if(rt <= a.t){ D.x = a.x; D.y = a.y; D.z = a.z; D.yaw = a.yaw; return; }
+      if(rt >= c.t){
+        // past the newest: coast on the last velocity for at most a snapshot's worth
+        var p = b.length > 1 ? b[b.length - 2] : c, dt0 = Math.max(0.01, c.t - p.t), ex = Math.min(rt - c.t, 0.06)/dt0;
+        D.x = c.x + (c.x - p.x)*ex; D.y = c.y + (c.y - p.y)*ex; D.z = c.z + (c.z - p.z)*ex; D.yaw = c.yaw; return;
+      }
+      for(k = 1; k < b.length; k++) if(b[k].t >= rt) break;
+      a = b[k - 1]; c = b[k]; f = (rt - a.t)/Math.max(1e-4, c.t - a.t);
+      D.x = a.x + (c.x - a.x)*f; D.y = a.y + (c.y - a.y)*f; D.z = a.z + (c.z - a.z)*f;
+      D.yaw = a.yaw + wrapPi(c.yaw - a.yaw)*f;
+    });
+    for(var id in drgBuf) if(!seen[id]) delete drgBuf[id];
+  }
   function dragonTick(dt, t){
     if(!V.dragons || !V.dragons.length) return;
     // mounted flight: the rider steers, Space/A climbs, Shift sinks
@@ -2765,9 +2799,12 @@ function makeGame(host, opts){
       // nobody claims one. After the boss falls the bots hop the stragglers.
       if(cand && !V.warden) dragonMount(Dr, cand.uid || cand.user, false, t);
     });
-    if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
     // prune dead bodies after a beat so the mesh can play out its fall
     V.dragons = (V.dragons || []).filter(function(D){ return D && !D.dead; });
+    // the others' mounts: drawn a beat behind the server between its snapshots
+    dragonInterp(t);
+    // ONE pose a frame: moveDragons reads speed and climb from the change since its
+    // last call, so a second call in the same frame saw zero and drew a sliding stand
     if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
   }
   function wardenBoxes(W){
@@ -5609,7 +5646,10 @@ function makeGame(host, opts){
             biteAt: 0, dead: false, hit: 0
           };
         });
-        if(R3 && R3.moveDragons) R3.moveDragons(V.dragons);
+        // buffer each remote mount's path (drawn ~100 ms behind by dragonInterp each
+        // frame) instead of jumping 20 times a second; posed once a frame in dragonTick
+        V.dragons.forEach(function(D){ if(!D.riderIsMe) dragonSnapPush(D, t); });
+        dragonInterp(t);
       }
     } else if(V.dragons && V.dragons.length && V.mode === "mp"){
       if(R3 && R3.clearDragons) R3.clearDragons();
@@ -7435,14 +7475,15 @@ function makeGame(host, opts){
         // toward ready (the same read as the gun reloading). A full tank is the plain
         // prompt with no bar.
         var inh = (ride.rechargeAt && t < ride.rechargeAt) ? clamp(1 - (ride.rechargeAt - t) / DRAGON_INHALE_SECS, 0, 1) : 0;
+        var mhp = " \u00b7 mount " + Math.round(100 * Math.max(0, ride.hp != null ? ride.hp : DRAGON_HP) / Math.max(1, ride.max || DRAGON_HP)) + "%";
         if(inh > 0){
           var secs = Math.max(1, Math.ceil(ride.rechargeAt - t));
-          dragonPrompt("G  dismount · inhaling…", inh, " " + secs + "s");
+          dragonPrompt("G  dismount · inhaling…" + mhp, inh, " " + secs + "s");
         } else if(!(ride.breathLeft > 0)){
           // tank dry and the inhale has not started yet (the frame you let go of it)
-          dragonPrompt("G  dismount · click to draw breath", 0.02);
+          dragonPrompt("G  dismount · click to draw breath" + mhp, 0.02);
         } else {
-          dragonPrompt("G  dismount · click to breathe", 0);
+          dragonPrompt("G  dismount · click to breathe" + mhp, 0);
         }
         return;
       }
@@ -9631,7 +9672,10 @@ function makeGame(host, opts){
     // battle scale: a little under the Commons mount so the beasts read as threats,
     // not vehicles, in an 80 m arena. > 2 keeps the pet pose on its slow ridden-mount
     // wing beats; the saddle still sits above the rider's feet (DRAGON_SEAT).
-    var DRAGON_ART_S = 2.6;
+    var DRAGON_ART_S = 3.1;
+    // the breath jet's core runs the whole reach the judge burns (DRAGON_BREATH_LEN): from the chase camera it runs away
+    // down the lens, so anything shorter read as a glow at the jaw
+    var DRAGON_JET_LEN = DRAGON_BREATH_LEN;   // m of breath jet off a battle mount's jaw (hqPets Fx.jet)
     var dragonPetWait = false;
     function dragonPets(){ return (window.HQV && window.HQV.hqPets) || null; }
     function dragonPetsWant(){
@@ -9654,6 +9698,10 @@ function makeGame(host, opts){
       var P = dragonPets();
       if(!P || !P.Fx) return null;
       try { dragonFx = P.Fx(THREE, scene); } catch(e){ dragonFxDead = true; return null; }
+      // a battle jet off a 2.6x mount: metre-scale puffs (the pool thins its rate to match), and its heat light is
+      // made now, with the pool, so the scene never recompiles mid-breath
+      if(dragonFx && dragonFx.pts && dragonFx.pts.material) dragonFx.pts.material.size = 1.1;
+      if(dragonFx) dragonFx.rate = 3;   // a battle stream, dense: the pool's own thinning (made for pet-sized puffs) x3
       return dragonFx;
     }
     // A rider-sized plume, not a wisp: the Commons pool paints 0.13 u sprites at
@@ -9664,8 +9712,16 @@ function makeGame(host, opts){
     function dragonBreathFx(D, at, dts, quiet){
       var F = dragonFxPool();
       if(!F || quiet) return;
-      if(!dragonBreathOn(D, at)) return;
+      var su = (D.mesh && D.mesh.userData) || D;
+      if(!dragonBreathOn(D, at)){ su.sndOn = false; return; }
       var fx = DRAGON_BREATH_FX[(D && D.tier) || "fire"] || "fire";
+      // the roar and the breath's sound as it opens (hqPets.sfx: off in Calm / at 0% SFX), fading with distance
+      if(!su.sndOn){
+        su.sndOn = true;
+        var Ps = dragonPets(), cd = camera && camera.position ? Math.hypot(camera.position.x - (D.x || 0), camera.position.y - (D.y || 0), camera.position.z - (D.z || 0)) : 0;
+        var vol = Math.max(0, 1 - cd / 90);
+        if(Ps && Ps.sfx && vol > 0){ Ps.sfx("roar", {size: 2.6, vol: vol}); Ps.sfx("breath", {kind: fx, vol: vol}); }
+      }
       // mouth: the posed pet's jaw when we have it, else the head cube
       var hx, hy, hz;
       var Mo = D.mesh && D.mesh.userData && D.mesh.userData.Pm;
@@ -9683,31 +9739,60 @@ function makeGame(host, opts){
       }
       // pet-space forward is (sin, cos) — the same vector dragonHead / the cone use
       var fyaw = D.yaw || 0, f0 = Math.sin(fyaw), f1 = Math.cos(fyaw);
-      // keep one shared flame-sprite pool for every dragon: a fat additive core that
-      // stretches down the cone, so the jet reads as fire from the 3rd-person seat
-      dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
-      // ~30 Hz emit — dense enough that the jet is continuous, not a dotted line
+      // the jet's core on the jaw, every frame (hqPets Fx.jet: a flame cone with its heat haze), long and
+      // flared: the chase camera sits behind the mount, so the jet runs away down the lens and a short,
+      // slim cone read as a glow at the head. The older sprite throat only where the pool has no jet.
+      // your own mount breathes where you look (the crosshair, up or down onto the deck); the others' by their
+      // flight attitude. Art only: the judge's cone is flat (dragonBreathStep), so this changes no hit.
+      var jdy = D.riderIsMe ? clamp(Math.tan((V.pitch || 0) - 0.04), -1.2, 0.25) : -0.1 - (D.pitch || 0) * 0.5;
+      var jn = 1 / Math.sqrt(1 + jdy * jdy), d0 = f0 * jn, d1 = jdy * jn, d2 = f1 * jn;   // the jet's unit direction
+      if(F.jet) F.jet(D, fx === "storm" ? "sparkle" : fx, hx, hy, hz, d0, d1, d2, DRAGON_JET_LEN, 1.1, 1.8);
+      else dragonFlameTick(D, at, dts, hx, hy, hz, f0, f1, fx, quiet);
+      // ~30 Hz emit, by the ticks this frame covered (a slow frame pours as much as three fast ones, so the
+      // stream stays dense on a laptop instead of thinning to a dotted line)
       D.fxAcc = (D.fxAcc || 0) + (dts || 0.016);
       if(D.fxAcc < 1/30) return;
-      D.fxAcc = 0;
+      var tk = Math.min(4, Math.floor(D.fxAcc * 30));
+      D.fxAcc = Math.min(1/30, D.fxAcc - tk / 30);
       // the Commons sprays at speed+16; a battle jet is hotter and heavier
-      var spd = (D.vF || 0) + 22;
-      var lift = (D.vy || 0) - (D.pitch || 0) * 6;
+      // (emit takes a flat heading, a speed along it and a climb: the jet's speed split the same way)
+      var sp0 = (D.vF || 0) + 24, spd = sp0 * jn;
+      var lift = (D.vy || 0) + d1 * sp0;
+      // the stations down the stream (m from the jaw): fat at the lips, blooming out to the tip
+      var L = DRAGON_JET_LEN, s1 = L * 0.12, s2 = L * 0.45, s3 = L * 0.8;
+      function at3(d){ return [hx + d0 * d, hy + d1 * d, hz + d2 * d]; }
+      var p1 = at3(s1), p2 = at3(s2), p3 = at3(s3);
       if(fx === "storm"){
-        F.emit("sparkle", hx, hy, hz, 8, f0, f1, spd, 2.8, 0.85, lift);
-        F.emit("sparkle", hx + f0 * 2.2, hy - 0.2, hz + f1 * 2.2, 6, f0, f1, spd * 0.85, 3.4, 0.75, lift * 0.7);
-        if(F.zap && (Math.floor(at * 9) % 2) === 0) F.zap(hx + f0 * 3.2, hy - 0.6, hz + f1 * 3.2);
+        F.emit("sparkle", p1[0], p1[1], p1[2], 10 * tk, f0, f1, spd, 2.8, 0.85, lift);
+        F.emit("sparkle", p2[0], p2[1], p2[2], 8 * tk, f0, f1, spd * 0.85, 3.6, 0.75, lift * 0.7);
+        F.emit("smoke", p3[0], p3[1] + 0.4, p3[2], 3 * tk, f0, f1, spd * 0.4, 3.0, 1.2, 1.2);
+        if(F.zap && (Math.floor(at * 9) % 2) === 0) F.zap(p2[0], p2[1] - 0.6, p2[2]);
       } else if(fx === "fire"){
-        F.emit("fire", hx + f0 * 0.5, hy, hz + f1 * 0.5, 12, f0, f1, spd, 3.6, 1.05, lift);
-        F.emit("ember", hx + f0 * 2.4, hy - 0.15, hz + f1 * 2.4, 8, f0, f1, spd * 0.88, 4.2, 1.15, lift * 0.75);
-        F.emit("fire", hx + f0 * 5.5, hy - 0.35, hz + f1 * 5.5, 6, f0, f1, spd * 0.72, 5.0, 1.25, lift * 0.5);
+        F.emit("fire", p1[0], p1[1], p1[2], 16 * tk, f0, f1, spd, 3.4, 1.0, lift);
+        F.emit("fire", p2[0], p2[1], p2[2], 12 * tk, f0, f1, spd * 0.8, 5.0, 1.1, lift * 0.6);
+        F.emit("ember", p2[0], p2[1] - 0.15, p2[2], 10 * tk, f0, f1, spd * 0.9, 5.5, 1.2, lift * 0.75);
+        F.emit("fire", p3[0], p3[1] - 0.3, p3[2], 8 * tk, f0, f1, spd * 0.6, 6.5, 1.25, lift * 0.4);
+        var p4 = at3(L);
+        F.emit("fire", p4[0], p4[1] - 0.2, p4[2], 8 * tk, f0, f1, spd * 0.45, 7.5, 1.1, lift * 0.3 + 0.8);   // the tip, still burning as it billows out
+        F.emit("smoke", p4[0], p4[1] + 0.8, p4[2], 5 * tk, f0, f1, spd * 0.3, 5.0, 1.8, 1.8);   // the black smoke rolling off its end
       } else if(fx === "ice"){
-        F.emit("ice", hx + f0 * 0.5, hy, hz + f1 * 0.5, 10, f0, f1, spd * 0.95, 3.2, 1.0, lift);
-        F.emit("snow", hx + f0 * 2.6, hy - 0.15, hz + f1 * 2.6, 8, f0, f1, spd * 0.82, 3.8, 1.2, lift * 0.7);
+        F.emit("ice", p1[0], p1[1], p1[2], 14 * tk, f0, f1, spd * 0.95, 3.2, 1.0, lift);
+        F.emit("ice", p2[0], p2[1], p2[2], 10 * tk, f0, f1, spd * 0.75, 4.6, 1.1, lift * 0.6);
+        F.emit("snow", p2[0], p2[1] - 0.15, p2[2], 10 * tk, f0, f1, spd * 0.82, 5.0, 1.3, lift * 0.7);
       } else {
-        F.emit(fx, hx + f0 * 0.5, hy, hz + f1 * 0.5, 8, f0, f1, spd * 0.85, 3.0, 1.05, lift);
-        F.emit(fx, hx + f0 * 3.0, hy - 0.2, hz + f1 * 3.0, 6, f0, f1, spd * 0.7, 3.8, 1.15, lift * 0.6);
+        F.emit(fx, p1[0], p1[1], p1[2], 12 * tk, f0, f1, spd * 0.85, 3.0, 1.05, lift);
+        F.emit(fx, p2[0], p2[1], p2[2], 10 * tk, f0, f1, spd * 0.7, 4.4, 1.15, lift * 0.6);
+        F.emit(fx, p3[0], p3[1], p3[2], 6 * tk, f0, f1, spd * 0.5, 5.4, 1.25, lift * 0.4);
       }
+      // where the stream meets the deck: a splash of flame (or frost) and the heat light down there, so a
+      // low pass sets the ground alight under it
+      var tip = at3(L), tgy = holeGroundY(tip[0], tip[2]);
+      if(tgy != null && tip[1] - tgy < 4.5){
+        var gk = fx === "ice" ? "snow" : fx === "storm" ? "sparkle" : fx === "fire" ? "fire" : fx;
+        F.emit(gk, tip[0], tgy + 0.3, tip[2], 10 * tk, f0, f1, 5, 9, 0.9, 2.2);
+        if(fx === "fire") F.emit("ember", tip[0], tgy + 0.2, tip[2], 6 * tk, f0, f1, 3, 10, 1.0, 4);
+        if(F.heat) F.heat(tip[0], tgy + 1.2, tip[2], gk, 1);
+      } else if(F.heat) F.heat(p2[0], p2[1], p2[2], fx === "storm" ? "sparkle" : fx === "fire" ? "fire" : fx, 1);
     }
     // additive fire sprites down the jet. One lazy pool of dragon-only sprites
     // (not the Commons Fx points) so the core of the flame is big and bright from
@@ -9740,22 +9825,22 @@ function makeGame(host, opts){
       if(acc < 1/20){ D.flAcc = acc; return; }
       D.flAcc = 0;
       var hue = fx === "ice" ? 0.35 : (fx === "shadow" || fx === "wisp") ? 0.72 : 0.08;
-      // three puffs a tick, staggered down the cone, each a big additive fireball
-      for(var k = 0; k < 3; k++){
+      // the white-hot throat of the jet, right at the jaw (the plume itself is the Commons pool's soft fire and smoke)
+      for(var k = 0; k < 1; k++){
         var sp = P.list[P.next]; P.next = (P.next + 1) % P.list.length;
         if(!sp) return;
         var r1 = Math.sin((P.next + 1) * 12.9898 + k * 78.233) * 43758.5453;
         r1 -= Math.floor(r1);
-        var along = 0.8 + k * 2.6 + r1 * 1.4;
+        var along = 0.5 + r1 * 0.9;
         var side = (r1 - 0.5) * (0.7 + along * 0.22);
         var px = hx + f0 * along + f1 * side;
         var pz = hz + f1 * along - f0 * side;
         var py = hy - 0.15 + (r1 - 0.5) * 0.7 + ((D.vy || 0) - (D.pitch || 0) * 6) * along * 0.02;
         sp.position.set(px, py, pz);
         // the core is fat at the mouth and blooms as it goes out
-        var grow = 1.15 + along * 0.22 + r1 * 0.55;
+        var grow = 0.7 + along * 0.3 + r1 * 0.35;
         sp.scale.set(grow * 1.55, grow * 1.15, 1);
-        sp.material.opacity = 0.95 - k * 0.12;
+        sp.material.opacity = 0.75;
         sp.material.color.setHSL(hue, 0.85, 0.58);
         sp.visible = true;
         sp.userData.life = 0.22 + k * 0.05;
@@ -9799,7 +9884,7 @@ function makeGame(host, opts){
       var gp = new THREE.Group();
       gp.add(Mo.g);
       // a soft ground shadow so the beast sits ON the deck (the pet build has none)
-      var sh = new THREE.Mesh(new THREE.CircleGeometry(1.7, 18).rotateX(-Math.PI/2),
+      var sh = new THREE.Mesh(new THREE.CircleGeometry(2.1, 18).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({color: 0x111111, transparent: true, opacity: 0.22, depthWrite: false, fog: false}));
       sh.position.y = 0.03;
       gp.add(sh);
@@ -9807,10 +9892,35 @@ function makeGame(host, opts){
       gp.userData.pet = 1;
       return gp;
     }
+    // where a rider sits on this mount's posed body (world space): the build's saddle point on its spine, so the rider rides
+    // ON the beast (it bobs, pitches and banks with it) instead of standing at the judge's seat height inside its back.
+    // Art only: the judge's rider stays at DRAGON_SEAT.
+    var dragonSeatV = new THREE.Vector3();
+    function dragonSaddle(D){
+      var Mo = D && D.mesh && D.mesh.userData && D.mesh.userData.Pm;
+      if(!Mo || !Mo.body || !Mo.wy || !Mo.wy.seatL) return null;
+      try { Mo.g.updateMatrixWorld(true); return Mo.body.localToWorld(dragonSeatV.set(0, Mo.wy.seatL[1], Mo.wy.seatL[2])); } catch(e){ return null; }
+    }
+    // seat a fighter's mesh on a mount: hips on the saddle, facing and leaning with the beast, the sitting pose after the clip
+    function dragonSeat(m, D){
+      var sd = dragonSaddle(D);
+      if(!sd) return false;
+      if(m.hipY == null){
+        var hb = m.bones && (m.bones.legL || m.bones.legR), hv = new THREE.Vector3();
+        m.hipY = 0.85;
+        if(hb){ try { m.g.updateMatrixWorld(true); hb.getWorldPosition(hv); var hy = (hv.y - m.g.position.y) / Math.max(0.01, m.g.scale.y || 1); if(hy > 0.3 && hy < 2) m.hipY = hy; } catch(e){} }
+      }
+      var dp = D.mesh;
+      m.g.rotation.order = "YXZ";
+      m.g.rotation.set(dp.rotation.x, dp.rotation.y, dp.rotation.z);
+      m.g.position.set(sd.x, sd.y - m.hipY * (m.g.scale.y || 1) + 0.12, sd.z);
+      m.rideTilt = true;
+      return true;
+    }
     // the dragon's own health bar: a canvas sprite above the beast, redrawn only when
     // the hp fraction moves. Same pattern as the player `tag()` / `dmgSprite()` plates —
     // canvas art, so the fills match those two (dmgSprite already paints raw hex).
-    var DRAGON_HP_BAR_Y = 3.4, DRAGON_HP_BAR_W = 3.2;
+    var DRAGON_HP_BAR_Y = 4.6, DRAGON_HP_BAR_W = 3.2;
     function dragonHpPlate(hp, max){
       var c = document.createElement("canvas"), g = c.getContext("2d");
       c.width = 256; c.height = 48;
@@ -9854,7 +9964,7 @@ function makeGame(host, opts){
     // HUD pill only appears within DRAGON_MOUNT_R, so a new player walking the deck
     // never sees it — this plate rides the beast itself and says how to mount from
     // any angle. Same canvas-sprite idiom as tag() / dragonHpPlate().
-    var DRAGON_MOUNT_PLATE_Y = 4.1, DRAGON_MOUNT_PLATE_W = 3.6;
+    var DRAGON_MOUNT_PLATE_Y = 5.4, DRAGON_MOUNT_PLATE_W = 3.6;
     function dragonMountPlate(tier){
       var c = document.createElement("canvas"), g = c.getContext("2d");
       c.width = 256; c.height = 64;
@@ -10058,18 +10168,29 @@ function makeGame(host, opts){
         dp.rotation.z = quiet ? 0 : dpRoll;
         // keep the health bar on the beast
         dragonHpBarSet(dp.userData.hpBar, D.hp != null ? D.hp : DRAGON_HP, D.max || DRAGON_HP);
+        // your own mount's bar sat right over its head in the chase view, hiding the jaw and the breath:
+        // the saddle prompt carries its health instead (dragonPromptTick)
+        if(dp.userData.hpBar) dp.userData.hpBar.visible = !D.riderIsMe && (dp.userData.hpBar.userData.hp | 0) > 0;
         // the "G  Ride" plate rides every idle dragon (hidden once claimed or dead)
         dragonMountPlateSet(dp, !D.rider && !D.dead, D.tier || dp.userData.tier || "fire");
         var Mo = dp.userData && dp.userData.Pm;
         if(Mo && window.HQV && window.HQV.hqPets && window.HQV.hqPets.pose){
           // the Commons pet build: pose it the way the city does (breath jaw + wing modes)
           var P = window.HQV.hqPets;
+          if(!dragonFx) dragonFxPool();
+          // past ~40 m: the far version (hqPets drLod: every part lighter, still posed every frame)
+          var lodD = camera && camera.position ? Math.hypot(camera.position.x - (D.x || 0), camera.position.y - (D.y || 0), camera.position.z - (D.z || 0)) : 0;
+          Mo.lod = lodD > (Mo.lod ? 38 : 42);   // (a little hysteresis: no flicker at the line)
           if(!Mo.sm) Mo.sm = {look: 0, jaw: 0, turn: 0, lastT: null, lastYaw: null};
           if(!dp.userData.pst) dp.userData.pst = {anim: "stand", ph: 0, yaw: 0, speed: 0};
           var st = dp.userData.pst, prev = dp.userData.pp || (dp.userData.pp = {x: D.x || 0, z: D.z || 0, y: D.y || 0, t: at});
           var dts = Math.max(0.001, Math.min(0.1, at - (prev.t || at)));
-          var sp = Math.hypot((D.x || 0) - prev.x, (D.z || 0) - prev.z) / dts;
-          var vy = ((D.y || 0) - prev.y) / dts;
+          // speed and climb, smoothed (a raw per-frame delta flickers the gait and wing mode)
+          var spRaw = Math.hypot((D.x || 0) - prev.x, (D.z || 0) - prev.z) / dts;
+          var vyRaw = ((D.y || 0) - prev.y) / dts, ke = Math.min(1, dts * 8);
+          prev.sp = prev.sp == null ? spRaw : prev.sp + (spRaw - prev.sp) * ke;
+          prev.vy = prev.vy == null ? vyRaw : prev.vy + (vyRaw - prev.vy) * ke;
+          var sp = prev.sp, vy = prev.vy;
           prev.x = D.x || 0; prev.y = D.y || 0; prev.z = D.z || 0; prev.t = at;
           st.yaw = D.yaw || 0;
           st.speed = sp;
@@ -10080,7 +10201,11 @@ function makeGame(host, opts){
           var airH = (D.y || 0) - (gy != null ? gy : 0);
           var flying = riding && airH > 0.8;
           var moving = sp > 0.35;
-          if(dragonBreathOn(D, at)) st.anim = "breath";
+          // breathing on the wing stays on the wing (the jaw opens, the wings keep working): a "breath"
+          // anim folded them to the flanks mid-air and the mount read as a spine with stubs
+          var brOn = dragonBreathOn(D, at);
+          st.breath = brOn && flying;
+          if(brOn && !flying) st.anim = "breath";
           else if(flying){
             st.anim = "fly";
             // the real flight mode when the rider owns it (climb/dive/hover/glide);
@@ -10091,6 +10216,8 @@ function makeGame(host, opts){
           else if(moving){ st.anim = "walk"; st.wing = null; st.ph = (st.ph || 0) + dts * 2.2; }
           else { st.anim = "stand"; st.wing = null; }
           try { P.pose(Mo, st, at, quiet, null); } catch(e){}
+          // its wingbeats (hqPets counts each downstroke): a whoosh by how far it is from the camera (none in Calm)
+          if(Mo.beats !== Mo.lb){ Mo.lb = Mo.beats; if(!quiet && P.sfx && lodD < 70) P.sfx("wing", {vol: 0.8 * (1 - lodD / 70), size: 2.6}); }
           dragonBreathFx(D, at, dts, quiet);
           return;
         }
@@ -11387,10 +11514,13 @@ function makeGame(host, opts){
         if(!P.mesh) addPlayer(P);
         var m = P.mesh; if(!m) return;
         m.g.visible = !P.gone && !(P.dead && t - (P.deadAt || 0) > 1.6);
+        var Pdr = !P.dead && dragonByRider(P.uid || P.user);   // a fighter on a mount sits its saddle (art only)
+        if(m.rideTilt && !Pdr){ m.g.rotation.x = 0; m.g.rotation.z = 0; m.rideTilt = false; }
         m.g.position.set(P.x, P.y, P.z); m.g.rotation.y = Math.PI - P.yaw;
-        setAnim(m, P.dead ? "die" : P.moving > 0.5 ? "walk" : "idle");
-        if(m.gun){ for(var gvi = 0; gvi < m.gun.length; gvi++) m.gun[gvi].visible = (P.w|0) === gvi; }
+        setAnim(m, P.dead ? "die" : P.moving > 0.5 && !Pdr ? "walk" : "idle");
+        if(m.gun){ for(var gvi = 0; gvi < m.gun.length; gvi++) m.gun[gvi].visible = !Pdr && (P.w|0) === gvi; }
         m.mixer.update(dt);
+        if(Pdr && dragonSeat(m, Pdr)) poseSit(m);
         m.tag.visible = !P.dead;
         // Disco: a dancing player is posed AFTER mixer.update so the swing survives
         // idle/walk. NOT dancing means we write nothing — the mixer already owns the
@@ -11606,11 +11736,10 @@ function makeGame(host, opts){
         if(mb && mb.mesh){
           var mm = mb.mesh;
           mm.g.visible = true;
-          mm.g.position.set(M.x, M.y, M.z);
-          mm.g.rotation.y = Math.PI - V.yaw;
           setAnim(mm, "idle");
           if(mm.gun){ for(var mgi = 0; mgi < mm.gun.length; mgi++) mm.gun[mgi].visible = false; }
           mm.mixer.update(dt);
+          if(!dragonSeat(mm, myDragon(t))){ mm.g.position.set(M.x, M.y, M.z); mm.g.rotation.y = Math.PI - V.yaw; }
           poseSit(mm);
           if(mm.headBone) mm.headBone.scale.setScalar(headScaleAt(t));
           if(mm.shield) mm.shield.visible = false;
@@ -11637,8 +11766,19 @@ function makeGame(host, opts){
       } else if(RIDING){
         // behind and above the saddle, looking where you look (the breath aims down the same
         // yaw). Seat = the rider's feet, so the offset reads as "over the dragon's shoulders".
-        var rfx = Math.sin(V.yaw), rfz = -Math.cos(V.yaw);
-        camera.position.set(M.x - rfx*DRAGON_CAM_BACK, M.y + DRAGON_CAM_UP, M.z - rfz*DRAGON_CAM_BACK);
+        // Over the right shoulder, not dead astern: straight behind, the beast was a thin spine and its
+        // breath a dot (the jet points away down the lens). Off to the side and higher it reads as a whole
+        // animal, wings and flank, and the jet runs across the frame. Airborne it pulls back for the span;
+        // breathing it swings a little wider so the stream shows its length. Eased, never snapped.
+        var rfx = Math.sin(V.yaw), rfz = -Math.cos(V.yaw), rrx = Math.cos(V.yaw), rrz = Math.sin(V.yaw);
+        var rD = myDragon(t), rgy = rD ? holeGroundY(rD.x || 0, rD.z || 0) : null;
+        var rAir = rD ? clamp(((rD.y || 0) - (rgy != null ? rgy : 0)) / 4, 0, 1) : 0, rBr = rD && dragonBreathOn(rD, t) ? 1 : 0;
+        var RC = V.rideCam || (V.rideCam = {air: rAir, br: 0});
+        var rk = Math.min(1, dt * 3);
+        RC.air += (rAir - RC.air) * rk; RC.br += (rBr - RC.br) * Math.min(1, dt * (rBr ? 2.5 : 1.5));
+        var cBack = DRAGON_CAM_BACK + RC.air * 1.4 - RC.br * 2.2, cUp = DRAGON_CAM_UP + RC.air * 1.0 + RC.br * 0.6;
+        var cSide = (quiet ? 1.2 : DRAGON_CAM_SIDE) + RC.br * 2.8;
+        camera.position.set(M.x - rfx*cBack + rrx*cSide, M.y + cUp, M.z - rfz*cBack + rrz*cSide);
         camera.rotation.order = "YXZ";
         camera.rotation.set(V.pitch + (V.dead ? -0.3 : 0), -V.yaw, V.dead && !quiet ? 0.35 : 0);
       } else {

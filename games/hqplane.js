@@ -285,6 +285,72 @@ function standBeside(thr, u, y, prop, ground){
 }
 
 /* ---------- the meshes (THREE only from here on) ---------- */
+// The pilot's place, built round the seat at (x, y, z) in parent p (k: p's own scale, so the kit stays life size):
+// a seat (cushion and back), the pedals, and the controls the hands hold, laid out for hq3d's seated rider
+// (games/people3d.js, ~1.5 m drawn): style "yoke" a column from the panel to a yoke with two horns; "heli" a cyclic
+// stick between the knees (right hand) and a collective lever by the left thigh. The grip anchors hang on the
+// controls (B.ctl), so they move with them (animate). Returns {grips: [L, R], feet: [L, R], ctl: {yoke | cyc, col}}.
+var kitMat = null;
+// one geometry from parts (meshes, each placed in the same parent): a kit costs a draw per moving piece
+function bake(THREE, parts){
+  var pos = [], nor = [];
+  parts.forEach(function(m){
+    m.updateMatrix(); var g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone(); g.applyMatrix4(m.matrix);
+    pos.push.apply(pos, g.attributes.position.array); nor.push.apply(nor, g.attributes.normal.array); g.dispose(); m.geometry.dispose();
+  });
+  var out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); out.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  out.computeBoundingSphere(); return out;
+}
+function pilotKit(THREE, p, x, y, z, style, k, seat){
+  k = k || 1;
+  if(!kitMat) kitMat = new THREE.MeshStandardMaterial({color: 0x2a2d33, roughness: 0.75, metalness: 0.15});
+  var root = new THREE.Group(); root.name = "pilot-kit"; root.position.set(x, y, z); root.scale.setScalar(1/k); p.add(root);
+  function box(L, w, h, d, px, py, pz, rx){ var o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d)); o.position.set(px, py, pz); if(rx) o.rotation.x = rx; L.push(o); }
+  function rod(L, a, b, r){
+    var d = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]), len = d.length();
+    var o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8)); o.position.set((a[0] + b[0])/2, (a[1] + b[1])/2, (a[2] + b[2])/2);
+    o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); L.push(o);
+  }
+  function solid(par, L, n){ var m = new THREE.Mesh(bake(THREE, L), kitMat); m.name = n; m.castShadow = true; par.add(m); return m; }
+  function at(par, n, px, py, pz, ud){ var o = new THREE.Object3D(); o.name = n; o.position.set(px, py, pz); if(ud) o.userData = ud; par.add(o); return o; }
+  var fixed = [];
+  if(seat !== false){ box(fixed, 0.46, 0.08, 0.46, 0, -0.04, 0.02); box(fixed, 0.46, 0.62, 0.08, 0, 0.3, -0.26, -0.16); }
+  // the pedals: ~0.55 m out from the hips, below the seat
+  [1, -1].forEach(function(sx){ box(fixed, 0.08, 0.13, 0.03, sx*0.12, -0.2, 0.47, -0.5); });
+  var out = {ctl: {}, feet: [1, -1].map(function(sx){ return at(root, "a-foot", sx*0.12, -0.25, 0.45); })};
+  if(style === "heli"){
+    // the cyclic: from the floor between the knees up to a grip at the right hand's height
+    var cyc = new THREE.Group(); cyc.position.set(-0.03, -0.3, 0.36); root.add(cyc);
+    var cl = []; rod(cl, [0, 0, 0], [0, 0.46, 0], 0.014); box(cl, 0.04, 0.12, 0.04, 0, 0.5, 0); solid(cyc, cl, "pilot-cyclic");
+    var gR = at(cyc, "a-grip-r", 0, 0.5, 0, {v: true});
+    // the collective: a lever hinged behind the left hip, raked up and forward beside the thigh
+    var col = new THREE.Group(); col.position.set(0.24, -0.02, -0.12); root.add(col);
+    var ld = new THREE.Vector3(0, 0.24, 0.3).normalize(), ll = [];
+    rod(ll, [0, 0, 0], [0, 0.2, 0.25], 0.016); rod(ll, [0, 0.2, 0.25], [0, 0.26, 0.325], 0.022); solid(col, ll, "pilot-collective");
+    var gL = at(col, "a-grip-l", 0, 0.235, 0.29, {axis: [0, -ld.y, -ld.z], fdir: [-1, -0.6, 0]});
+    out.grips = [gL, gR]; out.ctl = {cyc: cyc, col: col};
+  } else {
+    // the yoke: a column out of the panel, a bar and two horns held upright
+    var yk = new THREE.Group(); yk.position.set(0, 0.3, 0.3); root.add(yk);
+    var yl = []; rod(yl, [0, 0, 0], [0, 0, 0.5], 0.018); box(yl, 0.26, 0.035, 0.035, 0, -0.03, 0);
+    [1, -1].forEach(function(sx){ box(yl, 0.035, 0.13, 0.04, sx*0.13, 0.01, 0); });
+    solid(yk, yl, "pilot-yoke");
+    out.grips = [at(yk, "a-grip-l", 0.13, 0.01, 0, {v: true}), at(yk, "a-grip-r", -0.13, 0.01, 0, {v: true})];
+    out.ctl = {yoke: yk, z0: 0.3};
+  }
+  solid(root, fixed, "pilot-seat");
+  return out;
+}
+// the controls follow the flying: the yoke turns with the roll rate and comes back as the nose comes up; the
+// cyclic leans the same way, the collective rises with the power
+function moveKit(B, st){
+  var C = B && B.ctl; if(!C || !st) return;
+  var r = Math.max(-0.6, Math.min(0.6, (st.rV || 0)*0.35)), q = Math.max(-0.5, Math.min(0.5, (st.pV || 0)*0.3));
+  if(C.yoke){ C.yoke.rotation.z = -r; C.yoke.position.z = C.z0 - q*0.12; }
+  if(C.cyc){ C.cyc.rotation.z = -r*0.4; C.cyc.rotation.x = -q*0.4; }
+  if(C.col) C.col.rotation.x = -Math.max(0, Math.min(1, st.rpm || 0))*0.12;
+}
 // hqaircraft's model with the pilot's anchors; g's origin is the surface under it (the water at the floats' bottom,
 // the ground under the wheels)
 var panelGeo = null, panelMat = null;
@@ -297,8 +363,8 @@ function model(c, kind, color, accent){
   var sea = kind === "seaplane", yc = sea ? 2.9 : CR.PROP_YC;
   // the pilot: left seat, in the cockpit; the yoke and the pedals in front
   var sx = sea ? 0.35 : 0.28, sz = sea ? 5.3 : 0.75, sy = sea ? yc - 0.75 : yc - 0.42;
-  var B = {g: g, kind: kind, P: P, seat: anchor(sx, sy, sz), grips: [anchor(sx + 0.18, sy + 0.42, sz + 0.55), anchor(sx - 0.18, sy + 0.42, sz + 0.55)],
-           feet: [anchor(sx + 0.12, sy - 0.1, sz + 0.85), anchor(sx - 0.12, sy - 0.1, sz + 0.85)], lean: 0, riderK: 0.82, hats: false,
+  var kit = pilotKit(THREE, g, sx, sy, sz, "yoke", 1);
+  var B = {g: g, kind: kind, P: P, seat: anchor(sx, sy, sz), grips: kit.grips, feet: kit.feet, ctl: kit.ctl, lean: -0.12, riderK: 0.82, hats: false,
            phase: 0, brake: function(){}};
   return B;
 }
@@ -313,13 +379,13 @@ function jetModel(c, kind, color, accent){
   if(!panelGeo){ panelGeo = new THREE.BoxGeometry(1.3, 0.22, 0.42); panelMat = new THREE.MeshStandardMaterial({color: 0x15181d, roughness: 0.8}); }
   var pan = new THREE.Mesh(panelGeo, panelMat); pan.position.set(0, yc + 0.28, 17.95); pan.name = kind + "-glareshield"; g.add(pan);
   function anchor(x, y, z){ var o = new THREE.Object3D(); o.position.set(x, y, z); g.add(o); return o; }
-  var sx = 0.5, sy = yc - 0.55, sz = 17.0;
-  return {g: g, kind: kind, P: P, seat: anchor(sx, sy, sz), grips: [anchor(sx + 0.18, sy + 0.42, sz + 0.5), anchor(sx - 0.18, sy + 0.42, sz + 0.5)],
-          feet: [anchor(sx + 0.12, sy - 0.1, sz + 0.75), anchor(sx - 0.12, sy - 0.1, sz + 0.75)], lean: 0, riderK: 0.82, hats: false,
+  var sx = 0.5, sy = yc - 0.55, sz = 17.0, kit = pilotKit(THREE, g, sx, sy, sz, "yoke", k);
+  return {g: g, kind: kind, P: P, seat: anchor(sx, sy, sz), grips: kit.grips, feet: kit.feet, ctl: kit.ctl, lean: -0.12, riderK: 0.82, hats: false,
           phase: 0, brake: function(){}, jet: true};
 }
 function animate(B, st, dt, night){
   if(!B || !B.P) return;
+  moveKit(B, st);
   dt = Math.max(0, +dt || 0);
   var rpm = st ? st.rpm : 0, spin = rpm > 0.05;
   B.phase = (B.phase + dt*rpm*90) % (PI*2);
@@ -331,5 +397,6 @@ function animate(B, st, dt, night){
 
 HQV.hqplane = {VEHICLES: VEHICLES, KINDS: KINDS, H: H, GE: GE, newState: newState, step: step, liftShare: liftShare,
                autopilot: autopilot, toggleGear: toggleGear, canExit: canExit, exitSpot: exitSpot, commonsStands: commonsStands,
-               standBeside: standBeside, COMMONS_STANDS: COMMONS_STANDS, model: model, animate: animate, spring: spring};
+               standBeside: standBeside, COMMONS_STANDS: COMMONS_STANDS, model: model, animate: animate, spring: spring,
+               pilotKit: pilotKit, moveKit: moveKit, bake: bake};
 })();

@@ -370,7 +370,7 @@ class CallWiring(unittest.TestCase):
         self.assertIn("HQV.hqCall.owns(e)", self.src)
 
     def test_steps_every_frame_and_places_your_vehicles(self):
-        self.assertRegex(self.src, r"moveAvatar\(dt\);\s*\n\s*callStep\(dt\);")
+        self.assertRegex(self.src, r"moveAvatar\(sdt/sn\);\s*\n\s*callStep\(dt\);")
         self.assertIn("ownPlace(cur);", self.src)
 
     def test_no_boarding_on_the_move(self):

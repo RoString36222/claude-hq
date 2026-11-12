@@ -193,10 +193,13 @@ function model(c, kind, color, accent){
     new THREE.MeshBasicMaterial({color: 0xfff1d0, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false}));
   beam.geometry.translate(0, -30, 0); beam.position.set(0, bodyY - 0.7, atk ? 2.0 : 1.6); beam.rotation.x = -0.75; beam.visible = false; g.add(beam);
   var lamp = light(0xfff4dd, 0, bodyY - 0.75, atk ? 2.0 : 1.7, 1.6); lamp.visible = false;
-  var B = {g: g, kind: atk ? "attack" : "heli", seat: anchor(g, atk ? 0 : -0.4, bodyY - 0.55, atk ? 2.0 : 0.85),
-           grips: [anchor(g, atk ? 0.15 : -0.25, bodyY - 0.2, atk ? 2.45 : 1.25), anchor(g, atk ? -0.15 : -0.55, bodyY - 0.2, atk ? 2.45 : 1.25)],
-           feet: [anchor(g, atk ? 0.2 : -0.25, bodyY - 0.85, atk ? 2.75 : 1.65), anchor(g, atk ? -0.2 : -0.55, bodyY - 0.85, atk ? 2.75 : 1.65)],
-           lean: 0, riderK: 0.85, hats: false, rotor: rotor, blades: blades, disc: disc, tail: tblades, tailDisc: tdisc, lights: lights, beam: beam, lamp: lamp,
+  // the pilot's seat, cyclic, collective and pedals (games/hqplane.js pilotKit): the hands and feet on real controls
+  var px = atk ? 0 : -0.4, py = bodyY - 0.55, pz = atk ? 2.0 : 0.85, PK = HQV.hqplane && HQV.hqplane.pilotKit;
+  var kit = PK ? PK(THREE, g, px, py, pz, "heli", 1, !atk) : null;
+  var B = {g: g, kind: atk ? "attack" : "heli", seat: anchor(g, px, py, pz),
+           grips: kit ? kit.grips : [anchor(g, atk ? 0.15 : -0.25, bodyY - 0.2, atk ? 2.45 : 1.25), anchor(g, atk ? -0.15 : -0.55, bodyY - 0.2, atk ? 2.45 : 1.25)],
+           feet: kit ? kit.feet : [anchor(g, atk ? 0.2 : -0.25, bodyY - 0.85, atk ? 2.75 : 1.65), anchor(g, atk ? -0.2 : -0.55, bodyY - 0.85, atk ? 2.75 : 1.65)],
+           ctl: kit ? kit.ctl : null, lean: -0.08, riderK: 0.85, hats: false, rotor: rotor, blades: blades, disc: disc, tail: tblades, tailDisc: tdisc, lights: lights, beam: beam, lamp: lamp,
            phase: 0, tphase: 0, night: false, brake: function(){}};
   B.setNight = function(n){ B.night = !!n; };
   return B;
@@ -205,6 +208,7 @@ function model(c, kind, color, accent){
 // disc at speed, blinks the strobe, lights the searchlight at night while flying.
 function animate(B, st, dt, night, idle){
   if(!B) return;
+  if(st && HQV.hqplane && HQV.hqplane.moveKit) HQV.hqplane.moveKit(B, st);
   dt = Math.max(0, +dt || 0);
   var rpm = st ? st.rpm : (+idle || 0);
   B.phase = (B.phase + dt*rpm*32) % (PI*2); B.tphase = (B.tphase + dt*rpm*90) % (PI*2);

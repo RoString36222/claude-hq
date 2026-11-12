@@ -199,7 +199,7 @@ class PetRide(unittest.TestCase):
         for vy in c["glideVy"]:
             self.assertLess(vy, 0)
             self.assertGreater(vy, -c["V"]["glide"] - 0.05)  # a slow sink
-        self.assertEqual(c["glideWing"], "glide")
+        self.assertEqual(c["glideWing"], "flap")      # level flight beats its wings (3.41.1)
         self.assertAlmostEqual(c["hoverY"][0], c["hoverY"][1], delta=0.2)   # a hover holds its height
         self.assertEqual(c["hoverWing"], "hover")
 
@@ -273,7 +273,7 @@ class PetRide(unittest.TestCase):
         self.assertGreater(m["firedragon"]["len"], 3)
         self.assertTrue(m["firedragon"]["hasWings"])
         self.assertEqual(m["seaserpent"]["kind"], "serpent")
-        self.assertEqual(self.o["peer"], ["glide", "climb", "hover", "dive", True])
+        self.assertEqual(self.o["peer"], ["flap", "climb", "hover", "dive", True])
 
 
     def test_the_wyvern_seat(self):

@@ -166,7 +166,8 @@ function subFly(st, inp, env, ev){
     } else if(lift <= 0){ var fr = Math.exp(-1.8*h); st.vx *= fr; st.vz *= fr; st.tgt *= fr; }   // running in: it slows on its feet
   }
   st.speed = Math.hypot(st.vx, st.vz); st.agl = st.ground ? 0 : st.y - floor(st.x, st.z);
-  st.wing = st.ground ? "fold" : climbing ? "climb" : diving ? "dive" : hover ? "hover" : "glide";
+  // level flight is powered (wingbeats); it only glides, wings still, coming down gently
+  st.wing = st.ground ? "fold" : climbing ? "climb" : diving ? "dive" : hover ? "hover" : (+st.vy || 0) < -1.5 ? "glide" : "flap";
 }
 // a dinosaur on the ground, a serpent on the water: W / S, A / D, Shift (a dinosaur) runs
 function subGround(st, inp, env, ev){
@@ -282,7 +283,7 @@ function animate(B, st, t, dt, calm, breath, vol){
 function peerState(B, v, vy, agl){
   var st = B.peer || (B.peer = {speed: 0, ground: true, wing: "fold", yaw: 0, walk: 3});
   st.speed = v; st.ground = !(B.rk === "dragon" && agl > 1.2);
-  st.wing = st.ground ? "fold" : vy > 1.2 ? "climb" : vy < -5 ? "dive" : v < VEHICLES.dragon.hover ? "hover" : "glide";
+  st.wing = st.ground ? "fold" : vy > 1.2 ? "climb" : vy < -5 ? "dive" : v < VEHICLES.dragon.hover ? "hover" : vy < -1.5 ? "glide" : "flap";
   return st;
 }
 // the breath: a stream forward from the mouth, carried along at the dragon's speed (none at all in Calm: breathOf)

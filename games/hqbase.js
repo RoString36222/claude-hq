@@ -99,8 +99,26 @@ function fade(L, on){
     if(m.userData.op == null){ m.userData.op = m.opacity; m.userData.tr = m.transparent; }
     m.transparent = on || m.userData.tr; m.opacity = on ? 0.16 : m.userData.op; m.depthWrite = !on; m.needsUpdate = true; }); o.castShadow = !on; });
 }
+// [load] Its faded look is other shader programs (transparent; and its shadows, as fading back turns them all on): linked
+// once ahead, off the main thread (games/hq3d.js warm), so the first time it fades is not a frame-long stall. The
+// materials are only flagged for the compile and put straight back.
+function warmFade(c, L){
+  L.fade.warmed = true;
+  var ms = [], os = [];
+  L.fade.g.traverse(function(o){ if(!o.isMesh) return; os.push([o, o.castShadow]); o.castShadow = true;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(function(m){ if(m && ms.indexOf(m) < 0) ms.push(m); }); });
+  var tr = ms.map(function(m){ return m.transparent; });
+  ms.forEach(function(m){ m.transparent = true; });
+  try { c.warm(L.fade.g); }
+  catch(e){}
+  finally {
+    ms.forEach(function(m, i){ m.transparent = tr[i]; m.needsUpdate = true; });
+    os.forEach(function(r){ r[0].castShadow = r[1]; });
+  }
+}
 function cutaway(c, items){
   var me = c.avatar(), v = c.view && c.view(); if(!me || !v) return;
+  if(c.warm){ for(var i = 0; i < items.length; i++){ var Li = items[i]; if(Li.fade && !Li.fade.on && !Li.fade.warmed){ warmFade(c, Li); break; } } }   // one a pass
   var ux = Math.sin(v.yaw), uz = Math.cos(v.yaw), tp = Math.max(0.2, Math.tan(v.pitch));
   items.forEach(function(L){
     if(!L.fade) return;

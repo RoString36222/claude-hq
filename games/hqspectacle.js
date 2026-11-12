@@ -1624,7 +1624,7 @@ function create(c, W, o){
           Mw[k].decompose(wp4, wq4, ws4);
           if(m.kind === "ride") wp4.add(up.clone().applyQuaternion(wq4).multiplyScalar(0.35));   // Kenney's sit pose: hips at chair height
           chr.o.position.copy(wp4); chr.o.quaternion.copy(wq4);
-          anim(chr, m.kind === "walk" ? "walk" : m.kind === "ride" ? "sit" : "idle", m.kind === "walk" ? m.v/1.4 : 1);
+          anim(chr, m.kind === "walk" ? "walk" : m.kind === "ride" ? "sit" : "idle", m.kind === "walk" ? m.v/0.86 : 1);   // [3.41 realism] the Walk clip's 0.86 m/s (games/people3d.js GAIT)
           chr.mixer.update(dt || 0);
         }
         mesh.instanceMatrix.needsUpdate = true;

@@ -465,6 +465,7 @@ function build(c, site, opts){
     ["car", "bike"].forEach(function(k){ if(inst[k] && inst[k].instanceColor) inst[k].instanceColor.needsUpdate = true; });
     return rows.map(function(r){ return {key: r.key, bay: r.bay}; });
   }
+  var warming = false;
   function update(cam){
     if(!rows.length || !cam) return;
     var best = null, bd = NEAR;
@@ -474,6 +475,13 @@ function build(c, site, opts){
     if(full){ fleetG.remove(full.g); var old = rows.filter(function(r){ return r.key === fullKey; })[0]; if(old) place(old, true); full = null; }
     fullKey = key;
     if(!best || !HQV.hqVehicleModels) return;
+    // [realism perf] its full model not made yet (~10-20 ms): made in an idle moment, the car shown in full after that
+    var VM = HQV.hqVehicleModels;
+    if(VM.hasBlueprint && VM.warm && typeof requestIdleCallback === "function" && !VM.hasBlueprint(THREE, best.entry)){
+      fullKey = null;
+      if(!warming){ warming = true; requestIdleCallback(function(){ warming = false; try { VM.warm(c, best.entry); } catch(e){} }, {timeout: 500}); }
+      return;
+    }
     try {
       var R = HQV.hqVehicleModels.build(c, best.entry, best.paint), b = B[best.bay], h = new THREE.Group();
       h.add(R.g); seat(best, b, h.position); h.rotation.y = b.yaw; fleetG.add(h); full = {g: h};

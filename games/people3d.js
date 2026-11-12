@@ -16,10 +16,57 @@
  *                                 seat, a forward lean, hands on the grips (fingers curled), feet on the pegs
  *   HQV.people3d.ik.reach(ch, side, target, pole) / grip(ch, side, amount)
  *   HQV.people3d.FILES / TOP (each outfit's recolourable top material)
+ *   HQV.people3d.gaitPlan(v, rel, rate) / gaitDrive(ch, plan, dt) (before the mixer step) / gaitPost(ch, dt) (after it):
+ *                                 the measured gait: one phase for every locomotion clip, the stride lengthened past a
+ *                                 jog, directional clips, planted feet held (HQV.gait is the pure part, for tests)
  */
 (function(){
 "use strict";
 var HQV = window.HQV = window.HQV || {};
+
+/* ---------- the gait (HQ 3.41): pure, so node tests and the crowds share it ----------
+ * Measured from anims.glb at the drawn 1.7 m (games/proto: the stance foot's speed under the hips x the cycle):
+ * Walk covers 1.43 m a cycle (0.86 m/s at timeScale 1), Run 2.0 m (2.0 m/s), Run_Back 2.05 m, Run_Left / Run_Right
+ * 2.0 m. off: where that clip's left heel strikes, as a share of its cycle, less the walk's (0.035): every clip of the
+ * blend is driven from ONE phase (a sync group), so a planted foot in one clip is planted in the others and the legs
+ * never scissor through a walk / run crossfade. Past a jog the stride itself lengthens (k: the feet reach further
+ * from the hips, by leg IK after the clips; gaitPost), so a fast run is longer strides and not only faster legs.
+ * walkTo / runFrom: the walk / run crossfade (m/s); kMax the most stretch (the legs still reach the ground). */
+var GAIT = {walk: {stride: 1.43, off: 0}, sprint: {stride: 2.0, off: 0.415}, back: {stride: 2.05, off: 0.28},
+            left: {stride: 2.0, off: 0.95}, right: {stride: 2.0, off: 0.415},
+            idleTo: 0.6, walkTo: 1.5, runFrom: 2.6, kPer: 0.12, kMax: 1.45, shuffle: 0.9, drop: 0.035};
+var GAIT_CLIPS = ["walk", "sprint", "back", "left", "right"];
+function smooth01(a, b, x){ var t = Math.max(0, Math.min(1, (x - a)/(b - a))); return t*t*(3 - 2*t); }
+// v: ground speed (m/s, >= 0) at the drawn 1.7 m; rel: the way you move relative to your facing (rad: 0 ahead, +PI/2
+// to your left, PI back); rate: your turn (rad/s, a shuffle when turning on the spot).
+// -> {idle, walk, sprint, back, left, right (weights, sum 1), k (stride stretch), stride (m a cycle), cps (cycles/s)}
+function gaitPlan(v, rel, rate){
+  v = Math.max(0, +v || 0); rel = +rel || 0; rate = Math.abs(+rate || 0);
+  var sh = v < GAIT.idleTo ? Math.min(1, rate/2.5)*(1 - v/GAIT.idleTo)*0.6 : 0;
+  var idle = Math.max(0, 1 - v/GAIT.idleTo)*(1 - sh), go = 1 - idle;
+  var c = Math.cos(rel), s = Math.sin(rel), fw = c > 0 ? c*c : 0, bk = c < 0 ? c*c : 0, lt = s > 0 ? s*s : 0, rt = s < 0 ? s*s : 0;
+  if(sh > 0){ fw += bk + lt + rt; bk = lt = rt = 0; }                      // turning on the spot: the walk, a shuffle
+  var r = smooth01(GAIT.walkTo, GAIT.runFrom, v);
+  var P = {idle: idle, walk: go*fw*(1 - r), sprint: go*fw*r, back: go*bk, left: go*lt, right: go*rt};
+  P.k = 1 + Math.min(GAIT.kMax - 1, Math.max(0, v - GAIT.runFrom)*GAIT.kPer);
+  P.stride = gaitStride(P, P.k);
+  P.cps = Math.max(v/P.stride, sh > 0 ? rate*GAIT.shuffle/GAIT.walk.stride : 0);
+  return P;
+}
+// metres a cycle of a blend (weights w, stretch k): the walk's own stride, the run clips' stretched. Blended poses
+// blend the feet's paths as vectors (ahead and to the left at once is a diagonal only cos 45 as long), so the stride
+// is the length of the weighted sum of each clip's stride along its own way.
+var GAIT_DIR = {walk: [0, 1], sprint: [0, 1], back: [0, -1], left: [1, 0], right: [-1, 0]};
+function gaitStride(w, k){
+  var sum = 0, x = 0, z = 0;
+  GAIT_CLIPS.forEach(function(n){
+    var a = Math.max(0, +w[n] || 0), m = a*GAIT[n].stride*(n === "walk" ? 1 : k);
+    sum += a; x += m*GAIT_DIR[n][0]; z += m*GAIT_DIR[n][1];
+  });
+  return sum > 1e-6 ? Math.max(0.5, Math.hypot(x, z)/sum) : GAIT.walk.stride;
+}
+HQV.gait = {GAIT: GAIT, CLIPS: GAIT_CLIPS, plan: gaitPlan, stride: gaitStride};
+
 var E = HQV.engine;
 if(!E){ return; }
 
@@ -30,7 +77,7 @@ var TOP = {"woman-casual": ["White"], "man-hoodie": ["Purple"], "woman-adventure
            "man-adventurer": ["Green"], "woman-worker": ["Worker_Vest"], "man-casual": ["Red_Dark"]};
 var CH_H = 0.72;          // drawn height in model units (hq3d draws people 1.7 m: scale 1.7 / CH_H)
 var HEAD_K = 2.0;         // head scale over the pack's: the toy proportions
-var ANIM = {idle: "Idle", walk: "Walk", sprint: "Run", "emote-yes": "Wave"};
+var ANIM = {idle: "Idle", walk: "Walk", sprint: "Run", "emote-yes": "Wave", back: "Run_Back", left: "Run_Left", right: "Run_Right"};
 
 function A3(){ return HQV.avatar3d || {}; }
 function hexOf(pal, i){ var p = (A3().PALETTES || {})[pal]; return p && i > 0 && p[i] ? p[i] : null; }
@@ -194,6 +241,79 @@ function seat(ch, w, opts){
   o.updateMatrixWorld(true);
 }
 
+/* ---------- the gait, driven (HQ 3.41) ---------- */
+// One frame of locomotion, BEFORE the mixer step. P: gaitPlan(v, rel, rate); v the ground speed at the drawn 1.7 m.
+// The weights ease (omega 10: a change of pace or direction crossfades) into ch.loco; ONE phase (ch.gait.ph)
+// advances at the cadence the drawn blend needs (from the eased weights and stretch, so the planted foot keeps pace
+// with the ground) and every locomotion clip is set to that phase plus its own offset, timeScale 0 (the phase owns
+// their time). A character without a directional clip runs forward instead.
+function gaitDrive(ch, P, dt){
+  dt = Math.max(0, +dt || 0);
+  var G = ch.gait || (ch.gait = {ph: 0, k: 1, rel: 0}), L = ch.loco || (ch.loco = {}), acts = ch.acts, e = 1 - Math.exp(-10*dt);
+  var W = {idle: P.idle, walk: P.walk, sprint: P.sprint, back: P.back, left: P.left, right: P.right};
+  ["back", "left", "right"].forEach(function(n){ if(!acts[n] && W[n]){ W.sprint += W[n]; W[n] = 0; } });
+  if(!acts.sprint){ W.walk += W.sprint; W.sprint = 0; }
+  ["idle"].concat(GAIT_CLIPS).forEach(function(n){ L[n] = (+L[n] || 0) + ((W[n] || 0) - (+L[n] || 0))*e; });
+  G.k += (P.k - G.k)*e;
+  if(P.rel != null){ var dr = Math.atan2(Math.sin(P.rel - G.rel), Math.cos(P.rel - G.rel)); G.rel += dr*e; }
+  var S = gaitStride(L, G.k), cps = P.cps*(P.stride > 0 ? P.stride/S : 1);
+  G.ph = ((G.ph + cps*dt) % 1 + 1) % 1; G.cps = cps;
+  if(acts.idle){ acts.idle.enabled = true; if(!acts.idle.isRunning()){ acts.idle.play(); } acts.idle.timeScale = 1; acts.idle.setEffectiveWeight(L.idle); }
+  GAIT_CLIPS.forEach(function(n){
+    var a = acts[n]; if(!a){ return; }
+    a.enabled = L[n] > 1e-3; if(!a.enabled){ return; }                // out of the blend: not evaluated
+    if(!a.isRunning()){ a.play(); }
+    a.setEffectiveWeight(L[n]); a.timeScale = 0;
+    a.time = ((G.ph + GAIT[n].off) % 1)*a.getClip().duration;
+  });
+}
+// After the mixer step (dt: this frame's): the longer stride, and the planted foot held where it landed.
+// Stride: with ch.gait.k > 1 each foot's reach from the hips along the way you move is scaled by k, the hips a little
+// lower so the planted foot still reaches the ground. Plant: a foot at the ground (within PLANT_Y of the body's feet
+// level) is locked where it touched down for as long as it stays down, so the last few % the clips' own stance
+// wobbles by never shows as a glide; it lets go smoothly (omega 30) as the foot lifts, at once if the body is pulled
+// more than PLANT_MAX from it (a teleport, a shove). Each leg is then solved to its foot (two-bone IK).
+var GV = null, PLANT_Y = 0.05, PLANT_MAX = 0.35;
+function gaitPost(ch, dt){
+  var G = ch.gait, B = ch.bones;
+  if(!G || ch.cur !== "loco" || !B || !B.Hips || !ch.L){ if(G){ G.lk = null; } return; }
+  var THREE = ch.L.THREE, o = ch.o;
+  if(!GV){ GV = {q: new THREE.Quaternion(), s: new THREE.Vector3(), d: new THREE.Vector3(), f: new THREE.Vector3(), H: new THREE.Vector3(),
+                 F: new THREE.Vector3(), K: new THREE.Vector3(), T: new THREE.Vector3(), P: new THREE.Vector3(), O: new THREE.Vector3(),
+                 end: new THREE.Object3D(), K2: ikLib(THREE)}; }
+  dt = Math.max(0, +dt || 0);
+  var stretch = G.k > 1.003, lk = G.lk || (G.lk = {L: {on: false, w: 0, x: 0, z: 0}, R: {on: false, w: 0, x: 0, z: 0}});
+  var standing = !stretch && !(G.cps > 0.01);                          // standing: the clip's feet do not move; locks ease off
+  if(standing){ lk.L.on = lk.R.on = false; if(!lk.L.w && !lk.R.w){ return; } }
+  mark(ch);
+  o.updateMatrixWorld(true);
+  o.getWorldQuaternion(GV.q); o.getWorldScale(GV.s); o.getWorldPosition(GV.O);
+  var sc = GV.s.x*CH_H/1.7, t = stretch ? (G.k - 1)/(GAIT.kMax - 1) : 0, rel = 1 - Math.exp(-30*dt);
+  GV.f.set(0, 0, 1).applyQuaternion(GV.q); GV.f.y = 0; GV.f.normalize();
+  GV.d.set(Math.sin(G.rel), 0, Math.cos(G.rel)).applyQuaternion(GV.q); GV.d.y = 0; GV.d.normalize();
+  B.Hips.getWorldPosition(GV.H);
+  if(stretch){ GV.H.y -= GAIT.drop*t*sc; B.Hips.position.copy(B.Hips.parent.worldToLocal(GV.T.copy(GV.H))); B.Hips.updateMatrixWorld(true); }
+  ["L", "R"].forEach(function(s){
+    if(!B["Foot" + s] || !B["LowerLeg" + s]){ return; }
+    var foot = B["Foot" + s], shin = B["LowerLeg" + s], P = lk[s];
+    foot.getWorldPosition(GV.F); shin.getWorldPosition(GV.K);
+    GV.T.copy(GV.F);
+    if(stretch){ GV.T.addScaledVector(GV.d, ((GV.F.x - GV.H.x)*GV.d.x + (GV.F.z - GV.H.z)*GV.d.z)*(G.k - 1)); }
+    var down = !standing && GV.T.y - GV.O.y < PLANT_Y*sc;
+    if(down && !P.on){ P.on = true; P.x = GV.T.x; P.z = GV.T.z; P.w = 1; }
+    else if(!down){ P.on = false; }
+    if(P.on && Math.hypot(P.x - GV.T.x, P.z - GV.T.z) > PLANT_MAX*sc){ P.on = false; P.w = 0; }
+    if(!P.on){ P.w -= P.w*rel; if(P.w < 1e-3){ P.w = 0; } }
+    if(P.w > 0){ GV.T.x += (P.x - GV.T.x)*P.w; GV.T.z += (P.z - GV.T.z)*P.w; }
+    if(!stretch && P.w === 0){ return; }                                 // the clip's own leg, untouched
+    GV.P.copy(GV.K).addScaledVector(GV.f, 0.5*sc);
+    // the leg's end is where the clip put this foot, in the shin's space (exact when nothing moves it), not legTo's ankle
+    shin.add(GV.end); shin.updateMatrixWorld(true); GV.end.position.copy(shin.worldToLocal(GV.F.clone()));
+    GV.K2.twoBone(B["UpperLeg" + s], shin, GV.end, GV.T, GV.P);
+    GV.end.getWorldPosition(GV.F); shin.remove(GV.end);
+    foot.position.copy(foot.parent.worldToLocal(GV.F)); foot.updateMatrixWorld(true);
+  });
+}
 /* ---------- the toy head ---------- */
 // the old head in head-bone space: the bind-pose box of skin vertices weighted to the Head bone
 function skullBox(THREE, root, head){
@@ -215,6 +335,40 @@ function skullBox(THREE, root, head){
   return box.isEmpty() ? null : box;
 }
 
+// [realism perf] People were never frustum-culled (a skinned mesh's bounds are its bind pose, so they were switched off
+// wholesale): every person drew, and cast, from behind the camera too. A sub-mesh's own bind sphere does not hold its
+// posed limbs (a sprinting shoe or a seated rider's hand swings 20-40 cm past it), so every skinned part of one person
+// gets the same sphere: the whole body's, centred on the bind hips, radius the body's largest bind extent (about 1.7 m;
+// measured over every clip, the wave's raised hand needs 0.98 of it, a stride, a seat's legs out front and IK grips
+// less). Seats move o, never the hips, so the sphere follows the body.
+var CULL_PAD = 1.5;
+function cullable(THREE, root){
+  root.updateMatrixWorld(true);
+  var inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), rel = new THREE.Matrix4();
+  var box = new THREE.Box3(), gb = new THREE.Box3(), meshes = [], hips = null;
+  root.traverse(function(n){
+    if(n.isBone && !hips && /hips/i.test(n.name)){ hips = n; }
+    if(!n.isMesh){ return; }
+    n.frustumCulled = true;
+    if(!n.isSkinnedMesh){ return; }
+    if(!n.geometry.boundingBox){ n.geometry.computeBoundingBox(); }
+    rel.multiplyMatrices(inv, n.matrixWorld);
+    box.union(gb.copy(n.geometry.boundingBox).applyMatrix4(rel));
+    meshes.push(n);
+  });
+  if(!meshes.length || box.isEmpty()){ return; }
+  var c = hips ? hips.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv) : box.getCenter(new THREE.Vector3());
+  // CULL_PAD: the clips reach 0.98 of the bind extent from the hips (the wave's hand, a sprint's shoe); half as much
+  // again holds a pose wider than any clip (an exosuit's spread flight, a bigger emote, an IK reach), for a few more draws
+  var r = Math.max(box.max.y - box.min.y, box.max.x - box.min.x, box.max.z - box.min.z) * CULL_PAD;
+  var lc = new THREE.Vector3(), sc = new THREE.Vector3();
+  meshes.forEach(function(n){
+    rel.multiplyMatrices(inv, n.matrixWorld);
+    sc.setFromMatrixScale(rel);
+    lc.copy(c).applyMatrix4(rel.invert());
+    n.boundingSphere = new THREE.Sphere(lc.clone(), r / (Math.max(sc.x, sc.y, sc.z) || 1));
+  });
+}
 // geometry detail: 1 for your own and the people near you, less for crowds (crowdHead)
 var SEGK = 1;
 function sg(n){ return Math.max(6, Math.round(n * SEGK)); }
@@ -234,7 +388,16 @@ function skullGeo(THREE, rx, ry, rz, k){
   return g;
 }
 
-function toyHead(L, skull, spec, female){
+function toyHead(L, skull, spec, female, file){
+  // [load] build()'s heads: the geometry is made once per outfit and look, then shared (each person keeps its own
+  // materials); crowds (no file) get their own, which they merge and dispose
+  var hk = file ? [file, SEGK, spec[4] | 0, spec[5] | 0, spec[6] | 0, spec[7] === 1 ? 1 : 0, female ? 1 : 0].join("|") : null;
+  var rec = hk ? HEADG[hk] : null, G0 = GREC;
+  GREC = hk ? {list: rec || [], i: 0, replay: !!rec} : null;
+  try { return toyHead0(L, skull, spec, female); }
+  finally { if(hk && !rec){ HEADG[hk] = GREC.list; } GREC = G0; }
+}
+function toyHead0(L, skull, spec, female){
   var THREE = L.THREE, grp = new THREE.Group(); grp.name = "toy-head";
   var c = skull.getCenter(new THREE.Vector3()), sz = skull.getSize(new THREE.Vector3());
   var rx = sz.x * 0.5, ry = sz.y * 0.5, rz = sz.z * 0.44;
@@ -244,31 +407,41 @@ function toyHead(L, skull, spec, female){
   var skin = chrome ? new THREE.MeshStandardMaterial({color: "#c9d1db", roughness: 0.2, metalness: 0.9}) : mat(THREE, skinHex, 0.65);
   var hairM = mat(THREE, hairHex, 0.7), lit = spec[7] === 1;
   var eyeM = lit ? new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#5ff3ff", emissiveIntensity: 1.4}) : mat(THREE, "#2a1c16", 0.3);
-  var head = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, 1), skin); head.position.copy(c); grp.add(head);
+  var head = new THREE.Mesh(G(function(){ return skullGeo(THREE, rx, ry, rz, 1); }), skin); head.position.copy(c); grp.add(head);
   // a neck down into the collar (the pack's own neck went with its head)
-  var neck = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.36, rx * 0.42, ry * 0.9, 16), skin);
+  var neck = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(rx * 0.36, rx * 0.42, ry * 0.9, 16); }), skin);
   neck.position.copy(at(0, -1.05, -0.08)); grp.add(neck);
   [-1, 1].forEach(function(sx){
-    var eye = new THREE.Mesh(new THREE.SphereGeometry(1, sg(20), sg(14)), eyeM);
+    var eye = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(20), sg(14)); }), eyeM);
     eye.scale.set(rx * 0.11, ry * 0.15, rz * 0.06); eye.position.copy(at(sx * 0.36, -0.02, 0.93)); eye.rotation.y = sx * 0.35;
     grp.add(eye);
     if(!lit){
-      var glint = new THREE.Mesh(new THREE.SphereGeometry(1, sg(10), sg(8)), new THREE.MeshBasicMaterial({color: 0xffffff}));
+      var glint = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(10), sg(8)); }), new THREE.MeshBasicMaterial({color: 0xffffff}));
       glint.scale.setScalar(rx * 0.03); glint.position.copy(at(sx * 0.33, 0.04, 0.985)); grp.add(glint);
     }
-    var brow = new THREE.Mesh(new THREE.CapsuleGeometry(rx * 0.025, rx * 0.16, 4, 8), hairM);
+    var brow = new THREE.Mesh(G(function(){ return new THREE.CapsuleGeometry(rx * 0.025, rx * 0.16, 4, 8); }), hairM);
     brow.rotation.set(0, sx * 0.35, Math.PI / 2 + sx * 0.12); brow.position.copy(at(sx * 0.37, 0.24, 0.93)); grp.add(brow);
-    var ear = new THREE.Mesh(new THREE.SphereGeometry(1, sg(14), sg(10)), skin);
+    var ear = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(14), sg(10)); }), skin);
     ear.scale.set(rx * 0.08, ry * 0.17, rz * 0.13); ear.position.copy(at(sx * 0.98, -0.06, -0.05)); grp.add(ear);
   });
-  var nose = new THREE.Mesh(new THREE.SphereGeometry(1, sg(14), sg(10)), skin);
+  var nose = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(1, sg(14), sg(10)); }), skin);
   nose.scale.set(rx * 0.07, ry * 0.06, rz * 0.06); nose.position.copy(at(0, -0.22, 0.99)); grp.add(nose);
-  var mouth = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.09, rx * 0.017, 6, 16, Math.PI), mat(THREE, "#8a3b32", 0.5));
+  var mouth = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.09, rx * 0.017, 6, 16, Math.PI); }), mat(THREE, "#8a3b32", 0.5));
   mouth.rotation.set(-0.25, 0, Math.PI); mouth.scale.z = 0.3; mouth.position.copy(at(0, -0.40, 0.875)); grp.add(mouth);
   hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at);
   wear(THREE, grp, spec, at, rx, ry, rz, c);
-  grp.traverse(function(m){ if(m.isMesh){ m.castShadow = true; } });
+  // [realism perf] the skull casts the head's shadow (and the hair and hats, the bigger parts); eyes, glints, brows, ears,
+  // nose and mouth are each a shadow draw for a speck nobody sees
+  grp.traverse(function(m){ if(m.isMesh){ m.castShadow = m === head || m.material === hairM || (m.geometry.boundingSphere || (m.geometry.computeBoundingSphere(), m.geometry.boundingSphere)).radius*Math.max(m.scale.x, m.scale.y, m.scale.z) > rx*0.45; } });
   return {g: grp, c: c, rx: rx, ry: ry, rz: rz, skin: skin, hair: hairM};
+}
+
+// a toy-head geometry: made (and recorded) or, for a look made before, the recorded one in the same order
+var GREC = null;
+function G(make){
+  if(!GREC){ return make(); }
+  if(GREC.replay){ var g0 = GREC.list[GREC.i++]; if(g0){ return g0; } GREC.replay = false; }
+  var g = make(); g.userData.shared = true; GREC.list.push(g); return g;
 }
 
 // hairStyle: 0 own (women: fringe + tied ponytail; men: short crop), 1 shaved, 2 neon crest
@@ -285,26 +458,26 @@ function hairFor(THREE, grp, spec, female, hairM, c, rx, ry, rz, at){
   };
   var add = function(g, m){ var h = new THREE.Mesh(g, m || hairM); h.position.copy(c); grp.add(h); return h; };
   if(style === 1){
-    add(skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.012; }));
+    add(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.012; }); }));
     return;
   }
   if(style === 2){
     var neon = new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#5ff3ff", emissiveIntensity: 1.1, roughness: 0.4});
-    add(skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.01; }));
+    add(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return (d.z > 0.2 && d.y < 0.5) || d.y < -0.2 || (Math.abs(d.x) > 0.75 && d.y < 0.1) ? 0.95 : 1.01; }); }));
     for(var i = 0; i < 7; i++){
-      var t = i / 6, a = -0.6 + t * 2.3, spike = new THREE.Mesh(new THREE.ConeGeometry(rx * 0.12, ry * (0.42 - 0.1 * Math.abs(t - 0.4)), 8), neon);
+      var t = i / 6, a = -0.6 + t * 2.3, spike = new THREE.Mesh(G(function(){ return new THREE.ConeGeometry(rx * 0.12, ry * (0.42 - 0.1 * Math.abs(t - 0.4)), 8); }), neon);
       spike.position.set(c.x, c.y + Math.cos(a) * ry * 1.02, c.z + Math.sin(a) * rz * 1.02);
       spike.rotation.x = a; grp.add(spike);
     }
     return;
   }
-  add(shell(true, female ? -0.35 : -0.15));
+  add(G(function(){ return shell(true, female ? -0.35 : -0.15); }));
   if(female && hat !== 4 && hat !== 1){
     var pts = [];
     for(var j = 0; j <= 12; j++){ var u = j / 12; pts.push(new THREE.Vector2(Math.sin(Math.min(1, u * 1.6) * Math.PI * 0.5) * rx * 0.42 * (1 - u * 0.55) + 0.002, -u * ry * 1.2)); }
-    var tail = new THREE.Mesh(new THREE.LatheGeometry(pts, 18), hairM);
+    var tail = new THREE.Mesh(G(function(){ return new THREE.LatheGeometry(pts, 18); }), hairM);
     tail.position.copy(at(0, 0.48, -1.0)); tail.rotation.x = 0.75;
-    var tie = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.12, rx * 0.04, 8, 16), mat(THREE, "#2b2b30", 0.6));
+    var tie = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.12, rx * 0.04, 8, 16); }), mat(THREE, "#2b2b30", 0.6));
     tie.position.copy(tail.position); tie.rotation.x = Math.PI / 2 + 0.75;
     grp.add(tail, tie);
   }
@@ -320,24 +493,24 @@ function wear(THREE, grp, spec, at, rx, ry, rz, c){
 function wear0(THREE, grp, spec, at, rx, ry, rz, c){
   var hw = spec[5] | 0, acc = spec[6] | 0, outfit = hexOf("outfitColor", spec[3]) || "#3f6fb3";
   if(hw === 1){
-    var beanie = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.18 ? 1.12 : 0.9; }), mat(THREE, outfit, 0.9));
+    var beanie = new THREE.Mesh(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.18 ? 1.12 : 0.9; }); }), mat(THREE, outfit, 0.9));
     beanie.position.copy(c); grp.add(beanie);
-    var cuff = new THREE.Mesh(new THREE.TorusGeometry(1, 0.09, 8, 32), mat(THREE, outfit, 0.9));
+    var cuff = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(1, 0.09, 8, 32); }), mat(THREE, outfit, 0.9));
     cuff.scale.set(rx * 1.08, rz * 1.08, ry * 0.9); cuff.rotation.x = Math.PI / 2; cuff.position.copy(at(0, 0.22, 0)); grp.add(cuff);
-    var pom = new THREE.Mesh(new THREE.SphereGeometry(rx * 0.16, sg(12), sg(10)), mat(THREE, "#f2f0ea", 1)); pom.position.copy(at(0, 1.18, 0)); grp.add(pom);
+    var pom = new THREE.Mesh(G(function(){ return new THREE.SphereGeometry(rx * 0.16, sg(12), sg(10)); }), mat(THREE, "#f2f0ea", 1)); pom.position.copy(at(0, 1.18, 0)); grp.add(pom);
   } else if(hw === 2){
-    var crown = new THREE.Mesh(skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.25 ? 1.1 : 0.9; }), mat(THREE, outfit, 0.8));
+    var crown = new THREE.Mesh(G(function(){ return skullGeo(THREE, rx, ry, rz, function(d){ return d.y > 0.25 ? 1.1 : 0.9; }); }), mat(THREE, outfit, 0.8));
     crown.position.copy(c); grp.add(crown);
-    var peak = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.62, rx * 0.62, ry * 0.035, 24, 1, false, -Math.PI / 2, Math.PI), mat(THREE, outfit, 0.8));
+    var peak = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(rx * 0.62, rx * 0.62, ry * 0.035, 24, 1, false, -Math.PI / 2, Math.PI); }), mat(THREE, outfit, 0.8));
     peak.position.copy(at(0, 0.28, 0.82)); peak.rotation.x = 0.12; grp.add(peak);
   } else if(hw === 3){
-    var band = new THREE.Mesh(new THREE.TorusGeometry(1, 0.06, 8, 40), mat(THREE, outfit, 0.8));
+    var band = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(1, 0.06, 8, 40); }), mat(THREE, outfit, 0.8));
     band.scale.set(rx * 1.09, rz * 1.09, ry); band.rotation.x = Math.PI / 2 - 0.12; band.position.copy(at(0, 0.38, 0.02)); grp.add(band);
   } else if(hw === 4){
-    var cone = new THREE.Mesh(new THREE.ConeGeometry(rx * 0.42, ry * 1.0, 20), mat(THREE, "#ff5fa2", 0.6));
+    var cone = new THREE.Mesh(G(function(){ return new THREE.ConeGeometry(rx * 0.42, ry * 1.0, 20); }), mat(THREE, "#ff5fa2", 0.6));
     cone.position.copy(at(0.15, 1.35, 0)); cone.rotation.z = -0.2; grp.add(cone);
   } else if(hw === 5){
-    var halo = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.75, rx * 0.04, 8, 40),
+    var halo = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.75, rx * 0.04, 8, 40); }),
       new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#5ff3ff", emissiveIntensity: 1.5}));
     halo.rotation.x = Math.PI / 2; halo.position.copy(at(0, 1.45, 0)); halo.userData.spin = true; grp.add(halo);
   }
@@ -345,14 +518,14 @@ function wear0(THREE, grp, spec, at, rx, ry, rz, c){
     var frame = mat(THREE, acc === 1 ? "#3b2a22" : "#111214", 0.4);
     var lens = acc === 2 ? new THREE.MeshStandardMaterial({color: "#141518", roughness: 0.1, metalness: 0.6}) : null;
     [-1, 1].forEach(function(sx){
-      var ring = new THREE.Mesh(new THREE.TorusGeometry(rx * 0.17, rx * 0.022, 8, 24), frame);
+      var ring = new THREE.Mesh(G(function(){ return new THREE.TorusGeometry(rx * 0.17, rx * 0.022, 8, 24); }), frame);
       ring.position.copy(at(sx * 0.36, -0.02, 1.02)); ring.rotation.y = sx * 0.3; ring.userData.face = true; grp.add(ring);
-      if(lens){ var l = new THREE.Mesh(new THREE.CircleGeometry(rx * 0.16, 20), lens); l.position.copy(ring.position); l.rotation.y = sx * 0.3; l.userData.face = true; grp.add(l); }
+      if(lens){ var l = new THREE.Mesh(G(function(){ return new THREE.CircleGeometry(rx * 0.16, 20); }), lens); l.position.copy(ring.position); l.rotation.y = sx * 0.3; l.userData.face = true; grp.add(l); }
     });
-    var bridge = new THREE.Mesh(new THREE.CylinderGeometry(rx * 0.015, rx * 0.015, rx * 0.36, 6), frame);
+    var bridge = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(rx * 0.015, rx * 0.015, rx * 0.36, 6); }), frame);
     bridge.rotation.z = Math.PI / 2; bridge.position.copy(at(0, 0.0, 1.06)); bridge.userData.face = true; grp.add(bridge);
   } else if(acc === 3){
-    var visor = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, ry * 0.26, 32, 1, true, -1.1, 2.2),
+    var visor = new THREE.Mesh(G(function(){ return new THREE.CylinderGeometry(1, 1, ry * 0.26, 32, 1, true, -1.1, 2.2); }),
       new THREE.MeshStandardMaterial({color: "#5ff3ff", emissive: "#2aa9c9", emissiveIntensity: 0.9, transparent: true, opacity: 0.6, side: THREE.DoubleSide}));
     visor.scale.set(rx * 1.04, 1, rz * 1.06); visor.rotation.y = Math.PI / 2; visor.position.copy(at(0, 0.0, 0)); visor.userData.face = true; grp.add(visor);
   }
@@ -364,6 +537,7 @@ function recolour(L, mesh, spec, file){
   var skin = hexOf("skin", spec[1]), chrome = spec[1] === 7, top = hexOf("outfitColor", spec[3]), tops = TOP[file] || [];
   var out = mats.map(function(m0){
     var m = m0.clone(), name = m.name || "";
+    if(m.vertexColors && !mesh.geometry.attributes.color){ m.vertexColors = false; }   // (plainWhite)
     m.flatShading = false; m.roughness = Math.max(0.55, m.roughness == null ? 0.7 : m.roughness); m.metalness = 0;
     if(/^skin/i.test(name)){
       if(chrome){ m.color.set("#c9d1db"); m.metalness = 0.9; m.roughness = 0.2; }
@@ -390,6 +564,19 @@ function soften(g){
     a[3].forEach(function(i){ n.setXYZ(i, a[0] / l, a[1] / l, a[2] / l); });
   });
   n.needsUpdate = true;
+}
+
+// [load] per-outfit caches (build): PREP[file] {geo: original geometry -> softened, skull, legLen}; SITS[file|scale] clip;
+// HEADG[look] the toy head's geometries, made once per outfit and look (toyHead)
+var PREP = {}, SITS = {}, HEADG = {};
+// a vertex colour that is plain opaque white everywhere changes nothing but costs a shader program of its own
+// (USE_COLOR, USE_COLOR_ALPHA): dropped, so every body part is drawn by the one skinned program
+function plainWhite(g){
+  var c = g.attributes.color; if(!c){ return; }
+  for(var i = 0; i < c.count; i++){
+    for(var k = 0; k < c.itemSize; k++){ if(Math.abs(c.getComponent(i, k) - 1) > 1e-3){ return; } }
+  }
+  g.deleteAttribute("color");
 }
 
 // a static clip from the current pose of the given bones (quaternions) and foot controls (positions)
@@ -441,25 +628,33 @@ function build(spec){
     return Promise.all([E.loadGlb(L, "people", file), animsOf(L)]).then(function(r){
       var THREE = L.THREE, gltf = r[0], clips = r[1];
       var model = L.clone(gltf.scene), bones = {}, heads = [];
+      // [load] per outfit, once: the softened body geometry (shared by everyone wearing it), the skull, the legs
+      var pre = PREP[file] || (PREP[file] = {geo: new Map(), skull: undefined, legLen: null});
       model.traverse(function(n){
         if(n.isBone){ bones[n.name] = n; }
         if(n.isMesh){
           n.castShadow = true; n.frustumCulled = false;
           if(/head/i.test(n.name) || (n.parent && /head/i.test(n.parent.name))){ heads.push(n); return; }
-          n.geometry = n.geometry.clone(); soften(n.geometry); recolour(L, n, spec, file);
+          var g0 = n.geometry, g = pre.geo.get(g0);
+          if(!g){ g = g0.clone(); soften(g); plainWhite(g); g.userData.shared = true; pre.geo.set(g0, g); }
+          n.geometry = g; recolour(L, n, spec, file);
         }
       });
       model.updateMatrixWorld(true);
-      var legLen = {};
-      ["L", "R"].forEach(function(s){
-        var a = bones["LowerLeg" + s].getWorldPosition(new THREE.Vector3()), f = bones["Foot" + s].getWorldPosition(new THREE.Vector3());
-        legLen[s] = a.distanceTo(f) * 0.93;
-      });
-      var skull = skullBox(THREE, model, bones.Head), head = null;
+      var legLen = pre.legLen ? {L: pre.legLen.L, R: pre.legLen.R} : {};
+      if(!pre.legLen){
+        ["L", "R"].forEach(function(s){
+          var a = bones["LowerLeg" + s].getWorldPosition(new THREE.Vector3()), f = bones["Foot" + s].getWorldPosition(new THREE.Vector3());
+          legLen[s] = a.distanceTo(f) * 0.93;
+        });
+        pre.legLen = {L: legLen.L, R: legLen.R};
+      }
+      if(pre.skull === undefined){ pre.skull = skullBox(THREE, model, bones.Head); }
+      var skull = pre.skull ? pre.skull.clone() : null, head = null;
       heads.forEach(function(m){ m.visible = false; });
       if(bones.Head && skull){
         bones.Head.scale.setScalar(HEAD_K);
-        head = toyHead(L, skull, spec, female);
+        head = toyHead(L, skull, spec, female, file);
         bones.Head.add(head.g);
       }
       ["WristL", "WristR"].forEach(function(b){ if(bones[b]){ bones[b].scale.setScalar(1.12); } });
@@ -469,6 +664,7 @@ function build(spec){
       o.updateMatrixWorld(true);
       var box = new THREE.Box3().setFromObject(o, true), h = box.max.y - box.min.y || 1, k = CH_H / h;
       inner.scale.setScalar(k); inner.position.y = -box.min.y * k;
+      cullable(THREE, model);
       var mixer = new THREE.AnimationMixer(model), acts = {};
       // Posing on top of the clips (IK, seats, rails) must come off again before the next mixer step: three's mixer
       // writes a bone only when the clip's value changes, so a held clip (most of Idle, all of sit) never resets what
@@ -496,7 +692,12 @@ function build(spec){
           if(head && !E.calm()){ head.g.traverse(function(m){ if(m.userData.spin){ m.rotation.z = t * 1.2; } }); }
         }};
       var idle = THREE.AnimationClip.findByName(clips, "Idle");
-      if(idle){ try { acts.sit = mixer.clipAction(makeSit(ch, idle)); } catch(e){ /* no sit pose: standing fallback */ } }
+      if(idle){
+        // [load] the sit pose is the same for one outfit drawn at one scale (the scale differs only with a tall hat)
+        var sk = file + "|" + k.toFixed(6), sit = SITS[sk];
+        if(sit === undefined){ try { sit = makeSit(ch, idle); } catch(e){ sit = null; /* no sit pose: standing fallback */ } SITS[sk] = sit; }
+        if(sit){ acts.sit = mixer.clipAction(sit); }
+      }
       // IK world units scale with how big o is drawn; callers set ch.scaleW = o's world scale when they seat it
       return ch;
     });
@@ -635,6 +836,7 @@ function crowd(base, variant){
     o.traverse(function(n){ if(n.isBone){ bones[n.name] = n; } if(n.isMesh){ n.material = mat; n.frustumCulled = false; } });
     var hg = crowdHead(L, T, base, variant);
     if(hg && bones.Head){ var hm = new THREE.Mesh(hg, mat); hm.name = "crowd-head"; hm.castShadow = true; bones.Head.add(hm); }
+    cullable(THREE, o);
     var mixer = new THREE.AnimationMixer(model), acts = {};
     Object.keys(ANIM).forEach(function(n){ var cl = THREE.AnimationClip.findByName(T.clips, ANIM[n]); if(cl){ acts[n] = mixer.clipAction(cl); } });
     if(T.sit){ acts.sit = mixer.clipAction(T.sit); }
@@ -652,7 +854,8 @@ function crowd(base, variant){
 
 // the IK helpers need THREE, which arrives with the first build
 var IK = {seat: seat, reach: reach, grip: grip, hold: hold, hand: handFrame, leg: legTo, mark: mark, twoBone: null, aim: null};
-HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, crowd: crowd, build: function(spec){
+HQV.people3d = {FILES: FILES, FEMALE: FEMALE, TOP: TOP, CH_H: CH_H, ik: IK, crowd: crowd, GAIT: GAIT, gaitPlan: gaitPlan,
+  gaitDrive: gaitDrive, gaitPost: gaitPost, build: function(spec){
   return build(spec).then(function(ch){
     if(!IK.twoBone){ var K = ikLib(ch.L.THREE); IK.twoBone = K.twoBone; IK.aim = K.aim; }
     return ch;

@@ -265,15 +265,18 @@ function mountModel(c, pet){
   return B;
 }
 // the pet's pose from the ride: a dragon's wings (st.wing), a walker's gait at its speed (in its own size)
-function animate(B, st, t, dt, calm, breath){
+function animate(B, st, t, dt, calm, breath, vol){
   if(!B || !B.M || !HQV.hqPets) return;
   var ps = B.pst, sp = B.sp, v = Math.abs(+st.speed || 0), pv = v/(B.RS || 1);
   ps.yaw = +st.yaw || 0; ps.speed = pv; ps.wing = null;
   ps.agl = +st.agl || 0; ps.vy = +st.vy || 0; ps.leap = (+st.leapT || 0) > 0;   // the wyvern: its takeoff leap and its landing flare
-  if(B.rk === "dragon" && !st.ground){ ps.anim = "fly"; ps.wing = st.wing || "glide"; ps.ph += dt*3.2; }
+  ps.breath = false;
+  if(B.rk === "dragon" && !st.ground){ ps.anim = "fly"; ps.wing = st.wing || "glide"; ps.ph += dt*3.2; ps.breath = !!breath; }   // breathing on the wing: jaw open, wings still working
   else if(B.rk === "serpent"){ ps.anim = v > 0.3 ? "swim" : "float"; ps.wet = true; ps.ph += Math.max(0.6, pv)*dt*2.2; }
   else { ps.anim = breath ? "breath" : v > 0.25 ? (v > (st.walk || 4)*1.15 ? "run" : "walk") : "stand"; ps.ph += pv*dt*(sp.kind === "dino" ? 2.2 : 2.2); }
   HQV.hqPets.pose(B.M, ps, t, !!calm, null);
+  // its wingbeats (hqPets counts them, Mo.beats): yours at full, someone else's by how far (vol); none in Calm
+  if(B.M.beats !== B.lb){ B.lb = B.M.beats; var v2 = vol == null ? 1 : +vol || 0; if(!calm && v2 > 0.02 && HQV.hqPets.sfx) HQV.hqPets.sfx("wing", {vol: v2, size: 2}); }
 }
 // someone else's mount, from their presence: v (m/s across the ground), vy (m/s up), agl (m over the ground)
 function peerState(B, v, vy, agl){
@@ -286,10 +289,25 @@ function peerState(B, v, vy, agl){
 function breathe(F, B, st, dt, kind){
   if(!F || !B || !kind) return;
   if(B.M && B.M.fx) kind = BREATH[B.M.fx] || B.M.fx;                        // the wyvern breathes by its colour (fire, smoke, venom, ice)
-  B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return; B.acc = 0;
-  var m = B.mouth(), yaw = +st.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw), sp = Math.abs(+st.speed || 0) + 16;
-  F.emit(kind, m.x + fx*0.4, m.y, m.z + fz*0.4, 4, fx, fz, sp, 2.6, 0.7, (+st.vy || 0) - (st.pitch || 0)*6);
-  if(B.sp.fx === "storm" && F.zap && (Math.floor((st.t || 0)*9) % 3) === 0) F.zap(m.x + fx*3, m.y - 0.6, m.z + fz*3);
+  // a dragon you ride pours a real stream: a long, flared core on the jaw (seen from the chase camera behind, a short one
+  // read as a glow at the head) and puffs fed in at stations down it, by the ticks the frame covered (a slow frame pours
+  // as much as three fast ones); the wyvern and the others keep their short breath
+  var big = B.rk === "dragon", m = B.mouth(), yaw = +st.yaw || 0, fx = Math.sin(yaw), fz = Math.cos(yaw);
+  // (a dragon pours it down ahead onto the street, under the chase camera's line of sight: straight down the lens it read as a dot)
+  var dy = (big ? -0.42 : -0.12) - (+st.pitch || 0)*0.6, n = 1/Math.sqrt(1 + dy*dy), L = big ? 9 : 0, sp = Math.abs(+st.speed || 0) + (big ? 22 : 16);
+  if(F.jet){ if(big) F.jet(B, kind, m.x, m.y, m.z, fx*n, dy*n, fz*n, L, 1.4, 1.7); else F.jet(B, kind, m.x, m.y, m.z, fx, -0.1 - (+st.pitch || 0)*0.6, fz); }   // the core on the jaw, every frame (hqPets Fx)
+  B.acc = (B.acc || 0) + dt; if(B.acc < 1/45) return;
+  var tk = Math.min(4, Math.floor(B.acc*45)); B.acc = Math.min(1/45, B.acc - tk/45);
+  var lift = (+st.vy || 0) + (big ? dy*n*sp : -(st.pitch || 0)*6);
+  if(!big) F.emit(kind, m.x + fx*0.4, m.y, m.z + fz*0.4, 4*tk, fx, fz, sp, 2.6, 0.7, lift);
+  else {
+    var sub = kind === "fire" ? "ember" : kind === "ice" ? "snow" : kind, S = [[0.1, 9, 1, 3], [0.45, 7, 0.8, 4.4], [0.8, 5, 0.6, 5.6]];
+    for(var i = 0; i < S.length; i++){ var d = L*S[i][0], px = m.x + fx*n*d, py = m.y + dy*n*d, pz = m.z + fz*n*d;
+      F.emit(kind, px, py, pz, S[i][1]*tk, fx, fz, sp*n*S[i][2], S[i][3], 1 + i*0.1, lift*S[i][2]);
+      if(i === 1) F.emit(sub, px, py - 0.1, pz, 5*tk, fx, fz, sp*n*0.85, 5, 1.2, lift*0.7); }
+    if(kind === "fire") F.emit("smoke", m.x + fx*n*L, m.y + dy*n*L + 0.6, m.z + fz*n*L, 3*tk, fx, fz, sp*0.3, 4, 1.6, 1.6);   // the smoke rolling off its end
+  }
+  if(B.sp.fx === "storm" && F.zap && (Math.floor((st.t || 0)*9) % 3) === 0) F.zap(m.x + fx*(big ? 5 : 3), m.y - 0.6, m.z + fz*(big ? 5 : 3));
 }
 
 HQV.hqPetRide = {VEHICLES: VEHICLES, DINO: DINO, RIDE_DINO: RIDE_DINO, A_CODE: A_CODE, REACH: REACH, SERPENT_REACH: SERPENT_REACH,

@@ -370,7 +370,10 @@ class PetsEngine(unittest.TestCase):
         for sid, m in self.o["models"].items():
             self.assertLessEqual(m["meshes"], 6, sid)          # + its name tag: at most 7 draw calls a pet
             self.assertEqual(m["meshes"], m["drawn"], sid)
-            self.assertLessEqual(m["tris"], 4500, sid)
+            # a dragon is sculpted (the swept body, ridged horns, muscled limbs; mounts are seen close up): its own
+            # budget near, and its limbs and bits swap to lighter shapes far off (Mo.lod). The wyvern shares the drake build
+            # and its budget (one generator, one quality); every other pet keeps the 4,500 budget
+            self.assertLessEqual(m["tris"], 12000 if sid.endswith("dragon") or sid == "wyvern" else 4500, sid)
             self.assertTrue(m["finite"], sid)
             self.assertEqual(m["mat"], "MeshStandardMaterial", sid)
         M = self.o["models"]
@@ -422,7 +425,7 @@ class PetsEngine(unittest.TestCase):
         self.assertEqual(w["fx"], ["fire", "venom", "ice"])
         self.assertEqual(w["lodPosed"], 2, "far off it poses every fourth frame")
         self.assertLessEqual(self.o["models"]["wyvern"]["meshes"], 6)
-        self.assertLessEqual(self.o["models"]["wyvern"]["tris"], 4500)
+        self.assertLessEqual(self.o["models"]["wyvern"]["tris"], 12000)   # the dragons' build and budget (far: the light twins)
 
     def test_the_dragons(self):
         # the six dragons share the wyvern's drake build on four legs: forelegs, the veined membrane, a tail tip by element

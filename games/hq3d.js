@@ -3014,6 +3014,7 @@ function mount(el, api){
             pet: {id: r.p.id, name: r.p.name, sp: r.sp, breathT: 0}};
     avatar.hy = st.y; avatar.g.position.set(avatar.x, avatar.hy, avatar.z); avatar.g.rotation.y = avatar.yaw;
     if(PK && PK.setMounted) PK.setMounted(r.p.id);
+    if(rk === "dragon" && HQV.hqPets && HQV.hqPets.Fx && cur && cur.scene && !E.calm()) petFx();   // its breath's pool (and heat light) now, not mid-breath
     movedHere = true; E.sfx("go");
     driveHud(rk); rideUiSync(true);
     return true;
@@ -3044,6 +3045,8 @@ function mount(el, api){
     var k = PR.breathOf(ride.pet.sp, E.calm());
     if(!k){ if(api.announce) api.announce(E.calm() ? "Calm is on: no breath effects." : ride.pet.name + " has no breath to show."); return; }
     ride.pet.breathT = 1.4;
+    // the roar and the breath's sound (games/hqpets.js sfx: off in Calm and at 0% SFX volume)
+    var PS = HQV.hqPets; if(PS && PS.sfx){ if(PR.rideKind && PR.rideKind(ride.pet.sp) === "dragon") PS.sfx("roar", {size: 1.3}); PS.sfx("breath", {kind: k}); }
   }
   function petBreathStep(dt){
     var PR = HQV.hqPetRide, P = ride && ride.pet; if(!P || !PR || !(P.breathT > 0)) return false;
@@ -5330,7 +5333,7 @@ function mount(el, api){
             size: ride && ride.V && ride.V.size || 1,
             lean: ride && ride.lean ? ride.lean.rotation.z : EXO.fly ? exoLean() : 0, moving: !!keyMove,
             travelYaw: avatar.travelYaw != null ? avatar.travelYaw : null, turnRate: avatar.rate || 0,
-            boost: EXO.fly && EXO.fly.st.boosting ? 1 : 0};
+            boost: EXO.fly && EXO.fly.st.boosting ? 1 : 0, breath: !!(ride && ride.pet && ride.pet.breathT > 0)};
   }
   // Any key, click, wheel or pad input: the idle timer restarts and a cinematic hands back the camera.
   function noteInput(){
@@ -7320,7 +7323,7 @@ function mount(el, api){
         } else if(VEHICLES[vk].petride){             // [3.14] their pet's wings or gait, from how they move
           var pagl = P.th != null ? P.th - groundAt(P.x, P.z) : 0, pvy = dt > 0 && P.phy != null ? (P.hy - P.phy)/dt : 0; P.phy = P.hy;
           var pst = HQV.hqPetRide.peerState(P.bike, v, pvy, pagl); pst.yaw = P.yaw;
-          HQV.hqPetRide.animate(P.bike, pst, t || 0, dt, E.calm(), false);
+          HQV.hqPetRide.animate(P.bike, pst, t || 0, dt, E.calm(), false, avatar ? Math.max(0, 1 - Math.hypot((P.x || 0) - avatar.x, (P.z || 0) - avatar.z)/60)*0.7 : 0);   // (their wingbeats by how far)
         } else if(P.bike.roll) P.bike.roll(jump ? 0 : mv, P.steer);   // a catalogue vehicle's own wheels
         else (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
         var pl = E.calm() || baseKind(vk) === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;

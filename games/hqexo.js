@@ -666,6 +666,7 @@ function fin(v){ v = +v; return isFinite(v) ? v : 0; }
 function cl(v, a, b){ return v < a ? a : v > b ? b : v; }
 function bone(X, n){ return X.M.sk.bones[X.M.bi[n]]; }
 // the bank for a yaw rate (rad/s, + left) at a speed (m/s): + leans left, at most BANK_MAX either way
+function sm01(a, b, x){ var t = cl((fin(x) - a)/(b - a), 0, 1); return t*t*(3 - 2*t); }
 function bankFor(turn, speed){ return cl(fin(turn)*(Math.max(0, fin(speed))*BANK_K + 0.08), -BANK_MAX, BANK_MAX); }
 // the pose's targets for a flight state (pure, for tests): tilt (rad, the body toward horizontal), crouch 0..1, cruise
 // and boost weights, the legs' swing and splay, the arms' swing and spread, lead (the leading arm forward), thrust 0..1.3
@@ -674,7 +675,12 @@ function targets(fl, o){
   var c = m === "cruise" ? 1 : 0, ks = cl((sp - 15)/45, 0, 1), agl = fl && fl.agl != null && isFinite(+fl.agl) ? Math.max(0, +fl.agl) : 10;
   o.c = c; o.b = b ? 1 : 0; o.swim = m === "swim" ? 1 : 0;
   o.crouch = m === "landed" ? 1 : m === "hover" ? cl(1 - agl/1.6, 0, 1)*0.85 : 0;
-  o.tilt = m === "swim" ? PI/2 : m === "cruise" ? (b ? 1.5 : 1.22 + 0.14*ks) : m === "hover" ? 0.06 + cl(sp/15, 0, 1)*0.25 : 0;
+  // [3.41 realism] the lean is continuous in the speed (a hover leans in as it speeds up, a cruise flattens out from where the
+  // hover left off: no jump at the switch) and pitches with the real acceleration (fl.acc, m/s2: nose down speeding up,
+  // up braking); before, it jumped 0.31 -> 1.22 rad at 15 m/s and a slow spring dragged it there over ~2 s
+  var acc = fl && fl.acc != null ? cl(fin(fl.acc), -40, 40) : 0, mov = m === "cruise" || m === "hover";
+  o.tilt = m === "swim" ? PI/2 : m === "cruise" ? (b ? 1.5 : 0.86 + 0.36*sm01(15, 25, sp) + 0.14*ks) : m === "hover" ? 0.06 + 0.8*sm01(0, 15, sp) : 0;
+  if(mov && !b) o.tilt = cl(o.tilt + cl(acc*0.03, -0.3, 0.25), -0.2, 1.45);
   // the air brake (fl.brake 0..1, hqexoride's): up out of the dive, legs swung forward under you, arms flared like flaps
   var br = c ? cl(fin(fl.brake), 0, 1) : 0; o.brake = br;
   if(br) o.tilt -= br*0.62;
@@ -683,7 +689,10 @@ function targets(fl, o){
   o.armSw = c ? (b ? -0.3 : -0.22) + br*0.5 : 0.12 + o.crouch*0.25;
   o.armOut = c ? (b ? 0.05 : 0.13) + br*0.55 : 0.4 + o.crouch*0.15;
   o.lead = b ? 1 : 0;
-  o.thrust = m === "swim" || !m ? 0 : m === "landed" ? 0.2 : c ? (b ? 1.3 : 0.75 + 0.25*ks) : 0.45 + 0.1*cl(fin(fl.vs)/6, -1, 1);
+  // the flames follow the throttle the sim spools (fl.thr 0..1, yours): full on W, down to a pilot light coasting
+  var thr = fl && fl.thr != null && isFinite(+fl.thr) ? cl(+fl.thr, 0, 1) : null;
+  o.thrust = m === "swim" || !m ? 0 : m === "landed" ? 0.2 : c ? (b ? 1.3 : thr != null ? 0.35 + 0.55*thr + 0.15*ks : 0.75 + 0.25*ks)
+           : (thr != null ? 0.4 + 0.2*thr : 0.45) + 0.1*cl(fin(fl.vs)/6, -1, 1);
   // the humanoid's joints (rad; games/people3d.js): hipF the thighs forward of the body's line, knee its bend, ankle the
   // toes pointed, lsp the legs apart, aSw the arms forward (- back) and aOut out from the sides, elb the elbows' bend,
   // ext the wrists bent back (palms flat to the jet: down in a hover, back toward the feet in a cruise), land the feet planted
@@ -705,9 +714,10 @@ function sd(S, k, kv, goal, w, dt){
   S[k] = goal + (c + t)*e; S[kv] = (v - w*t)*e;
 }
 // hover <-> cruise blends slowly (c, tilt), the limbs a little faster; brake its own spring
-var SPR = [["c", 2.3], ["b", 3.5], ["swim", 4], ["crouch", 6], ["tilt", 2.6], ["legX", 4], ["splay", 4], ["armSw", 3.8], ["armOut", 3.8],
-           ["lead", 3.5], ["thrust", 6], ["bank", 4.5], ["climb", 3], ["slip", 3], ["brake", 4], ["w", 7],
-           ["land", 7], ["hipF", 4], ["knee", 5], ["ankle", 4], ["lsp", 4], ["aSw", 3.8], ["aOut", 3.8], ["elb", 4], ["ext", 4.5]];
+// [3.41 realism] all brisker (omega ~5-9, settling in 0.5-1 s, was 2.3-4.5: 1-2 s), so the body answers the stick, still no snap
+var SPR = [["c", 5], ["b", 6], ["swim", 5], ["crouch", 7], ["tilt", 7], ["legX", 6], ["splay", 6], ["armSw", 6], ["armOut", 6],
+           ["lead", 6], ["thrust", 9], ["bank", 7], ["climb", 6], ["slip", 5], ["brake", 6], ["w", 7],
+           ["land", 7], ["hipF", 6], ["knee", 6.5], ["ankle", 6], ["lsp", 6], ["aSw", 6], ["aOut", 6], ["elb", 6], ["ext", 6]];
 SPR.forEach(function(p){ p.push(p[0] + "v"); });          // its rate's key, made once
 function springs(){ var S = {}; SPR.forEach(function(p){ S[p[0]] = 0; S[p[2]] = 0; }); return S; }
 // a bone toward rest x Euler(x, y, z), by w of the way from where the clip left it
@@ -731,7 +741,8 @@ function pose(ch, t){
   S.mt = fin(S.mt) + (cl(mt, -4, 4) - fin(S.mt))*Math.min(1, dt*6); S.mv = fin(S.mv) + (cl(mv, -60, 60) - fin(S.mv))*Math.min(1, dt*4);
   var turn = on && fl.turn != null && isFinite(+fl.turn) ? +fl.turn : S.mt, vs = on && fl.vs != null && isFinite(+fl.vs) ? +fl.vs : S.mv;
   var sp = on ? Math.max(0, fin(fl.speed)) : 0;
-  TG.bank = on && m !== "swim" && m !== "landed" ? bankFor(turn, sp) : 0;
+  // the bank: the sim's own roll when it is given (yours: the body, the camera and the physics agree), else from the turn
+  TG.bank = on && m !== "swim" && m !== "landed" ? (fl.roll != null && isFinite(+fl.roll) ? cl(+fl.roll*1.1, -BANK_MAX, BANK_MAX) : bankFor(turn, sp)) : 0;
   TG.climb = m === "cruise" ? cl(Math.atan2(vs, Math.max(sp, 10)), -0.6, 0.6) : 0;
   TG.slip = m === "cruise" ? TG.bank*0.14*cl(sp/50, 0, 1) : 0;           // high speed: the nose a little into the turn, the body drifting out
   TG.w = on ? 1 : 0;

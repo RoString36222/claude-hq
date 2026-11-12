@@ -373,12 +373,33 @@ function portrait(spec, px){
     if(ch.rig === "uni"){ PR.cam.position.set(0.2, 0.67, 0.86); PR.cam.lookAt(0, 0.575, 0); }
     else { PR.cam.position.set(0.32, 0.6, 1.25); PR.cam.lookAt(0, 0.43, 0); }
     PR.cam.updateProjectionMatrix();
-    PR.r.setClearColor(0x000000, 0); PR.r.render(PR.S, PR.cam);
-    var c = document.createElement("canvas"); c.width = c.height = px;
-    var g = c.getContext("2d"); bgPaint(g, px, spec[8]); g.drawImage(PR.r.domElement, 0, 0, px, px);
-    PR.S.remove(ch.o);
-    ch.o.traverse(function(n){ if(n.isMesh){ n.geometry.dispose(); } });
-    return c.toDataURL("image/png");
+    return warmUp(PR.r, PR.S, PR.cam).then(function(){
+      PR.r.setClearColor(0x000000, 0); PR.r.render(PR.S, PR.cam);
+      var c = document.createElement("canvas"); c.width = c.height = px;
+      var g = c.getContext("2d"); bgPaint(g, px, spec[8]); g.drawImage(PR.r.domElement, 0, 0, px, px);
+      PR.S.remove(ch.o);
+      ch.o.traverse(function(n){ if(n.isMesh && !n.geometry.userData.shared){ n.geometry.dispose(); } });   // (games/people3d.js shares some per outfit)
+      return c.toDataURL("image/png");
+    });
+  });
+}
+// [load] the portrait's own GL context compiles its shaders off the main thread first (KHR_parallel_shader_compile),
+// each program's first use taken in its own short task: no 100+ ms frame per program, cold, when it is drawn
+function warmUp(r, S, cam){
+  var progs = [], par = false;
+  try {
+    par = !!r.getContext().getExtension("KHR_parallel_shader_compile");
+    r.compile(S, cam).forEach(function(m){ var p = r.properties.get(m).currentProgram; if(p && progs.indexOf(p) < 0){ progs.push(p); } });
+  } catch(e){ return Promise.resolve(); }
+  return new Promise(function(res){
+    var t0 = performance.now();
+    (function poll(){
+      for(var i = 0; i < progs.length; i++){
+        if(!par || progs[i].isReady()){ try { progs[i].getUniforms(); progs[i].getAttributes(); } catch(e){} progs.splice(i, 1); break; }
+      }
+      if(!progs.length || performance.now() - t0 > 6000){ res(); return; }
+      setTimeout(poll, par ? 8 : 0);
+    })();
   });
 }
 

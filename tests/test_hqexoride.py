@@ -72,6 +72,21 @@ import(url.pathToFileURL(root + "/games/vendor/three-module.js").href).then(func
       return function(){ calls.n++; }; }, set: function(o, k, v){ o[k] = v; return true; }}); }
   var canvas = {style: {}, getContext: function(){ return this._c || (this._c = ctx()); }};
   global.document = window.document = {createElement: function(){ return canvas; }};
+  // ---- [3.41 realism] drawn smoothly: per-frame movement of the drawn position (st.r) in a steady cruise, at 50 / 60 / 144 Hz
+  // and with a jittery clock, is the speed x that frame's time (the raw sim moves in whole 1/120 s sub-steps) ----
+  out.judder = [[50, 0], [60, 0], [144, 0], [60, 0.0003]].map(function(c){
+    var st = R.newState("sentinel", 0, 80, 0, 0), seed = 7, rnd = function(){ seed = (seed*16807) % 2147483647; return seed/2147483647; };
+    run(st, 6, {fwd: 1}, flat, 60);
+    var worst = 0, worstRaw = 0, n = 0, px = st.r.x, pz = st.r.z, rx = st.x, rz = st.z;
+    for(var i = 0; i < 300; i++){
+      var dt = 1/c[0] + (rnd() - 0.5)*2*c[1];
+      R.step(st, dt, {fwd: 1}, flat);
+      var want = st.speed*dt, d = Math.hypot(st.r.x - px, st.r.z - pz), dr = Math.hypot(st.x - rx, st.z - rz);
+      if(i > 3){ worst = Math.max(worst, Math.abs(d - want)/want); worstRaw = Math.max(worstRaw, Math.abs(dr - want)/want); n++; }
+      px = st.r.x; pz = st.r.z; rx = st.x; rz = st.z;
+    }
+    return {hz: c[0], worst: worst, worstRaw: worstRaw, speed: st.speed, mode: st.mode};
+  });
   var kids = [], box = {appendChild: function(c){ kids.push(c); c.parentNode = box; }, removeChild: function(c){ kids.splice(kids.indexOf(c), 1); },
     getBoundingClientRect: function(){ return {width: 800, height: 450}; }};
   window.THREE = THREE;
@@ -95,6 +110,14 @@ class ExoRide(unittest.TestCase):
         if r.returncode != 0:
             raise AssertionError(r.stderr[-3000:])
         cls.o = json.loads(r.stdout)
+
+    def test_drawn_position_does_not_judder(self):
+        # [3.41 realism] the sim steps in whole 1/120 s sub-steps (1 or 2 a frame); drawn between the last two by the clock's
+        # remainder (st.r), every frame moves by its own time's worth: within 3% at 50 / 60 / 144 Hz and a jittery clock
+        for j in self.o["judder"]:
+            self.assertEqual(j["mode"], "cruise", j)
+            self.assertLess(j["worst"], 0.03, j)
+        self.assertGreater(max(j["worstRaw"] for j in self.o["judder"]), 0.3)   # the raw sim position does judder
 
     def test_six_frames(self):
         self.assertEqual(self.o["frames"], ["sentinel", "strider", "bulwark", "abyss", "stratos", "flux"])

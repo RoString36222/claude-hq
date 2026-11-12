@@ -315,7 +315,10 @@ Builder.prototype.node = function(parent, name, x, y, z){
   var g = new this.T.Group(); if(name) g.name = name; g.position.set(x || 0, y || 0, z || 0);
   g.userData.parts = {}; parent.add(g); return g;
 };
+// [realism perf] FAR_ONLY: a far-only blueprint (build(.., {lod: 1})) keeps none of the near (LOD 0) parts
+var FAR_ONLY = false;
 Builder.prototype.put = function(node, mk, geo, col){
+  if(FAR_ONLY && !this.lod){ this.uvr = null; geo.dispose(); return geo; }
   var T = this.T, g = geo.index ? geo.toNonIndexed() : geo;
   if(g !== geo) geo.dispose();
   ["uv1", "uv2"].forEach(function(a){ if(g.attributes[a]) g.deleteAttribute(a); });
@@ -1224,7 +1227,7 @@ function buildCar(T, entry, st, d, G){
     zs = zs.filter(function(z){ return z >= zT && z <= zN; }).sort(function(a, b){ return a - b; });
     return zs.filter(function(z, k){ return !k || z - zs[k - 1] > 0.004; });
   };
-  var LODS = [0, 1];
+  var LODS = FAR_ONLY ? [1] : [0, 1];                          // [realism perf] a far-only blueprint skips the near loft
   LODS.forEach(function(lod){
     B.lod = lod;
     var zs = stations(lod), ring = secN(lod), under = [[-0.95, 0.06], [-0.8, 0.0], [0, -0.005], [0.8, 0.0], [0.95, 0.06]];
@@ -2000,13 +2003,31 @@ function shared(T){
 function keyOf(entry, st, d, k){ return [entry.id || "?", st.kind, st.type, st.brand, st.ev ? 1 : 0, d.lengthM, d.widthM, d.heightM, d.wheelbaseM, k].join("|"); }
 // [3.13] a blueprint per catalogue entry and tuned geometry (rims, rim colour, size, wing, exhaust, two-tone parts): a
 // stock vehicle keys as it always did, so every untuned copy still shares one
-function blueprint(T, entry, G){
+// [realism perf] far: only the far (LOD 1) parts, its own key (the Dealership's turntables, a first look while the full
+// one waits for an idle moment): ~a third of the work and none of the near geometry kept
+function blueprint(T, entry, G, far){
   G = G || GEO0;
-  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : ""), BP = store(T).bp;
+  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(G), key = keyOf(entry, st, d, k) + (sig ? "|t:" + sig : "") + (far ? "|far" : ""), BP = store(T).bp;
   if(BP[key]) return BP[key];
-  var bp = st.kind === "bike" ? buildBike(T, entry, st, d, G)
-    : st.type === "formula" ? buildFormula(T, entry, st, d) : buildCar(T, entry, st, d, G);
-  return (BP[key] = {st: st, d: d, k: k, bp: k === 1 ? bp : scaled(bp, k)});
+  var bp;
+  FAR_ONLY = !!far;
+  try { bp = st.kind === "bike" ? buildBike(T, entry, st, d, G)
+    : st.type === "formula" ? buildFormula(T, entry, st, d) : buildCar(T, entry, st, d, G); }
+  finally { FAR_ONLY = false; }
+  return (BP[key] = {st: st, d: d, k: k, far: !!far, bp: k === 1 ? bp : scaled(bp, k)});
+}
+// [realism perf] make the full blueprint now (an idle moment), so a build of it later is only a clone. -> true if made
+function warm(c, entry, tune){
+  var T = c && c.Mesh ? c : c && c.THREE;
+  if(!T || !entry || isStarter(entry) || hasBlueprint(T, entry, tune)) return false;
+  blueprint(T, entry, geoOf(tune || null, styleOf(entry).kind));
+  return true;
+}
+// [realism perf] is the full blueprint for this entry (and tune) made yet? (a build of it is then a clone: ~0.1 ms)
+function hasBlueprint(T, entry, tune){
+  if(!T || !entry || isStarter(entry)) return true;
+  var st = styleOf(entry), d = dims(entry), k = scaleOf(entry), sig = geoSig(geoOf(tune || null, st.kind));
+  return !!store(T).bp[keyOf(entry, st, d, k) + (sig ? "|t:" + sig : "")];
 }
 
 /* ---------- [3.13] tuning (games/hqtuning.js, the Tuning shop) ----------
@@ -2188,8 +2209,8 @@ function build(c, entry, paint, opts){
     if(!bike && c.car) sr = c.car(paintOf(entry, paint), opts.accent, tune && plateClean(tune.plate) ? plateClean(tune.plate) : opts.plate);
     if(sr){ if(tune) tuneStarter(T, sr, tune, bike ? "bike" : "car"); return sr; }
   }
-  var kind0 = styleOf(entry || {}).kind, G = geoOf(tune, kind0);
-  var B = blueprint(T, entry || {}, G), bp = B.bp, M = shared(T);
+  var kind0 = styleOf(entry || {}).kind, G = geoOf(tune, kind0), farOnly = opts.lod === 1;
+  var B = blueprint(T, entry || {}, G, farOnly), bp = B.bp, M = shared(T);
   var g = bp.g.clone(true);
   var pm = new (T.MeshPhysicalMaterial || T.MeshStandardMaterial)({color: paintOf(entry, paint), metalness: 0.55, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.08});
   pm.userData.paint = true;
@@ -2237,6 +2258,7 @@ function build(c, entry, paint, opts){
   }
   // the material half of a new tune, live (the Tuning shop's preview); geometry changes need a new build (sameGeo says)
   rig.setTune = function(t2){ if(!rig.tuneGeo || geoSig(geoOf(t2, rig.kind)) !== geoSig(rig.tuneGeo) || !!plateClean(t2 && t2.plate) !== !!rig.plateMesh) return false; tuneMats(T, rig, t2 || {}, rig.baseHex != null ? rig.baseHex : paintOf(entry, paint)); return true; };
+  if(farOnly){ rig.setLod(1); rig.lodLock = true; rig.farOnly = true; }   // no near model to switch to
   g.userData.rig = rig; g.name = "vehicle:" + ((entry && entry.id) || "?");
   var m3 = entry && entry.model3d;
   if(m3 && m3.file){
@@ -2366,7 +2388,7 @@ function triangles(rig, lod){ var t = 0; ((lod ? rig.lodMeshes : rig.meshes) || 
 function drawCalls(rig, lod){ return ((lod ? rig.lodMeshes : rig.meshes) || []).length; }
 function clearCache(T){ var BP = store(T).bp; Object.keys(BP).forEach(function(k){ BP[k].bp.g.traverse(function(o){ if(o.isMesh) o.geometry.dispose(); }); delete BP[k]; }); }
 
-HQV.hqVehicleModels = {build: build, dims: dims, shown: shown, scaleOf: scaleOf, SCALE: SCALE, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
+HQV.hqVehicleModels = {build: build, hasBlueprint: hasBlueprint, warm: warm, dims: dims, shown: shown, scaleOf: scaleOf, SCALE: SCALE, styleOf: styleOf, triangles: triangles, drawCalls: drawCalls, clearCache: clearCache,
                        DIMS: DIMS, CAR: CAR, BIKE: BIKE,
                        // [3.13] tuning: the geometry a tune picks (sameGeo: can setTune apply it live?), a starter's tune
                        geoOf: geoOf, geoSig: geoSig, sameGeo: function(a, b, kind){ return geoSig(geoOf(a, kind)) === geoSig(geoOf(b, kind)); },

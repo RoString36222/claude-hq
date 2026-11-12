@@ -491,7 +491,13 @@ function chasePose(s, mode, T, dt, q){
   var P = _.piv;
   ["x", "y", "z"].forEach(function(a){ var r = spring(P[a], P["v" + a], H[a], PIVOT_W, dt); P[a] = r[0]; P["v" + a] = r[1]; });
   var dx = P.x - H.x, dy = P.y - H.y, dz = P.z - H.z, dl = Math.sqrt(dx*dx + dy*dy + dz*dz);
-  if(dl > PIVOT_MAX){ k = PIVOT_MAX/dl; P.x = H.x + dx*k; P.y = H.y + dy*k; P.z = H.z + dz*k; }
+  // [3.41 realism] held at PIVOT_MAX it moves with the head, so its rate is the head's: a spring left carrying its own (larger,
+  // built up while clamped) rate overshot the head when you stopped or turned
+  if(dl > PIVOT_MAX){
+    k = PIVOT_MAX/dl; P.x = H.x + dx*k; P.y = H.y + dy*k; P.z = H.z + dz*k;
+    if(_.hp && dt > 0 && Math.abs(H.x - _.hp.x) + Math.abs(H.y - _.hp.y) + Math.abs(H.z - _.hp.z) < 300*dt){ P.vx = (H.x - _.hp.x)/dt; P.vy = (H.y - _.hp.y)/dt; P.vz = (H.z - _.hp.z)/dt; }
+  }
+  _.hp = {x: H.x, y: H.y, z: H.z};
   // the look-ahead: a vector along the heading, min(3, 0.3 speed) long, on its own spring
   var al = Math.min(AHEAD_MAX, T.speed*AHEAD_K), hf = rotYaw(0, 1, _.head);
   if(!_.ahead) _.ahead = {x: hf.x*al, z: hf.z*al, vx: 0, vz: 0};

@@ -111,6 +111,11 @@ function run(T, X, pool, specs, S0){
   out.tg = {hover: X.targets({mode: "hover", speed: 0, agl: 8}), cruise: X.targets({mode: "cruise", speed: 40}), fast: X.targets({mode: "cruise", speed: 200}),
             boost: X.targets({mode: "cruise", speed: 80, boost: true}), landed: X.targets({mode: "landed"}), low: X.targets({mode: "hover", agl: 0.2}),
             none: X.targets(null), odd: X.targets({mode: "cruise", speed: NaN, agl: "x", vs: Infinity, boost: "yes"})};
+  // [3.41 realism] continuous: hover just under the switch vs cruise just over it; the flames by the throttle; the lean by the acceleration
+  out.tgCont = {h: X.targets({mode: "hover", speed: 14.9}).tilt, c: X.targets({mode: "cruise", speed: 15.1}).tilt,
+                coast: X.targets({mode: "cruise", speed: 40, thr: 0}).thrust, full: X.targets({mode: "cruise", speed: 40, thr: 1}).thrust,
+                acc: X.targets({mode: "cruise", speed: 40, acc: 6}).tilt, dec: X.targets({mode: "cruise", speed: 40, acc: -6}).tilt,
+                still: X.targets({mode: "cruise", speed: 40}).tilt};
   out.bank = [X.BANK_MAX, X.bankFor(9, 300), X.bankFor(-9, 300), X.bankFor(0.5, 60), X.bankFor(0.5, 0), X.bankFor(NaN, NaN), X.bankFor(Infinity, 1), X.bankFor(1, -Infinity)];
   out.fx = {}; out.joints = {};
   X.FRAMES.forEach(function(F, fi){
@@ -301,6 +306,13 @@ class ExoBudget(unittest.TestCase):
             self.assertAlmostEqual(r["footShin"], j["hover"]["footShin"], delta=0.01, msg=m + ": the foot stays on the shin")
         self.assertGreater(j["hover"]["bodyUp"][1], 0.95, "hover: upright")
         self.assertGreater(j["boost"]["bodyUp"][2], j["cruise"]["bodyUp"][2], "boost: flatter than a cruise")
+
+    def test_flight_pose_is_continuous_and_follows_the_sim(self):
+        c = self.o["tgCont"]
+        self.assertLess(abs(c["h"] - c["c"]), 0.12, c)              # no jump at the hover / cruise switch (was 0.9 rad)
+        self.assertLess(c["coast"], c["full"] - 0.3, c)              # coasting: the flames die down with the throttle
+        self.assertGreater(c["acc"], c["still"] + 0.1, c)            # speeding up leans in
+        self.assertLess(c["dec"], c["still"] - 0.1, c)               # slowing down sits up
 
     def test_the_bank_is_limited(self):
         b = self.o["bank"]

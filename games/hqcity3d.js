@@ -828,7 +828,7 @@ HQV.hqWorlds.city3d = function(c, w){
   var staticG = new THREE.Group(), hqG = new THREE.Group();
   var hqs = [], views = [], civic = [], freeLots = [], freeMarks = [];   // placed things (entries below); freeMarks: the free lots' marks
   var lampGlows = [], parkBikes = [], bikes = [], cars = [];
-  var fount = null, skate = null, plaza = {x: 0, y: 0, z: 0}, sig = null;
+  var fount = null, skate = null, plaza = {x: 0, y: 0, z: 0}, sig = null, built = false;   // built: the first HQs are up (later ones wait for their shaders: build)
   var bIdx = null;                                      // building lots by 64 m bucket: [{id, min, max}]
   // Cities (a v2 world): which world, whose, how grown, and what runs on it
   var COMMONS = HQV.hqCity3d.COMMONS;     // (shadows the module's: the Commons this City is on, claude-hq@2 on an older Arena)
@@ -1167,10 +1167,21 @@ HQV.hqWorlds.city3d = function(c, w){
       next.push(E); made.push(E);
     });
     forceYou = false;
-    Object.keys(old).forEach(function(id){ unbuild(old[id]); });
+    // [load] HQs built while you are in the City (a new look, a level, a moved garage) show once their shaders are linked
+    // (off the main thread, games/hq3d.js warm): until then the ones they replace stay up, so no frame stalls on them
+    var gone = Object.keys(old).map(function(id){ return old[id]; }), late = built && made.length && c.warm ? made : null;
+    if(!late) gone.forEach(unbuild);
     hqs = next;
     made.forEach(building);
+    built = true;
     fadePrep(made);
+    if(late){                                    // (after fadePrep: their faded materials are what is drawn)
+      late.forEach(function(E){ E.g.visible = false; });
+      Promise.all(late.map(function(E){ return c.warm(E.g, S); })).then(null, function(){}).then(function(){
+        gone.forEach(function(E){ if(E.g.parent) unbuild(E); });
+        late.forEach(function(E){ if(E.g.parent) E.g.visible = true; });
+      });
+    }
     lampGlows = []; bikes = parkBikes.slice(); if(skate) skate.boards.forEach(function(b){ bikes.push(b); });
     boats.forEach(function(b){ bikes.push(b); });
     hqs.forEach(function(E){ E.glows.forEach(function(gl){ lampGlows.push(gl); }); E.items.forEach(function(b){ bikes.push(b); }); });

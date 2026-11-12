@@ -99,7 +99,10 @@ function wrapPi(a){ a = +a || 0; return Math.atan2(Math.sin(a), Math.cos(a)); }
 // walking forward turns you to face where a dragged (orbited) camera looks (HQ 3.2: the mouse steers while you walk).
 // 3.2 turns faster (3.6 rad/s, was 2.4) on a snappier spring (omega 18, was 10): the old turn read as sluggish
 // next to the minimap, which turned with your facing at once.
-var FOOT = {walk: 7, run: 10, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
+// HQ 3.41: 5.5 m/s (W) and 8 (Shift), down from 7 and 10: the people's legs (games/people3d.js's gait: the Run clip's
+// 2 m stride, lengthened to 2.7 / 2.9 m) pace those with a runner's cadence (2.0 and 2.8 strides a second); at 7 / 10
+// the old clip rates had the planted foot gliding at 83% of your speed, and rates that keep up would blur the legs.
+var FOOT = {walk: 5.5, run: 8, back: 0.65, turn: 3.6, turnW: 18, speedW: 12, steer: 6, aboutW: 9};
 // Where you are headed: facing while going forward or turning, facing + PI while stepping back. Standing still it
 // stays your facing if that is where you were last headed (prev: the last travelYaw), so the camera finishes
 // swinging in behind you after you turn on the spot; after a back-step (prev ~ facing + PI) or from a standstill: null
@@ -112,7 +115,7 @@ function travelYawOf(yaw, speed, rate, prev){
 }
 // One body-relative step on foot (chase family). st = {yaw, rate, rateV, speed (signed), speedV, travelYaw?, aboutV?,
 // faceGoal?, faceOff?}; inp = {fwd: -1..1 (W +, S -), turn: -1..1 (A +, turns left), run, face?}. The turn rate springs
-// toward +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward 7 / 10 m/s forward.
+// toward +-FOOT.turn rad/s and the yaw integrates it; the speed springs toward FOOT.walk / FOOT.run m/s forward.
 // S walks you toward the camera (HQ 3.3.1, as in most third-person games): you turn to face it -- inp.face, the
 // camera's heading + PI (else your facing + PI, latched when S went down) -- on a critically damped spring
 // (FOOT.aboutW: eases in and out, no overshoot), and walk forward out of the turn, faster the more you face it.
@@ -1263,7 +1266,7 @@ function mount(el, api){
     var p = warmAsync(ch.o, cur.scene); warmPeople.push(p);
     return p.then(function(){ var i = warmPeople.indexOf(p); if(i >= 0) warmPeople.splice(i, 1); if(inst.alive) onReady(ch); });
   }
-  var LOCO = ["idle", "walk", "sprint"];
+  var LOCO = ["idle", "walk", "sprint", "back", "left", "right"];
   function setAnim(ch, n, speed){
     if(!ch || !ch.acts[n]) return;
     if(ch.cur !== n){
@@ -1283,9 +1286,31 @@ function mount(el, api){
   }
   // On foot: the locomotion blend (locoWeights), its weights eased (omega 10) so a change of pace crossfades, the
   // sprint's phase locked to the walk's so the two never fight. A character with no walk clip: setAnim as before.
-  function locomote(ch, speed, rate, dt, runWant, goWant){
+  // HQ 3.41: the people (rig "uni") take games/people3d.js's gait instead: the clips' measured strides, one phase for
+  // every clip (no scissoring), the run's stride lengthened past a jog, and the way you move relative to your facing
+  // (rel, rad: 0 ahead, +PI/2 to your left, PI back) picking forward / back / sideways clips. speed should be the
+  // ground you really covered (m/s).
+  function locomote(ch, speed, rate, dt, runWant, goWant, rel){
     if(!ch) return;
     if(!ch.acts.walk || !ch.acts.idle){ setAnim(ch, Math.abs(speed) > 0.3 ? "walk" : "idle", Math.abs(speed) > 0.3 ? speed/FOOT.walk : 1); return; }
+    var P3 = HQV.people3d;
+    if(ch.rig === "uni" && P3 && P3.gaitDrive){
+      var sz = ch.base > 0 && ch.o ? (ch.o.scale.x/ch.base) || 1 : 1, gv = Math.abs(+speed || 0)/sz;
+      var gr = rel != null && isFinite(rel) ? +rel : (speed < 0 ? PI : 0), G = P3.gaitPlan(gv, gr, rate);
+      G.rel = gr;
+      ch._runWant = runWant == null ? G.sprint : (runWant && G.sprint > 0.01 ? 1 : 0);
+      ch._goWant = goWant == null ? 1 : (goWant ? 1 : 0);
+      ch._spd = speed;
+      if(ch.cur !== "loco"){
+        var was0 = ch.cur, L0 = {idle: 0, walk: 0, sprint: 0, back: 0, left: 0, right: 0};
+        if(was0 && LOCO.indexOf(was0) >= 0) L0[was0] = 1;
+        else if(was0 && ch.acts[was0]) ch.acts[was0].fadeOut(0.25);
+        if(!was0) L0.idle = 1;
+        ch.loco = L0; ch.cur = "loco";
+      }
+      P3.gaitDrive(ch, G, dt);
+      return;
+    }
     var W = locoWeights(speed, rate);
     // RAW intents, before the crossfade: what the KEYS say. The eased weights
     // below take ~0.3 s to fall, which is the latency the player feels after
@@ -2590,7 +2615,9 @@ function mount(el, api){
     var yaw0 = avatar.yaw;
     if(EXO.auto && (inp.fwd || inp.back || inp.left || inp.right)) exoAutoCancel("Auto-dock off: you have the suit.");
     if(EXO.auto) exoAutoStep(st, dt); else R.step(st, dt, inp, exoEnv());
-    avatar.x = st.x; avatar.z = st.z; avatar.yaw = wrapPi(st.yaw - PI); avatar.hy = st.y; avatar.hyV = 0;
+    // [3.41 realism] drawn between the sim's last two fixed sub-steps (hqexoride st.r): no judder from 1-or-2 sub-steps a frame
+    var rs = !EXO.auto && st.r ? st.r : st;
+    avatar.x = rs.x; avatar.z = rs.z; avatar.yaw = wrapPi(rs.yaw - PI); avatar.hy = rs.y; avatar.hyV = 0;
     avatar.rate += ((dt > 0 ? wrapPi(avatar.yaw - yaw0)/dt : 0) - avatar.rate)*ease(10, dt);
     avatar.speed = st.speed; avatar.travelYaw = st.speed > 0.5 ? avatar.yaw : null; avatar.pitch = st.pitch || 0;
     keyMove = st.mode !== "landed" || inp.fwd || inp.back; keyRun = false; movedHere = true;
@@ -2602,6 +2629,11 @@ function mount(el, api){
       setAnim(avatar.ch, "idle");
       var fy = avatar.ch._fly || (avatar.ch._fly = {});
       fy.mode = st.mode; fy.speed = st.speed; fy.boost = !!st.boosting; fy.turn = st.yr || 0; fy.vs = st.vs; fy.agl = st.agl; fy.brake = st.brake || 0;
+      // [3.41 realism] what the sim really does, for the pose: its spooled throttle (the flames), its roll (the bank) and the
+      // acceleration (the lean), smoothed a touch (omega 10) so a sub-step's step does not flicker
+      fy.thr = EXO.auto ? null : st.thr; fy.roll = EXO.auto ? null : rs.roll;
+      var fa = dt > 0 && fy.pv != null ? (st.speed - fy.pv)/dt : 0; fy.pv = st.speed;
+      fy.acc = (fy.acc || 0) + (E.clamp(fa, -40, 40) - (fy.acc || 0))*ease(10, dt);
       fy.spin = sp ? sp.d*2*PI*smooth01(sp.t/0.75) : 0;
     }
     view.goal.set(avatar.x*(cur.follow || 1), avatar.hy + (cur.camY || 1.4), avatar.z*(cur.follow || 1));
@@ -4929,7 +4961,7 @@ function mount(el, api){
     }
     avatar.travelYaw = avatar.tyStep ? avatar.tyChase : travelYawOf(avatar.yaw, avatar.speed, avatar.rate, avatar.travelYaw);
     avatar.tyStep = false;
-    var step = Math.abs(avatar.speed)*dt;
+    var gx0 = avatar.x, gz0 = avatar.z, step = Math.abs(avatar.speed)*dt;
     if(step && cur.camModes) step *= slopeFactor(slopeAlong(avatar.x, avatar.z, Math.atan2(dx, dz), 1.5), "foot");
     keyMove = Math.abs(avatar.speed) > 0.3; keyRun = keyMove && run; if(keyMove) movedHere = true;
     if(step > 0){
@@ -4941,6 +4973,9 @@ function mount(el, api){
       else if(!blocked(avatar.x, nz)) avatar.z = nz;
       else { avatar.speed = 0; avatar.sv = 0; keyMove = false; if(walkTo){ walkTo = null; walkDoor = null; } }   // a wall stops you
     }
+    // [3.41 realism] the ground really covered (after the slope and the walls): what the legs pace to, not the speed wanted
+    var gMoved = dt > 0 ? Math.hypot(avatar.x - gx0, avatar.z - gz0)/dt : 0, gSpd = Math.min(gMoved, Math.abs(avatar.speed));
+    var gRel = gMoved > 0.05 ? wrapPi(Math.atan2(avatar.x - gx0, avatar.z - gz0) - avatar.yaw) : avatar.speed < 0 ? PI : 0;
     // [3.16] a blast's push (gnKnock): a velocity of its own, slid along walls as a step is, dying away (slower in the air)
     if(GN.kx || GN.kz){
       var kx = avatar.x + GN.kx*dt, kz = avatar.z + GN.kz*dt, kd = Math.exp(-(avatar.airborne ? 1.5 : 6)*dt);
@@ -4953,7 +4988,7 @@ function mount(el, api){
     }
     // idle, walk and sprint blended by your pace, each at the rate your stride needs (backwards while you step back);
     // a lean into the turn and with the pace, the head into the turn
-    locomote(avatar.ch, avatar.speed, avatar.rate, dt, run, !!(fwd || side || walkTo));
+    locomote(avatar.ch, avatar.speed < 0 ? -gSpd : gSpd, avatar.rate, dt, run, !!(fwd || side || walkTo), gRel);
     if(keyMove) walkInto();
     leanStep(avatar.ch, avatar.lean || (avatar.lean = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), avatar.speed, avatar.rate, dt > 0 ? (avatar.speed - sp0)/dt : 0, dt, true);
     // Space hops: a little gravity so you come back down where you started.
@@ -6587,6 +6622,7 @@ function mount(el, api){
       headUndo(avatar.ch);
       railUndo(avatar.ch);
       avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t);
+      if(HQV.people3d && HQV.people3d.gaitPost) HQV.people3d.gaitPost(avatar.ch, dt);   // [3.41 realism] the longer stride, the planted feet (on foot only)
       if(avatar.rail && avatar.seat === "stand" && cur && cur.carry && cur.carry()) railApply(avatar.ch); else avatar.rail = false;   // [3.15] holding the rail
       if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
       else if(!ride && POOL.sb && peers[POOL.u] && avatar.ch.o.parent === peers[POOL.u].lean) ridePose(avatar.ch, POOL.sb, 0, peers[POOL.u].g);
@@ -7026,13 +7062,18 @@ function mount(el, api){
       // on foot: their pace from how fast they really move (smoothed), so the same blend as yours and no gliding
       var fv = P.sv != null ? (jump ? 0 : P.sv) : dt > 0 && !jump ? Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz))/dt : 0;
       var fr = P.syr != null ? (jump ? 0 : P.syr) : dt > 0 && P.pyaw != null && !jump ? wrapPi(P.yaw - P.pyaw)/dt : 0;
-      P.fs = (P.fs || 0) + ((P.a === 0 && fv < 0.5 ? 0 : Math.min(fv, 12)) - (P.fs || 0))*ease(8, dt);
-      P.fr = (P.fr || 0) + (fr - (P.fr || 0))*ease(8, dt);
+      // [3.41 realism] eased faster (omega 14, was 8) so their legs keep up as they speed up; and the way they move relative to
+      // their facing (P.frel: back / sideways clips), from where they really went
+      P.fs = (P.fs || 0) + ((P.a === 0 && fv < 0.5 ? 0 : Math.min(fv, 12)) - (P.fs || 0))*ease(14, dt);
+      P.fr = (P.fr || 0) + (fr - (P.fr || 0))*ease(14, dt);
+      var pmx = P.px == null ? 0 : P.x - P.px, pmz = P.pz == null ? 0 : P.z - P.pz;
+      if(dt > 0 && Math.hypot(pmx, pmz)/dt > 0.4){ var prel = wrapPi(Math.atan2(pmx, pmz) - (P.yaw || 0)); P.frel = P.frel == null ? prel : wrapPi(P.frel + wrapPi(prel - P.frel)*ease(10, dt)); }
       P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
       if(P.ch){
         headUndo(P.ch);
-        if(vk || P.ch._fly) setAnim(P.ch, "idle"); else locomote(P.ch, P.fs, P.fr, dt);   // [exo] a flying suit: no walking in the air
+        if(vk || P.ch._fly) setAnim(P.ch, "idle"); else locomote(P.ch, P.fs, P.fr, dt, null, null, P.frel);   // [exo] a flying suit: no walking in the air
         P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
+        if(!vk && HQV.people3d && HQV.people3d.gaitPost) HQV.people3d.gaitPost(P.ch, dt);
         if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
         else if(!vk){ leanStep(P.ch, P.lean2 || (P.lean2 = {r: 0, rv: 0, p: 0, pv: 0, h: 0, hv: 0}), P.fs, P.fr, 0, dt, true); headApply(P.ch, P.lean2.h); }
         boomStep(P.ch, !!(P.bb || boomLive[P.u]) && !vk, t, true);                      // their boombox, on foot

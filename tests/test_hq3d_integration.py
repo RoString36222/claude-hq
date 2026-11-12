@@ -185,7 +185,7 @@ class LoadOrderAndProtocol(unittest.TestCase):
         # a teleport (over 6 m from where they are drawn) lands at once; otherwise dead reckoning + a spring (HQ 3.2)
         self.assertRegex(place, r"Math\.hypot\(gx - P\.x, gz - P\.z, [^)]*\) > 6")
         self.assertIn("spring(P.x, P.sx || 0, gx, 10, dt)", place)
-        self.assertIn("locomote(P.ch, P.fs, P.fr, dt)", place)
+        self.assertIn("locomote(P.ch, P.fs, P.fr, dt, null, null, P.frel)", place)
         where = assigned_body(src, "inst.where")
         self.assertIn("cur.net || cur.name", where)
         self.assertIn("h: rigW ? avatar.g.position.y : null", where)
@@ -379,7 +379,7 @@ class Hq3dSource(unittest.TestCase):
         self.assertEqual(mv.count("rig.moveYaw"), 2)
         self.assertIn("face: fwd < 0 && avatar.faceGoal == null && rig.moveYaw != null ? wrapPi(rig.moveYaw + PI) : null", mv)
         # idle / walk / sprint blended by your signed pace (S plays it backwards), and the lean into turns (HQ 3.2)
-        self.assertIn("locomote(avatar.ch, avatar.speed, avatar.rate, dt, run, !!(fwd || side || walkTo))", mv)
+        self.assertIn("locomote(avatar.ch, avatar.speed < 0 ? -gSpd : gSpd, avatar.rate, dt, run, !!(fwd || side || walkTo), gRel)", mv)
         self.assertIn("leanStep(avatar.ch,", mv)
         # walking with a dragged camera turns you to face where it looks (camrig absorb)
         self.assertIn("HQV.camrig.absorb(rig, FOOT.steer*dt)", mv)
@@ -575,24 +575,24 @@ class Hq3dPure(unittest.TestCase):
     def test_mouse_steering_step(self):
         st = self.o["steer"]
         speed, mdx, mdz, yaw = st["w"]
-        self.assertAlmostEqual(speed, 7, delta=0.01)                                     # W: FOOT.walk along your facing
+        self.assertAlmostEqual(speed, 5.5, delta=0.01)                                     # W: FOOT.walk along your facing
         self.assertAlmostEqual(mdx, math.sin(0.5), places=6)
         self.assertAlmostEqual(mdz, math.cos(0.5), places=6)
         self.assertAlmostEqual(yaw, 0.5, places=9)                                       # never turns to face where you go
         speed, mdx, mdz, yaw = st["back"]
-        self.assertAlmostEqual(speed, -7*0.65, delta=0.01)                               # S: FOOT.back of the pace, signed
+        self.assertAlmostEqual(speed, -5.5*0.65, delta=0.01)                               # S: FOOT.back of the pace, signed
         self.assertAlmostEqual(mdx, math.sin(0.5), places=6)                             # (you go -md while it is negative)
         self.assertAlmostEqual(mdz, math.cos(0.5), places=6)
         self.assertAlmostEqual(yaw, 0.5, places=9)
         speed, mdx, mdz = st["left"]
-        self.assertAlmostEqual(speed, 7, delta=0.01)                                     # A: a step to your left
+        self.assertAlmostEqual(speed, 5.5, delta=0.01)                                     # A: a step to your left
         self.assertAlmostEqual(mdx, 1, places=6)
         self.assertAlmostEqual(mdz, 0, places=6)
         speed, mdx, mdz = st["coast"]
         self.assertGreater(speed, 0.5)                                                   # let go: you coast the same way
         self.assertLess(speed, 7)
         self.assertAlmostEqual(mdx, 1, places=6)
-        self.assertAlmostEqual(st["run"], 10, delta=0.02)
+        self.assertAlmostEqual(st["run"], 8, delta=0.02)
         self.assertAlmostEqual(st["turn"], 0.5, places=9)                                # the mouse's turn is the body's
         self.assertAlmostEqual(st["wrap"], 3.5 - 2*math.pi, places=9)
         self.assertEqual(st["junk"]["speed"], 0)
@@ -601,17 +601,17 @@ class Hq3dPure(unittest.TestCase):
         self.assertLess(self.o["wFirst"], 0.5)               # no instant 0 -> 7
         early, walk, sprint = self.o["w"]
         self.assertGreater(early, 1)
-        self.assertLess(early, 7)
-        self.assertAlmostEqual(walk, 7, delta=0.01)
-        self.assertAlmostEqual(sprint, 10, delta=0.02)
-        self.assertLess(self.o["stop"], 7)                    # eases down, not a hard stop
+        self.assertLess(early, 5.5)
+        self.assertAlmostEqual(walk, 5.5, delta=0.01)
+        self.assertAlmostEqual(sprint, 8, delta=0.02)
+        self.assertLess(self.o["stop"], 5.5)                  # eases down, not a hard stop
         self.assertGreater(self.o["stop"], 1)
 
     def test_s_walks_you_toward_the_camera(self):
         # HQ 3.3.1: S turns you to face the camera (critically damped, no overshoot) and walks you toward it while the
         # camera holds its heading (travelYaw null) and only backs up; it keeps holding through the release until W.
         speed, yaw, travel = self.o["back"]                                              # no inp.face: faces yaw0 + PI
-        self.assertAlmostEqual(speed, 7, delta=0.15)
+        self.assertAlmostEqual(speed, 5.5, delta=0.15)
         self.assertAlmostEqual(math.cos(yaw - (0.7 + math.pi)), 1, delta=1e-3)
         self.assertIsNone(travel)                                                         # the camera holds
         self.assertLessEqual(self.o["aboutMost"], math.pi + 0.01)                        # never turns past facing it

@@ -43,12 +43,14 @@ var CHAR_FILES = ["character-female-a", "character-male-a", "character-female-c"
 var CH_H = 0.72, BODY_H = 1.7;      // a character's model height (hq3d.js CH_H) and the drawn height (m)
 var AV = {player: 1.2, other: 0.7, max: 0.8, w: 7};   // avoidance: radii (m), the push cap (m), spring omega
 var TURN_K = 10;                    // the yaw's ease rate (1/s)
-var STRIDE = 1.5;                   // metres per walk cycle (both steps)
-var WALK_CLIP = 1.4;                // the walk clip's own pace (m/s): its timeScale is speed / this
+// [3.41 realism] the people's clips as measured (games/people3d.js GAIT, at the drawn 1.7 m): the Walk covers 1.43 m a cycle in
+// 1.667 s (0.86 m/s at rate 1), the Run 2.0 m in 1 s; the old 1.4 / 3.2 m/s paces had the planted foot sliding ~37%
+var STRIDE = 1.43;                  // metres per walk cycle (both steps)
+var WALK_CLIP = 0.86;               // the walk clip's own pace (m/s): its timeScale is speed / this
 var TINT = 0.32;                    // how far a near character's material leans toward the shirt colour
 var TALK_REACH = 3.2;
 var WARM_MS = 0.6;                  // route planning per frame (sim.warm), ms
-var JOG_STRIDE = 2.4, SPRINT_CLIP = 3.2;   // [crowds] metres per jog cycle; the sprint clip's own pace (m/s)
+var JOG_STRIDE = 2.0, SPRINT_CLIP = 2.0;   // [crowds] metres per jog cycle; the sprint clip's own pace (m/s)
 var SIT_SINK = 0.42;                // [crowds] a far body sitting: how far it sinks (no sit pose at that distance)
 var DOG_FAR = 80, MAX_DOGS = 48;    // [play-street] dogs (a walker's on its lead, a loose one) drawn within this of the camera, at most
 var DOG_COLS = [0x8a5a2b, 0xf0e6d2, 0x2b2b2b, 0xc89b5a, 0x6b4a2f, 0xdedede, 0xa0522d];
@@ -468,8 +470,9 @@ function create(THREE, parent, sim, opts){
       slot.ch.o.position.set(r.ax, r.y, r.az); slot.ch.o.rotation.y = slot.yaw;
       slot.ch.o.scale.setScalar(BODY_H/CH_H*(r.size > 0 ? +r.size : 1));
       var acts = slot.ch.acts || {};
-      if(r.anim === "walk" || (r.anim === "jog" && !acts.sprint)) setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP)/WALK_CLIP));
-      else if(r.anim === "jog") setAnim(slot.ch, "sprint", Math.max(0.5, (r.speed || SPRINT_CLIP)/SPRINT_CLIP));
+      var rsz = r.size > 0 ? +r.size : 1;                            // a bigger body's stride is longer: its legs go slower
+      if(r.anim === "walk" || (r.anim === "jog" && !acts.sprint)) setAnim(slot.ch, "walk", Math.max(0.5, (r.speed || WALK_CLIP*rsz)/(WALK_CLIP*rsz)));
+      else if(r.anim === "jog") setAnim(slot.ch, "sprint", Math.max(0.5, (r.speed || SPRINT_CLIP*rsz)/(SPRINT_CLIP*rsz)));
       else setAnim(slot.ch, r.anim === "sit" && acts.sit ? "sit" : "idle", 1);
       if(slot.ch.mixer) slot.ch.mixer.update(dt);
     });

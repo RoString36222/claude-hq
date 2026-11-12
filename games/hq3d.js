@@ -2438,7 +2438,8 @@ function mount(el, api){
     }
     var sy = seatTop(B), seatW = B.seat.getWorldPosition(new THREE.Vector3());
     if(sy != null) seatW.addScaledVector(A.up, sy);
-    seatW.addScaledVector(A.up, (B.hipUp != null ? B.hipUp : 0.04)*H);   // the hip joints ride ~7 cm (×H/1.7) over the cushion
+    var fit = ch._fit && ch._fit.B === B ? ch._fit : (ch._fit = {B: B, dy: 0, n: 0});
+    seatW.addScaledVector(A.up, ((B.hipUp != null ? B.hipUp : 0.04) + fit.dy)*H);   // the hip joints ~7 cm (×H/1.7) over the cushion, then fitted (seatFit)
     var hipW = Bo.Hips.getWorldPosition(new THREE.Vector3()), par = ch.o.parent;
     ch.o.position.add(par.worldToLocal(seatW.clone()).sub(par.worldToLocal(hipW)));
     ch.o.updateMatrixWorld(true);
@@ -2477,7 +2478,37 @@ function mount(el, api){
     if(Bo.Neck) uniTurn(Bo.Neck, A.left, -bend*0.5);
     if(Bo.Head) uniTurn(Bo.Head, A.left, -bend*0.35);
     if(steer){ if(Bo.Chest) uniTurn(Bo.Chest, A.up, steer*0.14); if(Bo.Neck) uniTurn(Bo.Neck, A.up, steer*0.25); }
-    // 4. the legs: feet flat on the pegs (the ankle over the peg, its ball on it), knees forward and in
+    // 5. the hands, where the grips are this frame (the bars or the wheel already turned). One short of its grip (the
+    // far bar at full lock, a wheel turned a quarter): the upper body twists (at the waist), bends and leans (from the hip
+    // joints) that shoulder toward it, a damped least-squares step at a time (each turn's swing of the shoulder, solved for the
+    // shortfall), and both hands take hold again
+    function holdAll(){
+      return ["L", "R"].map(function(sd, i){
+        var sh = Bo["UpperArm" + sd].getWorldPosition(new THREE.Vector3());
+        return K.hold(ch, sd, gW[i], gripSpec(ch, B, i, gW[i], A, sh)) || 0;
+      });
+    }
+    if(grips){
+      var miss = holdAll(), tol = 0.003*H, tot = [0, 0, 0], LIM = [[-0.7, 0.7], [-0.1, 0.55], [-0.4, 0.4]], ax = [A.up, A.left, A.fwd];
+      var J = new THREE.Matrix3(), M = new THREE.Matrix3(), lam2 = Math.pow(0.04*H, 2);
+      for(var r = 0; r < 8 && Bo.Abdomen && Math.max(miss[0], miss[1]) > tol; r++){
+        var i = miss[0] >= miss[1] ? 0 : 1, U = Bo["UpperArm" + (i ? "R" : "L")];
+        var u = U.getWorldPosition(new THREE.Vector3()), d = gW[i].clone().sub(u).setLength(miss[i]);
+        var rh = u.clone().sub(Bo.Hips.getWorldPosition(tmpA)), rel = u.clone().sub(Bo.Abdomen.getWorldPosition(tmpA));
+        var c = ax.map(function(a, k){ return a.clone().cross(k ? rh : rel); });
+        J.set(c[0].x, c[1].x, c[2].x, c[0].y, c[1].y, c[2].y, c[0].z, c[1].z, c[2].z);
+        M.copy(J).multiply(J.clone().transpose()); M.elements[0] += lam2; M.elements[4] += lam2; M.elements[8] += lam2;
+        var th = d.applyMatrix3(M.invert()).applyMatrix3(J.clone().transpose());
+        [th.x, th.y, th.z].forEach(function(t, k){
+          var to = E.clamp(tot[k] + t, LIM[k][0], LIM[k][1]);
+          uniTurn(k ? Bo.Hips : Bo.Abdomen, ax[k], to - tot[k]); tot[k] = to;   // the twist at the waist; the bend and the lean from the hip joints
+        });
+        var S = Bo["Shoulder" + (i ? "R" : "L")];                    // and the collarbone reaches after it (a little)
+        if(S && r > 0){ var u2 = U.getWorldPosition(new THREE.Vector3()); K.aim(S, u2, u2.clone().addScaledVector(gW[i].clone().sub(u2).normalize(), Math.min(miss[i], 0.12*u2.distanceTo(S.getWorldPosition(tmpA))))); }
+        miss = holdAll();
+      }
+    }
+    // 6. the legs (after the hands: a bend from the hip joints above swings them): feet flat on the pegs (the ankle over the peg, its ball on it), knees forward and in
     ["L", "R"].forEach(function(sd, i){
       var sg = i ? -1 : 1;
       if(B.feet && B.feet[i]){
@@ -2486,11 +2517,41 @@ function mount(el, api){
         K.leg(ch, sd, peg, hp.add(peg).multiplyScalar(0.5).addScaledVector(A.fwd, H).addScaledVector(A.up, 0.5*H).addScaledVector(A.left, sg*(B.knees != null ? B.knees : 0.06)*H));
       }
     });
-    // 5. the hands
-    if(grips) ["L", "R"].forEach(function(sd, i){
-      var sh = Bo["UpperArm" + sd].getWorldPosition(new THREE.Vector3());
-      K.hold(ch, sd, gW[i], gripSpec(ch, B, i, gW[i], A, sh));
+    seatFit(ch, B, A, H, fit);
+  }
+  // the body's underside onto the seat: once the sit clip has settled, the lowest skin under the pelvis (binned in a
+  // few columns, the hips' own frame) against the vehicle's surface straight below each; the hips are moved so the
+  // closest of the lowest columns just presses in (4 mm at 1.7 m), the result kept in fit.dy (× H) for every later frame. Three passes.
+  function seatFit(ch, B, A, H, fit){
+    if(fit.n >= 3 || B.seatRay === false) return;
+    var sit = ch.cur && ch.acts[ch.cur]; if(sit && sit.getEffectiveWeight() < 0.99) return;
+    fit.n++;
+    var hip = ch.bones.Hips.getWorldPosition(new THREE.Vector3()), NL = 3, NF = 4, L0 = 0.045*H, F0 = -0.09*H, F1 = -0.01*H;
+    var low = []; for(var c = 0; c < NL*NF; c++) low.push(Infinity);
+    var v = new THREE.Vector3(), d = new THREE.Vector3();
+    ch.o.traverse(function(m){
+      if(!m.isSkinnedMesh || !m.visible || !m.geometry.attributes.position) return;
+      var P = m.geometry.attributes.position, n = P.count;
+      for(var k = 0; k < n; k++){
+        v.fromBufferAttribute(P, k); m.applyBoneTransform(k, v); v.applyMatrix4(m.matrixWorld);
+        d.copy(v).sub(hip);
+        var l = d.dot(A.left), f = d.dot(A.fwd); if(l < -L0 || l >= L0 || f < F0 || f >= F1) continue;
+        var ci = Math.floor((l + L0)/(2*L0)*NL)*NF + Math.floor((f - F0)/(F1 - F0)*NF), h = d.dot(A.up);
+        if(h < low[ci]) low[ci] = h;
+      }
     });
+    var ms = []; B.g.traverse(function(o){ if(o.isMesh && !o.isSprite && o.visible && !o.userData.lod && o.material && !o.material.transparent) ms.push(o); });
+    // (only the columns where the body is lowest, the sit bones: a thigh over the tank's top is not the seat)
+    var rc = new THREE.Raycaster(), down = A.up.clone().negate(), gap = Infinity, deep = Math.min.apply(null, low) + 0.012*H;
+    for(var a = 0; a < NL; a++) for(var b = 0; b < NF; b++){
+      var lo = low[a*NF + b]; if(lo === Infinity || lo > deep) continue;
+      var o = hip.clone().addScaledVector(A.left, -L0 + (a + 0.5)*2*L0/NL).addScaledVector(A.fwd, F0 + (b + 0.5)*(F1 - F0)/NF).addScaledVector(A.up, 0.15*H);
+      rc.set(o, down); rc.far = 0.6*H;
+      var hit = rc.intersectObjects(ms, false)[0]; if(!hit) continue;
+      gap = Math.min(gap, lo - hit.point.sub(hip).dot(A.up));
+    }
+    if(gap === Infinity){ fit.n = 3; return; }
+    fit.dy = E.clamp(fit.dy - (gap + 0.004*H/1.7)/H, -0.12, 0.12);
   }
   /* ---------- [realism] posing games/people3d.js bodies (rig "uni") over their clips ----------
      World-space helpers: everything they turn is put back at the character's next mixer step (people3d mark()),

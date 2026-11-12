@@ -311,6 +311,16 @@ Builder.prototype.ring = function(node, mk, col, r0, r1, seg, x, side){
   for(var i = 0; i < uv.count; i++) uv.setXY(i, (i % (seg + 1))/seg, i < seg + 1 ? 0 : 1);
   return this.add(node, mk, g, col, x, 0, 0, 0, side*PI/2, 0);
 };
+// a bike's steering: "steer" turns (rotation.y) about the raked axis through the steering head and down the fork (as a
+// real one does: the bars swing round their stem, not round the front axle); its one child, square to the bike again,
+// holds the parts in the steering head's own frame (0 at the head)
+function steerAxis(B, root, yH, zH, zf, Rf){
+  var rk = Math.atan2(zf - zH, Math.max(0.1, yH - Rf)), tilt = B.node(root, null, 0, yH, zH);
+  tilt.rotation.x = -rk;
+  var st = B.node(tilt, "steer"), inner = B.node(st, null);
+  inner.rotation.x = rk;
+  return st;
+}
 Builder.prototype.node = function(parent, name, x, y, z){
   var g = new this.T.Group(); if(name) g.name = name; g.position.set(x || 0, y || 0, z || 0);
   g.userData.parts = {}; parent.add(g); return g;
@@ -1504,7 +1514,7 @@ function buildFormula(T, entry, st, d){
     });
   });
   // the driver, low in the middle: hips behind the cockpit's middle, legs out along the nose, a rectangular wheel
-  var ys = 0.2, zS = zCk - 0.2, riderK = 0.5;
+  var ys = 0.2, zS = zCk + 0.12, riderK = 0.5;   // (forward enough that, leant back, the helmet is in the cockpit opening, clear of the airbox)
   B.box(body, "trim", COL.dark, 0.4, 0.06, 0.5, 0, ys - 0.05, zS);
   // (laid out for the games/people3d.js driver lying back under the halo: the wheel over the belly, the pedals at the nose)
   var col = new T.Group(); col.position.set(0, ys + 0.3, zS + 0.08); col.rotation.x = -0.75; root.add(col);
@@ -1842,13 +1852,13 @@ function buildBike(T, entry, st, d, G){
     // rear caliper
     B.t("satin").at(body, "trim", P.cal, rbox(T, 0.035, 0.07, 0.06, 0.012, 1), -(twR/2 + 0.02), Rr + 0.09, zr - 0.07);
     anchor(T, root, "a-foot-l", 0.2, pegY + 0.02, pegZ); anchor(T, root, "a-foot-r", -0.2, pegY + 0.02, pegZ);
-    anchor(T, root, "a-seat", 0, ys + 0.02, zS + (sport ? 0.09 : 0));   // a sport rider sits up against the tank
+    anchor(T, root, "a-seat", 0, ys + 0.02, zS + (sport ? -0.02 : 0));   // a sport rider sits forward in the seat, clear of the tank
   });
   // ---- the steering: fork, front wheel, mudguard, bars, lamp, dash ----
   B.lod = 0;
   // the steering turns about a vertical axis through the front axle (the raked axis meets the ground near the tyre's
   // contact patch); its parts hang from an inner node at the steering head
-  var steerO = B.node(root, "steer", 0, yH, zf), steer = B.node(steerO, null, 0, 0, zH - zf), fz = zf - zH, fy = Rf - yH, fx = twF/2 + 0.045;
+  var steerO = steerAxis(B, root, yH, zH, zf, Rf), steer = steerO.children[0], fz = zf - zH, fy = Rf - yH, fx = twF/2 + 0.045;
   var fT = function(t){ return [fy*t, fz*t]; };
   [0, 1].forEach(function(lod){
     B.lod = lod;
@@ -1959,7 +1969,7 @@ function buildScooter(T, entry, st, d, G){
     anchor(T, root, "a-seat-2", 0, ys + 0.1, zr - 0.25);
   });
   B.lod = 0;
-  var steerO = B.node(root, "steer", 0, yH, zf), steer = B.node(steerO, null, 0, 0, zH - zf), fz = zf - zH, fy = Rf - yH;
+  var steerO = steerAxis(B, root, yH, zH, zf, Rf), steer = steerO.children[0], fz = zf - zH, fy = Rf - yH;
   [0, 1].forEach(function(lod){
     B.lod = lod;
     if(lod){ B.at(steer, "trim", COL.black, rodG(T, [0.3, 0.08, -0.02], [-0.3, 0.08, -0.02], 0.02, 0.02, 5)); return; }

@@ -191,6 +191,7 @@ function grip(ch, side, amount){
 // Hold a bar, a rim or a stick at world point `at`: o = {across (the bar's axis, the way index -> pinky should run),
 // fdir (roughly where the fingers point), r (the bar's radius, world), curl, pole (the elbow's side)}. The wrist is
 // placed so the bar lies across the palm at the knuckles, the hand turned to the bar, then the fingers close round it.
+// Returns how far (world) the wrist stayed short of where it had to be.
 function hold(ch, side, at, o){
   var THREE = ch.L.THREE, B = ch.bones, K = IK;
   if(!B["UpperArm" + side] || !K.twoBone){ return; }
@@ -200,12 +201,14 @@ function hold(ch, side, at, o){
   var H0 = handFrame(ch, side); if(!H0){ return; }
   var wt = at.clone().addScaledVector(fd, -H0.pl * (o.into == null ? 0.82 : o.into)).addScaledVector(nd, -(o.r || 0));
   K.twoBone(B["UpperArm" + side], B["LowerArm" + side], B["Wrist" + side], wt, o.pole);
+  var miss = B["Wrist" + side].getWorldPosition(new THREE.Vector3()).distanceTo(wt);   // > 0: the arm could not reach
   var H = handFrame(ch, side), Mc = new THREE.Matrix4().makeBasis(H.f, H.a, H.n), Md = new THREE.Matrix4().makeBasis(fd, ad, nd);
   var q = new THREE.Quaternion().setFromRotationMatrix(Md.multiply(Mc.transpose()));
   var w = B["Wrist" + side], qw = w.getWorldQuaternion(new THREE.Quaternion()).premultiply(q);
   w.quaternion.copy(w.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(qw));
   w.updateMatrixWorld(true);
   grip(ch, side, o.curl == null ? 0.9 : o.curl);
+  return miss;
 }
 // Seat on a vehicle: w = {seat, gripL, gripR, pegL, pegR} in world space. Call after the clips for this frame.
 function seat(ch, w, opts){

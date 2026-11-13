@@ -29,6 +29,7 @@ import re
 import secrets
 import subprocess
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -91,6 +92,19 @@ def _verify(token: str, purpose: str = "") -> str | None:
 def run(args, cwd=None, timeout=600):
     p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def probe(url, timeout=5):
+    """GET url's health. -> (ok, why): why says what failed, '' when ok. No subprocess."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return (200 <= r.status < 300), ("" if 200 <= r.status < 300 else "HTTP %d" % r.status)
+    except urllib.error.HTTPError as e:
+        return False, "HTTP %d" % e.code
+    except urllib.error.URLError as e:
+        return False, str(e.reason)[:120]
+    except (OSError, ValueError) as e:
+        return False, str(e)[:120]
 
 
 def git(*args):
@@ -471,7 +485,11 @@ def _log_line(msg):
 
 
 def status():
-    run(["git", "fetch", "origin", BRANCH, "--quiet"], cwd=ARENA_DIR, timeout=60)
+    # --no-auto-maintenance: git 2.47 (the panel image's) ends every fetch with
+    # `git maintenance run --auto --detach`. Detached, it was re-parented to this
+    # script (PID 1 in the container), which never reaped it: one zombie `git` per
+    # poll, ~8,200 in 10 days, until the container could not spawn anything.
+    run(["git", "fetch", "--no-auto-maintenance", "origin", BRANCH, "--quiet"], cwd=ARENA_DIR, timeout=60)
     # "Running" is what was RELEASED, not where the checkout is: release.sh moves the
     # checkout before its CI gate, so a release that stopped there left HEAD on the
     # new commit while the old image kept serving -- and this page said "deployed".
@@ -490,7 +508,10 @@ def status():
     # panel runs in its own container, so loopback is the panel itself (:8090)
     # and never the app. The app is `expose`d, not published, so it has no
     # host port either -- a loopback probe cannot succeed in either layout.
-    code, _ = run(["curl", "-fsS", "--max-time", "5", HEALTH_URL], timeout=15)
+    # In-process (urllib), not curl: a page that polls should not spawn a process per poll.
+    healthy, why = probe(HEALTH_URL)
+    # The public URL too, so "the panel cannot reach the app" reads apart from "the Arena is down".
+    public = probe(f"https://{ARENA_DOMAIN}/health")[0] if ARENA_DOMAIN and not healthy else None
     try:
         with open(DEPLOY_LOG) as f:
             log = "".join(f.readlines()[-40:])
@@ -498,7 +519,7 @@ def status():
         log = "(no deploy log yet)"
     return {
         "local": local, "remote": remote, "behind": int(behind or 0),
-        "pending": pending, "healthy": code == 0,
+        "pending": pending, "healthy": healthy, "why": why, "public": public,
         "subject": git("log", "-1", "--pretty=%s"),
         "when": git("log", "-1", "--pretty=%cr"),
         "log": log,
@@ -1842,12 +1863,13 @@ def _history_rows(text):
     return rows
 
 
-def brief(live, head, release, checks, healthy, rows, changes, mode="release"):
+def brief(live, head, release, checks, healthy, rows, changes, mode="release", why="", public=None):
     """The page's story, from what is known (pure, so tests/test_deploy_panel.py can walk every case).
 
     live: {version, sha, subject} of the running release; head: {sha, subject, when} of main; release: CI's
     latest {version, sha} or None; checks: GitHub's check runs on head (None: unknown); healthy: the health
-    check; rows: _history_rows; changes: [{sha, subject}] the deploy would ship.
+    check; rows: _history_rows; changes: [{sha, subject}] the deploy would ship; why: what the health check
+    hit; public: the public /health answered (None: not asked).
     -> {tone, headline, line, deployed_at, steps: [{key, label, state, detail}], action: {enabled, label, why},
         rollback: {enabled, label, version}, changes, checks}
     """
@@ -1909,12 +1931,20 @@ def brief(live, head, release, checks, healthy, rows, changes, mode="release"):
     rollback = ({"enabled": True, "label": "Roll back to " + prev[1], "version": prev[1]} if prev
                 else {"enabled": False, "label": "Nothing to roll back to", "version": None})
     deployed_at = next((r[0] for r in reversed(rows) if r[1] == cur), None)
-    tone = "bad" if not healthy else "warn" if (action["enabled"] or ci_state == "failed") else "ok"
-    headline = ("Live and healthy" if healthy else "Live, but not answering its health check")
+    tone = "bad" if not healthy and not public else "warn" if (not healthy or action["enabled"] or ci_state == "failed") else "ok"
+    headline = health_head(healthy, why, public)
     line = " \u00b7 ".join(x for x in (cur or (lsha[:7] if lsha else "no release yet"), live.get("subject") or "") if x)
     return {"tone": tone, "headline": headline, "line": line, "deployed_at": deployed_at, "steps": steps,
             "action": action, "rollback": rollback, "changes": changes[:12], "more": max(0, n - 12),
             "checks": [{"name": c["name"], "status": c["status"]} for c in ci]}
+
+
+def health_head(healthy, why="", public=None):
+    if healthy:
+        return "Live and healthy"
+    if public:
+        return "Live (public health OK), but the panel cannot reach the app" + (": " + why if why else "")
+    return "Live, but not answering its health check" + (" (" + why + ")" if why else "")
 
 
 def overview():
@@ -1943,7 +1973,7 @@ def overview():
             rows = _history_rows(f.read())
     except OSError:
         rows = []
-    return brief(live, head, release, _checks(hsha), s["healthy"], rows, changes, mode)
+    return brief(live, head, release, _checks(hsha), s["healthy"], rows, changes, mode, s["why"], s["public"])
 
 
 def render(login, csrf):
@@ -1959,7 +1989,7 @@ def render(login, csrf):
             .replace("__WHO__", html.escape(login))
             .replace("__DOMAIN__", html.escape(ARENA_DOMAIN or "arena"))
             .replace("__BRANCH__", html.escape(BRANCH))
-            .replace("__HEALTH_HEAD__", "Live and healthy" if s["healthy"] else "Live, but not answering its health check")
+            .replace("__HEALTH_HEAD__", html.escape(health_head(s["healthy"], s["why"], s["public"])))
             .replace("__HEALTH__", "healthy" if s["healthy"] else "not responding")
             .replace("__DOTCLS__", "up" if s["healthy"] else "down")
             .replace("__LOCAL__", html.escape(s["local"]))

@@ -70,6 +70,11 @@ services:
       context: ../ops
       dockerfile: Dockerfile.panel
     restart: unless-stopped
+    # An init as PID 1 reaps whatever the panel's commands leave behind. Without it the
+    # panel's Python was PID 1 and reaped nothing: each poll's detached
+    # `git maintenance` stayed a zombie, and after 10 days the container hit its
+    # process limit, so every health probe failed to start.
+    init: true
     logging: *logging
     env_file: /etc/arena-panel.env
     environment:

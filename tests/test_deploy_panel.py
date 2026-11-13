@@ -671,6 +671,15 @@ class Brief(unittest.TestCase):
         r = self.b(healthy=False, release=None, checks=self.OK)
         self.assertEqual((r["tone"], r["headline"]), ("bad", "Live, but not answering its health check"))
 
+    def test_the_reason_reads_in_the_headline(self):
+        r2 = deploy_panel.brief(self.L, self.H, None, self.OK, False, self.ROWS, self.CH, why="timed out")
+        self.assertEqual(r2["headline"], "Live, but not answering its health check (timed out)")
+
+    def test_panel_cut_off_from_a_healthy_arena_is_a_warning(self):
+        r = deploy_panel.brief(self.L, self.H, None, self.OK, False, self.ROWS, self.CH, why="Name or service not known", public=True)
+        self.assertEqual(r["tone"], "warn")
+        self.assertEqual(r["headline"], "Live (public health OK), but the panel cannot reach the app: Name or service not known")
+
     def test_rollback_names_the_release_it_goes_back_to(self):
         self.assertEqual(self.b()["rollback"], {"enabled": True, "label": "Roll back to 2026.10.27-1111111", "version": "2026.10.27-1111111"})
         self.assertFalse(self.b(rows=self.ROWS[1:])["rollback"]["enabled"])
@@ -684,3 +693,43 @@ class Brief(unittest.TestCase):
         self.assertIn('fetch("/api/status"', page)
         block = page[page.index("function drawBrief("):page.index("function brief()")]
         self.assertNotIn("innerHTML", block)
+
+
+class NoZombies(unittest.TestCase):
+    """The poll leaves no detached git behind, an init reaps anything else, and the health probe spawns nothing."""
+
+    def test_probe_answers_without_a_process(self):
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200 if self.path == "/health" else 503)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            base = "http://127.0.0.1:%d" % srv.server_address[1]
+            self.assertEqual(deploy_panel.probe(base + "/health"), (True, ""))
+            self.assertEqual(deploy_panel.probe(base + "/down"), (False, "HTTP 503"))
+        finally:
+            srv.shutdown()
+        ok, why = deploy_panel.probe("http://127.0.0.1:1/health", timeout=2)
+        self.assertFalse(ok)
+        self.assertTrue(why)
+
+    def test_the_status_probe_is_not_curl(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ops", "deploy_panel.py")) as f:
+            src = f.read()
+        self.assertNotIn('run(["curl"', src)
+        self.assertIn('"fetch", "--no-auto-maintenance"', src, "a fetch per poll must not leave git maintenance running detached")
+
+    def test_compose_runs_the_panel_under_an_init(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend", "docker-compose.yml")) as f:
+            src = f.read()
+        panel = src[src.index("\n  panel:"):src.index("\n  caddy:")]
+        self.assertIn("init: true", panel)

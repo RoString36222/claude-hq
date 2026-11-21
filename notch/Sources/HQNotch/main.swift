@@ -28,11 +28,16 @@ final class NotchController {
     private var mouseTimer: Timer?
     private var leftAt: Date?
     private var enteredAt: Date?
-    /// The cursor must rest on the closed pill this long before it opens.
-    static let hoverDelay: TimeInterval = 0.5
+    /// The cursor must rest on the closed pill this long before it opens (it swells at once).
+    static let hoverDelay: TimeInterval = 0.2
+    /// ...and be off the panel this long before it folds back up.
+    static let leaveDelay: TimeInterval = 0.3
     private var autoOpenUntil: Date?
+    /// The panel was held open for a request on the last tick.
+    private var wasHeld = false
     private var bag = Set<AnyCancellable>()
-    static let panelSize = CGSize(width: NotchRoot.expandedWidth + 40, height: 900)
+    /// Room around the open panel for its shoulders and its shadow.
+    static let panelSize = CGSize(width: NotchRoot.expandedWidth + 2 * NotchRoot.openShoulder + 56, height: 900)
 
     init(model: AppModel) {
         self.model = model
@@ -77,6 +82,9 @@ final class NotchController {
             autoOpenUntil = nil   // back to normal hover behaviour
             try? await Task.sleep(for: .seconds(1.5))
             snapshot(to: dir + "/notch-after.png")   // collapsed again unless hovered
+            model.debugPeek()
+            try? await Task.sleep(for: .seconds(1))
+            snapshot(to: dir + "/notch-peek.png")    // the top session's "finished" banner
         }
     }
 
@@ -125,7 +133,9 @@ final class NotchController {
     private var visibleRect: NSRect {
         let pf = panel.frame
         let size = model.expanded ? model.expandedSize
-            : CGSize(width: Self.pillWidth(notch: notch, beside: model.placed != .notch), height: notch.height)
+            : model.peek != nil ? CGSize(width: PeekBanner.width, height: notch.height + NotchRoot.peekExtra)
+            : CGSize(width: Self.pillWidth(notch: notch, beside: model.placed != .notch) + (model.hovering ? NotchRoot.swell.width : 0),
+                     height: notch.height + (model.hovering ? NotchRoot.swell.height : 0))
         // the expanded panel is centred on the pill too, but never past the panel's own edges
         let cx = model.expanded ? min(max(pillCentre, size.width/2), pf.width - size.width/2) : pillCentre
         return NSRect(x: pf.minX + cx - size.width / 2, y: pf.maxY - size.height, width: size.width, height: size.height)
@@ -135,6 +145,12 @@ final class NotchController {
         let p = NSEvent.mouseLocation
         let inside = visibleRect.insetBy(dx: -2, dy: -2).contains(p)
         panel.ignoresMouseEvents = !inside
+        let swell = inside && !model.expanded
+        if model.hovering != swell { model.hovering = swell }
+        // A request waiting on the notch keeps it open, cursor or not; once it's answered, a
+        // short pause so the card is seen going away, then the usual fold.
+        if model.expanded, model.holdOpen { wasHeld = true; leftAt = nil; return }
+        if wasHeld { wasHeld = false; autoOpenUntil = Date().addingTimeInterval(0.6) }
         if inside {
             leftAt = nil
             if !model.expanded {
@@ -148,18 +164,23 @@ final class NotchController {
         if let until = autoOpenUntil, Date() < until { return }
         autoOpenUntil = nil
         if leftAt == nil { leftAt = Date() }
-        if let l = leftAt, Date().timeIntervalSince(l) > 0.45 { set(expanded: false) }
+        if let l = leftAt, Date().timeIntervalSince(l) > Self.leaveDelay { set(expanded: false) }
     }
 
-    /// Something needs the person: open for a few seconds even without hover.
+    /// Something needs the person: open even without hover. A request answerable here holds it
+    /// open (`holdOpen`); a prompt only the terminal can answer shows for a few seconds.
     private func popOpen() {
         autoOpenUntil = Date().addingTimeInterval(8)
         set(expanded: true)
     }
 
     private func set(expanded: Bool) {
+        if ProcessInfo.processInfo.environment["HQNOTCH_DEBUG_LOG"] != nil, expanded != model.expanded {
+            NSLog("HQNotch: %@ (%d pending)", expanded ? "open" : "fold", model.store.pending.count)
+        }
         model.expanded = expanded
         enteredAt = nil
+        if expanded { model.hovering = false; model.dismissPeek() }
         if !expanded { leftAt = nil; model.showSettings = false; model.showDiff = nil; panel.resignKey() }
     }
 }

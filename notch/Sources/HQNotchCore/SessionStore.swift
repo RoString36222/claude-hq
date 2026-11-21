@@ -49,6 +49,15 @@ public struct Session: Equatable, Sendable, Identifiable {
     public var env: [String: String] = [:]
     public var creature: Creature?        // from HQ when known; nil = compute locally
     public var title = ""                 // HQ's session title, when HQ is running
+    public var stale = false              // HQ: an open tab with no activity for a day
+
+    /// Which filter tab the session falls under. A session that needs you is never stale.
+    public var bucket: SessionFilter {
+        switch status {
+        case .working, .needs: .working
+        case .idle, .done, .error: stale ? .stale : .idle
+        }
+    }
 
     public var folder: String {
         let name = (cwd as NSString).lastPathComponent
@@ -57,6 +66,15 @@ public struct Session: Equatable, Sendable, Identifiable {
 
     /// Card heading: HQ's title, else the folder.
     public var label: String { title.isEmpty ? folder : title }
+}
+
+/// The notch's session filter.
+public enum SessionFilter: String, CaseIterable, Sendable, Identifiable {
+    case all, working, idle, stale
+    public var id: String { rawValue }
+    public var label: String {
+        switch self { case .all: "All"; case .working: "Working"; case .idle: "Idle"; case .stale: "Stale" }
+    }
 }
 
 /// Things the UI should do once (sounds, popping the panel open).
@@ -79,7 +97,7 @@ public struct SessionStore: Sendable {
 
     public var ordered: [Session] {
         sessions.values.sorted { a, b in
-            let ra = rank(a.status), rb = rank(b.status)
+            let ra = a.bucket == .stale ? 5 : rank(a.status), rb = b.bucket == .stale ? 5 : rank(b.status)
             return ra != rb ? ra < rb : a.lastEvent > b.lastEvent
         }
     }
@@ -101,6 +119,7 @@ public struct SessionStore: Sendable {
         if m.ppid > 0 { s.ppid = m.ppid }
         if !m.env.isEmpty { s.env = m.env }
         s.lastEvent = now
+        s.stale = false
         var fx: [StoreEffect] = []
         let label = m.tool.map { $0.target.isEmpty ? $0.tool : "\($0.tool) · \($0.target)" } ?? ""
 
@@ -210,6 +229,8 @@ public struct SessionStore: Sendable {
                     continue
                 }
                 s.creature = h.creature
+                // HQ polls lag the hooks: a tab just woken up must not flip back to stale.
+                if now.timeIntervalSince(s.lastEvent) > 120 { s.stale = h.stale }
                 if !h.title.isEmpty { s.title = h.title }
                 if s.promptCount < h.promptCount { s.promptCount = h.promptCount }
                 sessions[h.sessionId] = s
@@ -221,6 +242,7 @@ public struct SessionStore: Sendable {
                 s.status = h.status
                 s.now = h.now
                 s.lastPrompt = h.lastPrompt
+                s.stale = h.stale
                 sessions[h.sessionId] = s
             }
         }
@@ -238,16 +260,18 @@ public struct HQSession: Sendable, Equatable {
     public var promptCount: Int
     public var creature: Creature?
     public var title: String
+    public var stale: Bool
 
     public init(sessionId: String, cwd: String, status: SessionStatus, live: Bool, now: String,
-                lastPrompt: String, promptCount: Int, creature: Creature?, title: String = "") {
+                lastPrompt: String, promptCount: Int, creature: Creature?, title: String = "", stale: Bool = false) {
         self.sessionId = sessionId; self.cwd = cwd; self.status = status; self.live = live
         self.now = now; self.lastPrompt = lastPrompt; self.promptCount = promptCount; self.creature = creature
-        self.title = title
+        self.title = title; self.stale = stale
     }
 
     /// Parse HQ's payload. Only Claude Code sessions HQ reports as live (an interactive
-    /// session with a running pid, working / needs / idle, not stale) seed new cards.
+    /// session with a running pid: working / needs / idle, or stale = open but quiet for a day)
+    /// seed new cards.
     public static func parse(_ data: Data) -> [HQSession] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = root["sessions"] as? [[String: Any]] else { return [] }
@@ -261,12 +285,13 @@ public struct HQSession: Sendable, Equatable {
                 cr = Creature(species: sp, stage: (c["stage"] as? Int) ?? 0, shiny: (c["shiny"] as? Bool) ?? false,
                               branchDex: evo?["branchDex"] as? Int, megaSlug: evo?["megaSlug"] as? String)
             }
-            let live = ["working", "needs", "idle"].contains(raw) && (o["source"] as? String ?? "claude") == "claude"
-                && (o["stale"] as? Bool) != true && (o["kind"] as? String) == "interactive" && o["pid"] is Int
+            let stale = raw == "stale" || (o["stale"] as? Bool) == true
+            let live = ["working", "needs", "idle", "stale"].contains(raw) && (o["source"] as? String ?? "claude") == "claude"
+                && (o["kind"] as? String) == "interactive" && o["pid"] is Int
             return HQSession(sessionId: sid, cwd: (o["cwd"] as? String) ?? "", status: status, live: live,
                              now: (o["now"] as? String) ?? "", lastPrompt: (o["lastPrompt"] as? String) ?? "",
                              promptCount: (o["promptCount"] as? Int) ?? 0, creature: cr,
-                             title: (o["title"] as? String) ?? "")
+                             title: (o["title"] as? String) ?? "", stale: stale && status != .working && status != .needs)
         }
     }
 }
